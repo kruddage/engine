@@ -2,6 +2,6 @@
 
 A game engine built in C with a TypeScript shell.
 
-Live site is deployed via Cloudflare Pages (URL to be added once configured).
+Live site: https://engine-3jw.pages.dev/
 
-PR previews are handled automatically by Cloudflare Pages.
+PR previews are deployed automatically by Cloudflare Pages.

@@ -2,6 +2,6 @@
 
 A game engine built in C with a TypeScript shell.
 
-Live at: https://kruddage.github.io/engine/
+Live site is deployed via Cloudflare Pages (URL to be added once configured).
 
-PR previews are deployed automatically to `https://kruddage.github.io/engine/pr-preview/pr-{N}/` with a bot comment linking to the preview.
+PR previews are handled automatically by Cloudflare Pages.

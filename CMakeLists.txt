@@ -23,17 +23,25 @@ target_link_libraries(memory PRIVATE mimalloc-static)
 add_library(subsystem modules/core/subsystem.c)
 target_include_directories(subsystem PUBLIC modules/core)
 
+add_library(plugin_loader modules/core/plugin_loader.c)
+target_include_directories(plugin_loader PUBLIC modules/core)
+target_link_libraries(plugin_loader PRIVATE log)
+
 add_executable(index modules/core/engine.c)
 target_include_directories(index PRIVATE modules/core)
-target_link_libraries(index PRIVATE subsystem log memory)
+target_link_libraries(index PRIVATE subsystem log memory plugin_loader)
 
 if(EMSCRIPTEN)
 	set_target_properties(index PROPERTIES SUFFIX ".html")
 	target_link_options(index PRIVATE
 		-sENVIRONMENT=web
 		-sALLOW_MEMORY_GROWTH=1
-		-sMALLOC=emmalloc
+		-sMAIN_MODULE=1
 	)
+
+	add_executable(hello_plugin modules/hello_plugin/hello_plugin.c)
+	set_target_properties(hello_plugin PROPERTIES SUFFIX ".wasm")
+	target_link_options(hello_plugin PRIVATE -sSIDE_MODULE=1)
 endif()
 
 if(NOT EMSCRIPTEN)

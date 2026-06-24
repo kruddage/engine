@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: MIT */
+/* SPDX-License-Identifier: LGPL-2.1-or-later */
 #ifndef PLUGIN_LOADER_H
 #define PLUGIN_LOADER_H
 

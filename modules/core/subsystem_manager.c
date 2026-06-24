@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: MIT */
+/* SPDX-License-Identifier: LGPL-2.1-or-later */
 #include "subsystem_manager.h"
 
 #include <stdint.h>

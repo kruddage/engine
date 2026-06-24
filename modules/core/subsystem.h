@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: MIT */
+/* SPDX-License-Identifier: LGPL-2.1-or-later */
 #ifndef SUBSYSTEM_H
 #define SUBSYSTEM_H
 

@@ -56,6 +56,8 @@ int main(void)
 	engine_init();
 #ifdef __EMSCRIPTEN__
 	emscripten_set_main_loop(engine_tick, 0, 1);
+#else
+	/* Native main loop not yet implemented; seam for future loop. */
 #endif
 	engine_shutdown();
 	return 0;

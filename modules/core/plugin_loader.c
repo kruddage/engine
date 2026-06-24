@@ -37,6 +37,7 @@ void plugin_loader_set_manager(struct subsystem_manager *mgr)
 #ifdef __EMSCRIPTEN__
 	manager = mgr;
 #else
+	/* emscripten_dlopen unavailable on native; plugin loading unsupported. */
 	(void)mgr;
 #endif
 }
@@ -46,6 +47,7 @@ void plugin_loader_set_plugins(const char * const *plugins)
 #ifdef __EMSCRIPTEN__
 	plugin_list = plugins;
 #else
+	/* emscripten_dlopen unavailable on native; plugin loading unsupported. */
 	(void)plugins;
 #endif
 }
@@ -62,6 +64,8 @@ void plugin_loader_init(void)
 				  (void *)plugin_list[i],
 				  on_load, on_error);
 	}
+#else
+	/* emscripten_dlopen unavailable on native; nothing to init. */
 #endif
 }
 

@@ -8,6 +8,19 @@ let vx = 220
 let vy = 160
 const SIZE = 60
 
+let wasmStatus = 'loading…'
+
+async function loadCore(): Promise<void> {
+  try {
+    const response = await fetch('/wasm/core.wasm')
+    const { instance } = await WebAssembly.instantiateStreaming(response)
+    const ping = instance.exports.engine_ping as () => number
+    wasmStatus = ping() === 1 ? 'WASM: OK' : 'WASM: unexpected value'
+  } catch {
+    wasmStatus = 'WASM: failed'
+  }
+}
+
 const loop = new EngineLoop(canvas, {
   update(dt) {
     x += vx * dt
@@ -23,7 +36,10 @@ const loop = new EngineLoop(canvas, {
     ctx.clearRect(0, 0, window.innerWidth, window.innerHeight)
     ctx.fillStyle = '#7c3aed'
     ctx.fillRect(x, y, SIZE, SIZE)
+    ctx.fillStyle = '#ffffff'
+    ctx.font = '14px monospace'
+    ctx.fillText(wasmStatus, 12, 24)
   },
 })
 
-loop.start()
+loadCore().then(() => loop.start())

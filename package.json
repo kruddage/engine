@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build:wasm": "make -C modules/core",
+    "build": "npm run build:wasm && tsc --noEmit && vite build",
     "preview": "vite preview",
     "lint": "eslint .",
     "test": "vitest run"

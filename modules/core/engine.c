@@ -19,12 +19,19 @@ static const struct subsystem subsystems[] = {
 	{ NULL }
 };
 
+static const char * const plugins[] = {
+	"hello_plugin.wasm",
+	"asset_plugin.wasm",
+	NULL,
+};
+
 static struct subsystem_manager manager;
 static int32_t frame_count;
 
 void engine_init(void)
 {
 	plugin_loader_set_manager(&manager);
+	plugin_loader_set_plugins(plugins);
 	subsystem_manager_init(&manager, subsystems);
 	frame_count = 0;
 	LOG_INFO("engine: init");

@@ -31,6 +31,11 @@ add_library(plugin_loader modules/core/plugin_loader.c)
 target_include_directories(plugin_loader PUBLIC modules/core)
 target_include_directories(plugin_loader PRIVATE modules/log)
 
+add_library(asset_plugin modules/asset/asset_plugin.c)
+target_include_directories(asset_plugin PUBLIC modules/asset)
+target_include_directories(asset_plugin PRIVATE modules/core modules/log modules/memory)
+target_link_libraries(asset_plugin PRIVATE log memory subsystem subsystem_manager)
+
 add_executable(index modules/core/engine.c)
 target_include_directories(index PRIVATE modules/core)
 target_link_libraries(index PRIVATE subsystem subsystem_manager log memory plugin_loader)
@@ -59,6 +64,25 @@ if(EMSCRIPTEN)
 		DEPENDS ${CMAKE_BINARY_DIR}/hello_plugin.wasm
 	)
 	add_dependencies(index hello_plugin)
+
+	add_custom_command(
+		OUTPUT ${CMAKE_BINARY_DIR}/asset_plugin.wasm
+		COMMAND ${CMAKE_C_COMPILER}
+			-sSIDE_MODULE=1
+			-O2
+			-I${CMAKE_SOURCE_DIR}/modules/asset
+			-I${CMAKE_SOURCE_DIR}/modules/core
+			-I${CMAKE_SOURCE_DIR}/modules/log
+			-I${CMAKE_SOURCE_DIR}/modules/memory
+			-o ${CMAKE_BINARY_DIR}/asset_plugin.wasm
+			${CMAKE_SOURCE_DIR}/modules/asset/asset_plugin.c
+		DEPENDS modules/asset/asset_plugin.c
+		COMMENT "Building asset_plugin SIDE_MODULE"
+	)
+	add_custom_target(asset_plugin_wasm ALL
+		DEPENDS ${CMAKE_BINARY_DIR}/asset_plugin.wasm
+	)
+	add_dependencies(index asset_plugin_wasm)
 endif()
 
 if(NOT EMSCRIPTEN)
@@ -75,4 +99,7 @@ if(NOT EMSCRIPTEN)
 	add_executable(subsystem_manager_test tests/subsystem_manager_test.c)
 	target_link_libraries(subsystem_manager_test PRIVATE subsystem_manager)
 	add_test(NAME subsystem_manager COMMAND subsystem_manager_test)
+	add_executable(asset_test tests/asset_test.c)
+	target_link_libraries(asset_test PRIVATE asset_plugin log memory)
+	add_test(NAME asset COMMAND asset_test)
 endif()

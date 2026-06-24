@@ -11,6 +11,7 @@ FetchContent_Declare(mimalloc
 set(MI_BUILD_SHARED OFF CACHE BOOL "" FORCE)
 set(MI_BUILD_OBJECT OFF CACHE BOOL "" FORCE)
 set(MI_BUILD_TESTS  OFF CACHE BOOL "" FORCE)
+set(MI_OVERRIDE     OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(mimalloc)
 
 add_library(log modules/log/log.c)
@@ -36,12 +37,24 @@ if(EMSCRIPTEN)
 	target_link_options(index PRIVATE
 		-sENVIRONMENT=web
 		-sALLOW_MEMORY_GROWTH=1
+		-sMALLOC=emmalloc
 		-sMAIN_MODULE=1
 	)
 
-	add_executable(hello_plugin modules/hello_plugin/hello_plugin.c)
-	set_target_properties(hello_plugin PROPERTIES SUFFIX ".wasm")
-	target_link_options(hello_plugin PRIVATE -sSIDE_MODULE=1)
+	add_custom_command(
+		OUTPUT ${CMAKE_BINARY_DIR}/hello_plugin.wasm
+		COMMAND ${CMAKE_C_COMPILER}
+			-sSIDE_MODULE=1
+			-O2
+			-o ${CMAKE_BINARY_DIR}/hello_plugin.wasm
+			${CMAKE_SOURCE_DIR}/modules/hello_plugin/hello_plugin.c
+		DEPENDS modules/hello_plugin/hello_plugin.c
+		COMMENT "Building hello_plugin SIDE_MODULE"
+	)
+	add_custom_target(hello_plugin ALL
+		DEPENDS ${CMAKE_BINARY_DIR}/hello_plugin.wasm
+	)
+	add_dependencies(index hello_plugin)
 endif()
 
 if(NOT EMSCRIPTEN)

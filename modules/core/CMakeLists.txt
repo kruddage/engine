@@ -6,7 +6,7 @@ target_include_directories(subsystem_manager PUBLIC .)
 
 add_library(plugin_loader plugin_loader.c)
 target_include_directories(plugin_loader PUBLIC .)
-target_link_libraries(plugin_loader PRIVATE log)
+target_include_directories(plugin_loader PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../log)
 
 add_executable(index engine.c)
 target_include_directories(index PRIVATE .)

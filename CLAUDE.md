@@ -30,9 +30,13 @@ ABI boundaries.
 ```sh
 npm run build:wasm   # compile all C modules to WASM (requires clang + wasm-ld)
 npm run build        # build:wasm + tsc check + vite bundle
-npm run dev          # vite dev server (WASM must be pre-built)
+npm run dev          # vite dev server — run build:wasm first
 npm test             # vitest
 ```
+
+WASM binaries are not committed to git. CI builds them from source via GitHub
+Actions (`.github/workflows/deploy.yml`) before deploying to Cloudflare Pages.
+Run `npm run build:wasm` locally once before `npm run dev`.
 
 ## Key constraints
 

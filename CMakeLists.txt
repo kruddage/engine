@@ -26,6 +26,7 @@ if(EMSCRIPTEN)
 	target_link_options(index PRIVATE
 		-sENVIRONMENT=web
 		-sALLOW_MEMORY_GROWTH=1
+		-sMALLOC=emmalloc
 	)
 endif()
 

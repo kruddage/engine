@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 #include "engine.h"
 
+#include "memory.h"
+
 #include <stdint.h>
 #include <stdio.h>
 
@@ -12,6 +14,7 @@ static int32_t frame_count;
 
 void engine_init(void)
 {
+	mem_init();
 	frame_count = 0;
 	printf("engine: init\n");
 }
@@ -26,6 +29,7 @@ void engine_tick(void)
 void engine_shutdown(void)
 {
 	printf("engine: shutdown\n");
+	mem_shutdown();
 }
 
 int main(void)

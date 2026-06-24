@@ -26,7 +26,7 @@ target_include_directories(subsystem PUBLIC modules/core)
 
 add_library(plugin_loader modules/core/plugin_loader.c)
 target_include_directories(plugin_loader PUBLIC modules/core)
-target_link_libraries(plugin_loader PRIVATE log)
+target_include_directories(plugin_loader PRIVATE modules/log)
 
 add_executable(index modules/core/engine.c)
 target_include_directories(index PRIVATE modules/core)

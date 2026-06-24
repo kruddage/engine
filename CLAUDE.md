@@ -14,6 +14,19 @@ CMakeLists.txt    Root build — emcmake cmake drives everything
 build/            Build output (gitignored) — index.html, index.js, index.wasm
 ```
 
+## License
+
+All source files are licensed under **LGPL-2.1-or-later**. Every new `.c` or `.h`
+file must begin with:
+
+```c
+/* SPDX-License-Identifier: LGPL-2.1-or-later */
+```
+
+Do not use MIT or any other identifier — the project relicensed from MIT at tag
+`last-mit-release`. Commercial licensing is available from the author; this dual
+model requires copyright assignment via CLA for external contributions.
+
 ## C coding standard
 
 All C code follows the Linux kernel coding style. See `CODING_STANDARD.md` at the

@@ -1,9 +1,8 @@
-name: CI / Deploy
+name: Deploy
 
 on:
   push:
     branches: [main]
-  pull_request:
 
 jobs:
   build-and-deploy:
@@ -15,17 +14,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install WASM toolchain
-        run: sudo apt-get install -y clang lld
+      - name: Install Emscripten
+        uses: mymindstorm/setup-emsdk@v14
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-
-      - run: npm ci
-      - run: npm test
-      - run: npm run build
+      - name: Build
+        run: |
+          emcmake cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/pages-action@v1
@@ -33,5 +28,5 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: b9b420ba27330d12b7631a3abf1f7a69
           projectName: engine
-          directory: dist
+          directory: build
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}

@@ -3,9 +3,23 @@ project(krudd C)
 
 set(CMAKE_C_STANDARD 11)
 
-add_executable(index modules/core/engine.c)
+include(FetchContent)
+FetchContent_Declare(mimalloc
+	GIT_REPOSITORY https://github.com/microsoft/mimalloc.git
+	GIT_TAG        v2.1.7
+)
+set(MI_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(MI_BUILD_OBJECT OFF CACHE BOOL "" FORCE)
+set(MI_BUILD_TESTS  OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(mimalloc)
 
+add_library(memory modules/memory/memory.c)
+target_include_directories(memory PUBLIC modules/memory)
+target_link_libraries(memory PRIVATE mimalloc-static)
+
+add_executable(index modules/core/engine.c)
 target_include_directories(index PRIVATE modules/core)
+target_link_libraries(index PRIVATE memory)
 
 if(EMSCRIPTEN)
 	set_target_properties(index PROPERTIES SUFFIX ".html")
@@ -13,4 +27,11 @@ if(EMSCRIPTEN)
 		-sENVIRONMENT=web
 		-sALLOW_MEMORY_GROWTH=1
 	)
+endif()
+
+if(NOT EMSCRIPTEN)
+	add_executable(memory_test tests/memory_test.c)
+	target_link_libraries(memory_test PRIVATE memory)
+	enable_testing()
+	add_test(NAME memory COMMAND memory_test)
 endif()

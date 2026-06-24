@@ -4,10 +4,8 @@
 
 #include <stdint.h>
 
-/*
- * engine_ping - proof-of-life; returns 1 so the host can confirm the
- * module loaded and the ABI resolves correctly.
- */
-int32_t engine_ping(void);
+void engine_init(void);
+void engine_tick(void);
+void engine_shutdown(void);
 
 #endif /* ENGINE_H */

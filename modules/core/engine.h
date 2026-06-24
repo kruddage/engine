@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: MIT */
+/* SPDX-License-Identifier: LGPL-2.1-or-later */
 #ifndef ENGINE_H
 #define ENGINE_H
 

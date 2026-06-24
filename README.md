@@ -1,7 +1,7 @@
 # KRUDD
 
-A game engine built in C with a TypeScript shell.
+A game engine built in C, compiled to WASM via Emscripten.
 
-Live site is deployed via Cloudflare Pages (URL to be added once configured).
+Live: https://engine.pages.dev
 
 PR previews are handled automatically by Cloudflare Pages.

@@ -16,3 +16,17 @@ jobs:
         run: |
           emcmake cmake -B build
           cmake --build build
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build_test
+
+      - name: Build
+        run: cmake --build build_test
+
+      - name: Run tests
+        run: ctest --test-dir build_test --output-on-failure

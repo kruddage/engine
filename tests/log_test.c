@@ -16,29 +16,29 @@ static int tests_passed;
 
 static void test_all_levels(void)
 {
-	log_set_level(LOG_DEBUG);
-	log_debug("debug message");
-	log_info("info message");
-	log_warn("warn message");
-	log_error("error message");
+	log_set_level(LOG_LEVEL_DEBUG);
+	LOG_DEBUG("debug message");
+	LOG_INFO("info message");
+	LOG_WARN("warn message");
+	LOG_ERROR("error message");
 }
 
 static void test_level_filter(void)
 {
 	/* set to WARN — debug and info calls must not crash */
-	log_set_level(LOG_WARN);
-	log_debug("suppressed");
-	log_info("suppressed");
-	log_warn("visible");
-	log_error("visible");
+	log_set_level(LOG_LEVEL_WARN);
+	LOG_DEBUG("suppressed");
+	LOG_INFO("suppressed");
+	LOG_WARN("visible");
+	LOG_ERROR("visible");
 }
 
 static void test_format(void)
 {
-	log_set_level(LOG_DEBUG);
-	log_debug("value: %d", 42);
-	log_info("string: %s", "hello");
-	log_warn("float: %.2f", 3.14);
+	log_set_level(LOG_LEVEL_DEBUG);
+	LOG_DEBUG("value: %d", 42);
+	LOG_INFO("string: %s", "hello");
+	LOG_WARN("float: %.2f", 3.14);
 }
 
 int main(void)

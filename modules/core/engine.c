@@ -17,19 +17,19 @@ void engine_init(void)
 	log_init();
 	mem_init();
 	frame_count = 0;
-	log_info("engine: init");
+	LOG_INFO("engine: init");
 }
 
 void engine_tick(void)
 {
 	frame_count++;
 	if (frame_count % 60 == 0)
-		log_debug("engine: frame %d", frame_count);
+		LOG_DEBUG("engine: frame %d", frame_count);
 }
 
 void engine_shutdown(void)
 {
-	log_info("engine: shutdown");
+	LOG_INFO("engine: shutdown");
 	mem_shutdown();
 	log_shutdown();
 }

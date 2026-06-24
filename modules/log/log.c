@@ -4,18 +4,18 @@
 #include <stdarg.h>
 #include <stdio.h>
 
-static enum log_level current_level = LOG_INFO;
+static enum log_level current_level = LOG_LEVEL_INFO;
 
 static const char *level_prefix[] = {
-	[LOG_DEBUG] = "DEBUG",
-	[LOG_INFO]  = "INFO",
-	[LOG_WARN]  = "WARN",
-	[LOG_ERROR] = "ERROR",
+	[LOG_LEVEL_DEBUG] = "DEBUG",
+	[LOG_LEVEL_INFO]  = "INFO",
+	[LOG_LEVEL_WARN]  = "WARN",
+	[LOG_LEVEL_ERROR] = "ERROR",
 };
 
 void log_init(void)
 {
-	current_level = LOG_INFO;
+	current_level = LOG_LEVEL_INFO;
 }
 
 void log_shutdown(void)
@@ -37,7 +37,7 @@ void log_write(enum log_level level, const char *fmt, ...)
 	if (level < current_level)
 		return;
 
-	out = (level >= LOG_WARN) ? stderr : stdout;
+	out = (level >= LOG_LEVEL_WARN) ? stderr : stdout;
 
 	fprintf(out, "[%s] ", level_prefix[level]);
 	va_start(args, fmt);

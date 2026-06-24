@@ -16,7 +16,7 @@ async function loadCore(): Promise<void> {
     const { instance } = await WebAssembly.instantiateStreaming(response)
     const ping = instance.exports.engine_ping as () => number
     wasmStatus = ping() === 1 ? 'WASM: OK' : 'WASM: unexpected value'
-  } catch (e) {
+  } catch {
     wasmStatus = 'WASM: failed'
   }
 }

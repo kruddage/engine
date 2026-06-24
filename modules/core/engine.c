@@ -1,10 +1,10 @@
 /* SPDX-License-Identifier: MIT */
 #include "engine.h"
 
+#include "log.h"
 #include "memory.h"
 
 #include <stdint.h>
-#include <stdio.h>
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -14,22 +14,24 @@ static int32_t frame_count;
 
 void engine_init(void)
 {
+	log_init();
 	mem_init();
 	frame_count = 0;
-	printf("engine: init\n");
+	log_info("engine: init");
 }
 
 void engine_tick(void)
 {
 	frame_count++;
 	if (frame_count % 60 == 0)
-		printf("engine: frame %d\n", frame_count);
+		log_debug("engine: frame %d", frame_count);
 }
 
 void engine_shutdown(void)
 {
-	printf("engine: shutdown\n");
+	log_info("engine: shutdown");
 	mem_shutdown();
+	log_shutdown();
 }
 
 int main(void)

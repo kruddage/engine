@@ -24,13 +24,16 @@ target_link_libraries(memory PRIVATE mimalloc-static)
 add_library(subsystem modules/core/subsystem.c)
 target_include_directories(subsystem PUBLIC modules/core)
 
+add_library(subsystem_manager modules/core/subsystem_manager.c)
+target_include_directories(subsystem_manager PUBLIC modules/core)
+
 add_library(plugin_loader modules/core/plugin_loader.c)
 target_include_directories(plugin_loader PUBLIC modules/core)
 target_include_directories(plugin_loader PRIVATE modules/log)
 
 add_executable(index modules/core/engine.c)
 target_include_directories(index PRIVATE modules/core)
-target_link_libraries(index PRIVATE subsystem log memory plugin_loader)
+target_link_libraries(index PRIVATE subsystem subsystem_manager log memory plugin_loader)
 
 if(EMSCRIPTEN)
 	set_target_properties(index PROPERTIES SUFFIX ".html")
@@ -46,6 +49,7 @@ if(EMSCRIPTEN)
 		COMMAND ${CMAKE_C_COMPILER}
 			-sSIDE_MODULE=1
 			-O2
+			-I${CMAKE_SOURCE_DIR}/modules/core
 			-o ${CMAKE_BINARY_DIR}/hello_plugin.wasm
 			${CMAKE_SOURCE_DIR}/modules/hello_plugin/hello_plugin.c
 		DEPENDS modules/hello_plugin/hello_plugin.c
@@ -68,4 +72,7 @@ if(NOT EMSCRIPTEN)
 	add_executable(subsystem_test tests/subsystem_test.c)
 	target_link_libraries(subsystem_test PRIVATE subsystem)
 	add_test(NAME subsystem COMMAND subsystem_test)
+	add_executable(subsystem_manager_test tests/subsystem_manager_test.c)
+	target_link_libraries(subsystem_manager_test PRIVATE subsystem_manager)
+	add_test(NAME subsystem_manager COMMAND subsystem_manager_test)
 endif()

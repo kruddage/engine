@@ -4,10 +4,11 @@
 
 #include "log_api.h"
 
-void log_init(void);
-void log_shutdown(void);
-void log_set_level(enum log_level level);
-void log_write(enum log_level level, const char *fmt, ...);
+void     log_init(void);
+void     log_shutdown(void);
+void     log_set_level(enum log_level level);
+void     log_write(enum log_level level, const char *fmt, ...);
+uint32_t log_get_history(struct log_message *out, uint32_t max);
 
 #define LOG_DEBUG(fmt, ...) log_write(LOG_LEVEL_DEBUG, fmt, ##__VA_ARGS__)
 #define LOG_INFO(fmt, ...)  log_write(LOG_LEVEL_INFO,  fmt, ##__VA_ARGS__)

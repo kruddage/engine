@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: LGPL-2.1-or-later */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef PLUGIN_LOADER_H
 #define PLUGIN_LOADER_H
 

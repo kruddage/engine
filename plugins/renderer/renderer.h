@@ -36,6 +36,11 @@ typedef enum {
 } gpu_topology;
 
 typedef enum {
+	GPU_INDEX_FORMAT_UINT16 = 0,
+	GPU_INDEX_FORMAT_UINT32,
+} gpu_index_format;
+
+typedef enum {
 	GPU_LOAD_OP_LOAD = 0,
 	GPU_LOAD_OP_CLEAR,
 	GPU_LOAD_OP_DONT_CARE,
@@ -55,11 +60,12 @@ typedef enum {
  * Depth-stencil and blend state are set independently via cmd calls.
  */
 struct gpu_pipeline_desc {
-	gpu_format   color_formats[GPU_MAX_COLOR_ATTACHMENTS];
-	uint32_t     color_format_count;
-	gpu_format   depth_format;   /* GPU_FORMAT_UNKNOWN if no depth */
-	gpu_topology topology;
-	uint32_t     sample_count;
+	gpu_format      color_formats[GPU_MAX_COLOR_ATTACHMENTS];
+	uint32_t        color_format_count;
+	gpu_format      depth_format;        /* GPU_FORMAT_UNKNOWN if no depth */
+	gpu_topology    topology;
+	gpu_index_format strip_index_format; /* only used for strip topologies */
+	uint32_t        sample_count;
 };
 
 /* --- Render passes ------------------------------------------------------- */

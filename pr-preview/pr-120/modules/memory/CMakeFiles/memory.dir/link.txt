@@ -1,0 +1,2 @@
+/home/runner/work/_temp/5ded40be-b0a4-482c-af88-802de563638a/emsdk-main/upstream/emscripten/emar qc libmemory.a CMakeFiles/memory.dir/memory.c.o
+/home/runner/work/_temp/5ded40be-b0a4-482c-af88-802de563638a/emsdk-main/upstream/emscripten/emranlib libmemory.a

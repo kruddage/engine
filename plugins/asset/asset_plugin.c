@@ -2,8 +2,8 @@
 #include "asset.h"
 #include "subsystem.h"
 #include "subsystem_manager.h"
-#include "log.h"
-#include "memory.h"
+#include "log_api.h"
+#include "memory_api.h"
 
 #include <string.h>
 #include <stdint.h>
@@ -12,6 +12,13 @@
 #include <emscripten/fetch.h>
 #else
 #include <stdio.h>
+#include "log.h"
+#include "memory.h"
+static const struct log_api    native_log = { log_write };
+static const struct memory_api native_mem = {
+	mem_alloc, mem_alloc_zero, mem_free,
+	mem_pool_create, mem_pool_alloc, mem_pool_free, mem_pool_destroy,
+};
 #endif
 
 #define ASSET_CACHE_MAX 64
@@ -26,6 +33,14 @@ struct asset_entry {
 
 static struct asset_entry cache[ASSET_CACHE_MAX];
 static int32_t            cache_count;
+
+#ifdef __EMSCRIPTEN__
+static const struct log_api    *g_log;
+static const struct memory_api *g_mem;
+#else
+static const struct log_api    *g_log = &native_log;
+static const struct memory_api *g_mem = &native_mem;
+#endif
 
 static struct asset_entry *find_entry(const char *path)
 {
@@ -56,7 +71,7 @@ static struct asset_entry *alloc_entry(const char *path)
 
 static void evict_entry(struct asset_entry *e)
 {
-	mem_free(e->data);
+	g_mem->free(e->data);
 	*e = cache[--cache_count];
 }
 
@@ -66,15 +81,15 @@ static void on_fetch_success(emscripten_fetch_t *fetch)
 {
 	struct asset_entry *e = (struct asset_entry *)fetch->userData;
 
-	e->data = mem_alloc((size_t)fetch->numBytes);
+	e->data = g_mem->alloc((size_t)fetch->numBytes);
 	if (e->data) {
 		memcpy(e->data, fetch->data, (size_t)fetch->numBytes);
 		e->size  = (uint32_t)fetch->numBytes;
 		e->state = ASSET_LOADED;
-		LOG_INFO("asset: loaded %s (%u bytes)", e->path, e->size);
+		g_log->write(LOG_LEVEL_INFO, "asset: loaded %s (%u bytes)", e->path, e->size);
 	} else {
 		e->state = ASSET_ERROR;
-		LOG_INFO("asset: out of memory loading %s", e->path);
+		g_log->write(LOG_LEVEL_INFO, "asset: out of memory loading %s", e->path);
 	}
 	emscripten_fetch_close(fetch);
 }
@@ -84,7 +99,7 @@ static void on_fetch_error(emscripten_fetch_t *fetch)
 	struct asset_entry *e = (struct asset_entry *)fetch->userData;
 
 	e->state = ASSET_ERROR;
-	LOG_INFO("asset: error loading %s (HTTP %d)", e->path, fetch->status);
+	g_log->write(LOG_LEVEL_INFO, "asset: error loading %s (HTTP %d)", e->path, fetch->status);
 	emscripten_fetch_close(fetch);
 }
 
@@ -126,7 +141,7 @@ static void start_fetch(struct asset_entry *e)
 		return;
 	}
 
-	buf = mem_alloc((size_t)len);
+	buf = g_mem->alloc((size_t)len);
 	if (!buf) {
 		fclose(f);
 		e->state = ASSET_ERROR;
@@ -137,7 +152,7 @@ static void start_fetch(struct asset_entry *e)
 	fclose(f);
 
 	if (n != (size_t)len) {
-		mem_free(buf);
+		g_mem->free(buf);
 		e->state = ASSET_ERROR;
 		return;
 	}
@@ -159,7 +174,7 @@ void asset_request(const char *path)
 	}
 	e = alloc_entry(path);
 	if (!e) {
-		LOG_INFO("asset: cache full, dropping %s", path);
+		g_log->write(LOG_LEVEL_INFO, "asset: cache full, dropping %s", path);
 		return;
 	}
 	e->refs = 1;
@@ -198,7 +213,7 @@ void asset_release(const char *path)
 
 static void asset_init(void)
 {
-	LOG_INFO("asset: init");
+	g_log->write(LOG_LEVEL_INFO, "asset: init");
 }
 
 static void asset_tick(void)
@@ -211,9 +226,9 @@ static void asset_shutdown(void)
 	int32_t i;
 
 	for (i = 0; i < cache_count; i++)
-		mem_free(cache[i].data);
+		g_mem->free(cache[i].data);
 	cache_count = 0;
-	LOG_INFO("asset: shutdown");
+	g_log->write(LOG_LEVEL_INFO, "asset: shutdown");
 }
 
 static const struct subsystem desc = {
@@ -223,7 +238,15 @@ static const struct subsystem desc = {
 	.shutdown = asset_shutdown,
 };
 
+#ifdef __EMSCRIPTEN__
 void plugin_entry(struct subsystem_manager *mgr)
+#else
+void asset_plugin_entry(struct subsystem_manager *mgr)
+#endif
 {
+#ifdef __EMSCRIPTEN__
+	g_log = subsystem_manager_get_api(mgr, "log");
+	g_mem = subsystem_manager_get_api(mgr, "memory");
+#endif
 	subsystem_manager_register(mgr, &desc);
 }

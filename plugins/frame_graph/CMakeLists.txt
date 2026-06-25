@@ -16,7 +16,7 @@ if(EMSCRIPTEN)
 			-I${CMAKE_CURRENT_SOURCE_DIR}
 			-I${CMAKE_SOURCE_DIR}/plugins/renderer
 			-I${CMAKE_SOURCE_DIR}/modules/core
-			-I${CMAKE_SOURCE_DIR}/modules/log
+			-I${CMAKE_SOURCE_DIR}/plugins/include
 			-o ${CMAKE_BINARY_DIR}/frame_graph.wasm
 			${CMAKE_CURRENT_SOURCE_DIR}/fg.c
 		DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/fg.c

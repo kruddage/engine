@@ -2,12 +2,7 @@
 #ifndef LOG_H
 #define LOG_H
 
-enum log_level {
-	LOG_LEVEL_DEBUG = 0,
-	LOG_LEVEL_INFO,
-	LOG_LEVEL_WARN,
-	LOG_LEVEL_ERROR,
-};
+#include "log_api.h"
 
 void log_init(void);
 void log_shutdown(void);

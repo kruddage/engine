@@ -15,8 +15,7 @@ if(EMSCRIPTEN)
 			-O2
 			-I${CMAKE_CURRENT_SOURCE_DIR}
 			-I${CMAKE_SOURCE_DIR}/modules/core
-			-I${CMAKE_SOURCE_DIR}/modules/log
-			-I${CMAKE_SOURCE_DIR}/modules/memory
+			-I${CMAKE_SOURCE_DIR}/plugins/include
 			-o ${CMAKE_BINARY_DIR}/asset_plugin.wasm
 			${CMAKE_CURRENT_SOURCE_DIR}/asset_plugin.c
 		DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/asset_plugin.c

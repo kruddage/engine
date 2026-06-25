@@ -108,6 +108,16 @@ struct gpu_barrier {
 	uint32_t        hazard_flags; /* backend-defined sparse bits */
 };
 
+/* --- Texture descriptors ------------------------------------------------- */
+
+struct gpu_texture_desc {
+	gpu_format format;
+	uint32_t   width;
+	uint32_t   height;
+	uint32_t   mip_levels;   /* 0 → full mip chain */
+	uint32_t   sample_count; /* 1 for no MSAA */
+};
+
 /* --- Draw / dispatch ----------------------------------------------------- */
 
 struct gpu_draw_indexed_args {
@@ -162,6 +172,10 @@ struct gpu_api {
 	void  (*gpu_free)(void *ptr);
 	/* Returns the GPU-side address of a cpu-mapped allocation. */
 	void *(*gpu_host_to_device_ptr)(void *host_ptr);
+
+	/* Textures */
+	gpu_texture_t (*texture_create)(const struct gpu_texture_desc *desc);
+	void          (*texture_destroy)(gpu_texture_t texture);
 };
 
 #endif /* RENDERER_H */

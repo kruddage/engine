@@ -56,6 +56,8 @@ static void test_vtable_fully_populated(void)
 	assert(gpu->gpu_malloc != NULL);
 	assert(gpu->gpu_free != NULL);
 	assert(gpu->gpu_host_to_device_ptr != NULL);
+	assert(gpu->texture_create != NULL);
+	assert(gpu->texture_destroy != NULL);
 }
 
 static void test_cmd_buf_begin_returns_null(void)
@@ -113,6 +115,14 @@ static void test_calls_dont_crash(void)
 	gpu->gpu_malloc(64);
 	gpu->gpu_free(NULL);
 	gpu->gpu_host_to_device_ptr(NULL);
+	gpu->texture_create(&(struct gpu_texture_desc){
+		.format       = GPU_FORMAT_RGBA8_UNORM,
+		.width        = 256,
+		.height       = 256,
+		.mip_levels   = 1,
+		.sample_count = 1,
+	});
+	gpu->texture_destroy(NULL);
 }
 
 static void test_log_records_call_type(void)
@@ -201,6 +211,34 @@ static void test_log_records_sequence(void)
 	assert(log[2].type == GPU_CALL_CMD_BUF_SUBMIT);
 }
 
+static void test_texture_ops_logged(void)
+{
+	const struct gpu_call_record *log;
+	const struct gpu_api *gpu;
+	struct gpu_texture_desc desc = {
+		.format       = GPU_FORMAT_RGBA8_UNORM,
+		.width        = 512,
+		.height       = 256,
+		.mip_levels   = 1,
+		.sample_count = 1,
+	};
+	uint32_t count;
+
+	setup();
+	gpu = (const struct gpu_api *)subsystem_manager_get_api(&mgr, "renderer");
+
+	gpu->texture_create(&desc);
+	gpu->texture_destroy(NULL);
+
+	log = renderer_null_get_log(&count);
+	assert(count == 2);
+	assert(log[0].type == GPU_CALL_TEXTURE_CREATE);
+	assert(log[0].args.texture_create.format == (uint32_t)GPU_FORMAT_RGBA8_UNORM);
+	assert(log[0].args.texture_create.width  == 512);
+	assert(log[0].args.texture_create.height == 256);
+	assert(log[1].type == GPU_CALL_TEXTURE_DESTROY);
+}
+
 int main(void)
 {
 	RUN(registers_as_renderer);
@@ -211,6 +249,7 @@ int main(void)
 	RUN(log_reset_clears_entries);
 	RUN(log_captures_args);
 	RUN(log_records_sequence);
+	RUN(texture_ops_logged);
 
 	printf("%d/%d tests passed\n", tests_passed, tests_run);
 	return tests_passed == tests_run ? 0 : 1;

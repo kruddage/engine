@@ -13,9 +13,9 @@
 #endif
 
 static const struct subsystem subsystems[] = {
-	{ "log",           log_init,           NULL, log_shutdown           },
-	{ "memory",        mem_init,           NULL, mem_shutdown           },
-	{ "plugin_loader", plugin_loader_init, NULL, plugin_loader_shutdown },
+	{ .name = "log",           .init = log_init,           .shutdown = log_shutdown           },
+	{ .name = "memory",        .init = mem_init,           .shutdown = mem_shutdown           },
+	{ .name = "plugin_loader", .init = plugin_loader_init, .shutdown = plugin_loader_shutdown },
 	{ NULL }
 };
 

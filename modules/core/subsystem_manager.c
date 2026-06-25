@@ -2,6 +2,7 @@
 #include "subsystem_manager.h"
 
 #include <stdint.h>
+#include <string.h>
 
 void subsystem_manager_init(struct subsystem_manager *mgr,
 			    const struct subsystem *table)
@@ -30,6 +31,24 @@ void subsystem_manager_register(struct subsystem_manager *mgr,
 
 	if (mgr->dynamic[slot].init)
 		mgr->dynamic[slot].init();
+}
+
+const void *subsystem_manager_get_api(const struct subsystem_manager *mgr,
+				      const char *name)
+{
+	int32_t i;
+
+	for (i = 0; mgr->static_table[i].name; i++) {
+		if (strcmp(mgr->static_table[i].name, name) == 0)
+			return mgr->static_table[i].api;
+	}
+
+	for (i = 0; i < mgr->dynamic_count; i++) {
+		if (strcmp(mgr->dynamic[i].name, name) == 0)
+			return mgr->dynamic[i].api;
+	}
+
+	return NULL;
 }
 
 void subsystem_manager_tick(struct subsystem_manager *mgr)

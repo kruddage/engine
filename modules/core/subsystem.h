@@ -9,6 +9,7 @@
  */
 struct subsystem {
 	const char *name;
+	const void *api;      /* optional service vtable; NULL if unused */
 	void (*init)(void);
 	void (*tick)(void);
 	void (*shutdown)(void);

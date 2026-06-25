@@ -3,7 +3,7 @@ if(EMSCRIPTEN)
 		OUTPUT ${CMAKE_BINARY_DIR}/renderer_webgpu.wasm
 		COMMAND ${CMAKE_C_COMPILER}
 			-sSIDE_MODULE=1
-			-sUSE_WEBGPU=1
+			--use-port=emdawnwebgpu
 			-O2
 			-I${CMAKE_CURRENT_SOURCE_DIR}
 			-I${CMAKE_SOURCE_DIR}/plugins/renderer

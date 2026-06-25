@@ -32,18 +32,6 @@ if(NOT EMSCRIPTEN)
 endif()
 
 if(EMSCRIPTEN)
-	# ImGui is compiled into the main module so all side modules share one context.
-	target_sources(index PRIVATE
-		${imgui_SOURCE_DIR}/imgui.cpp
-		${imgui_SOURCE_DIR}/imgui_draw.cpp
-		${imgui_SOURCE_DIR}/imgui_tables.cpp
-		${imgui_SOURCE_DIR}/imgui_widgets.cpp
-		${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
-	)
-	target_include_directories(index PRIVATE
-		${imgui_SOURCE_DIR}
-		${imgui_SOURCE_DIR}/backends
-	)
 	set_target_properties(index PROPERTIES
 		SUFFIX ".html"
 		RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}

@@ -4,8 +4,9 @@
  * imgui_plugin — Dear ImGui subsystem.
  *
  * Manages the ImGui frame lifecycle (NewFrame → registered panels → Render)
- * and Emscripten input handling.  ImGui itself is compiled into the main
- * module so all side modules share a single context.
+ * and Emscripten input handling.  ImGui is compiled into this side module;
+ * kruddboard and any future panel plugins import ImGui symbols from here via
+ * Emscripten's dynamic linker global symbol table (loaded before them).
  *
  * Other plugins register draw callbacks via imgui_api.register_panel;
  * they are called between ImGui::NewFrame() and ImGui::Render() each tick.

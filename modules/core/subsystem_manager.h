@@ -29,6 +29,13 @@ void subsystem_manager_init(struct subsystem_manager *mgr,
 void subsystem_manager_register(struct subsystem_manager *mgr,
 				const struct subsystem *desc);
 
+/*
+ * Look up the api pointer registered by the named subsystem.
+ * Returns NULL if no subsystem with that name is found.
+ */
+const void *subsystem_manager_get_api(const struct subsystem_manager *mgr,
+				      const char *name);
+
 void subsystem_manager_tick(struct subsystem_manager *mgr);
 
 /* Shuts down dynamic subsystems first, then static, both in reverse order. */

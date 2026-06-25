@@ -11,9 +11,19 @@
 #include "log_level.h"
 
 #include <stdarg.h>
+#include <stdint.h>
+
+#define LOG_HISTORY_CAP     256
+#define LOG_MESSAGE_MAX_LEN 256
+
+struct log_message {
+	enum log_level level;
+	char           text[LOG_MESSAGE_MAX_LEN];
+};
 
 struct log_api {
-	void (*write)(enum log_level level, const char *fmt, ...);
+	void     (*write)(enum log_level level, const char *fmt, ...);
+	uint32_t (*get_history)(struct log_message *out, uint32_t max);
 };
 
 #endif /* LOG_API_H */

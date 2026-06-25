@@ -1,5 +1,9 @@
-add_library(log log.c)
+add_library(log
+	log.c
+	${CMAKE_SOURCE_DIR}/modules/core/ring_buf.c
+)
 target_include_directories(log PUBLIC . ${CMAKE_SOURCE_DIR}/plugins/include)
+target_include_directories(log PRIVATE ${CMAKE_SOURCE_DIR}/modules/core)
 
 if(NOT EMSCRIPTEN)
 	add_executable(log_test log_test.c)

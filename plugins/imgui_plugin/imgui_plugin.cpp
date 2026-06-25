@@ -1,11 +1,14 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /*
- * imgui_plugin — Dear ImGui proof-of-life subsystem.
+ * imgui_plugin — Dear ImGui subsystem.
  *
- * Initialises Dear ImGui with the OpenGL ES 3 backend and renders a
- * "Hello World" window each frame.  Mouse input is forwarded via
- * Emscripten HTML5 callbacks so the window is interactive.
+ * Manages the ImGui frame lifecycle (NewFrame → registered panels → Render)
+ * and Emscripten input handling.  ImGui itself is compiled into the main
+ * module so all side modules share a single context.
+ *
+ * Other plugins register draw callbacks via imgui_api.register_panel;
+ * they are called between ImGui::NewFrame() and ImGui::Render() each tick.
  *
  * Must be loaded after renderer_webgl so the WebGL 2 context exists.
  */
@@ -15,6 +18,8 @@ extern "C" {
 #include "subsystem_manager.h"
 #include "log_api.h"
 #include "log_level.h"
+#include "imgui_api.h"
+#include "stats_api.h"
 }
 
 #include "imgui.h"
@@ -25,7 +30,31 @@ extern "C" {
 #include <GLES3/gl3.h>
 #endif
 
-static const struct log_api *g_log;
+static const struct log_api   *g_log;
+static const struct stats_api *g_stats;
+
+struct panel_entry {
+	const char *name;
+	void      (*draw_fn)(void *userdata);
+	void       *userdata;
+};
+
+static struct panel_entry s_panels[IMGUI_MAX_PANELS];
+static int                s_panel_count;
+
+static void imgui_register_panel(const char *name,
+				 void (*draw_fn)(void *userdata),
+				 void *userdata)
+{
+	if (s_panel_count >= IMGUI_MAX_PANELS)
+		return;
+	s_panels[s_panel_count].name     = name;
+	s_panels[s_panel_count].draw_fn  = draw_fn;
+	s_panels[s_panel_count].userdata = userdata;
+	s_panel_count++;
+}
+
+static const imgui_api g_imgui_api = { imgui_register_panel };
 
 #ifdef __EMSCRIPTEN__
 
@@ -97,7 +126,8 @@ static void imgui_tick(void)
 #ifdef __EMSCRIPTEN__
 	double css_w, css_h;
 	double dpr;
-	int phys_w, phys_h;
+	int    phys_w, phys_h;
+	int    i;
 
 	emscripten_get_element_css_size("#canvas", &css_w, &css_h);
 	dpr    = EM_ASM_DOUBLE({ return window.devicePixelRatio || 1.0; });
@@ -108,27 +138,17 @@ static void imgui_tick(void)
 	ImGuiIO &io = ImGui::GetIO();
 	io.DisplaySize             = ImVec2((float)css_w, (float)css_h);
 	io.DisplayFramebufferScale = ImVec2((float)dpr,   (float)dpr);
-	io.DeltaTime               = 1.0f / 60.0f;
+	io.DeltaTime = (g_stats && g_stats->last_frame_ms > 0.0f)
+		? g_stats->last_frame_ms / 1000.0f
+		: 1.0f / 60.0f;
 
 	ImGui_ImplOpenGL3_NewFrame();
 	ImGui::NewFrame();
 
-	static int  s_counter  = 0;
-	static bool s_checkbox = false;
-	static float s_slider  = 0.5f;
-
-	ImGui::SetNextWindowPos(ImVec2(20.0f, 20.0f), ImGuiCond_Once);
-	ImGui::Begin("KRUDD");
-	ImGui::Text("Hello, World!");
-	ImGui::Text("Engine running.");
-	ImGui::Separator();
-	if (ImGui::Button("Tap me"))
-		s_counter++;
-	ImGui::SameLine();
-	ImGui::Text("count: %d", s_counter);
-	ImGui::Checkbox("checkbox", &s_checkbox);
-	ImGui::SliderFloat("slider", &s_slider, 0.0f, 1.0f);
-	ImGui::End();
+	for (i = 0; i < s_panel_count; i++) {
+		if (s_panels[i].draw_fn)
+			s_panels[i].draw_fn(s_panels[i].userdata);
+	}
 
 	ImGui::Render();
 	ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -144,7 +164,7 @@ static void imgui_shutdown(void)
 
 static const struct subsystem desc = {
 	"imgui",
-	nullptr,
+	&g_imgui_api,
 	imgui_init,
 	imgui_tick,
 	imgui_shutdown,
@@ -157,8 +177,10 @@ extern "C" void imgui_plugin_entry(struct subsystem_manager *mgr)
 #endif
 {
 #ifdef __EMSCRIPTEN__
-	g_log = (const struct log_api *)
+	g_log   = (const struct log_api *)
 		subsystem_manager_get_api(mgr, "log");
+	g_stats = (const struct stats_api *)
+		subsystem_manager_get_api(mgr, "stats");
 #endif
 	subsystem_manager_register(mgr, &desc);
 }

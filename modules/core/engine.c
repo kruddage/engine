@@ -6,6 +6,7 @@
 #include "memory.h"
 #include "memory_api.h"
 #include "plugin_loader.h"
+#include "version.h"
 
 #include <stdint.h>
 
@@ -58,7 +59,7 @@ void engine_init(void)
 	plugin_loader_set_plugins(plugins);
 	subsystem_manager_init(&manager, subsystems);
 	frame_count = 0;
-	LOG_INFO("engine: init");
+	LOG_INFO("engine: init v" ENGINE_VERSION_STRING);
 }
 
 void engine_tick(void)

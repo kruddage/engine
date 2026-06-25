@@ -2,6 +2,8 @@ name: CI
 
 on:
   pull_request:
+  push:
+    branches: [main]
 
 jobs:
   build:
@@ -22,11 +24,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install lcov
-        run: sudo apt-get install -y lcov
-
       - name: Configure
-        run: cmake -B build_test -DCOVERAGE=ON
+        run: cmake -B build_test
 
       - name: Build
         run: cmake --build build_test
@@ -34,18 +33,68 @@ jobs:
       - name: Run tests
         run: ctest --test-dir build_test --output-on-failure
 
+  sanitizers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build_san -DSANITIZE=ON
+
+      - name: Build
+        run: cmake --build build_san
+
+      - name: Run tests
+        run: ctest --test-dir build_san --output-on-failure
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install lcov
+        run: sudo apt-get install -y lcov
+
+      - name: Configure
+        run: cmake -B build -DCOVERAGE=ON
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Run tests
+        run: ctest --test-dir build --output-on-failure
+
       - name: Collect coverage
         run: |
-          lcov --capture --directory build_test --output-file coverage.info --ignore-errors empty
+          lcov --capture --directory build --output-file coverage.info --ignore-errors empty
           lcov --remove coverage.info '*/usr/*' '*/_deps/*' '*_test.c' --output-file coverage.info --ignore-errors empty
 
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: coverage.info
+      - name: Check coverage threshold
+        run: |
+          pct=$(lcov --summary coverage.info 2>&1 | awk '/lines/{gsub(/%/,"",$2); print int($2)}')
+          echo "Line coverage: ${pct}%"
+          if [ "${pct}" -lt 80 ]; then
+            echo "Coverage ${pct}% is below the 80% threshold" >&2
+            exit 1
+          fi
+
+  clang-tidy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install clang-tidy
+        run: sudo apt-get install -y clang-tidy
+
+      - name: Configure
+        run: cmake -B build_tidy
+
+      - name: Run clang-tidy
+        run: run-clang-tidy -p build_tidy '.*(modules|plugins)/.*(?<!_test)\.c$'
 
   preview:
+    if: github.event_name == 'pull_request'
+    needs: [build, test, sanitizers, coverage, clang-tidy]
     runs-on: ubuntu-latest
     permissions:
       contents: read

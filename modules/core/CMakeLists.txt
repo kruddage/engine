@@ -41,6 +41,7 @@ if(EMSCRIPTEN)
 		-sFETCH=1
 		--use-port=emdawnwebgpu
 		--extern-pre-js ${CMAKE_CURRENT_SOURCE_DIR}/error_overlay.js
+		-sEXPORT_ALL=1
 		-sEXPORTED_FUNCTIONS=${PLUGIN_API_EXPORTS_STR}
 	)
 endif()

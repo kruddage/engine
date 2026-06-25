@@ -1,12 +1,11 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 #include "subsystem.h"
 #include "subsystem_manager.h"
-
-#include <stdio.h>
+#include "log.h"
 
 static void hello_init(void)
 {
-	printf("hello_plugin: init\n");
+	LOG_INFO("hello_plugin: init");
 }
 
 static void hello_tick(void)
@@ -15,7 +14,7 @@ static void hello_tick(void)
 
 static void hello_shutdown(void)
 {
-	printf("hello_plugin: shutdown\n");
+	LOG_INFO("hello_plugin: shutdown");
 }
 
 static const struct subsystem desc = {

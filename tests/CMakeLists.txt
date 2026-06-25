@@ -26,6 +26,7 @@ add_test(NAME plugin_loader COMMAND plugin_loader_test)
 add_executable(renderer_null_test renderer_null_test.c)
 target_include_directories(renderer_null_test PRIVATE
 	${CMAKE_SOURCE_DIR}/plugins/renderer
+	${CMAKE_SOURCE_DIR}/plugins/renderer_null
 	${CMAKE_SOURCE_DIR}/modules/core
 )
 target_link_libraries(renderer_null_test PRIVATE renderer_null log subsystem_manager)

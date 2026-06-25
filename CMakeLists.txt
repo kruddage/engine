@@ -26,6 +26,13 @@ set(MI_BUILD_TESTS  OFF CACHE BOOL "" FORCE)
 set(MI_OVERRIDE     OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(mimalloc)
 
+FetchContent_Declare(imgui
+	GIT_REPOSITORY https://github.com/ocornut/imgui.git
+	GIT_TAG        v1.90.9
+	GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(imgui)
+
 if(NOT EMSCRIPTEN)
 	set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 	enable_testing()
@@ -40,3 +47,4 @@ add_subdirectory(plugins/renderer)
 add_subdirectory(plugins/renderer_null)
 add_subdirectory(plugins/renderer_webgl)
 add_subdirectory(plugins/frame_graph)
+add_subdirectory(plugins/imgui_plugin)

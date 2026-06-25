@@ -19,7 +19,10 @@ static void hello_shutdown(void)
 }
 
 static const struct subsystem desc = {
-	"hello", hello_init, hello_tick, hello_shutdown,
+	.name     = "hello",
+	.init     = hello_init,
+	.tick     = hello_tick,
+	.shutdown = hello_shutdown,
 };
 
 void plugin_entry(struct subsystem_manager *mgr)

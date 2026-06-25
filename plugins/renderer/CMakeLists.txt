@@ -1,0 +1,2 @@
+add_library(renderer_interface INTERFACE)
+target_include_directories(renderer_interface INTERFACE .)

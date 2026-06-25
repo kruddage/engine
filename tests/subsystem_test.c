@@ -27,8 +27,8 @@ static void b_init(void)     { record(4); }
 static void b_shutdown(void) { record(5); }
 
 static const struct subsystem two_subsystems[] = {
-	{ "a", a_init, a_tick, a_shutdown },
-	{ "b", b_init, NULL,   b_shutdown },
+	{ .name = "a", .init = a_init, .tick = a_tick, .shutdown = a_shutdown },
+	{ .name = "b", .init = b_init, .shutdown = b_shutdown },
 	{ NULL }
 };
 

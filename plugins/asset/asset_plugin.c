@@ -217,7 +217,10 @@ static void asset_shutdown(void)
 }
 
 static const struct subsystem desc = {
-	"asset", asset_init, asset_tick, asset_shutdown,
+	.name     = "asset",
+	.init     = asset_init,
+	.tick     = asset_tick,
+	.shutdown = asset_shutdown,
 };
 
 void plugin_entry(struct subsystem_manager *mgr)

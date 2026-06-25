@@ -31,7 +31,7 @@ static void c_tick(void)     { record(8); }
 static void c_shutdown(void) { record(9); }
 
 static const struct subsystem static_table[] = {
-	{ "a", a_init, a_tick, a_shutdown },
+	{ .name = "a", .init = a_init, .tick = a_tick, .shutdown = a_shutdown },
 	{ NULL }
 };
 
@@ -58,7 +58,7 @@ static void test_static_lifecycle(void)
 static void test_dynamic_register_calls_init(void)
 {
 	struct subsystem_manager mgr;
-	struct subsystem dyn = { "b", b_init, b_tick, b_shutdown };
+	struct subsystem dyn = { .name = "b", .init = b_init, .tick = b_tick, .shutdown = b_shutdown };
 
 	reset();
 	subsystem_manager_init(&mgr, static_table);
@@ -72,7 +72,7 @@ static void test_dynamic_register_calls_init(void)
 static void test_tick_order_static_then_dynamic(void)
 {
 	struct subsystem_manager mgr;
-	struct subsystem dyn = { "b", b_init, b_tick, b_shutdown };
+	struct subsystem dyn = { .name = "b", .init = b_init, .tick = b_tick, .shutdown = b_shutdown };
 
 	subsystem_manager_init(&mgr, static_table);
 	subsystem_manager_register(&mgr, &dyn);
@@ -87,7 +87,7 @@ static void test_tick_order_static_then_dynamic(void)
 static void test_shutdown_dynamic_before_static(void)
 {
 	struct subsystem_manager mgr;
-	struct subsystem dyn = { "b", b_init, b_tick, b_shutdown };
+	struct subsystem dyn = { .name = "b", .init = b_init, .tick = b_tick, .shutdown = b_shutdown };
 
 	subsystem_manager_init(&mgr, static_table);
 	subsystem_manager_register(&mgr, &dyn);
@@ -103,8 +103,8 @@ static void test_shutdown_dynamic_reverse_order(void)
 {
 	struct subsystem_manager mgr;
 	struct subsystem empty[] = {{ NULL }};
-	struct subsystem db = { "b", b_init, NULL, b_shutdown };
-	struct subsystem dc = { "c", c_init, NULL, c_shutdown };
+	struct subsystem db = { .name = "b", .init = b_init, .shutdown = b_shutdown };
+	struct subsystem dc = { .name = "c", .init = c_init, .shutdown = c_shutdown };
 
 	subsystem_manager_init(&mgr, empty);
 	subsystem_manager_register(&mgr, &db);
@@ -121,7 +121,7 @@ static void test_max_dynamic_slots(void)
 {
 	struct subsystem_manager mgr;
 	struct subsystem empty[] = {{ NULL }};
-	struct subsystem dyn = { "x", NULL, NULL, NULL };
+	struct subsystem dyn = { .name = "x" };
 	int i;
 
 	subsystem_manager_init(&mgr, empty);

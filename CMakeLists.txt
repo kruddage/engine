@@ -19,6 +19,8 @@ add_subdirectory(modules/memory)
 add_subdirectory(modules/core)
 add_subdirectory(plugins/asset)
 add_subdirectory(plugins/hello_plugin)
+add_subdirectory(plugins/renderer)
+add_subdirectory(plugins/renderer_null)
 
 if(NOT EMSCRIPTEN)
 	add_subdirectory(tests)

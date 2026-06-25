@@ -1,0 +1,130 @@
+/* SPDX-License-Identifier: LGPL-2.1-or-later */
+#include "renderer.h"
+#include "log.h"
+#include "subsystem.h"
+#include "subsystem_manager.h"
+
+#include <stddef.h>
+#include <stdint.h>
+
+static gpu_cmd_buf_t null_cmd_buf_begin(void)
+{
+	LOG_INFO("renderer_null: cmd_buf_begin");
+	return NULL;
+}
+
+static void null_cmd_buf_submit(gpu_cmd_buf_t cmd)
+{
+	LOG_INFO("renderer_null: cmd_buf_submit cmd=%p", (void *)cmd);
+}
+
+static gpu_pipeline_t null_pipeline_create(const struct gpu_pipeline_desc *desc)
+{
+	LOG_INFO("renderer_null: pipeline_create color_format_count=%u",
+		 desc->color_format_count);
+	return NULL;
+}
+
+static void null_pipeline_destroy(gpu_pipeline_t pipeline)
+{
+	LOG_INFO("renderer_null: pipeline_destroy pipeline=%p",
+		 (void *)pipeline);
+}
+
+static void null_cmd_set_pipeline(gpu_cmd_buf_t cmd, gpu_pipeline_t pipeline)
+{
+	LOG_INFO("renderer_null: cmd_set_pipeline cmd=%p pipeline=%p",
+		 (void *)cmd, (void *)pipeline);
+}
+
+static void null_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
+				       const struct gpu_render_pass_desc *desc)
+{
+	LOG_INFO("renderer_null: cmd_begin_render_pass cmd=%p color_count=%u",
+		 (void *)cmd, desc->color_count);
+}
+
+static void null_cmd_end_render_pass(gpu_cmd_buf_t cmd)
+{
+	LOG_INFO("renderer_null: cmd_end_render_pass cmd=%p", (void *)cmd);
+}
+
+static void null_cmd_barrier(gpu_cmd_buf_t cmd,
+			      const struct gpu_barrier *barriers,
+			      uint32_t count)
+{
+	(void)barriers;
+	LOG_INFO("renderer_null: cmd_barrier cmd=%p count=%u",
+		 (void *)cmd, count);
+}
+
+static void null_cmd_draw_indexed(gpu_cmd_buf_t cmd,
+				  const struct gpu_draw_indexed_args *args,
+				  void *data_gpu)
+{
+	LOG_INFO("renderer_null: cmd_draw_indexed cmd=%p index_count=%u data=%p",
+		 (void *)cmd, args->index_count, data_gpu);
+}
+
+static void null_cmd_dispatch(gpu_cmd_buf_t cmd,
+			      uint32_t x, uint32_t y, uint32_t z,
+			      void *data_gpu)
+{
+	LOG_INFO("renderer_null: cmd_dispatch cmd=%p x=%u y=%u z=%u data=%p",
+		 (void *)cmd, x, y, z, data_gpu);
+}
+
+static void *null_gpu_malloc(size_t size)
+{
+	LOG_INFO("renderer_null: gpu_malloc size=%zu", size);
+	return NULL;
+}
+
+static void null_gpu_free(void *ptr)
+{
+	LOG_INFO("renderer_null: gpu_free ptr=%p", ptr);
+}
+
+static void *null_gpu_host_to_device_ptr(void *host_ptr)
+{
+	LOG_INFO("renderer_null: gpu_host_to_device_ptr ptr=%p", host_ptr);
+	return host_ptr;
+}
+
+static const struct gpu_api null_api = {
+	.cmd_buf_begin          = null_cmd_buf_begin,
+	.cmd_buf_submit         = null_cmd_buf_submit,
+	.pipeline_create        = null_pipeline_create,
+	.pipeline_destroy       = null_pipeline_destroy,
+	.cmd_set_pipeline       = null_cmd_set_pipeline,
+	.cmd_begin_render_pass  = null_cmd_begin_render_pass,
+	.cmd_end_render_pass    = null_cmd_end_render_pass,
+	.cmd_barrier            = null_cmd_barrier,
+	.cmd_draw_indexed       = null_cmd_draw_indexed,
+	.cmd_dispatch           = null_cmd_dispatch,
+	.gpu_malloc             = null_gpu_malloc,
+	.gpu_free               = null_gpu_free,
+	.gpu_host_to_device_ptr = null_gpu_host_to_device_ptr,
+};
+
+static void renderer_null_init(void)
+{
+	LOG_INFO("renderer_null: init");
+}
+
+static void renderer_null_shutdown(void)
+{
+	LOG_INFO("renderer_null: shutdown");
+}
+
+static const struct subsystem desc = {
+	.name     = "renderer",
+	.api      = &null_api,
+	.init     = renderer_null_init,
+	.shutdown = renderer_null_shutdown,
+};
+
+void plugin_entry(struct subsystem_manager *mgr)
+{
+	subsystem_manager_register(mgr, &desc);
+}

@@ -42,7 +42,8 @@ jobs:
                   "Cross-Origin-Embedder-Policy": "require-corp"
                 },
                 "continue": true
-              }
+              },
+              { "handle": "filesystem" }
             ]
           }
           EOF

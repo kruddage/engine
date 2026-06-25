@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 #include "renderer.h"
+#include "renderer_null.h"
 #include "subsystem_manager.h"
 
 #include <assert.h>
@@ -26,6 +27,7 @@ static void setup(void)
 {
 	subsystem_manager_init(&mgr, empty_table);
 	plugin_entry(&mgr);
+	renderer_null_reset_log();
 }
 
 static void test_registers_as_renderer(void)
@@ -113,12 +115,102 @@ static void test_calls_dont_crash(void)
 	gpu->gpu_host_to_device_ptr(NULL);
 }
 
+static void test_log_records_call_type(void)
+{
+	const struct gpu_call_record *log;
+	const struct gpu_api *gpu;
+	uint32_t count;
+
+	setup();
+	gpu = (const struct gpu_api *)subsystem_manager_get_api(&mgr, "renderer");
+
+	gpu->cmd_buf_begin();
+
+	log = renderer_null_get_log(&count);
+	assert(count == 1);
+	assert(log[0].type == GPU_CALL_CMD_BUF_BEGIN);
+}
+
+static void test_log_reset_clears_entries(void)
+{
+	const struct gpu_call_record *log;
+	const struct gpu_api *gpu;
+	uint32_t count;
+
+	setup();
+	gpu = (const struct gpu_api *)subsystem_manager_get_api(&mgr, "renderer");
+
+	gpu->cmd_buf_begin();
+	gpu->cmd_buf_submit(NULL);
+	renderer_null_reset_log();
+
+	log = renderer_null_get_log(&count);
+	assert(count == 0);
+	(void)log;
+}
+
+static void test_log_captures_args(void)
+{
+	const struct gpu_call_record *log;
+	const struct gpu_api *gpu;
+	struct gpu_pipeline_desc pdesc = {
+		.color_formats      = { GPU_FORMAT_RGBA8_UNORM,
+					GPU_FORMAT_BGRA8_UNORM },
+		.color_format_count = 2,
+	};
+	struct gpu_draw_indexed_args draw = {
+		.index_count    = 6,
+		.instance_count = 4,
+	};
+	uint32_t count;
+
+	setup();
+	gpu = (const struct gpu_api *)subsystem_manager_get_api(&mgr, "renderer");
+
+	gpu->pipeline_create(&pdesc);
+	gpu->cmd_draw_indexed(NULL, &draw, NULL);
+
+	log = renderer_null_get_log(&count);
+	assert(count == 2);
+	assert(log[0].type == GPU_CALL_PIPELINE_CREATE);
+	assert(log[0].args.pipeline_create.color_format_count == 2);
+	assert(log[1].type == GPU_CALL_CMD_DRAW_INDEXED);
+	assert(log[1].args.cmd_draw_indexed.index_count == 6);
+	assert(log[1].args.cmd_draw_indexed.instance_count == 4);
+}
+
+static void test_log_records_sequence(void)
+{
+	const struct gpu_call_record *log;
+	const struct gpu_api *gpu;
+	struct gpu_barrier barriers[3] = { 0 };
+	uint32_t count;
+
+	setup();
+	gpu = (const struct gpu_api *)subsystem_manager_get_api(&mgr, "renderer");
+
+	gpu->cmd_buf_begin();
+	gpu->cmd_barrier(NULL, barriers, 3);
+	gpu->cmd_buf_submit(NULL);
+
+	log = renderer_null_get_log(&count);
+	assert(count == 3);
+	assert(log[0].type == GPU_CALL_CMD_BUF_BEGIN);
+	assert(log[1].type == GPU_CALL_CMD_BARRIER);
+	assert(log[1].args.cmd_barrier.count == 3);
+	assert(log[2].type == GPU_CALL_CMD_BUF_SUBMIT);
+}
+
 int main(void)
 {
 	RUN(registers_as_renderer);
 	RUN(vtable_fully_populated);
 	RUN(cmd_buf_begin_returns_null);
 	RUN(calls_dont_crash);
+	RUN(log_records_call_type);
+	RUN(log_reset_clears_entries);
+	RUN(log_captures_args);
+	RUN(log_records_sequence);
 
 	printf("%d/%d tests passed\n", tests_passed, tests_run);
 	return tests_passed == tests_run ? 0 : 1;

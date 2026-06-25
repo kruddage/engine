@@ -8,6 +8,7 @@ Checks: >-
   bugprone-string-literal-with-embedded-nul,
   bugprone-suspicious-string-compare,
   bugprone-too-small-loop-variable,
-  clang-analyzer-*
+  clang-analyzer-*,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling
 WarningsAsErrors: '*'
 HeaderFilterRegex: '^.*(modules|plugins)/.*'

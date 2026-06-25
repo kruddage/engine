@@ -811,7 +811,7 @@ struct device_ready_ctx {
  * result where emscripten_webgpu_get_device() can find it, then calls
  * cb(ctx) on the C side.
  */
-EM_JS(void, webgpu_acquire_device_async, (void (*cb)(void *), void *ctx), {
+EM_JS(void, webgpu_acquire_device_async, (void *cb, void *ctx), {
 	(async function () {
 		var adapter = await navigator.gpu.requestAdapter();
 		var device  = await adapter.requestDevice();
@@ -903,7 +903,7 @@ static void renderer_webgpu_async_init(void (*done)(void *ctx), void *ctx)
 	c           = malloc(sizeof(*c));
 	c->done     = done;
 	c->done_ctx = ctx;
-	webgpu_acquire_device_async(on_device_ready, c);
+	webgpu_acquire_device_async((void *)on_device_ready, c);
 }
 
 /* Draws the bootstrap triangle into the swapchain each frame. */

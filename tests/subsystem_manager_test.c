@@ -131,6 +131,175 @@ static void test_max_dynamic_slots(void)
 	assert(mgr.dynamic_count == SUBSYSTEM_MANAGER_MAX_DYNAMIC);
 }
 
+/* ---- async_subsystem tests ---- */
+
+static void (*g_saved_done)(void *ctx);
+static void  *g_saved_done_ctx;
+
+static void async_init_sync(void (*done)(void *ctx), void *ctx)
+{
+	record(10);
+	done(ctx);
+}
+
+static void async_init_deferred(void (*done)(void *ctx), void *ctx)
+{
+	record(11);
+	g_saved_done     = done;
+	g_saved_done_ctx = ctx;
+}
+
+static void async_tick(void)     { record(12); }
+static void async_shutdown(void) { record(13); }
+
+static const struct subsystem empty_table[] = {{ NULL }};
+
+static void test_async_register_calls_async_init(void)
+{
+	struct subsystem_manager mgr;
+	struct async_subsystem dyn = {
+		.name       = "async_a",
+		.async_init = async_init_sync,
+	};
+
+	reset();
+	subsystem_manager_init(&mgr, empty_table);
+	subsystem_manager_register_async(&mgr, &dyn);
+	assert(mgr.async_dynamic_count == 1);
+	assert(seq_idx == 1);
+	assert(seq[0] == 10);
+}
+
+static void test_async_ready_after_done(void)
+{
+	struct subsystem_manager mgr;
+	struct async_subsystem dyn = {
+		.name       = "async_a",
+		.async_init = async_init_deferred,
+	};
+
+	subsystem_manager_init(&mgr, empty_table);
+	subsystem_manager_register_async(&mgr, &dyn);
+	assert(mgr.async_dynamic[0].ready == 0);
+
+	g_saved_done(g_saved_done_ctx);
+	assert(mgr.async_dynamic[0].ready == 1);
+}
+
+static void test_async_tick_gated_on_ready(void)
+{
+	struct subsystem_manager mgr;
+	struct async_subsystem dyn = {
+		.name       = "async_a",
+		.async_init = async_init_deferred,
+		.tick       = async_tick,
+	};
+
+	subsystem_manager_init(&mgr, empty_table);
+	subsystem_manager_register_async(&mgr, &dyn);
+
+	reset();
+	subsystem_manager_tick(&mgr);
+	assert(seq_idx == 0); /* not ready yet */
+
+	g_saved_done(g_saved_done_ctx);
+
+	reset();
+	subsystem_manager_tick(&mgr);
+	assert(seq_idx == 1);
+	assert(seq[0] == 12);
+}
+
+static void test_async_shutdown_gated_on_ready(void)
+{
+	struct subsystem_manager mgr;
+	struct async_subsystem dyn = {
+		.name       = "async_a",
+		.async_init = async_init_deferred,
+		.shutdown   = async_shutdown,
+	};
+
+	subsystem_manager_init(&mgr, empty_table);
+	subsystem_manager_register_async(&mgr, &dyn);
+
+	reset();
+	subsystem_manager_shutdown(&mgr);
+	assert(seq_idx == 0); /* shutdown skipped — never became ready */
+}
+
+static void cb_record_14(void *ctx) { (void)ctx; record(14); }
+static void cb_record_15(void *ctx) { (void)ctx; record(15); }
+
+static void test_async_on_ready_deferred(void)
+{
+	struct subsystem_manager mgr;
+	struct async_subsystem dyn = {
+		.name       = "async_a",
+		.async_init = async_init_deferred,
+	};
+
+	subsystem_manager_init(&mgr, empty_table);
+	subsystem_manager_register_async(&mgr, &dyn);
+
+	subsystem_manager_on_ready(&mgr, "async_a", cb_record_14, NULL);
+	subsystem_manager_on_ready(&mgr, "async_a", cb_record_15, NULL);
+
+	reset();
+	g_saved_done(g_saved_done_ctx);
+	assert(seq_idx == 2);
+	assert(seq[0] == 14);
+	assert(seq[1] == 15);
+}
+
+static void test_async_on_ready_fires_immediately_if_ready(void)
+{
+	struct subsystem_manager mgr;
+	struct async_subsystem dyn = {
+		.name       = "async_a",
+		.async_init = async_init_sync,
+	};
+
+	subsystem_manager_init(&mgr, empty_table);
+	subsystem_manager_register_async(&mgr, &dyn);
+
+	reset();
+	subsystem_manager_on_ready(&mgr, "async_a", cb_record_14, NULL);
+	assert(seq_idx == 1);
+	assert(seq[0] == 14);
+}
+
+static void test_async_max_slots(void)
+{
+	struct subsystem_manager mgr;
+	struct async_subsystem dyn = {
+		.name       = "x",
+		.async_init = async_init_sync,
+	};
+	int i;
+
+	subsystem_manager_init(&mgr, empty_table);
+	for (i = 0; i < SUBSYSTEM_MANAGER_MAX_ASYNC + 5; i++)
+		subsystem_manager_register_async(&mgr, &dyn);
+
+	assert(mgr.async_dynamic_count == SUBSYSTEM_MANAGER_MAX_ASYNC);
+}
+
+static void test_async_get_api(void)
+{
+	struct subsystem_manager mgr;
+	static const int sentinel = 42;
+	struct async_subsystem dyn = {
+		.name       = "async_a",
+		.api        = &sentinel,
+		.async_init = async_init_deferred,
+	};
+
+	subsystem_manager_init(&mgr, empty_table);
+	subsystem_manager_register_async(&mgr, &dyn);
+
+	assert(subsystem_manager_get_api(&mgr, "async_a") == &sentinel);
+}
+
 int main(void)
 {
 	RUN(static_lifecycle);
@@ -139,6 +308,14 @@ int main(void)
 	RUN(shutdown_dynamic_before_static);
 	RUN(shutdown_dynamic_reverse_order);
 	RUN(max_dynamic_slots);
+	RUN(async_register_calls_async_init);
+	RUN(async_ready_after_done);
+	RUN(async_tick_gated_on_ready);
+	RUN(async_shutdown_gated_on_ready);
+	RUN(async_on_ready_deferred);
+	RUN(async_on_ready_fires_immediately_if_ready);
+	RUN(async_max_slots);
+	RUN(async_get_api);
 
 	printf("%d/%d tests passed\n", tests_passed, tests_run);
 	return tests_passed == tests_run ? 0 : 1;

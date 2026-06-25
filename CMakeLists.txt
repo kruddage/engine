@@ -33,6 +33,7 @@ add_subdirectory(plugins/asset)
 add_subdirectory(plugins/hello_plugin)
 add_subdirectory(plugins/renderer)
 add_subdirectory(plugins/renderer_null)
+add_subdirectory(plugins/frame_graph)
 
 if(NOT EMSCRIPTEN)
 	enable_testing()

@@ -19,6 +19,14 @@ typedef struct gpu_cmd_buf  *gpu_cmd_buf_t;
 typedef struct gpu_pipeline *gpu_pipeline_t;
 typedef struct gpu_texture  *gpu_texture_t;
 
+/* --- Capability flags ---------------------------------------------------- */
+
+typedef enum {
+	GPU_CAP_DRAW_DIRECT  = 1u << 0,
+	GPU_CAP_DRAW_INDEXED = 1u << 1,
+	GPU_CAP_COMPUTE      = 1u << 2,
+} gpu_cap;
+
 /* --- Enumerations -------------------------------------------------------- */
 
 typedef enum {
@@ -142,6 +150,8 @@ struct gpu_draw_indexed_args {
  *   gpu = subsystem_manager_get_api(mgr, "renderer");
  */
 struct gpu_api {
+	uint32_t caps; /* bitmask of gpu_cap values set by backend during init */
+
 	/* Command buffers */
 	gpu_cmd_buf_t (*cmd_buf_begin)(void);
 	void          (*cmd_buf_submit)(gpu_cmd_buf_t cmd);

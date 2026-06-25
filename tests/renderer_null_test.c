@@ -211,6 +211,17 @@ static void test_log_records_sequence(void)
 	assert(log[2].type == GPU_CALL_CMD_BUF_SUBMIT);
 }
 
+static void test_caps_flags(void)
+{
+	const struct gpu_api *gpu;
+
+	setup();
+	gpu = (const struct gpu_api *)subsystem_manager_get_api(&mgr, "renderer");
+	assert(gpu->caps & GPU_CAP_DRAW_INDEXED);
+	assert(gpu->caps & GPU_CAP_COMPUTE);
+	assert(!(gpu->caps & GPU_CAP_DRAW_DIRECT));
+}
+
 static void test_texture_ops_logged(void)
 {
 	const struct gpu_call_record *log;
@@ -250,6 +261,7 @@ int main(void)
 	RUN(log_captures_args);
 	RUN(log_records_sequence);
 	RUN(texture_ops_logged);
+	RUN(caps_flags);
 
 	printf("%d/%d tests passed\n", tests_passed, tests_run);
 	return tests_passed == tests_run ? 0 : 1;

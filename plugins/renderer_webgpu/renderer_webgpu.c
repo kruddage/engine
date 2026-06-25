@@ -359,7 +359,7 @@
 #include "log.h"
 
 #include <webgpu/webgpu.h>
-#include <emscripten/emscripten.h>
+#include <emscripten/html5_webgpu.h>
 #include <emscripten/html5.h>
 
 #include <stdlib.h>
@@ -538,7 +538,7 @@ webgpu_pipeline_create(const struct gpu_pipeline_desc *desc)
 
 	frag = (WGPUFragmentState){
 		.module      = g_shader,
-		.entryPoint  = "fs_main",
+		.entryPoint  = { .data = "fs_main", .length = WGPU_STRLEN },
 		.targetCount = desc->color_format_count,
 		.targets     = targets,
 	};
@@ -546,7 +546,7 @@ webgpu_pipeline_create(const struct gpu_pipeline_desc *desc)
 	wdesc = (WGPURenderPipelineDescriptor){
 		.vertex = {
 			.module     = g_shader,
-			.entryPoint = "vs_main",
+			.entryPoint = { .data = "vs_main", .length = WGPU_STRLEN },
 		},
 		.primitive = {
 			.topology = topology_to_wgpu(desc->topology),
@@ -563,7 +563,7 @@ webgpu_pipeline_create(const struct gpu_pipeline_desc *desc)
 	if (desc->depth_format != GPU_FORMAT_UNKNOWN) {
 		ds_state = (WGPUDepthStencilState){
 			.format            = format_to_wgpu(desc->depth_format),
-			.depthWriteEnabled = 1,
+			.depthWriteEnabled = WGPUOptionalBool_True,
 			.depthCompare      = WGPUCompareFunction_Less,
 		};
 		wdesc.depthStencil = &ds_state;
@@ -818,7 +818,8 @@ static void renderer_webgpu_init(void)
 				&(WGPUSurfaceSourceHTMLCanvasIdFromDOM){
 					.chain = { .sType =
 					  WGPUSType_SurfaceSourceHTMLCanvasIdFromDOM },
-					.selector = "#canvas",
+					.selector = { .data = "#canvas",
+					              .length = WGPU_STRLEN },
 				},
 		});
 	wgpuInstanceRelease(instance);
@@ -835,7 +836,7 @@ static void renderer_webgpu_init(void)
 
 	wgsl_desc = (WGPUShaderModuleWGSLDescriptor){
 		.chain = { .sType = WGPUSType_ShaderModuleWGSLDescriptor },
-		.code  = k_triangle_wgsl,
+		.code  = { .data = k_triangle_wgsl, .length = WGPU_STRLEN },
 	};
 	g_shader = wgpuDeviceCreateShaderModule(g_device,
 		&(WGPUShaderModuleDescriptor){
@@ -848,7 +849,7 @@ static void renderer_webgpu_init(void)
 	};
 	frag = (WGPUFragmentState){
 		.module      = g_shader,
-		.entryPoint  = "fs_main",
+		.entryPoint  = { .data = "fs_main", .length = WGPU_STRLEN },
 		.targetCount = 1,
 		.targets     = &ct,
 	};
@@ -856,7 +857,7 @@ static void renderer_webgpu_init(void)
 		&(WGPURenderPipelineDescriptor){
 			.vertex = {
 				.module     = g_shader,
-				.entryPoint = "vs_main",
+				.entryPoint = { .data = "vs_main", .length = WGPU_STRLEN },
 			},
 			.primitive = {
 				.topology = WGPUPrimitiveTopology_TriangleList,

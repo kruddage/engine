@@ -122,9 +122,11 @@
  * pipeline_create(desc):
  *   WGPURenderPipelineDescriptor wdesc = {
  *       .primitive = {
- *           .topology  = <topology_map[desc->topology]>,
- *           // strip topologies additionally need:
- *           .stripIndexFormat = WGPUIndexFormat_Uint16 or Uint32
+ *           .topology         = <topology_map[desc->topology]>,
+ *           .stripIndexFormat = <strip topologies only>
+ *               GPU_INDEX_FORMAT_UINT16 → WGPUIndexFormat_Uint16
+ *               GPU_INDEX_FORMAT_UINT32 → WGPUIndexFormat_Uint32
+ *               list/point topologies  → WGPUIndexFormat_Undefined
  *       },
  *       .multisample = { .count = desc->sample_count, .mask = ~0u },
  *       .vertex   = { .module = <shader>, .entryPoint = "vs_main" },
@@ -325,27 +327,26 @@
  *   free(wt);
  *
  * -------------------------------------------------------------------------
- * OPEN QUESTIONS (to resolve before any code is written)
+ * DESIGN DECISIONS (resolved before implementation)
  * -------------------------------------------------------------------------
  *
- * 1. Root data size: cmd_draw_indexed receives data_gpu as void* with no
- *    accompanying size. wgpuRenderPassEncoderSetBindGroup requires a byte
- *    offset into the uniform buffer but the bind group layout bakes the
- *    size. Callers must agree on a maximum root data size (or we require
- *    a size hint at pipeline creation time).
+ * 1. Root data size: gpu_malloc(size) records the size alongside the
+ *    CPU allocation. At draw time, cmd_draw_indexed looks up the size from
+ *    that record and passes it to wgpuQueueWriteBuffer. No changes to
+ *    gpu_pipeline_desc or the caller ABI are required.
  *
- * 2. Depth texture sampling: WGPUTextureUsage_TextureBinding on a depth
- *    format requires the "depth32float-stencil8" or equivalent feature.
- *    Document what the backend does when sampling depth is requested.
+ * 2. Depth texture sampling: depth textures are created with
+ *    WGPUTextureUsage_RenderAttachment only. Sampling a depth texture is
+ *    a known limitation of this backend and is not supported.
  *
- * 3. Emscripten header path: <webgpu/webgpu.h> (older emsdk) vs
- *    <dawn/webgpu.h> (emdawnwebgpu port). Pin the emsdk version before
- *    implementation starts.
+ * 3. Emscripten header path: use <webgpu/webgpu.h> from the emsdk
+ *    WebGPU port (USE_WEBGPU=1 linker flag). Do not use the emdawnwebgpu
+ *    port headers.
  *
- * 4. gpu_topology_strip_index_format: WebGPU strip topologies require
- *    WGPUPrimitiveState.stripIndexFormat (Uint16 or Uint32). Our
- *    gpu_pipeline_desc has no such field. Decide on a default (Uint16)
- *    or extend the descriptor before implementing pipelines.
+ * 4. Strip index format: gpu_pipeline_desc now carries a strip_index_format
+ *    field (GPU_INDEX_FORMAT_UINT16 / UINT32). The backend maps this to
+ *    WGPUPrimitiveState.stripIndexFormat for strip topologies and ignores
+ *    it for list/point topologies.
  *
  * =========================================================================
  * IMPLEMENTATION STARTS HERE (not yet written)

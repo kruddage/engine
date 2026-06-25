@@ -22,14 +22,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install lcov
+        run: sudo apt-get install -y lcov
+
       - name: Configure
-        run: cmake -B build_test
+        run: cmake -B build_test -DCOVERAGE=ON
 
       - name: Build
         run: cmake --build build_test
 
       - name: Run tests
         run: ctest --test-dir build_test --output-on-failure
+
+      - name: Collect coverage
+        run: |
+          lcov --capture --directory build_test --output-file coverage.info
+          lcov --remove coverage.info '*/usr/*' '*/_deps/*' '*/tests/*' --output-file coverage.info
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.info
 
   preview:
     runs-on: ubuntu-latest

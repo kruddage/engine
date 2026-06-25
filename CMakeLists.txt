@@ -3,6 +3,12 @@ project(krudd C)
 
 set(CMAKE_C_STANDARD 11)
 
+option(COVERAGE "Enable gcov code coverage" OFF)
+if(COVERAGE)
+	add_compile_options(--coverage)
+	add_link_options(--coverage)
+endif()
+
 include(FetchContent)
 FetchContent_Declare(mimalloc
 	GIT_REPOSITORY https://github.com/microsoft/mimalloc.git

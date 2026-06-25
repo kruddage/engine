@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
-window.addEventListener('error', function(e) {
+window.addEventListener('error', function (e) {
 	showError('Uncaught error', e.error ? (e.error.stack || e.message) : e.message);
 });
-window.addEventListener('unhandledrejection', function(e) {
+window.addEventListener('unhandledrejection', function (e) {
 	var reason = e.reason;
 	var detail;
 	if (reason == null || typeof reason !== 'object') {
@@ -17,6 +17,11 @@ window.addEventListener('unhandledrejection', function(e) {
 });
 
 function showError(title, detail) {
+	if (typeof window.kruddShowError === 'function') {
+		window.kruddShowError(title, detail);
+		return;
+	}
+	/* fallback before shell is ready */
 	if (!document.body) {
 		alert(title + ':\n' + detail);
 		return;

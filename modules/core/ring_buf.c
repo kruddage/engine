@@ -17,6 +17,8 @@ void ring_buf_push(struct ring_buf *rb, const void *elem)
 {
 	char *dst;
 
+	if (!rb->capacity)
+		return;
 	dst = (char *)rb->storage + rb->head * rb->elem_size;
 	memcpy(dst, elem, rb->elem_size);
 	rb->head = (rb->head + 1) % rb->capacity;

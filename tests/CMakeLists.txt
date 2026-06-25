@@ -31,3 +31,13 @@ target_include_directories(renderer_null_test PRIVATE
 )
 target_link_libraries(renderer_null_test PRIVATE renderer_null log subsystem_manager)
 add_test(NAME renderer_null COMMAND renderer_null_test)
+
+add_executable(fg_test fg_test.c)
+target_include_directories(fg_test PRIVATE
+	${CMAKE_SOURCE_DIR}/plugins/renderer
+	${CMAKE_SOURCE_DIR}/plugins/renderer_null
+	${CMAKE_SOURCE_DIR}/plugins/frame_graph
+	${CMAKE_SOURCE_DIR}/modules/core
+)
+target_link_libraries(fg_test PRIVATE frame_graph renderer_null log subsystem_manager)
+add_test(NAME fg COMMAND fg_test)

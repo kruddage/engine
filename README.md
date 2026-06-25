@@ -5,8 +5,8 @@
 [![Sanitizers](https://github.com/kruddage/engine/actions/workflows/sanitizers.yml/badge.svg)](https://github.com/kruddage/engine/actions/workflows/sanitizers.yml)
 [![clang-tidy](https://github.com/kruddage/engine/actions/workflows/clang-tidy.yml/badge.svg)](https://github.com/kruddage/engine/actions/workflows/clang-tidy.yml)
 [![Coverage](https://github.com/kruddage/engine/actions/workflows/coverage.yml/badge.svg)](https://github.com/kruddage/engine/actions/workflows/coverage.yml)
-[![Live](https://img.shields.io/website?url=https%3A%2F%2Fengine-livid-pi.vercel.app&label=live)](https://engine-livid-pi.vercel.app)
+[![Live](https://img.shields.io/website?url=https%3A%2F%2Fkruddage.github.io%2Fengine&label=live)](https://kruddage.github.io/engine)
 
 A game engine built in C, compiled to WASM via Emscripten.
 
-PR previews deploy to Vercel and post a link on the PR.
+PR previews deploy to GitHub Pages and post a link on the PR.

@@ -9,6 +9,12 @@ if(COVERAGE)
 	add_link_options(--coverage)
 endif()
 
+option(SANITIZE "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+if(SANITIZE)
+	add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+	add_link_options(-fsanitize=address,undefined)
+endif()
+
 include(FetchContent)
 FetchContent_Declare(mimalloc
 	GIT_REPOSITORY https://github.com/microsoft/mimalloc.git

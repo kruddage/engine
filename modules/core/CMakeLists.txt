@@ -33,6 +33,7 @@ if(EMSCRIPTEN)
 	set_target_properties(index PROPERTIES
 		SUFFIX ".html"
 		RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+		LINKER_LANGUAGE CXX
 	)
 	target_link_options(index PRIVATE
 		-sENVIRONMENT=web

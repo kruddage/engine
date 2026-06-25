@@ -198,6 +198,7 @@ static void null_texture_destroy(gpu_texture_t texture)
 }
 
 static const struct gpu_api null_api = {
+	.caps                   = GPU_CAP_DRAW_INDEXED | GPU_CAP_COMPUTE,
 	.cmd_buf_begin          = null_cmd_buf_begin,
 	.cmd_buf_submit         = null_cmd_buf_submit,
 	.pipeline_create        = null_pipeline_create,

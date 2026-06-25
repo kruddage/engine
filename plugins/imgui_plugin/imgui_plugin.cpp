@@ -46,6 +46,26 @@ static EM_BOOL on_mouse_button(int type, const EmscriptenMouseEvent *e,
 	return EM_FALSE;
 }
 
+static EM_BOOL on_touch(int type, const EmscriptenTouchEvent *e,
+			void * /*ud*/)
+{
+	if (e->numTouches < 1)
+		return EM_FALSE;
+
+	const EmscriptenTouchPoint *t = &e->touches[0];
+	ImGuiIO &io = ImGui::GetIO();
+
+	io.AddMousePosEvent((float)t->targetX, (float)t->targetY);
+
+	if (type == EMSCRIPTEN_EVENT_TOUCHSTART)
+		io.AddMouseButtonEvent(0, true);
+	else if (type == EMSCRIPTEN_EVENT_TOUCHEND ||
+		 type == EMSCRIPTEN_EVENT_TOUCHCANCEL)
+		io.AddMouseButtonEvent(0, false);
+
+	return EM_TRUE;
+}
+
 #endif /* __EMSCRIPTEN__ */
 
 static void imgui_init(void)
@@ -63,6 +83,10 @@ static void imgui_init(void)
 	emscripten_set_mousemove_callback("#canvas", nullptr, 0, on_mouse_move);
 	emscripten_set_mousedown_callback("#canvas", nullptr, 0, on_mouse_button);
 	emscripten_set_mouseup_callback("#canvas",   nullptr, 0, on_mouse_button);
+	emscripten_set_touchstart_callback("#canvas",  nullptr, 0, on_touch);
+	emscripten_set_touchmove_callback("#canvas",   nullptr, 0, on_touch);
+	emscripten_set_touchend_callback("#canvas",    nullptr, 0, on_touch);
+	emscripten_set_touchcancel_callback("#canvas", nullptr, 0, on_touch);
 #endif
 
 	g_log->write(LOG_LEVEL_INFO, "imgui_plugin: init");

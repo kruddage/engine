@@ -44,6 +44,7 @@ static const struct subsystem subsystems[] = {
 static const char * const plugins[] = {
 	"hello_plugin.wasm",
 	"asset_plugin.wasm",
+	"renderer_webgl.wasm",
 	NULL,
 };
 

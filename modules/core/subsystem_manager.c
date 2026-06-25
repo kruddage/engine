@@ -4,6 +4,13 @@
 #include <stdint.h>
 #include <string.h>
 
+#ifdef __EMSCRIPTEN__
+/* Called only from side modules; mark used so the optimizer keeps them. */
+#define PLUGIN_API __attribute__((used))
+#else
+#define PLUGIN_API
+#endif
+
 void subsystem_manager_init(struct subsystem_manager *mgr,
 			    const struct subsystem *table)
 {
@@ -18,8 +25,8 @@ void subsystem_manager_init(struct subsystem_manager *mgr,
 	}
 }
 
-void subsystem_manager_register(struct subsystem_manager *mgr,
-				const struct subsystem *desc)
+PLUGIN_API void subsystem_manager_register(struct subsystem_manager *mgr,
+					   const struct subsystem *desc)
 {
 	int32_t slot;
 
@@ -33,8 +40,8 @@ void subsystem_manager_register(struct subsystem_manager *mgr,
 		mgr->dynamic[slot].init();
 }
 
-const void *subsystem_manager_get_api(const struct subsystem_manager *mgr,
-				      const char *name)
+PLUGIN_API const void *subsystem_manager_get_api(const struct subsystem_manager *mgr,
+						 const char *name)
 {
 	int32_t i;
 

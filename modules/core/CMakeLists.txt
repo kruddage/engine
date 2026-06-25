@@ -24,5 +24,6 @@ if(EMSCRIPTEN)
 		-sMAIN_MODULE=1
 		-sFETCH=1
 		--use-port=emdawnwebgpu
+		--extern-pre-js ${CMAKE_CURRENT_SOURCE_DIR}/error_overlay.js
 	)
 endif()

@@ -359,8 +359,10 @@
 #include "log.h"
 
 #include <webgpu/webgpu.h>
-#include <emscripten/html5_webgpu.h>
 #include <emscripten/html5.h>
+
+/* Provided by the emdawnwebgpu JS runtime; no C header in the port. */
+extern WGPUDevice emscripten_webgpu_get_device(void);
 
 #include <stdlib.h>
 #include <stdint.h>

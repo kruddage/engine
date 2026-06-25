@@ -1,8 +1,11 @@
-SPDX-License-Identifier: LGPL-2.1-or-later
+SPDX-License-Identifier: GPL-2.0-or-later
 
-KRUDD Engine is licensed under the GNU Lesser General Public License,
-version 2.1 or (at your option) any later version.
+KRUDD Engine is licensed under the GNU General Public License,
+version 2 or (at your option) any later version.
 
-Full license text: https://www.gnu.org/licenses/lgpl-2.1.html
+Full license text: https://www.gnu.org/licenses/gpl-2.0.html
 
-Commercial licensing is available — contact the author for terms.
+Commercial licensing is available for proprietary use — contact the author for terms.
+
+Note: releases up to and including the tag `last-mit-release` remain available
+under the MIT license.

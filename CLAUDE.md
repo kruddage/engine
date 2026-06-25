@@ -16,16 +16,18 @@ build/            Build output (gitignored) — index.html, index.js, index.wasm
 
 ## License
 
-All source files are licensed under **LGPL-2.1-or-later**. Every new `.c` or `.h`
+All source files are licensed under **GPL-2.0-or-later**. Every new `.c` or `.h`
 file must begin with:
 
 ```c
-/* SPDX-License-Identifier: LGPL-2.1-or-later */
+/* SPDX-License-Identifier: GPL-2.0-or-later */
 ```
 
-Do not use MIT or any other identifier — the project relicensed from MIT at tag
-`last-mit-release`. Commercial licensing is available from the author; this dual
-model requires copyright assignment via CLA for external contributions.
+Do not use MIT, LGPL, or any other identifier. The project was MIT up to tag
+`last-mit-release`, then LGPL-2.1-or-later briefly, and is now GPL-2.0-or-later.
+Use of the engine in proprietary commercial products requires a commercial license
+from the author. Open source / GPL-compliant use is free. This dual model requires
+copyright assignment via CLA for external contributions.
 
 ## C coding standard
 

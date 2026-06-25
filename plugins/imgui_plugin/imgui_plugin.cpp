@@ -71,21 +71,39 @@ static void imgui_init(void)
 static void imgui_tick(void)
 {
 #ifdef __EMSCRIPTEN__
-	int w, h;
+	double css_w, css_h;
+	double dpr;
+	int phys_w, phys_h;
 
-	emscripten_get_canvas_element_size("#canvas", &w, &h);
+	emscripten_get_element_css_size("#canvas", &css_w, &css_h);
+	dpr    = EM_ASM_DOUBLE({ return window.devicePixelRatio || 1.0; });
+	phys_w = (int)(css_w * dpr + 0.5);
+	phys_h = (int)(css_h * dpr + 0.5);
+	emscripten_set_canvas_element_size("#canvas", phys_w, phys_h);
 
 	ImGuiIO &io = ImGui::GetIO();
-	io.DisplaySize = ImVec2((float)w, (float)h);
-	io.DeltaTime   = 1.0f / 60.0f;
+	io.DisplaySize             = ImVec2((float)css_w, (float)css_h);
+	io.DisplayFramebufferScale = ImVec2((float)dpr,   (float)dpr);
+	io.DeltaTime               = 1.0f / 60.0f;
 
 	ImGui_ImplOpenGL3_NewFrame();
 	ImGui::NewFrame();
+
+	static int  s_counter  = 0;
+	static bool s_checkbox = false;
+	static float s_slider  = 0.5f;
 
 	ImGui::SetNextWindowPos(ImVec2(20.0f, 20.0f), ImGuiCond_Once);
 	ImGui::Begin("KRUDD");
 	ImGui::Text("Hello, World!");
 	ImGui::Text("Engine running.");
+	ImGui::Separator();
+	if (ImGui::Button("Tap me"))
+		s_counter++;
+	ImGui::SameLine();
+	ImGui::Text("count: %d", s_counter);
+	ImGui::Checkbox("checkbox", &s_checkbox);
+	ImGui::SliderFloat("slider", &s_slider, 0.0f, 1.0f);
 	ImGui::End();
 
 	ImGui::Render();

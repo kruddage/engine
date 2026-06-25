@@ -349,6 +349,592 @@
  *    it for list/point topologies.
  *
  * =========================================================================
- * IMPLEMENTATION STARTS HERE (not yet written)
+ * IMPLEMENTATION
  * =========================================================================
  */
+
+#include "renderer.h"
+#include "subsystem.h"
+#include "subsystem_manager.h"
+#include "log.h"
+
+#include <webgpu/webgpu.h>
+#include <emscripten/emscripten.h>
+#include <emscripten/html5.h>
+
+#include <stdlib.h>
+#include <stdint.h>
+#include <string.h>
+
+/* ---- Internal handle types ---- */
+
+struct webgpu_cmd_buf {
+	WGPUCommandEncoder    encoder;
+	WGPURenderPassEncoder render_pass;
+};
+
+struct webgpu_texture {
+	WGPUTexture     texture;
+	WGPUTextureView view;
+};
+
+#define MAX_GPU_ALLOCS 256
+
+struct gpu_alloc {
+	void       *cpu;
+	WGPUBuffer  buf;
+	size_t      size;
+};
+
+/* ---- Global device state ---- */
+
+static WGPUDevice  g_device;
+static WGPUQueue   g_queue;
+static WGPUSurface g_surface;
+
+static WGPUShaderModule   g_shader;
+static WGPURenderPipeline g_triangle_pipeline;
+
+static struct gpu_alloc g_allocs[MAX_GPU_ALLOCS];
+static uint32_t         g_alloc_count;
+
+/*
+ * Procedural colored-triangle shader — no vertex buffer or uniforms.
+ * vs_main generates clip-space positions from vertex_index;
+ * fs_main returns a solid red.
+ */
+static const char k_triangle_wgsl[] =
+	"@vertex\n"
+	"fn vs_main(@builtin(vertex_index) vi: u32)"
+	" -> @builtin(position) vec4f {\n"
+	"    var pos = array<vec2f, 3>(\n"
+	"        vec2f( 0.0,  0.5),\n"
+	"        vec2f(-0.5, -0.5),\n"
+	"        vec2f( 0.5, -0.5),\n"
+	"    );\n"
+	"    return vec4f(pos[vi], 0.0, 1.0);\n"
+	"}\n"
+	"@fragment\n"
+	"fn fs_main() -> @location(0) vec4f {\n"
+	"    return vec4f(1.0, 0.2, 0.1, 1.0);\n"
+	"}\n";
+
+/* ---- Format / topology conversion helpers ---- */
+
+static WGPUTextureFormat format_to_wgpu(gpu_format fmt)
+{
+	switch (fmt) {
+	case GPU_FORMAT_RGBA8_UNORM:   return WGPUTextureFormat_RGBA8Unorm;
+	case GPU_FORMAT_BGRA8_UNORM:   return WGPUTextureFormat_BGRA8Unorm;
+	case GPU_FORMAT_DEPTH32_FLOAT: return WGPUTextureFormat_Depth32Float;
+	default:                        return WGPUTextureFormat_Undefined;
+	}
+}
+
+static WGPUPrimitiveTopology topology_to_wgpu(gpu_topology t)
+{
+	switch (t) {
+	case GPU_TOPOLOGY_TRIANGLE_LIST:  return WGPUPrimitiveTopology_TriangleList;
+	case GPU_TOPOLOGY_TRIANGLE_STRIP: return WGPUPrimitiveTopology_TriangleStrip;
+	case GPU_TOPOLOGY_LINE_LIST:      return WGPUPrimitiveTopology_LineList;
+	case GPU_TOPOLOGY_POINT_LIST:     return WGPUPrimitiveTopology_PointList;
+	default:                           return WGPUPrimitiveTopology_TriangleList;
+	}
+}
+
+static WGPUIndexFormat strip_index_format_to_wgpu(gpu_index_format f,
+						   gpu_topology t)
+{
+	if (t != GPU_TOPOLOGY_TRIANGLE_STRIP)
+		return WGPUIndexFormat_Undefined;
+	return f == GPU_INDEX_FORMAT_UINT32
+		? WGPUIndexFormat_Uint32
+		: WGPUIndexFormat_Uint16;
+}
+
+static WGPULoadOp load_op_to_wgpu(gpu_load_op op)
+{
+	switch (op) {
+	case GPU_LOAD_OP_LOAD:      return WGPULoadOp_Load;
+	case GPU_LOAD_OP_CLEAR:     return WGPULoadOp_Clear;
+	/* WebGPU has no load don't-care; Undefined is the closest. */
+	case GPU_LOAD_OP_DONT_CARE: return WGPULoadOp_Undefined;
+	default:                    return WGPULoadOp_Load;
+	}
+}
+
+static WGPUStoreOp store_op_to_wgpu(gpu_store_op op)
+{
+	switch (op) {
+	case GPU_STORE_OP_STORE:     return WGPUStoreOp_Store;
+	case GPU_STORE_OP_DONT_CARE: return WGPUStoreOp_Discard;
+	default:                     return WGPUStoreOp_Store;
+	}
+}
+
+/* ---- gpu_alloc lookup table ---- */
+
+static struct gpu_alloc *find_alloc(void *cpu)
+{
+	uint32_t i;
+
+	for (i = 0; i < g_alloc_count; i++) {
+		if (g_allocs[i].cpu == cpu)
+			return &g_allocs[i];
+	}
+	return NULL;
+}
+
+static void remove_alloc(void *cpu)
+{
+	uint32_t i;
+
+	for (i = 0; i < g_alloc_count; i++) {
+		if (g_allocs[i].cpu == cpu) {
+			g_allocs[i] = g_allocs[--g_alloc_count];
+			return;
+		}
+	}
+}
+
+/* ---- gpu_api implementations ---- */
+
+static gpu_cmd_buf_t webgpu_cmd_buf_begin(void)
+{
+	struct webgpu_cmd_buf *cmd = malloc(sizeof(*cmd));
+
+	cmd->encoder    = wgpuDeviceCreateCommandEncoder(g_device, NULL);
+	cmd->render_pass = NULL;
+	return (gpu_cmd_buf_t)cmd;
+}
+
+static void webgpu_cmd_buf_submit(gpu_cmd_buf_t handle)
+{
+	struct webgpu_cmd_buf *cmd = (struct webgpu_cmd_buf *)handle;
+	WGPUCommandBuffer cb;
+
+	cb = wgpuCommandEncoderFinish(cmd->encoder, NULL);
+	wgpuQueueSubmit(g_queue, 1, &cb);
+	wgpuCommandBufferRelease(cb);
+	wgpuCommandEncoderRelease(cmd->encoder);
+	free(cmd);
+}
+
+static gpu_pipeline_t
+webgpu_pipeline_create(const struct gpu_pipeline_desc *desc)
+{
+	WGPUColorTargetState targets[GPU_MAX_COLOR_ATTACHMENTS];
+	WGPUFragmentState    frag;
+	WGPURenderPipelineDescriptor wdesc;
+	WGPUDepthStencilState ds_state;
+	uint32_t i;
+
+	for (i = 0; i < desc->color_format_count; i++) {
+		targets[i] = (WGPUColorTargetState){
+			.format    = format_to_wgpu(desc->color_formats[i]),
+			.writeMask = WGPUColorWriteMask_All,
+		};
+	}
+
+	frag = (WGPUFragmentState){
+		.module      = g_shader,
+		.entryPoint  = "fs_main",
+		.targetCount = desc->color_format_count,
+		.targets     = targets,
+	};
+
+	wdesc = (WGPURenderPipelineDescriptor){
+		.vertex = {
+			.module     = g_shader,
+			.entryPoint = "vs_main",
+		},
+		.primitive = {
+			.topology = topology_to_wgpu(desc->topology),
+			.stripIndexFormat = strip_index_format_to_wgpu(
+				desc->strip_index_format, desc->topology),
+		},
+		.multisample = {
+			.count = desc->sample_count ? desc->sample_count : 1,
+			.mask  = ~0u,
+		},
+		.fragment = &frag,
+	};
+
+	if (desc->depth_format != GPU_FORMAT_UNKNOWN) {
+		ds_state = (WGPUDepthStencilState){
+			.format            = format_to_wgpu(desc->depth_format),
+			.depthWriteEnabled = 1,
+			.depthCompare      = WGPUCompareFunction_Less,
+		};
+		wdesc.depthStencil = &ds_state;
+	}
+
+	return (gpu_pipeline_t)wgpuDeviceCreateRenderPipeline(g_device, &wdesc);
+}
+
+static void webgpu_pipeline_destroy(gpu_pipeline_t pipeline)
+{
+	wgpuRenderPipelineRelease((WGPURenderPipeline)pipeline);
+}
+
+static void webgpu_cmd_set_pipeline(gpu_cmd_buf_t handle,
+				    gpu_pipeline_t pipeline)
+{
+	struct webgpu_cmd_buf *cmd = (struct webgpu_cmd_buf *)handle;
+
+	wgpuRenderPassEncoderSetPipeline(cmd->render_pass,
+					 (WGPURenderPipeline)pipeline);
+}
+
+static void webgpu_cmd_begin_render_pass(gpu_cmd_buf_t handle,
+					 const struct gpu_render_pass_desc *desc)
+{
+	struct webgpu_cmd_buf *cmd = (struct webgpu_cmd_buf *)handle;
+	WGPURenderPassColorAttachment color_atts[GPU_MAX_COLOR_ATTACHMENTS];
+	WGPURenderPassDescriptor      rp_desc;
+	WGPURenderPassDepthStencilAttachment ds_att;
+	uint32_t i;
+
+	for (i = 0; i < desc->color_count; i++) {
+		const struct gpu_color_attachment *a = &desc->color[i];
+		struct webgpu_texture *wt = (struct webgpu_texture *)a->texture;
+
+		color_atts[i] = (WGPURenderPassColorAttachment){
+			.view       = wt->view,
+			.loadOp     = load_op_to_wgpu(a->load_op),
+			.storeOp    = store_op_to_wgpu(a->store_op),
+			.clearValue = {
+				a->clear[0], a->clear[1],
+				a->clear[2], a->clear[3],
+			},
+			.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED,
+		};
+	}
+
+	rp_desc = (WGPURenderPassDescriptor){
+		.colorAttachmentCount = desc->color_count,
+		.colorAttachments     = color_atts,
+	};
+
+	if (desc->depth != NULL) {
+		struct webgpu_texture *wt = (struct webgpu_texture *)desc->depth;
+
+		ds_att = (WGPURenderPassDepthStencilAttachment){
+			.view             = wt->view,
+			.depthLoadOp      = load_op_to_wgpu(desc->depth_load_op),
+			.depthStoreOp     = store_op_to_wgpu(desc->depth_store_op),
+			.depthClearValue  = desc->clear_depth,
+		};
+		rp_desc.depthStencilAttachment = &ds_att;
+	}
+
+	cmd->render_pass = wgpuCommandEncoderBeginRenderPass(
+		cmd->encoder, &rp_desc);
+}
+
+static void webgpu_cmd_end_render_pass(gpu_cmd_buf_t handle)
+{
+	struct webgpu_cmd_buf *cmd = (struct webgpu_cmd_buf *)handle;
+
+	wgpuRenderPassEncoderEnd(cmd->render_pass);
+	wgpuRenderPassEncoderRelease(cmd->render_pass);
+	cmd->render_pass = NULL;
+}
+
+/* [MISMATCH A] WebGPU implicit sync — barriers are a documented no-op. */
+static void webgpu_cmd_barrier(gpu_cmd_buf_t cmd,
+				const struct gpu_barrier *barriers,
+				uint32_t count)
+{
+	(void)cmd; (void)barriers; (void)count;
+}
+
+/*
+ * [MISMATCH B] data_gpu is a CPU pointer into g_allocs (identity mapping
+ * from gpu_host_to_device_ptr). Flush the staging copy before drawing.
+ * Bind group wiring is deferred until shaders declare uniform bindings.
+ */
+static void webgpu_cmd_draw_indexed(gpu_cmd_buf_t handle,
+				    const struct gpu_draw_indexed_args *args,
+				    void *data_gpu)
+{
+	struct webgpu_cmd_buf *cmd = (struct webgpu_cmd_buf *)handle;
+	struct gpu_alloc *alloc;
+
+	if (data_gpu != NULL) {
+		alloc = find_alloc(data_gpu);
+		if (alloc != NULL) {
+			wgpuQueueWriteBuffer(g_queue, alloc->buf, 0,
+					     alloc->cpu, alloc->size);
+		}
+	}
+
+	wgpuRenderPassEncoderDraw(cmd->render_pass,
+				  args->index_count,
+				  args->instance_count ? args->instance_count : 1,
+				  args->first_index,
+				  args->first_instance);
+}
+
+static void webgpu_cmd_dispatch(gpu_cmd_buf_t handle,
+				uint32_t x, uint32_t y, uint32_t z,
+				void *data_gpu)
+{
+	struct webgpu_cmd_buf *cmd = (struct webgpu_cmd_buf *)handle;
+	struct gpu_alloc *alloc;
+	WGPUComputePassEncoder cpe;
+
+	if (data_gpu != NULL) {
+		alloc = find_alloc(data_gpu);
+		if (alloc != NULL) {
+			wgpuQueueWriteBuffer(g_queue, alloc->buf, 0,
+					     alloc->cpu, alloc->size);
+		}
+	}
+
+	cpe = wgpuCommandEncoderBeginComputePass(cmd->encoder, NULL);
+	wgpuComputePassEncoderDispatchWorkgroups(cpe, x, y, z);
+	wgpuComputePassEncoderEnd(cpe);
+	wgpuComputePassEncoderRelease(cpe);
+}
+
+/* [MISMATCH C] Returns a CPU pointer; a WGPUBuffer is created alongside. */
+static void *webgpu_gpu_malloc(size_t size)
+{
+	void       *cpu;
+	WGPUBuffer  buf;
+
+	if (g_alloc_count >= MAX_GPU_ALLOCS)
+		return NULL;
+
+	cpu = malloc(size);
+	if (cpu == NULL)
+		return NULL;
+
+	buf = wgpuDeviceCreateBuffer(g_device, &(WGPUBufferDescriptor){
+		.size  = (size + 3) & ~(size_t)3,
+		.usage = WGPUBufferUsage_Uniform | WGPUBufferUsage_CopyDst,
+	});
+
+	g_allocs[g_alloc_count++] = (struct gpu_alloc){
+		.cpu  = cpu,
+		.buf  = buf,
+		.size = size,
+	};
+
+	return cpu;
+}
+
+static void webgpu_gpu_free(void *ptr)
+{
+	struct gpu_alloc *alloc = find_alloc(ptr);
+
+	if (alloc == NULL)
+		return;
+	wgpuBufferRelease(alloc->buf);
+	free(alloc->cpu);
+	remove_alloc(ptr);
+}
+
+/* Identity: the CPU pointer is the key used at draw time. */
+static void *webgpu_gpu_host_to_device_ptr(void *host_ptr)
+{
+	return host_ptr;
+}
+
+static gpu_texture_t webgpu_texture_create(const struct gpu_texture_desc *desc)
+{
+	struct webgpu_texture *wt;
+	int                    is_depth;
+	WGPUTextureUsageFlags  usage;
+
+	wt       = malloc(sizeof(*wt));
+	is_depth = (desc->format == GPU_FORMAT_DEPTH32_FLOAT);
+	usage    = WGPUTextureUsage_RenderAttachment;
+	if (!is_depth)
+		usage |= WGPUTextureUsage_TextureBinding;
+
+	wt->texture = wgpuDeviceCreateTexture(g_device, &(WGPUTextureDescriptor){
+		.usage         = usage,
+		.dimension     = WGPUTextureDimension_2D,
+		.size          = { desc->width, desc->height, 1 },
+		.format        = format_to_wgpu(desc->format),
+		.mipLevelCount = desc->mip_levels ? desc->mip_levels : 1,
+		.sampleCount   = desc->sample_count ? desc->sample_count : 1,
+	});
+	wt->view = wgpuTextureCreateView(wt->texture, NULL);
+	return (gpu_texture_t)wt;
+}
+
+static void webgpu_texture_destroy(gpu_texture_t texture)
+{
+	struct webgpu_texture *wt = (struct webgpu_texture *)texture;
+
+	wgpuTextureViewRelease(wt->view);
+	wgpuTextureDestroy(wt->texture);
+	wgpuTextureRelease(wt->texture);
+	free(wt);
+}
+
+/* ---- gpu_api vtable ---- */
+
+static const struct gpu_api webgpu_api = {
+	.cmd_buf_begin          = webgpu_cmd_buf_begin,
+	.cmd_buf_submit         = webgpu_cmd_buf_submit,
+	.pipeline_create        = webgpu_pipeline_create,
+	.pipeline_destroy       = webgpu_pipeline_destroy,
+	.cmd_set_pipeline       = webgpu_cmd_set_pipeline,
+	.cmd_begin_render_pass  = webgpu_cmd_begin_render_pass,
+	.cmd_end_render_pass    = webgpu_cmd_end_render_pass,
+	.cmd_barrier            = webgpu_cmd_barrier,
+	.cmd_draw_indexed       = webgpu_cmd_draw_indexed,
+	.cmd_dispatch           = webgpu_cmd_dispatch,
+	.gpu_malloc             = webgpu_gpu_malloc,
+	.gpu_free               = webgpu_gpu_free,
+	.gpu_host_to_device_ptr = webgpu_gpu_host_to_device_ptr,
+	.texture_create         = webgpu_texture_create,
+	.texture_destroy        = webgpu_texture_destroy,
+};
+
+/* ---- Plugin lifecycle ---- */
+
+static void renderer_webgpu_init(void)
+{
+	WGPUInstance instance;
+	int w, h;
+	WGPUShaderModuleWGSLDescriptor wgsl_desc;
+	WGPUColorTargetState ct;
+	WGPUFragmentState    frag;
+
+	LOG_INFO("renderer_webgpu: init");
+
+	g_device = emscripten_webgpu_get_device();
+	g_queue  = wgpuDeviceGetQueue(g_device);
+
+	instance = wgpuCreateInstance(NULL);
+	g_surface = wgpuInstanceCreateSurface(instance,
+		&(WGPUSurfaceDescriptor){
+			.nextInChain = (WGPUChainedStruct *)
+				&(WGPUSurfaceSourceHTMLCanvasIdFromDOM){
+					.chain = { .sType =
+					  WGPUSType_SurfaceSourceHTMLCanvasIdFromDOM },
+					.selector = "#canvas",
+				},
+		});
+	wgpuInstanceRelease(instance);
+
+	emscripten_get_canvas_element_size("#canvas", &w, &h);
+
+	wgpuSurfaceConfigure(g_surface, &(WGPUSurfaceConfiguration){
+		.device = g_device,
+		.format = WGPUTextureFormat_BGRA8Unorm,
+		.usage  = WGPUTextureUsage_RenderAttachment,
+		.width  = (uint32_t)w,
+		.height = (uint32_t)h,
+	});
+
+	wgsl_desc = (WGPUShaderModuleWGSLDescriptor){
+		.chain = { .sType = WGPUSType_ShaderModuleWGSLDescriptor },
+		.code  = k_triangle_wgsl,
+	};
+	g_shader = wgpuDeviceCreateShaderModule(g_device,
+		&(WGPUShaderModuleDescriptor){
+			.nextInChain = (WGPUChainedStruct *)&wgsl_desc,
+		});
+
+	ct = (WGPUColorTargetState){
+		.format    = WGPUTextureFormat_BGRA8Unorm,
+		.writeMask = WGPUColorWriteMask_All,
+	};
+	frag = (WGPUFragmentState){
+		.module      = g_shader,
+		.entryPoint  = "fs_main",
+		.targetCount = 1,
+		.targets     = &ct,
+	};
+	g_triangle_pipeline = wgpuDeviceCreateRenderPipeline(g_device,
+		&(WGPURenderPipelineDescriptor){
+			.vertex = {
+				.module     = g_shader,
+				.entryPoint = "vs_main",
+			},
+			.primitive = {
+				.topology = WGPUPrimitiveTopology_TriangleList,
+			},
+			.multisample = {
+				.count = 1,
+				.mask  = ~0u,
+			},
+			.fragment = &frag,
+		});
+
+	LOG_INFO("renderer_webgpu: ready");
+}
+
+/* Draws the bootstrap triangle into the swapchain each frame. */
+static void renderer_webgpu_tick(void)
+{
+	WGPUSurfaceTexture st;
+	WGPUTextureView    frame_view;
+	WGPUCommandEncoder enc;
+	WGPURenderPassColorAttachment ca;
+	WGPURenderPassEncoder rpe;
+	WGPUCommandBuffer cb;
+
+	wgpuSurfaceGetCurrentTexture(g_surface, &st);
+	if (!st.texture)
+		return;
+
+	frame_view = wgpuTextureCreateView(st.texture, NULL);
+
+	enc = wgpuDeviceCreateCommandEncoder(g_device, NULL);
+
+	ca = (WGPURenderPassColorAttachment){
+		.view       = frame_view,
+		.loadOp     = WGPULoadOp_Clear,
+		.storeOp    = WGPUStoreOp_Store,
+		.clearValue = { 0.05f, 0.05f, 0.05f, 1.0f },
+		.depthSlice = WGPU_DEPTH_SLICE_UNDEFINED,
+	};
+	rpe = wgpuCommandEncoderBeginRenderPass(enc,
+		&(WGPURenderPassDescriptor){
+			.colorAttachmentCount = 1,
+			.colorAttachments     = &ca,
+		});
+
+	wgpuRenderPassEncoderSetPipeline(rpe, g_triangle_pipeline);
+	wgpuRenderPassEncoderDraw(rpe, 3, 1, 0, 0);
+	wgpuRenderPassEncoderEnd(rpe);
+	wgpuRenderPassEncoderRelease(rpe);
+
+	cb = wgpuCommandEncoderFinish(enc, NULL);
+	wgpuQueueSubmit(g_queue, 1, &cb);
+	wgpuCommandBufferRelease(cb);
+	wgpuCommandEncoderRelease(enc);
+
+	wgpuTextureViewRelease(frame_view);
+	wgpuSurfacePresent(g_surface);
+	wgpuTextureRelease(st.texture);
+}
+
+static void renderer_webgpu_shutdown(void)
+{
+	LOG_INFO("renderer_webgpu: shutdown");
+	wgpuRenderPipelineRelease(g_triangle_pipeline);
+	wgpuShaderModuleRelease(g_shader);
+	wgpuSurfaceRelease(g_surface);
+	wgpuQueueRelease(g_queue);
+}
+
+static const struct subsystem webgpu_subsystem = {
+	.name     = "renderer",
+	.api      = &webgpu_api,
+	.init     = renderer_webgpu_init,
+	.tick     = renderer_webgpu_tick,
+	.shutdown = renderer_webgpu_shutdown,
+};
+
+void plugin_entry(struct subsystem_manager *mgr)
+{
+	subsystem_manager_register(mgr, &webgpu_subsystem);
+}

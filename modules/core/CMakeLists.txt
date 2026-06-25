@@ -27,6 +27,7 @@ if(EMSCRIPTEN)
 		-sMAIN_MODULE=1
 		-sFETCH=1
 		--extern-pre-js ${CMAKE_CURRENT_SOURCE_DIR}/error_overlay.js
+		-sMAX_WEBGL_VERSION=2
 		-sEXPORTED_FUNCTIONS=_main
 	)
 endif()

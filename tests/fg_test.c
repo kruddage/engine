@@ -19,8 +19,7 @@ static int tests_passed;
 	printf("PASS: " #name "\n"); \
 } while (0)
 
-/* Only renderer_null's plugin_entry is needed here. */
-void plugin_entry(struct subsystem_manager *mgr);
+void renderer_null_plugin_entry(struct subsystem_manager *mgr);
 
 static const struct subsystem empty_table[] = {{ NULL }};
 static struct subsystem_manager mgr;
@@ -31,7 +30,7 @@ static void setup(void)
 	const struct gpu_api *gpu;
 
 	subsystem_manager_init(&mgr, empty_table);
-	plugin_entry(&mgr); /* register renderer_null as "renderer" */
+	renderer_null_plugin_entry(&mgr); /* register renderer_null as "renderer" */
 	renderer_null_reset_log();
 
 	gpu  = subsystem_manager_get_api(&mgr, "renderer");

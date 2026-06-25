@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: LGPL-2.1-or-later
+# SPDX-License-Identifier: GPL-2.0-or-later
 #
 # Verifies that plugin WASM files do not directly import engine implementation
 # symbols that should only be accessed through the subsystem vtable API.

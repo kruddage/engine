@@ -6,6 +6,16 @@ target_include_directories(renderer_null PRIVATE
 )
 target_link_libraries(renderer_null PRIVATE log subsystem subsystem_manager)
 
+if(NOT EMSCRIPTEN)
+	add_executable(renderer_null_test renderer_null_test.c)
+	target_include_directories(renderer_null_test PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}
+		${CMAKE_SOURCE_DIR}/plugins/renderer
+	)
+	target_link_libraries(renderer_null_test PRIVATE renderer_null log subsystem_manager)
+	add_test(NAME renderer_null COMMAND renderer_null_test)
+endif()
+
 if(EMSCRIPTEN)
 	add_custom_command(
 		OUTPUT ${CMAKE_BINARY_DIR}/renderer_null.wasm

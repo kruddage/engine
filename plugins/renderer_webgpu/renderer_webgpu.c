@@ -356,7 +356,7 @@
 #include "renderer.h"
 #include "subsystem.h"
 #include "subsystem_manager.h"
-#include "log.h"
+#include "log_api.h"
 
 #include <webgpu/webgpu.h>
 #include <emscripten/html5.h>
@@ -396,6 +396,8 @@ static WGPURenderPipeline g_triangle_pipeline;
 
 static struct gpu_alloc g_allocs[MAX_GPU_ALLOCS];
 static uint32_t         g_alloc_count;
+
+static const struct log_api *g_log;
 
 /*
  * Procedural colored-triangle shader — no vertex buffer or uniforms.
@@ -805,7 +807,7 @@ static void renderer_webgpu_init(void)
 	WGPUColorTargetState ct;
 	WGPUFragmentState    frag;
 
-	LOG_INFO("renderer_webgpu: init");
+	g_log->write(LOG_LEVEL_INFO, "renderer_webgpu: init");
 
 	g_device = emscripten_webgpu_get_device();
 	g_queue  = wgpuDeviceGetQueue(g_device);
@@ -868,7 +870,7 @@ static void renderer_webgpu_init(void)
 			.fragment = &frag,
 		});
 
-	LOG_INFO("renderer_webgpu: ready");
+	g_log->write(LOG_LEVEL_INFO, "renderer_webgpu: ready");
 }
 
 /* Draws the bootstrap triangle into the swapchain each frame. */
@@ -919,7 +921,7 @@ static void renderer_webgpu_tick(void)
 
 static void renderer_webgpu_shutdown(void)
 {
-	LOG_INFO("renderer_webgpu: shutdown");
+	g_log->write(LOG_LEVEL_INFO, "renderer_webgpu: shutdown");
 	wgpuRenderPipelineRelease(g_triangle_pipeline);
 	wgpuShaderModuleRelease(g_shader);
 	wgpuSurfaceRelease(g_surface);
@@ -936,5 +938,6 @@ static const struct subsystem webgpu_subsystem = {
 
 void plugin_entry(struct subsystem_manager *mgr)
 {
+	g_log = subsystem_manager_get_api(mgr, "log");
 	subsystem_manager_register(mgr, &webgpu_subsystem);
 }

@@ -4,6 +4,7 @@
 
 #include "log.h"
 #include "memory.h"
+#include "memory_api.h"
 #include "plugin_loader.h"
 
 #include <stdint.h>
@@ -12,10 +13,31 @@
 #include <emscripten.h>
 #endif
 
+/*
+ * Vtables for the engine's own services.  Taking the address of each function
+ * here keeps them reachable from main(), preventing dead-code elimination from
+ * removing them before the dynamic linker can expose them to plugins.  Plugins
+ * access these through subsystem_manager_get_api() and call via the pointer —
+ * no direct named import from the main module required.
+ */
+static const struct log_api g_log_api = {
+	.write = log_write,
+};
+
+static const struct memory_api g_mem_api = {
+	.alloc        = mem_alloc,
+	.alloc_zero   = mem_alloc_zero,
+	.free         = mem_free,
+	.pool_create  = mem_pool_create,
+	.pool_alloc   = mem_pool_alloc,
+	.pool_free    = mem_pool_free,
+	.pool_destroy = mem_pool_destroy,
+};
+
 static const struct subsystem subsystems[] = {
-	{ .name = "log",           .init = log_init,           .shutdown = log_shutdown           },
-	{ .name = "memory",        .init = mem_init,           .shutdown = mem_shutdown           },
-	{ .name = "plugin_loader", .init = plugin_loader_init, .shutdown = plugin_loader_shutdown },
+	{ .name = "log",           .api = &g_log_api, .init = log_init,           .shutdown = log_shutdown           },
+	{ .name = "memory",        .api = &g_mem_api, .init = mem_init,           .shutdown = mem_shutdown           },
+	{ .name = "plugin_loader",                    .init = plugin_loader_init, .shutdown = plugin_loader_shutdown },
 	{ NULL }
 };
 

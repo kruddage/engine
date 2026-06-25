@@ -3,11 +3,22 @@
 #include "renderer.h"
 #include "subsystem.h"
 #include "subsystem_manager.h"
-#include "log.h"
+#include "log_api.h"
 
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifndef __EMSCRIPTEN__
+#include "log.h"
+static const struct log_api native_log = { log_write };
+#endif
+
+#ifdef __EMSCRIPTEN__
+static const struct log_api *g_log;
+#else
+static const struct log_api *g_log = &native_log;
+#endif
 
 #define FG_MAX_PASSES     64
 #define FG_MAX_RESOURCES  64
@@ -77,7 +88,7 @@ fg_resource_t fg_declare_transient(struct fg *fg, const char *name,
 	struct fg_resource *r;
 
 	if (fg->resource_count >= FG_MAX_RESOURCES) {
-		LOG_ERROR("fg: resource limit (%u) reached", FG_MAX_RESOURCES);
+		g_log->write(LOG_LEVEL_ERROR, "fg: resource limit (%u) reached", FG_MAX_RESOURCES);
 		return NULL;
 	}
 	r = &fg->resources[fg->resource_count++];
@@ -98,12 +109,12 @@ fg_pass_t fg_pass_declare(struct fg *fg, const char *name,
 	uint32_t i;
 
 	if (fg->pass_count >= FG_MAX_PASSES) {
-		LOG_ERROR("fg: pass limit (%u) reached", FG_MAX_PASSES);
+		g_log->write(LOG_LEVEL_ERROR, "fg: pass limit (%u) reached", FG_MAX_PASSES);
 		return NULL;
 	}
 	if (read_count > FG_MAX_PASS_DEPS || write_count > FG_MAX_PASS_DEPS) {
-		LOG_ERROR("fg: pass dependency limit (%u) exceeded",
-			  FG_MAX_PASS_DEPS);
+		g_log->write(LOG_LEVEL_ERROR, "fg: pass dependency limit (%u) exceeded",
+			     FG_MAX_PASS_DEPS);
 		return NULL;
 	}
 	p = &fg->passes[fg->pass_count++];
@@ -174,7 +185,7 @@ void fg_compile(struct fg *fg)
 		if (!p->alive)
 			continue;
 		p->alive = 0;
-		LOG_DEBUG("fg: culling dead pass '%s'", p->name);
+		g_log->write(LOG_LEVEL_DEBUG, "fg: culling dead pass '%s'", p->name);
 
 		/* Decrement reader_count for each resource this pass reads;
 		 * propagate to the writer's ref_count */
@@ -378,12 +389,12 @@ static const struct fg_api g_fg_api = {
 
 static void frame_graph_init(void)
 {
-	LOG_INFO("frame_graph: init");
+	g_log->write(LOG_LEVEL_INFO, "frame_graph: init");
 }
 
 static void frame_graph_shutdown(void)
 {
-	LOG_INFO("frame_graph: shutdown");
+	g_log->write(LOG_LEVEL_INFO, "frame_graph: shutdown");
 }
 
 static const struct subsystem g_desc = {
@@ -404,8 +415,11 @@ void plugin_entry(struct subsystem_manager *mgr)
 void fg_plugin_entry(struct subsystem_manager *mgr)
 #endif
 {
+#ifdef __EMSCRIPTEN__
+	g_log = subsystem_manager_get_api(mgr, "log");
+#endif
 	g_gpu = subsystem_manager_get_api(mgr, "renderer");
 	if (!g_gpu)
-		LOG_WARN("frame_graph: renderer not registered yet");
+		g_log->write(LOG_LEVEL_WARN, "frame_graph: renderer not registered yet");
 	subsystem_manager_register(mgr, &g_desc);
 }

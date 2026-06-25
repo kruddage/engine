@@ -8,7 +8,7 @@ if(EMSCRIPTEN)
 			-I${CMAKE_CURRENT_SOURCE_DIR}
 			-I${CMAKE_SOURCE_DIR}/plugins/renderer
 			-I${CMAKE_SOURCE_DIR}/modules/core
-			-I${CMAKE_SOURCE_DIR}/modules/log
+			-I${CMAKE_SOURCE_DIR}/plugins/include
 			-o ${CMAKE_BINARY_DIR}/renderer_webgpu.wasm
 			${CMAKE_CURRENT_SOURCE_DIR}/renderer_webgpu.c
 		DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/renderer_webgpu.c

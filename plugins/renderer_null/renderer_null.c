@@ -1,27 +1,38 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 #include "renderer.h"
 #include "renderer_null.h"
-#include "log.h"
+#include "log_api.h"
 #include "subsystem.h"
 #include "subsystem_manager.h"
 
 #include <stddef.h>
 #include <stdint.h>
 
+#ifndef __EMSCRIPTEN__
+#include "log.h"
+static const struct log_api native_log = { log_write };
+#endif
+
 #define RENDERER_NULL_LOG_MAX 256
 
-static struct gpu_call_record g_log[RENDERER_NULL_LOG_MAX];
+static struct gpu_call_record g_log_buf[RENDERER_NULL_LOG_MAX];
 static uint32_t               g_log_count;
+
+#ifdef __EMSCRIPTEN__
+static const struct log_api *g_log;
+#else
+static const struct log_api *g_log = &native_log;
+#endif
 
 static void log_append(struct gpu_call_record rec)
 {
 	if (g_log_count < RENDERER_NULL_LOG_MAX)
-		g_log[g_log_count++] = rec;
+		g_log_buf[g_log_count++] = rec;
 }
 
 static gpu_cmd_buf_t null_cmd_buf_begin(void)
 {
-	LOG_INFO("renderer_null: cmd_buf_begin");
+	g_log->write(LOG_LEVEL_INFO, "renderer_null: cmd_buf_begin");
 	log_append((struct gpu_call_record){
 		.type = GPU_CALL_CMD_BUF_BEGIN,
 	});
@@ -30,7 +41,7 @@ static gpu_cmd_buf_t null_cmd_buf_begin(void)
 
 static void null_cmd_buf_submit(gpu_cmd_buf_t cmd)
 {
-	LOG_INFO("renderer_null: cmd_buf_submit cmd=%p", (void *)cmd);
+	g_log->write(LOG_LEVEL_INFO, "renderer_null: cmd_buf_submit cmd=%p", (void *)cmd);
 	log_append((struct gpu_call_record){
 		.type = GPU_CALL_CMD_BUF_SUBMIT,
 	});
@@ -39,8 +50,8 @@ static void null_cmd_buf_submit(gpu_cmd_buf_t cmd)
 static gpu_pipeline_t
 null_pipeline_create(const struct gpu_pipeline_desc *desc)
 {
-	LOG_INFO("renderer_null: pipeline_create color_format_count=%u",
-		 desc->color_format_count);
+	g_log->write(LOG_LEVEL_INFO, "renderer_null: pipeline_create color_format_count=%u",
+		     desc->color_format_count);
 	log_append((struct gpu_call_record){
 		.type = GPU_CALL_PIPELINE_CREATE,
 		.args = {
@@ -54,8 +65,8 @@ null_pipeline_create(const struct gpu_pipeline_desc *desc)
 
 static void null_pipeline_destroy(gpu_pipeline_t pipeline)
 {
-	LOG_INFO("renderer_null: pipeline_destroy pipeline=%p",
-		 (void *)pipeline);
+	g_log->write(LOG_LEVEL_INFO, "renderer_null: pipeline_destroy pipeline=%p",
+		     (void *)pipeline);
 	log_append((struct gpu_call_record){
 		.type = GPU_CALL_PIPELINE_DESTROY,
 	});
@@ -63,8 +74,8 @@ static void null_pipeline_destroy(gpu_pipeline_t pipeline)
 
 static void null_cmd_set_pipeline(gpu_cmd_buf_t cmd, gpu_pipeline_t pipeline)
 {
-	LOG_INFO("renderer_null: cmd_set_pipeline cmd=%p pipeline=%p",
-		 (void *)cmd, (void *)pipeline);
+	g_log->write(LOG_LEVEL_INFO, "renderer_null: cmd_set_pipeline cmd=%p pipeline=%p",
+		     (void *)cmd, (void *)pipeline);
 	log_append((struct gpu_call_record){
 		.type = GPU_CALL_CMD_SET_PIPELINE,
 	});
@@ -73,8 +84,8 @@ static void null_cmd_set_pipeline(gpu_cmd_buf_t cmd, gpu_pipeline_t pipeline)
 static void null_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 				       const struct gpu_render_pass_desc *desc)
 {
-	LOG_INFO("renderer_null: cmd_begin_render_pass cmd=%p color_count=%u",
-		 (void *)cmd, desc->color_count);
+	g_log->write(LOG_LEVEL_INFO, "renderer_null: cmd_begin_render_pass cmd=%p color_count=%u",
+		     (void *)cmd, desc->color_count);
 	log_append((struct gpu_call_record){
 		.type = GPU_CALL_CMD_BEGIN_RENDER_PASS,
 		.args = {
@@ -87,7 +98,7 @@ static void null_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 
 static void null_cmd_end_render_pass(gpu_cmd_buf_t cmd)
 {
-	LOG_INFO("renderer_null: cmd_end_render_pass cmd=%p", (void *)cmd);
+	g_log->write(LOG_LEVEL_INFO, "renderer_null: cmd_end_render_pass cmd=%p", (void *)cmd);
 	log_append((struct gpu_call_record){
 		.type = GPU_CALL_CMD_END_RENDER_PASS,
 	});
@@ -98,8 +109,8 @@ static void null_cmd_barrier(gpu_cmd_buf_t cmd,
 			      uint32_t count)
 {
 	(void)barriers;
-	LOG_INFO("renderer_null: cmd_barrier cmd=%p count=%u",
-		 (void *)cmd, count);
+	g_log->write(LOG_LEVEL_INFO, "renderer_null: cmd_barrier cmd=%p count=%u",
+		     (void *)cmd, count);
 	log_append((struct gpu_call_record){
 		.type = GPU_CALL_CMD_BARRIER,
 		.args = { .cmd_barrier = { .count = count } },
@@ -110,8 +121,8 @@ static void null_cmd_draw_indexed(gpu_cmd_buf_t cmd,
 				  const struct gpu_draw_indexed_args *args,
 				  void *data_gpu)
 {
-	LOG_INFO("renderer_null: cmd_draw_indexed cmd=%p index_count=%u data=%p",
-		 (void *)cmd, args->index_count, data_gpu);
+	g_log->write(LOG_LEVEL_INFO, "renderer_null: cmd_draw_indexed cmd=%p index_count=%u data=%p",
+		     (void *)cmd, args->index_count, data_gpu);
 	log_append((struct gpu_call_record){
 		.type = GPU_CALL_CMD_DRAW_INDEXED,
 		.args = {
@@ -127,8 +138,8 @@ static void null_cmd_dispatch(gpu_cmd_buf_t cmd,
 			      uint32_t x, uint32_t y, uint32_t z,
 			      void *data_gpu)
 {
-	LOG_INFO("renderer_null: cmd_dispatch cmd=%p x=%u y=%u z=%u data=%p",
-		 (void *)cmd, x, y, z, data_gpu);
+	g_log->write(LOG_LEVEL_INFO, "renderer_null: cmd_dispatch cmd=%p x=%u y=%u z=%u data=%p",
+		     (void *)cmd, x, y, z, data_gpu);
 	log_append((struct gpu_call_record){
 		.type = GPU_CALL_CMD_DISPATCH,
 		.args = { .cmd_dispatch = { .x = x, .y = y, .z = z } },
@@ -137,7 +148,7 @@ static void null_cmd_dispatch(gpu_cmd_buf_t cmd,
 
 static void *null_gpu_malloc(size_t size)
 {
-	LOG_INFO("renderer_null: gpu_malloc size=%zu", size);
+	g_log->write(LOG_LEVEL_INFO, "renderer_null: gpu_malloc size=%zu", size);
 	log_append((struct gpu_call_record){
 		.type = GPU_CALL_GPU_MALLOC,
 		.args = { .gpu_malloc = { .size = size } },
@@ -147,13 +158,13 @@ static void *null_gpu_malloc(size_t size)
 
 static void null_gpu_free(void *ptr)
 {
-	LOG_INFO("renderer_null: gpu_free ptr=%p", ptr);
+	g_log->write(LOG_LEVEL_INFO, "renderer_null: gpu_free ptr=%p", ptr);
 	log_append((struct gpu_call_record){ .type = GPU_CALL_GPU_FREE });
 }
 
 static void *null_gpu_host_to_device_ptr(void *host_ptr)
 {
-	LOG_INFO("renderer_null: gpu_host_to_device_ptr ptr=%p", host_ptr);
+	g_log->write(LOG_LEVEL_INFO, "renderer_null: gpu_host_to_device_ptr ptr=%p", host_ptr);
 	log_append((struct gpu_call_record){
 		.type = GPU_CALL_GPU_HOST_TO_DEVICE_PTR,
 	});
@@ -163,8 +174,8 @@ static void *null_gpu_host_to_device_ptr(void *host_ptr)
 static gpu_texture_t
 null_texture_create(const struct gpu_texture_desc *desc)
 {
-	LOG_INFO("renderer_null: texture_create fmt=%u w=%u h=%u",
-		 (unsigned)desc->format, desc->width, desc->height);
+	g_log->write(LOG_LEVEL_INFO, "renderer_null: texture_create fmt=%u w=%u h=%u",
+		     (unsigned)desc->format, desc->width, desc->height);
 	log_append((struct gpu_call_record){
 		.type = GPU_CALL_TEXTURE_CREATE,
 		.args = {
@@ -180,7 +191,7 @@ null_texture_create(const struct gpu_texture_desc *desc)
 
 static void null_texture_destroy(gpu_texture_t texture)
 {
-	LOG_INFO("renderer_null: texture_destroy texture=%p", (void *)texture);
+	g_log->write(LOG_LEVEL_INFO, "renderer_null: texture_destroy texture=%p", (void *)texture);
 	log_append((struct gpu_call_record){
 		.type = GPU_CALL_TEXTURE_DESTROY,
 	});
@@ -206,13 +217,13 @@ static const struct gpu_api null_api = {
 
 static void renderer_null_init(void)
 {
-	LOG_INFO("renderer_null: init");
+	g_log->write(LOG_LEVEL_INFO, "renderer_null: init");
 	renderer_null_reset_log();
 }
 
 static void renderer_null_shutdown(void)
 {
-	LOG_INFO("renderer_null: shutdown");
+	g_log->write(LOG_LEVEL_INFO, "renderer_null: shutdown");
 }
 
 static const struct subsystem desc = {
@@ -222,15 +233,22 @@ static const struct subsystem desc = {
 	.shutdown = renderer_null_shutdown,
 };
 
+#ifdef __EMSCRIPTEN__
 void plugin_entry(struct subsystem_manager *mgr)
+#else
+void renderer_null_plugin_entry(struct subsystem_manager *mgr)
+#endif
 {
+#ifdef __EMSCRIPTEN__
+	g_log = subsystem_manager_get_api(mgr, "log");
+#endif
 	subsystem_manager_register(mgr, &desc);
 }
 
 const struct gpu_call_record *renderer_null_get_log(uint32_t *out_count)
 {
 	*out_count = g_log_count;
-	return g_log;
+	return g_log_buf;
 }
 
 void renderer_null_reset_log(void)

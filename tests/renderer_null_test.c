@@ -18,7 +18,7 @@ static int tests_passed;
 	printf("PASS: " #name "\n"); \
 } while (0)
 
-void plugin_entry(struct subsystem_manager *mgr);
+void renderer_null_plugin_entry(struct subsystem_manager *mgr);
 
 static const struct subsystem empty_table[] = {{ NULL }};
 static struct subsystem_manager mgr;
@@ -26,7 +26,7 @@ static struct subsystem_manager mgr;
 static void setup(void)
 {
 	subsystem_manager_init(&mgr, empty_table);
-	plugin_entry(&mgr);
+	renderer_null_plugin_entry(&mgr);
 	renderer_null_reset_log();
 }
 

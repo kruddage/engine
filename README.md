@@ -1,6 +1,6 @@
 # KRUDD
 
-[![License: LGPL-2.1-or-later](https://img.shields.io/badge/License-LGPL--2.1--or--later-blue.svg)](https://spdx.org/licenses/LGPL-2.1-or-later.html)
+[![License: GPL-2.0-or-later](https://img.shields.io/badge/License-GPL--2.0--or--later-blue.svg)](https://spdx.org/licenses/GPL-2.0-or-later.html)
 [![CI](https://github.com/kruddage/engine/actions/workflows/ci.yml/badge.svg)](https://github.com/kruddage/engine/actions/workflows/ci.yml)
 [![Sanitizers](https://github.com/kruddage/engine/actions/workflows/sanitizers.yml/badge.svg)](https://github.com/kruddage/engine/actions/workflows/sanitizers.yml)
 [![clang-tidy](https://github.com/kruddage/engine/actions/workflows/clang-tidy.yml/badge.svg)](https://github.com/kruddage/engine/actions/workflows/clang-tidy.yml)

@@ -26,7 +26,7 @@ jobs:
       - name: Collect coverage
         run: |
           lcov --capture --directory build --output-file coverage.info --ignore-errors empty
-          lcov --remove coverage.info '*/usr/*' '*/_deps/*' '*/tests/*' --output-file coverage.info --ignore-errors empty
+          lcov --remove coverage.info '*/usr/*' '*/_deps/*' '*_test.c' --output-file coverage.info --ignore-errors empty
 
       - name: Check coverage threshold
         run: |

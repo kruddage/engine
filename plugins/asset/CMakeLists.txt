@@ -7,6 +7,12 @@ target_include_directories(asset_plugin PRIVATE
 )
 target_link_libraries(asset_plugin PRIVATE log memory subsystem subsystem_manager)
 
+if(NOT EMSCRIPTEN)
+	add_executable(asset_test asset_test.c)
+	target_link_libraries(asset_test PRIVATE asset_plugin log memory)
+	add_test(NAME asset COMMAND asset_test)
+endif()
+
 if(EMSCRIPTEN)
 	add_custom_command(
 		OUTPUT ${CMAKE_BINARY_DIR}/asset_plugin.wasm

@@ -18,4 +18,4 @@ jobs:
         run: cmake -B build_tidy
 
       - name: Run clang-tidy
-        run: run-clang-tidy -p build_tidy '.*(modules|plugins)/.*\.c$'
+        run: run-clang-tidy -p build_tidy '.*(modules|plugins)/.*(?<!_test)\.c$'

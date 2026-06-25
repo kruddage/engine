@@ -7,6 +7,17 @@ target_include_directories(frame_graph PRIVATE
 )
 target_link_libraries(frame_graph PRIVATE log subsystem subsystem_manager)
 
+if(NOT EMSCRIPTEN)
+	add_executable(fg_test fg_test.c)
+	target_include_directories(fg_test PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}
+		${CMAKE_SOURCE_DIR}/plugins/renderer
+		${CMAKE_SOURCE_DIR}/plugins/renderer_null
+	)
+	target_link_libraries(fg_test PRIVATE frame_graph renderer_null log subsystem_manager)
+	add_test(NAME fg COMMAND fg_test)
+endif()
+
 if(EMSCRIPTEN)
 	add_custom_command(
 		OUTPUT ${CMAKE_BINARY_DIR}/frame_graph.wasm

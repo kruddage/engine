@@ -6,6 +6,7 @@
 #include "log_api.h"
 
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -92,7 +93,7 @@ fg_resource_t fg_declare_transient(struct fg *fg, const char *name,
 		return NULL;
 	}
 	r = &fg->resources[fg->resource_count++];
-	strncpy(r->name, name, sizeof(r->name) - 1);
+	snprintf(r->name, sizeof(r->name), "%s", name);
 	r->desc        = desc;
 	r->handle      = NULL;
 	r->reader_count = 0;
@@ -118,7 +119,7 @@ fg_pass_t fg_pass_declare(struct fg *fg, const char *name,
 		return NULL;
 	}
 	p = &fg->passes[fg->pass_count++];
-	strncpy(p->name, name, sizeof(p->name) - 1);
+	snprintf(p->name, sizeof(p->name), "%s", name);
 	for (i = 0; i < read_count; i++)
 		p->reads[i] = reads[i];
 	p->read_count = read_count;

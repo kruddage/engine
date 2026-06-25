@@ -36,6 +36,7 @@ add_subdirectory(plugins/renderer_null)
 add_subdirectory(plugins/frame_graph)
 
 if(NOT EMSCRIPTEN)
+	set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 	enable_testing()
 	add_subdirectory(tests)
 endif()

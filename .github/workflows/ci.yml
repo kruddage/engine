@@ -49,7 +49,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      deployments: write
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
@@ -62,28 +61,20 @@ jobs:
           emcmake cmake -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build
 
-      - name: Deploy preview to Cloudflare Pages
-        id: deploy
-        run: |
-          output=$(npx wrangler@3 pages deploy build \
-            --project-name=engine \
-            --branch="${GITHUB_HEAD_REF}" 2>&1)
-          printf '%s\n' "$output"
-          url=$(printf '%s\n' "$output" | grep -oE 'https://[a-z0-9-]+\.pages\.dev' | tail -1)
-          echo "url=${url}" >> "${GITHUB_OUTPUT}"
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: b9b420ba27330d12b7631a3abf1f7a69
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-build
+          path: build
 
-      - name: Post preview URL on PR
+      - name: Post preview link on PR
         uses: actions/github-script@v7
         with:
           script: |
-            const url = '${{ steps.deploy.outputs.url }}';
-            if (!url) { core.warning('no preview URL found in deploy output'); return; }
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `## Preview\n\n✅ ${url}`,
+              body: `## Preview\n\n✅ Build artifact available: [Download from Actions run](${runUrl})`,
             });

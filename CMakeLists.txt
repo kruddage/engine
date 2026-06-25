@@ -29,5 +29,6 @@ add_subdirectory(plugins/renderer)
 add_subdirectory(plugins/renderer_null)
 
 if(NOT EMSCRIPTEN)
+	enable_testing()
 	add_subdirectory(tests)
 endif()

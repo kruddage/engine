@@ -43,6 +43,12 @@ cmake --build build             # compile — outputs build/index.{html,js,wasm}
 
 Serve `build/` with any static file server to run locally.
 
+## Workflow
+
+When you finish implementing a GitHub issue, create a pull request using the
+GitHub MCP tools (`mcp__github__create_pull_request`). Reference the issue
+number in the PR body (e.g. `Closes #N`).
+
 ## Key constraints
 
 - C owns the loop. `engine_tick` is the frame callback passed to

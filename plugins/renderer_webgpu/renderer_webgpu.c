@@ -361,9 +361,6 @@
 #include <webgpu/webgpu.h>
 #include <emscripten/html5.h>
 
-/* Provided by the emdawnwebgpu JS runtime; no C header in the port. */
-extern WGPUDevice emscripten_webgpu_get_device(void);
-
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -748,7 +745,7 @@ static gpu_texture_t webgpu_texture_create(const struct gpu_texture_desc *desc)
 {
 	struct webgpu_texture *wt;
 	int                    is_depth;
-	WGPUTextureUsageFlags  usage;
+	WGPUTextureUsage       usage;
 
 	wt       = malloc(sizeof(*wt));
 	is_depth = (desc->format == GPU_FORMAT_DEPTH32_FLOAT);
@@ -804,7 +801,7 @@ static void renderer_webgpu_init(void)
 {
 	WGPUInstance instance;
 	int w, h;
-	WGPUShaderModuleWGSLDescriptor wgsl_desc;
+	WGPUShaderSourceWGSL wgsl_desc;
 	WGPUColorTargetState ct;
 	WGPUFragmentState    frag;
 
@@ -817,9 +814,9 @@ static void renderer_webgpu_init(void)
 	g_surface = wgpuInstanceCreateSurface(instance,
 		&(WGPUSurfaceDescriptor){
 			.nextInChain = (WGPUChainedStruct *)
-				&(WGPUSurfaceSourceHTMLCanvasIdFromDOM){
+				&(WGPUEmscriptenSurfaceSourceCanvasHTMLSelector){
 					.chain = { .sType =
-					  WGPUSType_SurfaceSourceHTMLCanvasIdFromDOM },
+					  WGPUSType_EmscriptenSurfaceSourceCanvasHTMLSelector },
 					.selector = { .data = "#canvas",
 					              .length = WGPU_STRLEN },
 				},
@@ -836,8 +833,8 @@ static void renderer_webgpu_init(void)
 		.height = (uint32_t)h,
 	});
 
-	wgsl_desc = (WGPUShaderModuleWGSLDescriptor){
-		.chain = { .sType = WGPUSType_ShaderModuleWGSLDescriptor },
+	wgsl_desc = (WGPUShaderSourceWGSL){
+		.chain = { .sType = WGPUSType_ShaderSourceWGSL },
 		.code  = { .data = k_triangle_wgsl, .length = WGPU_STRLEN },
 	};
 	g_shader = wgpuDeviceCreateShaderModule(g_device,

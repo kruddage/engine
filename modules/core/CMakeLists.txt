@@ -13,7 +13,10 @@ target_include_directories(index PRIVATE .)
 target_link_libraries(index PRIVATE subsystem subsystem_manager log memory plugin_loader)
 
 if(EMSCRIPTEN)
-	set_target_properties(index PROPERTIES SUFFIX ".html")
+	set_target_properties(index PROPERTIES
+		SUFFIX ".html"
+		RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
+	)
 	target_link_options(index PRIVATE
 		-sENVIRONMENT=web
 		-sALLOW_MEMORY_GROWTH=1

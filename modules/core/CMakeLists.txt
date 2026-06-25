@@ -19,5 +19,6 @@ if(EMSCRIPTEN)
 		-sALLOW_MEMORY_GROWTH=1
 		-sMALLOC=emmalloc
 		-sMAIN_MODULE=1
+		-sFETCH=1
 	)
 endif()

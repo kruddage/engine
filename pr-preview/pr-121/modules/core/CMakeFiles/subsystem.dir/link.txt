@@ -1,0 +1,2 @@
+/home/runner/work/_temp/83be1174-d5aa-4eba-9668-d79d11b6380c/emsdk-main/upstream/emscripten/emar qc libsubsystem.a CMakeFiles/subsystem.dir/subsystem.c.o
+/home/runner/work/_temp/83be1174-d5aa-4eba-9668-d79d11b6380c/emsdk-main/upstream/emscripten/emranlib libsubsystem.a

@@ -5,8 +5,8 @@
 [![Sanitizers](https://github.com/kruddage/engine/actions/workflows/sanitizers.yml/badge.svg)](https://github.com/kruddage/engine/actions/workflows/sanitizers.yml)
 [![clang-tidy](https://github.com/kruddage/engine/actions/workflows/clang-tidy.yml/badge.svg)](https://github.com/kruddage/engine/actions/workflows/clang-tidy.yml)
 [![Coverage](https://github.com/kruddage/engine/actions/workflows/coverage.yml/badge.svg)](https://github.com/kruddage/engine/actions/workflows/coverage.yml)
-[![Live](https://img.shields.io/website?url=https%3A%2F%2Fengine-3jw.pages.dev&label=live)](https://engine-3jw.pages.dev)
+[![Live](https://img.shields.io/website?url=https%3A%2F%2Fkruddage.github.io%2Fengine&label=live)](https://kruddage.github.io/engine)
 
 A game engine built in C, compiled to WASM via Emscripten.
 
-PR previews are handled automatically by Cloudflare Pages.
+PR previews upload a build artifact to the Actions run.

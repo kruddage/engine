@@ -160,6 +160,32 @@ static void *null_gpu_host_to_device_ptr(void *host_ptr)
 	return host_ptr;
 }
 
+static gpu_texture_t
+null_texture_create(const struct gpu_texture_desc *desc)
+{
+	LOG_INFO("renderer_null: texture_create fmt=%u w=%u h=%u",
+		 (unsigned)desc->format, desc->width, desc->height);
+	log_append((struct gpu_call_record){
+		.type = GPU_CALL_TEXTURE_CREATE,
+		.args = {
+			.texture_create = {
+				.format = (uint32_t)desc->format,
+				.width  = desc->width,
+				.height = desc->height,
+			},
+		},
+	});
+	return NULL;
+}
+
+static void null_texture_destroy(gpu_texture_t texture)
+{
+	LOG_INFO("renderer_null: texture_destroy texture=%p", (void *)texture);
+	log_append((struct gpu_call_record){
+		.type = GPU_CALL_TEXTURE_DESTROY,
+	});
+}
+
 static const struct gpu_api null_api = {
 	.cmd_buf_begin          = null_cmd_buf_begin,
 	.cmd_buf_submit         = null_cmd_buf_submit,
@@ -174,6 +200,8 @@ static const struct gpu_api null_api = {
 	.gpu_malloc             = null_gpu_malloc,
 	.gpu_free               = null_gpu_free,
 	.gpu_host_to_device_ptr = null_gpu_host_to_device_ptr,
+	.texture_create         = null_texture_create,
+	.texture_destroy        = null_texture_destroy,
 };
 
 static void renderer_null_init(void)

@@ -25,6 +25,8 @@ enum gpu_call_type {
 	GPU_CALL_GPU_MALLOC,
 	GPU_CALL_GPU_FREE,
 	GPU_CALL_GPU_HOST_TO_DEVICE_PTR,
+	GPU_CALL_TEXTURE_CREATE,
+	GPU_CALL_TEXTURE_DESTROY,
 };
 
 struct gpu_call_record {
@@ -39,6 +41,11 @@ struct gpu_call_record {
 		} cmd_draw_indexed;
 		struct { uint32_t x; uint32_t y; uint32_t z; } cmd_dispatch;
 		struct { size_t size;                         } gpu_malloc;
+		struct {
+			uint32_t format; /* gpu_format, stored as uint32_t */
+			uint32_t width;
+			uint32_t height;
+		} texture_create;
 	} args;
 };
 

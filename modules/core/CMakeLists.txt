@@ -20,5 +20,6 @@ if(EMSCRIPTEN)
 		-sMALLOC=emmalloc
 		-sMAIN_MODULE=1
 		-sFETCH=1
+		--use-port=emdawnwebgpu
 	)
 endif()

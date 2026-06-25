@@ -60,11 +60,12 @@
  * INITIALIZATION (Emscripten-specific)
  * -------------------------------------------------------------------------
  *
- * Standard WebGPU init is async (requestAdapter → requestDevice). In
- * Emscripten, the browser already owns the device; we obtain it
- * synchronously via the Emscripten extension:
+ * WebGPU init is async (requestAdapter → requestDevice). We register as
+ * an async_subsystem so the engine defers our tick until the device is
+ * ready. async_init fires an EM_JS that requests the adapter and device,
+ * stores the result in Module['preinitializedWebGPUDevice'] (the
+ * emdawnwebgpu convention), then calls back into C. Only then do we call:
  *
- *   #include <emscripten/emscripten.h>
  *   WGPUDevice device = emscripten_webgpu_get_device();
  *   WGPUQueue  queue  = wgpuDeviceGetQueue(device);
  *
@@ -354,12 +355,13 @@
  */
 
 #include "renderer.h"
-#include "subsystem.h"
+#include "async_subsystem.h"
 #include "subsystem_manager.h"
 #include "log_api.h"
 
 #include <webgpu/webgpu.h>
 #include <emscripten/html5.h>
+#include <emscripten.h>
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -799,15 +801,33 @@ static const struct gpu_api webgpu_api = {
 
 /* ---- Plugin lifecycle ---- */
 
-static void renderer_webgpu_init(void)
+struct device_ready_ctx {
+	void    (*done)(void *ctx);
+	void    *done_ctx;
+};
+
+/*
+ * Requests a WebGPU adapter and device from the browser, stores the
+ * result where emscripten_webgpu_get_device() can find it, then calls
+ * cb(ctx) on the C side.
+ */
+EM_JS(void, webgpu_acquire_device_async, (void (*cb)(void *), void *ctx), {
+	(async function () {
+		var adapter = await navigator.gpu.requestAdapter();
+		var device  = await adapter.requestDevice();
+		Module['preinitializedWebGPUDevice'] = device;
+		getWasmTableEntry(cb)(ctx);
+	}());
+});
+
+static void on_device_ready(void *raw)
 {
+	struct device_ready_ctx *c = raw;
 	WGPUInstance instance;
 	int w, h;
 	WGPUShaderSourceWGSL wgsl_desc;
 	WGPUColorTargetState ct;
 	WGPUFragmentState    frag;
-
-	g_log->write(LOG_LEVEL_INFO, "renderer_webgpu: init");
 
 	g_device = emscripten_webgpu_get_device();
 	g_queue  = wgpuDeviceGetQueue(g_device);
@@ -871,6 +891,19 @@ static void renderer_webgpu_init(void)
 		});
 
 	g_log->write(LOG_LEVEL_INFO, "renderer_webgpu: ready");
+	c->done(c->done_ctx);
+	free(c);
+}
+
+static void renderer_webgpu_async_init(void (*done)(void *ctx), void *ctx)
+{
+	struct device_ready_ctx *c;
+
+	g_log->write(LOG_LEVEL_INFO, "renderer_webgpu: init");
+	c           = malloc(sizeof(*c));
+	c->done     = done;
+	c->done_ctx = ctx;
+	webgpu_acquire_device_async(on_device_ready, c);
 }
 
 /* Draws the bootstrap triangle into the swapchain each frame. */
@@ -928,16 +961,16 @@ static void renderer_webgpu_shutdown(void)
 	wgpuQueueRelease(g_queue);
 }
 
-static const struct subsystem webgpu_subsystem = {
-	.name     = "renderer",
-	.api      = &webgpu_api,
-	.init     = renderer_webgpu_init,
-	.tick     = renderer_webgpu_tick,
-	.shutdown = renderer_webgpu_shutdown,
+static const struct async_subsystem webgpu_subsystem = {
+	.name       = "renderer",
+	.api        = &webgpu_api,
+	.async_init = renderer_webgpu_async_init,
+	.tick       = renderer_webgpu_tick,
+	.shutdown   = renderer_webgpu_shutdown,
 };
 
 void plugin_entry(struct subsystem_manager *mgr)
 {
 	g_log = subsystem_manager_get_api(mgr, "log");
-	subsystem_manager_register(mgr, &webgpu_subsystem);
+	subsystem_manager_register_async(mgr, &webgpu_subsystem);
 }

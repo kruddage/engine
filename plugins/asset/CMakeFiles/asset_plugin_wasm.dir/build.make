@@ -70,7 +70,7 @@ plugins/asset/CMakeFiles/asset_plugin_wasm: asset_plugin.wasm
 
 asset_plugin.wasm: /home/runner/work/engine/engine/plugins/asset/asset_plugin.c
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --blue --bold --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building asset_plugin SIDE_MODULE"
-	cd /home/runner/work/engine/engine/build/plugins/asset && /home/runner/work/_temp/4b217378-07ae-43de-a9e7-2a86e85fd910/emsdk-main/upstream/emscripten/emcc -sSIDE_MODULE=1 -O2 -I/home/runner/work/engine/engine/plugins/asset -I/home/runner/work/engine/engine/modules/core -I/home/runner/work/engine/engine/plugins/include -o /home/runner/work/engine/engine/build/asset_plugin.wasm /home/runner/work/engine/engine/plugins/asset/asset_plugin.c
+	cd /home/runner/work/engine/engine/build/plugins/asset && /home/runner/work/_temp/aabd50eb-8d7f-4aac-8be8-7418d79559e7/emsdk-main/upstream/emscripten/emcc -sSIDE_MODULE=1 -O2 -I/home/runner/work/engine/engine/plugins/asset -I/home/runner/work/engine/engine/modules/core -I/home/runner/work/engine/engine/plugins/include -o /home/runner/work/engine/engine/build/asset_plugin.wasm /home/runner/work/engine/engine/plugins/asset/asset_plugin.c
 
 plugins/asset/CMakeFiles/asset_plugin_wasm.dir/codegen:
 .PHONY : plugins/asset/CMakeFiles/asset_plugin_wasm.dir/codegen

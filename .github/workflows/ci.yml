@@ -21,24 +21,13 @@ jobs:
           emcmake cmake -B build
           cmake --build build
 
-  configure:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Configure
-        run: cmake -B build
-
-      - name: Upload compile_commands.json
-        uses: actions/upload-artifact@v4
-        with:
-          name: compile-commands
-          path: build/compile_commands.json
-
   sanitizers:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install ccache
+        run: sudo apt-get install -y ccache
 
       - name: Cache ccache
         uses: actions/cache@v4
@@ -61,8 +50,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install lcov
-        run: sudo apt-get install -y lcov
+      - name: Install lcov and ccache
+        run: sudo apt-get install -y lcov ccache
 
       - name: Cache ccache
         uses: actions/cache@v4
@@ -95,7 +84,6 @@ jobs:
           fi
 
   clang-tidy:
-    needs: [configure]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -103,11 +91,8 @@ jobs:
       - name: Install clang-tidy
         run: sudo apt-get install -y clang-tidy
 
-      - name: Download compile_commands.json
-        uses: actions/download-artifact@v4
-        with:
-          name: compile-commands
-          path: build
+      - name: Configure
+        run: cmake -B build
 
       - name: Run clang-tidy
         run: run-clang-tidy -p build '.*(modules|plugins)/.*(?<!_test)\.c$'

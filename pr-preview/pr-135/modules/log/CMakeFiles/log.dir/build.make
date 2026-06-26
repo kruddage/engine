@@ -76,29 +76,29 @@ modules/log/CMakeFiles/log.dir/log.c.o: modules/log/CMakeFiles/log.dir/flags.mak
 modules/log/CMakeFiles/log.dir/log.c.o: /home/runner/work/engine/engine/modules/log/log.c
 modules/log/CMakeFiles/log.dir/log.c.o: modules/log/CMakeFiles/log.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building C object modules/log/CMakeFiles/log.dir/log.c.o"
-	cd /home/runner/work/engine/engine/build/modules/log && ccache /home/runner/work/_temp/7c942439-83e4-4cb2-a8de-a1dbe131c8d3/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT modules/log/CMakeFiles/log.dir/log.c.o -MF CMakeFiles/log.dir/log.c.o.d -o CMakeFiles/log.dir/log.c.o -c /home/runner/work/engine/engine/modules/log/log.c
+	cd /home/runner/work/engine/engine/build/modules/log && ccache /home/runner/work/_temp/e5f14d78-25b9-4c45-bb5d-03066f1bdd3d/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT modules/log/CMakeFiles/log.dir/log.c.o -MF CMakeFiles/log.dir/log.c.o.d -o CMakeFiles/log.dir/log.c.o -c /home/runner/work/engine/engine/modules/log/log.c
 
 modules/log/CMakeFiles/log.dir/log.c.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/log.dir/log.c.i"
-	cd /home/runner/work/engine/engine/build/modules/log && /home/runner/work/_temp/7c942439-83e4-4cb2-a8de-a1dbe131c8d3/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/modules/log/log.c > CMakeFiles/log.dir/log.c.i
+	cd /home/runner/work/engine/engine/build/modules/log && /home/runner/work/_temp/e5f14d78-25b9-4c45-bb5d-03066f1bdd3d/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/modules/log/log.c > CMakeFiles/log.dir/log.c.i
 
 modules/log/CMakeFiles/log.dir/log.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/log.dir/log.c.s"
-	cd /home/runner/work/engine/engine/build/modules/log && /home/runner/work/_temp/7c942439-83e4-4cb2-a8de-a1dbe131c8d3/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/modules/log/log.c -o CMakeFiles/log.dir/log.c.s
+	cd /home/runner/work/engine/engine/build/modules/log && /home/runner/work/_temp/e5f14d78-25b9-4c45-bb5d-03066f1bdd3d/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/modules/log/log.c -o CMakeFiles/log.dir/log.c.s
 
 modules/log/CMakeFiles/log.dir/__/core/ring_buf.c.o: modules/log/CMakeFiles/log.dir/flags.make
 modules/log/CMakeFiles/log.dir/__/core/ring_buf.c.o: /home/runner/work/engine/engine/modules/core/ring_buf.c
 modules/log/CMakeFiles/log.dir/__/core/ring_buf.c.o: modules/log/CMakeFiles/log.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Building C object modules/log/CMakeFiles/log.dir/__/core/ring_buf.c.o"
-	cd /home/runner/work/engine/engine/build/modules/log && ccache /home/runner/work/_temp/7c942439-83e4-4cb2-a8de-a1dbe131c8d3/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT modules/log/CMakeFiles/log.dir/__/core/ring_buf.c.o -MF CMakeFiles/log.dir/__/core/ring_buf.c.o.d -o CMakeFiles/log.dir/__/core/ring_buf.c.o -c /home/runner/work/engine/engine/modules/core/ring_buf.c
+	cd /home/runner/work/engine/engine/build/modules/log && ccache /home/runner/work/_temp/e5f14d78-25b9-4c45-bb5d-03066f1bdd3d/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT modules/log/CMakeFiles/log.dir/__/core/ring_buf.c.o -MF CMakeFiles/log.dir/__/core/ring_buf.c.o.d -o CMakeFiles/log.dir/__/core/ring_buf.c.o -c /home/runner/work/engine/engine/modules/core/ring_buf.c
 
 modules/log/CMakeFiles/log.dir/__/core/ring_buf.c.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/log.dir/__/core/ring_buf.c.i"
-	cd /home/runner/work/engine/engine/build/modules/log && /home/runner/work/_temp/7c942439-83e4-4cb2-a8de-a1dbe131c8d3/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/modules/core/ring_buf.c > CMakeFiles/log.dir/__/core/ring_buf.c.i
+	cd /home/runner/work/engine/engine/build/modules/log && /home/runner/work/_temp/e5f14d78-25b9-4c45-bb5d-03066f1bdd3d/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/modules/core/ring_buf.c > CMakeFiles/log.dir/__/core/ring_buf.c.i
 
 modules/log/CMakeFiles/log.dir/__/core/ring_buf.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/log.dir/__/core/ring_buf.c.s"
-	cd /home/runner/work/engine/engine/build/modules/log && /home/runner/work/_temp/7c942439-83e4-4cb2-a8de-a1dbe131c8d3/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/modules/core/ring_buf.c -o CMakeFiles/log.dir/__/core/ring_buf.c.s
+	cd /home/runner/work/engine/engine/build/modules/log && /home/runner/work/_temp/e5f14d78-25b9-4c45-bb5d-03066f1bdd3d/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/modules/core/ring_buf.c -o CMakeFiles/log.dir/__/core/ring_buf.c.s
 
 # Object files for target log
 log_OBJECTS = \

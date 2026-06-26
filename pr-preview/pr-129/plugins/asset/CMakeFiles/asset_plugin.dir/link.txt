@@ -1,2 +1,0 @@
-/home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/emar qc libasset_plugin.a CMakeFiles/asset_plugin.dir/asset_plugin.c.o
-/home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/emranlib libasset_plugin.a

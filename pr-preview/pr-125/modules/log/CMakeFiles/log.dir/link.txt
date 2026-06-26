@@ -1,2 +1,0 @@
-/home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/emscripten/emar qc liblog.a CMakeFiles/log.dir/log.c.o CMakeFiles/log.dir/__/core/ring_buf.c.o
-/home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/emscripten/emranlib liblog.a

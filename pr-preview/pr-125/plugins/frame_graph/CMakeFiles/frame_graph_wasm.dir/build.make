@@ -70,7 +70,7 @@ plugins/frame_graph/CMakeFiles/frame_graph_wasm: frame_graph.wasm
 
 frame_graph.wasm: /home/runner/work/engine/engine/plugins/frame_graph/fg.c
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --blue --bold --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building frame_graph SIDE_MODULE"
-	cd /home/runner/work/engine/engine/build/plugins/frame_graph && /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/emcc -sSIDE_MODULE=1 -O2 -I/home/runner/work/engine/engine/plugins/frame_graph -I/home/runner/work/engine/engine/plugins/renderer -I/home/runner/work/engine/engine/modules/core -I/home/runner/work/engine/engine/plugins/include -o /home/runner/work/engine/engine/build/frame_graph.wasm /home/runner/work/engine/engine/plugins/frame_graph/fg.c
+	cd /home/runner/work/engine/engine/build/plugins/frame_graph && /home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/emscripten/emcc -sSIDE_MODULE=1 -O2 -I/home/runner/work/engine/engine/plugins/frame_graph -I/home/runner/work/engine/engine/plugins/renderer -I/home/runner/work/engine/engine/modules/core -I/home/runner/work/engine/engine/plugins/include -o /home/runner/work/engine/engine/build/frame_graph.wasm /home/runner/work/engine/engine/plugins/frame_graph/fg.c
 
 plugins/frame_graph/CMakeFiles/frame_graph_wasm.dir/codegen:
 .PHONY : plugins/frame_graph/CMakeFiles/frame_graph_wasm.dir/codegen

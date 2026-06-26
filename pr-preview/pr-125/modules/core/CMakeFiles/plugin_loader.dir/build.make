@@ -76,15 +76,15 @@ modules/core/CMakeFiles/plugin_loader.dir/plugin_loader.c.o: modules/core/CMakeF
 modules/core/CMakeFiles/plugin_loader.dir/plugin_loader.c.o: /home/runner/work/engine/engine/modules/core/plugin_loader.c
 modules/core/CMakeFiles/plugin_loader.dir/plugin_loader.c.o: modules/core/CMakeFiles/plugin_loader.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building C object modules/core/CMakeFiles/plugin_loader.dir/plugin_loader.c.o"
-	cd /home/runner/work/engine/engine/build/modules/core && /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT modules/core/CMakeFiles/plugin_loader.dir/plugin_loader.c.o -MF CMakeFiles/plugin_loader.dir/plugin_loader.c.o.d -o CMakeFiles/plugin_loader.dir/plugin_loader.c.o -c /home/runner/work/engine/engine/modules/core/plugin_loader.c
+	cd /home/runner/work/engine/engine/build/modules/core && /home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT modules/core/CMakeFiles/plugin_loader.dir/plugin_loader.c.o -MF CMakeFiles/plugin_loader.dir/plugin_loader.c.o.d -o CMakeFiles/plugin_loader.dir/plugin_loader.c.o -c /home/runner/work/engine/engine/modules/core/plugin_loader.c
 
 modules/core/CMakeFiles/plugin_loader.dir/plugin_loader.c.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/plugin_loader.dir/plugin_loader.c.i"
-	cd /home/runner/work/engine/engine/build/modules/core && /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/modules/core/plugin_loader.c > CMakeFiles/plugin_loader.dir/plugin_loader.c.i
+	cd /home/runner/work/engine/engine/build/modules/core && /home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/modules/core/plugin_loader.c > CMakeFiles/plugin_loader.dir/plugin_loader.c.i
 
 modules/core/CMakeFiles/plugin_loader.dir/plugin_loader.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/plugin_loader.dir/plugin_loader.c.s"
-	cd /home/runner/work/engine/engine/build/modules/core && /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/modules/core/plugin_loader.c -o CMakeFiles/plugin_loader.dir/plugin_loader.c.s
+	cd /home/runner/work/engine/engine/build/modules/core && /home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/modules/core/plugin_loader.c -o CMakeFiles/plugin_loader.dir/plugin_loader.c.s
 
 # Object files for target plugin_loader
 plugin_loader_OBJECTS = \

@@ -3,24 +3,24 @@ modules/core/CMakeFiles/subsystem_manager.dir/subsystem_manager.c.o: \
   /home/runner/work/engine/engine/modules/core/subsystem_manager.h \
   /home/runner/work/engine/engine/modules/core/subsystem.h \
   /home/runner/work/engine/engine/modules/core/async_subsystem.h \
-  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/lib/clang/23/include/stdint.h \
-  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/cache/sysroot/include/stdint.h \
-  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/cache/sysroot/include/bits/alltypes.h \
-  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/cache/sysroot/include/compat/string.h \
-  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/cache/sysroot/include/string.h \
-  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/cache/sysroot/include/features.h \
-  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/cache/sysroot/include/strings.h \
-  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/cache/sysroot/include/emscripten.h \
-  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h \
-  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/cache/sysroot/include/emscripten/em_asm.h \
-  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/cache/sysroot/include/emscripten/em_js.h \
-  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/cache/sysroot/include/emscripten/em_macros.h \
-  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/lib/clang/23/include/stdbool.h \
-  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/cache/sysroot/include/stdbool.h \
-  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/cache/sysroot/include/emscripten/em_types.h \
-  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/cache/sysroot/include/emscripten/promise.h \
-  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/cache/sysroot/include/compat/stdlib.h \
-  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/cache/sysroot/include/stdlib.h \
-  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/cache/sysroot/include/alloca.h \
-  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/cache/sysroot/include/emscripten/version.h \
-  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/cache/sysroot/include/emscripten/wget.h
+  /home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/lib/clang/23/include/stdint.h \
+  /home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/emscripten/cache/sysroot/include/stdint.h \
+  /home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/emscripten/cache/sysroot/include/bits/alltypes.h \
+  /home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/emscripten/cache/sysroot/include/compat/string.h \
+  /home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/emscripten/cache/sysroot/include/string.h \
+  /home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/emscripten/cache/sysroot/include/features.h \
+  /home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/emscripten/cache/sysroot/include/strings.h \
+  /home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/emscripten/cache/sysroot/include/emscripten.h \
+  /home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/emscripten/cache/sysroot/include/emscripten/emscripten.h \
+  /home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/emscripten/cache/sysroot/include/emscripten/em_asm.h \
+  /home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/emscripten/cache/sysroot/include/emscripten/em_js.h \
+  /home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/emscripten/cache/sysroot/include/emscripten/em_macros.h \
+  /home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/lib/clang/23/include/stdbool.h \
+  /home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/emscripten/cache/sysroot/include/stdbool.h \
+  /home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/emscripten/cache/sysroot/include/emscripten/em_types.h \
+  /home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/emscripten/cache/sysroot/include/emscripten/promise.h \
+  /home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/emscripten/cache/sysroot/include/compat/stdlib.h \
+  /home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/emscripten/cache/sysroot/include/stdlib.h \
+  /home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/emscripten/cache/sysroot/include/alloca.h \
+  /home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/emscripten/cache/sysroot/include/emscripten/version.h \
+  /home/runner/work/_temp/8d546eb9-712a-49db-96a3-aac41b1e1490/emsdk-main/upstream/emscripten/cache/sysroot/include/emscripten/wget.h

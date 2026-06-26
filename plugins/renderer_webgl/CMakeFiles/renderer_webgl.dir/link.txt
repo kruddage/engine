@@ -1,0 +1,2 @@
+/home/runner/work/_temp/4b217378-07ae-43de-a9e7-2a86e85fd910/emsdk-main/upstream/emscripten/emar qc librenderer_webgl.a CMakeFiles/renderer_webgl.dir/renderer_webgl.c.o
+/home/runner/work/_temp/4b217378-07ae-43de-a9e7-2a86e85fd910/emsdk-main/upstream/emscripten/emranlib librenderer_webgl.a

@@ -3,12 +3,14 @@
 /*
  * kruddboard — engine debug overlay plugin.
  *
- * Registers three always-on ImGui panels via imgui_api:
+ * Registers three ImGui panels via imgui_api:
  *   "Frame Stats"  — FPS, frame time ms, frame count
  *   "Log"          — scrollable live log stream with level filter
  *   "Subsystems"   — loaded plugins, API presence, tick vs. init-only
  *
- * Must be loaded after imgui_plugin.
+ * Panels register lazily on the first tick after imgui_api is available,
+ * avoiding the async dlopen race where kruddboard loads before imgui_plugin.
+ * Toggle visibility with backtick (`). Visible by default.
  */
 
 extern "C" {
@@ -22,17 +24,40 @@ extern "C" {
 
 #include "imgui.h"
 
-static const struct log_api          *g_log;
-static const struct stats_api        *g_stats;
+#ifdef __EMSCRIPTEN__
+#include <emscripten/html5.h>
+#include <string.h>
+#endif
+
+static const struct log_api           *g_log;
+static const struct stats_api         *g_stats;
 static const struct subsystem_manager *g_mgr;
+static int                             g_visible = 1;
+static int                             g_panels_registered;
 
 /* ------------------------------------------------------------------ */
-/* Frame Stats panel (#114)                                            */
+/* Visibility toggle                                                   */
+/* ------------------------------------------------------------------ */
+
+#ifdef __EMSCRIPTEN__
+static EM_BOOL on_keydown(int /*type*/, const EmscriptenKeyboardEvent *e,
+			   void * /*ud*/)
+{
+	if (strcmp(e->code, "Backquote") == 0) {
+		g_visible = !g_visible;
+		return EM_TRUE;
+	}
+	return EM_FALSE;
+}
+#endif
+
+/* ------------------------------------------------------------------ */
+/* Frame Stats panel                                                   */
 /* ------------------------------------------------------------------ */
 
 static void draw_stats(void * /*userdata*/)
 {
-	if (!g_stats)
+	if (!g_stats || !g_visible)
 		return;
 
 	ImGui::SetNextWindowPos(ImVec2(10.0f, 10.0f), ImGuiCond_Once);
@@ -45,7 +70,7 @@ static void draw_stats(void * /*userdata*/)
 }
 
 /* ------------------------------------------------------------------ */
-/* Log viewer panel (#115)                                             */
+/* Log viewer panel                                                    */
 /* ------------------------------------------------------------------ */
 
 static void draw_log(void * /*userdata*/)
@@ -56,7 +81,7 @@ static void draw_log(void * /*userdata*/)
 	uint32_t     count;
 	uint32_t     i;
 
-	if (!g_log)
+	if (!g_log || !g_visible)
 		return;
 
 	count = g_log->get_history(msgs, LOG_HISTORY_CAP);
@@ -102,14 +127,14 @@ static void draw_log(void * /*userdata*/)
 }
 
 /* ------------------------------------------------------------------ */
-/* Subsystem list panel (#116)                                         */
+/* Subsystem list panel                                                */
 /* ------------------------------------------------------------------ */
 
 static void draw_subsystems(void * /*userdata*/)
 {
 	int i;
 
-	if (!g_mgr)
+	if (!g_mgr || !g_visible)
 		return;
 
 	ImGui::SetNextWindowPos(ImVec2(520.0f, 10.0f), ImGuiCond_Once);
@@ -152,13 +177,41 @@ static void draw_subsystems(void * /*userdata*/)
 }
 
 /* ------------------------------------------------------------------ */
-/* Plugin lifecycle (#113)                                             */
+/* Plugin lifecycle                                                    */
 /* ------------------------------------------------------------------ */
 
 static void kruddboard_init(void)
 {
+#ifdef __EMSCRIPTEN__
+	emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT,
+					nullptr, 0, on_keydown);
+#endif
 	if (g_log)
 		g_log->write(LOG_LEVEL_INFO, "kruddboard: init");
+}
+
+static void kruddboard_tick(void)
+{
+#ifdef __EMSCRIPTEN__
+	const struct imgui_api *imgui;
+
+	if (g_panels_registered)
+		return;
+
+	imgui = (const struct imgui_api *)
+		subsystem_manager_get_api(g_mgr, "imgui");
+
+	if (!imgui)
+		return;
+
+	imgui->register_panel("Frame Stats", draw_stats,      nullptr);
+	imgui->register_panel("Log",         draw_log,        nullptr);
+	imgui->register_panel("Subsystems",  draw_subsystems,  nullptr);
+	g_panels_registered = 1;
+
+	if (g_log)
+		g_log->write(LOG_LEVEL_INFO, "kruddboard: panels registered");
+#endif
 }
 
 static void kruddboard_shutdown(void)
@@ -171,7 +224,7 @@ static const struct subsystem desc = {
 	"kruddboard",
 	nullptr,
 	kruddboard_init,
-	nullptr, /* panels draw via imgui_api callbacks, not tick */
+	kruddboard_tick,
 	kruddboard_shutdown,
 };
 
@@ -181,27 +234,12 @@ extern "C" void plugin_entry(struct subsystem_manager *mgr)
 extern "C" void kruddboard_entry(struct subsystem_manager *mgr)
 #endif
 {
-	const struct imgui_api *imgui;
-
 #ifdef __EMSCRIPTEN__
 	g_log   = (const struct log_api *)
 		subsystem_manager_get_api(mgr, "log");
 	g_stats = (const struct stats_api *)
 		subsystem_manager_get_api(mgr, "stats");
 	g_mgr   = mgr;
-
-	imgui = (const struct imgui_api *)
-		subsystem_manager_get_api(mgr, "imgui");
-
-	if (!imgui) {
-		if (g_log)
-			g_log->write(LOG_LEVEL_WARN,
-				     "kruddboard: imgui_api not found, panels disabled");
-	} else {
-		imgui->register_panel("Frame Stats", draw_stats,     nullptr);
-		imgui->register_panel("Log",         draw_log,       nullptr);
-		imgui->register_panel("Subsystems",  draw_subsystems, nullptr);
-	}
 #endif
 
 	subsystem_manager_register(mgr, &desc);

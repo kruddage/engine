@@ -1,0 +1,2 @@
+/home/runner/work/_temp/7b576629-e0d6-4e3e-ae78-51a2b76178a9/emsdk-main/upstream/emscripten/emar qc libplugin_loader.a CMakeFiles/plugin_loader.dir/plugin_loader.c.o
+/home/runner/work/_temp/7b576629-e0d6-4e3e-ae78-51a2b76178a9/emsdk-main/upstream/emscripten/emranlib libplugin_loader.a

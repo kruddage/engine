@@ -32,6 +32,7 @@ if(NOT EMSCRIPTEN)
 endif()
 
 if(EMSCRIPTEN)
+	target_sources(index PRIVATE plugin_abi.c)
 	set_target_properties(index PROPERTIES
 		SUFFIX ".html"
 		RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}

@@ -147,7 +147,8 @@ footer {
 	color: #555;
 }
 
-.error-dismiss {
+.error-dismiss,
+.error-copy {
 	background: none;
 	border: 1px solid #333;
 	color: #666;
@@ -158,9 +159,15 @@ footer {
 	letter-spacing: 0.05em;
 }
 
-.error-dismiss:hover {
+.error-dismiss:hover,
+.error-copy:hover {
 	border-color: #555;
 	color: #aaa;
+}
+
+.error-copy.copied {
+	border-color: #2d6a2d;
+	color: #4a9a4a;
 }
 
 .error-body {
@@ -199,6 +206,7 @@ footer {
 				<span class="error-label" id="error-label"></span>
 				<span class="error-source">index.wasm</span>
 			</div>
+			<button class="error-copy" id="error-copy">copy</button>
 			<button class="error-dismiss" id="error-dismiss">dismiss</button>
 		</div>
 		<div class="error-body" id="error-body"></div>
@@ -208,6 +216,19 @@ footer {
 <script>
 	document.getElementById('error-dismiss').addEventListener('click', function () {
 		document.getElementById('error-backdrop').classList.remove('visible');
+	});
+
+	document.getElementById('error-copy').addEventListener('click', function () {
+		var btn = this;
+		var text = document.getElementById('error-body').textContent;
+		navigator.clipboard.writeText(text).then(function () {
+			btn.textContent = 'copied!';
+			btn.classList.add('copied');
+			setTimeout(function () {
+				btn.textContent = 'copy';
+				btn.classList.remove('copied');
+			}, 2000);
+		});
 	});
 
 	/* Called by error_overlay.js */

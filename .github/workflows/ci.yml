@@ -128,7 +128,12 @@ jobs:
           emcmake cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache
           cmake --build build
 
+      # Stage only the web outputs. Publishing the raw build/ tree would commit
+      # _deps/ (a gitlink) to gh-pages and break the Pages branch build.
+      - name: Stage site
+        run: sh scripts/stage-site.sh build public
+
       - name: Deploy PR preview
         uses: rossjrw/pr-preview-action@v1
         with:
-          source-dir: build
+          source-dir: public

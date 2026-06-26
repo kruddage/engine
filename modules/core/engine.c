@@ -13,6 +13,10 @@
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
+#include "canvas_api.h"
+#include "fetch_api.h"
+extern const struct canvas_api g_canvas_api;
+extern const struct fetch_api  g_fetch_api;
 #endif
 
 /*
@@ -40,13 +44,26 @@ static const struct memory_api g_mem_api = {
 /* Mutable; updated each tick and read by plugins via the "stats" api. */
 static struct stats_api g_stats_api;
 
+#ifdef __EMSCRIPTEN__
+/* canvas and fetch must precede plugin_loader so plugins can retrieve them. */
+static const struct subsystem subsystems[] = {
+	{ .name = "log",           .api = &g_log_api,    .init = log_init,           .shutdown = log_shutdown           },
+	{ .name = "memory",        .api = &g_mem_api,    .init = mem_init,           .shutdown = mem_shutdown           },
+	{ .name = "canvas",        .api = &g_canvas_api                                                                  },
+	{ .name = "fetch",         .api = &g_fetch_api                                                                   },
+	{ .name = "plugin_loader",                        .init = plugin_loader_init, .shutdown = plugin_loader_shutdown },
+	{ .name = "stats",         .api = &g_stats_api                                                                   },
+	{ NULL }
+};
+#else
 static const struct subsystem subsystems[] = {
 	{ .name = "log",           .api = &g_log_api, .init = log_init,           .shutdown = log_shutdown           },
 	{ .name = "memory",        .api = &g_mem_api, .init = mem_init,           .shutdown = mem_shutdown           },
 	{ .name = "plugin_loader",                    .init = plugin_loader_init, .shutdown = plugin_loader_shutdown },
-	{ .name = "stats",         .api = &g_stats_api                                                                },
+	{ .name = "stats",         .api = &g_stats_api                                                                 },
 	{ NULL }
 };
+#endif
 
 static const char * const plugins[] = {
 	"hello_plugin.wasm",

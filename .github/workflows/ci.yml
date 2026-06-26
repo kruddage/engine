@@ -88,9 +88,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Ban EM_ASM in plugin side modules
+      - name: Ban emscripten_* calls in plugin side modules
         run: |
-          ! grep -rn --include='*.c' --include='*.cpp' 'EM_ASM' plugins/
+          ! grep -rn --include='*.c' --include='*.cpp' 'emscripten_' plugins/
 
   clang-tidy:
     runs-on: ubuntu-latest

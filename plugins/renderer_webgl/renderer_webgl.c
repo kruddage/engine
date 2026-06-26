@@ -9,8 +9,11 @@
 #include <stdlib.h>
 
 #ifdef __EMSCRIPTEN__
-#include <emscripten/html5.h>
 #include <GLES3/gl3.h>
+/* Wrappers defined in plugin_abi.c (main module); imported at dynamic-link. */
+extern int  webgl_context_create(void);
+extern void webgl_context_make_current(int ctx);
+extern void webgl_context_destroy(int ctx);
 #else
 #include "log.h"
 static const struct log_api native_log = { log_write };
@@ -34,9 +37,9 @@ struct gpu_texture {
 };
 
 #ifdef __EMSCRIPTEN__
-static const struct log_api           *g_log;
-static EMSCRIPTEN_WEBGL_CONTEXT_HANDLE g_ctx;
-static unsigned int                    g_topology; /* active draw topology */
+static const struct log_api *g_log;
+static int                   g_ctx;
+static unsigned int          g_topology; /* active draw topology */
 #else
 static const struct log_api *g_log = &native_log;
 #endif
@@ -272,13 +275,8 @@ static const struct gpu_api webgl_api = {
 static void renderer_webgl_init(void)
 {
 #ifdef __EMSCRIPTEN__
-	EmscriptenWebGLContextAttributes attrs;
-
-	emscripten_webgl_init_context_attributes(&attrs);
-	attrs.majorVersion = 2;
-	attrs.minorVersion = 0;
-	g_ctx = emscripten_webgl_create_context("#canvas", &attrs);
-	emscripten_webgl_make_context_current(g_ctx);
+	g_ctx = webgl_context_create();
+	webgl_context_make_current(g_ctx);
 #endif
 	g_log->write(LOG_LEVEL_INFO, "renderer_webgl: init");
 }
@@ -296,7 +294,7 @@ static void renderer_webgl_shutdown(void)
 {
 	g_log->write(LOG_LEVEL_INFO, "renderer_webgl: shutdown");
 #ifdef __EMSCRIPTEN__
-	emscripten_webgl_destroy_context(g_ctx);
+	webgl_context_destroy(g_ctx);
 #endif
 }
 

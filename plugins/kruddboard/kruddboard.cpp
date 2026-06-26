@@ -25,13 +25,16 @@ extern "C" {
 #include "imgui.h"
 
 #ifdef __EMSCRIPTEN__
-#include <emscripten/html5.h>
+#include "canvas_api.h"
 #include <string.h>
 #endif
 
 static const struct log_api           *g_log;
 static const struct stats_api         *g_stats;
 static const struct subsystem_manager *g_mgr;
+#ifdef __EMSCRIPTEN__
+static const struct canvas_api        *g_canvas;
+#endif
 static int                             g_visible = 1;
 static int                             g_panels_registered;
 
@@ -40,14 +43,13 @@ static int                             g_panels_registered;
 /* ------------------------------------------------------------------ */
 
 #ifdef __EMSCRIPTEN__
-static EM_BOOL on_keydown(int /*type*/, const EmscriptenKeyboardEvent *e,
-			   void * /*ud*/)
+static int on_keydown(const struct canvas_key_event *ev, void * /*ud*/)
 {
-	if (strcmp(e->code, "Backquote") == 0) {
+	if (strcmp(ev->code, "Backquote") == 0) {
 		g_visible = !g_visible;
-		return EM_TRUE;
+		return 1;
 	}
-	return EM_FALSE;
+	return 0;
 }
 #endif
 
@@ -183,8 +185,7 @@ static void draw_subsystems(void * /*userdata*/)
 static void kruddboard_init(void)
 {
 #ifdef __EMSCRIPTEN__
-	emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT,
-					nullptr, 0, on_keydown);
+	g_canvas->set_keydown_callback(on_keydown, nullptr);
 #endif
 	if (g_log)
 		g_log->write(LOG_LEVEL_INFO, "kruddboard: init");
@@ -235,11 +236,13 @@ extern "C" void kruddboard_entry(struct subsystem_manager *mgr)
 #endif
 {
 #ifdef __EMSCRIPTEN__
-	g_log   = (const struct log_api *)
+	g_log    = (const struct log_api *)
 		subsystem_manager_get_api(mgr, "log");
-	g_stats = (const struct stats_api *)
+	g_stats  = (const struct stats_api *)
 		subsystem_manager_get_api(mgr, "stats");
-	g_mgr   = mgr;
+	g_canvas = (const struct canvas_api *)
+		subsystem_manager_get_api(mgr, "canvas");
+	g_mgr    = mgr;
 #endif
 
 	subsystem_manager_register(mgr, &desc);

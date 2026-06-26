@@ -9,7 +9,7 @@
 #include <stdint.h>
 
 #ifdef __EMSCRIPTEN__
-#include <emscripten/fetch.h>
+#include "fetch_api.h"
 #else
 #include <stdio.h>
 #include "log.h"
@@ -37,6 +37,7 @@ static int32_t            cache_count;
 #ifdef __EMSCRIPTEN__
 static const struct log_api    *g_log;
 static const struct memory_api *g_mem;
+static const struct fetch_api  *g_fetch;
 #else
 static const struct log_api    *g_log = &native_log;
 static const struct memory_api *g_mem = &native_mem;
@@ -77,43 +78,36 @@ static void evict_entry(struct asset_entry *e)
 
 #ifdef __EMSCRIPTEN__
 
-static void on_fetch_success(emscripten_fetch_t *fetch)
+static void on_fetch_success(void *userdata, const void *data, uint32_t size)
 {
-	struct asset_entry *e = (struct asset_entry *)fetch->userData;
+	struct asset_entry *e = (struct asset_entry *)userdata;
 
-	e->data = g_mem->alloc((size_t)fetch->numBytes);
+	e->data = g_mem->alloc((size_t)size);
 	if (e->data) {
-		memcpy(e->data, fetch->data, (size_t)fetch->numBytes);
-		e->size  = (uint32_t)fetch->numBytes;
+		memcpy(e->data, data, (size_t)size);
+		e->size  = size;
 		e->state = ASSET_LOADED;
-		g_log->write(LOG_LEVEL_INFO, "asset: loaded %s (%u bytes)", e->path, e->size);
+		g_log->write(LOG_LEVEL_INFO, "asset: loaded %s (%u bytes)",
+			     e->path, e->size);
 	} else {
 		e->state = ASSET_ERROR;
-		g_log->write(LOG_LEVEL_INFO, "asset: out of memory loading %s", e->path);
+		g_log->write(LOG_LEVEL_INFO,
+			     "asset: out of memory loading %s", e->path);
 	}
-	emscripten_fetch_close(fetch);
 }
 
-static void on_fetch_error(emscripten_fetch_t *fetch)
+static void on_fetch_error(void *userdata, int http_status)
 {
-	struct asset_entry *e = (struct asset_entry *)fetch->userData;
+	struct asset_entry *e = (struct asset_entry *)userdata;
 
 	e->state = ASSET_ERROR;
-	g_log->write(LOG_LEVEL_INFO, "asset: error loading %s (HTTP %d)", e->path, fetch->status);
-	emscripten_fetch_close(fetch);
+	g_log->write(LOG_LEVEL_INFO, "asset: error loading %s (HTTP %d)",
+		     e->path, http_status);
 }
 
 static void start_fetch(struct asset_entry *e)
 {
-	emscripten_fetch_attr_t attr;
-
-	emscripten_fetch_attr_init(&attr);
-	strncpy(attr.requestMethod, "GET", sizeof(attr.requestMethod) - 1);
-	attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY;
-	attr.userData   = e;
-	attr.onsuccess  = on_fetch_success;
-	attr.onerror    = on_fetch_error;
-	emscripten_fetch(&attr, e->path);
+	g_fetch->fetch(e->path, e, on_fetch_success, on_fetch_error);
 }
 
 #else /* native: synchronous filesystem read */
@@ -245,8 +239,9 @@ void asset_plugin_entry(struct subsystem_manager *mgr)
 #endif
 {
 #ifdef __EMSCRIPTEN__
-	g_log = subsystem_manager_get_api(mgr, "log");
-	g_mem = subsystem_manager_get_api(mgr, "memory");
+	g_log   = subsystem_manager_get_api(mgr, "log");
+	g_mem   = subsystem_manager_get_api(mgr, "memory");
+	g_fetch = subsystem_manager_get_api(mgr, "fetch");
 #endif
 	subsystem_manager_register(mgr, &desc);
 }

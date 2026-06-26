@@ -27,16 +27,15 @@ extern "C" {
 #include "backends/imgui_impl_opengl3.h"
 
 #ifdef __EMSCRIPTEN__
-#include <emscripten/html5.h>
 #include <GLES3/gl3.h>
-
-/* Defined in plugin_abi.c (main module) via EM_JS; side modules must not
- * use inline-JS macros directly — see plugin_abi.c for the explanation. */
-extern "C" double get_device_pixel_ratio(void);
+#include "canvas_api.h"
 #endif
 
-static const struct log_api   *g_log;
-static const struct stats_api *g_stats;
+static const struct log_api    *g_log;
+static const struct stats_api  *g_stats;
+#ifdef __EMSCRIPTEN__
+static const struct canvas_api *g_canvas;
+#endif
 
 struct panel_entry {
 	const char *name;
@@ -63,41 +62,33 @@ static const imgui_api g_imgui_api = { imgui_register_panel };
 
 #ifdef __EMSCRIPTEN__
 
-static EM_BOOL on_mouse_move(int /*type*/, const EmscriptenMouseEvent *e,
-			     void * /*ud*/)
+static int on_mouse_move(const struct canvas_mouse_event *ev, void * /*ud*/)
 {
-	ImGui::GetIO().AddMousePosEvent((float)e->canvasX, (float)e->canvasY);
-	return EM_FALSE;
+	ImGui::GetIO().AddMousePosEvent((float)ev->x, (float)ev->y);
+	return 0;
 }
 
-static EM_BOOL on_mouse_button(int type, const EmscriptenMouseEvent *e,
-			       void * /*ud*/)
+static int on_mouse_button(int pressed, const struct canvas_mouse_event *ev,
+			    void * /*ud*/)
 {
-	bool pressed = (type == EMSCRIPTEN_EVENT_MOUSEDOWN);
-
-	if ((int)e->button < 5)
-		ImGui::GetIO().AddMouseButtonEvent((int)e->button, pressed);
-	return EM_FALSE;
+	if ((int)ev->button < 5)
+		ImGui::GetIO().AddMouseButtonEvent((int)ev->button,
+						   (bool)pressed);
+	return 0;
 }
 
-static EM_BOOL on_touch(int type, const EmscriptenTouchEvent *e,
-			void * /*ud*/)
+static int on_touch(const struct canvas_touch_event *ev, void * /*ud*/)
 {
-	if (e->numTouches < 1)
-		return EM_FALSE;
-
-	const EmscriptenTouchPoint *t = &e->touches[0];
 	ImGuiIO &io = ImGui::GetIO();
 
-	io.AddMousePosEvent((float)t->targetX, (float)t->targetY);
+	io.AddMousePosEvent((float)ev->x, (float)ev->y);
 
-	if (type == EMSCRIPTEN_EVENT_TOUCHSTART)
+	if (ev->type == CANVAS_TOUCH_START)
 		io.AddMouseButtonEvent(0, true);
-	else if (type == EMSCRIPTEN_EVENT_TOUCHEND ||
-		 type == EMSCRIPTEN_EVENT_TOUCHCANCEL)
+	else if (ev->type == CANVAS_TOUCH_END || ev->type == CANVAS_TOUCH_CANCEL)
 		io.AddMouseButtonEvent(0, false);
 
-	return EM_TRUE;
+	return 1;
 }
 
 #endif /* __EMSCRIPTEN__ */
@@ -114,13 +105,13 @@ static void imgui_init(void)
 	ImGui_ImplOpenGL3_Init("#version 300 es");
 
 #ifdef __EMSCRIPTEN__
-	emscripten_set_mousemove_callback("#canvas", nullptr, 0, on_mouse_move);
-	emscripten_set_mousedown_callback("#canvas", nullptr, 0, on_mouse_button);
-	emscripten_set_mouseup_callback("#canvas",   nullptr, 0, on_mouse_button);
-	emscripten_set_touchstart_callback("#canvas",  nullptr, 0, on_touch);
-	emscripten_set_touchmove_callback("#canvas",   nullptr, 0, on_touch);
-	emscripten_set_touchend_callback("#canvas",    nullptr, 0, on_touch);
-	emscripten_set_touchcancel_callback("#canvas", nullptr, 0, on_touch);
+	g_canvas->set_mousemove_callback(on_mouse_move,   nullptr);
+	g_canvas->set_mousedown_callback(on_mouse_button, nullptr);
+	g_canvas->set_mouseup_callback(on_mouse_button,   nullptr);
+	g_canvas->set_touchstart_callback(on_touch,  nullptr);
+	g_canvas->set_touchmove_callback(on_touch,   nullptr);
+	g_canvas->set_touchend_callback(on_touch,    nullptr);
+	g_canvas->set_touchcancel_callback(on_touch, nullptr);
 #endif
 
 	g_log->write(LOG_LEVEL_INFO, "imgui_plugin: init");
@@ -134,11 +125,11 @@ static void imgui_tick(void)
 	int    phys_w, phys_h;
 	int    i;
 
-	emscripten_get_element_css_size("#canvas", &css_w, &css_h);
-	dpr    = get_device_pixel_ratio();
+	g_canvas->get_css_size(&css_w, &css_h);
+	dpr    = g_canvas->get_device_pixel_ratio();
 	phys_w = (int)(css_w * dpr + 0.5);
 	phys_h = (int)(css_h * dpr + 0.5);
-	emscripten_set_canvas_element_size("#canvas", phys_w, phys_h);
+	g_canvas->set_size(phys_w, phys_h);
 
 	ImGuiIO &io = ImGui::GetIO();
 	io.DisplaySize             = ImVec2((float)css_w, (float)css_h);
@@ -182,10 +173,12 @@ extern "C" void imgui_plugin_entry(struct subsystem_manager *mgr)
 #endif
 {
 #ifdef __EMSCRIPTEN__
-	g_log   = (const struct log_api *)
+	g_log    = (const struct log_api *)
 		subsystem_manager_get_api(mgr, "log");
-	g_stats = (const struct stats_api *)
+	g_stats  = (const struct stats_api *)
 		subsystem_manager_get_api(mgr, "stats");
+	g_canvas = (const struct canvas_api *)
+		subsystem_manager_get_api(mgr, "canvas");
 #endif
 	subsystem_manager_register(mgr, &desc);
 }

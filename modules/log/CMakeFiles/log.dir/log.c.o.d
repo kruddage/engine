@@ -3,31 +3,31 @@ modules/log/CMakeFiles/log.dir/log.c.o: \
   /home/runner/work/engine/engine/modules/log/log.h \
   /home/runner/work/engine/engine/plugins/include/log_api.h \
   /home/runner/work/engine/engine/plugins/include/log_level.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/emscripten/cache/sysroot/include/compat/stdarg.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/lib/clang/23/include/stdarg.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/emscripten/cache/sysroot/include/stdarg.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/lib/clang/23/include/__stdarg_header_macro.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/lib/clang/23/include/__stdarg___gnuc_va_list.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/lib/clang/23/include/__stdarg_va_list.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/lib/clang/23/include/__stdarg_va_arg.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/lib/clang/23/include/__stdarg___va_copy.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/lib/clang/23/include/__stdarg_va_copy.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/lib/clang/23/include/stdint.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/emscripten/cache/sysroot/include/stdint.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/emscripten/cache/sysroot/include/bits/alltypes.h \
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/emscripten/cache/sysroot/include/compat/stdarg.h \
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/lib/clang/23/include/stdarg.h \
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/emscripten/cache/sysroot/include/stdarg.h \
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/lib/clang/23/include/__stdarg_header_macro.h \
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/lib/clang/23/include/__stdarg___gnuc_va_list.h \
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/lib/clang/23/include/__stdarg_va_list.h \
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/lib/clang/23/include/__stdarg_va_arg.h \
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/lib/clang/23/include/__stdarg___va_copy.h \
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/lib/clang/23/include/__stdarg_va_copy.h \
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/lib/clang/23/include/stdint.h \
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/emscripten/cache/sysroot/include/stdint.h \
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/emscripten/cache/sysroot/include/bits/alltypes.h \
   /home/runner/work/engine/engine/modules/core/ring_buf.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/lib/clang/23/include/stddef.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/emscripten/cache/sysroot/include/stddef.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/lib/clang/23/include/__stddef_header_macro.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/lib/clang/23/include/__stddef_ptrdiff_t.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/lib/clang/23/include/__stddef_size_t.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/lib/clang/23/include/__stddef_wchar_t.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/lib/clang/23/include/__stddef_null.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/lib/clang/23/include/__stddef_max_align_t.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/lib/clang/23/include/__stddef_offsetof.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/emscripten/cache/sysroot/include/stdio.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/emscripten/cache/sysroot/include/wasi/api.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/emscripten/cache/sysroot/include/features.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/emscripten/cache/sysroot/include/compat/string.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/emscripten/cache/sysroot/include/string.h \
-  /home/runner/work/_temp/91016e69-2b65-400f-9c95-c722818b986b/emsdk-main/upstream/emscripten/cache/sysroot/include/strings.h
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/lib/clang/23/include/stddef.h \
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/emscripten/cache/sysroot/include/stddef.h \
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/lib/clang/23/include/__stddef_header_macro.h \
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/lib/clang/23/include/__stddef_ptrdiff_t.h \
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/lib/clang/23/include/__stddef_size_t.h \
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/lib/clang/23/include/__stddef_wchar_t.h \
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/lib/clang/23/include/__stddef_null.h \
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/lib/clang/23/include/__stddef_max_align_t.h \
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/lib/clang/23/include/__stddef_offsetof.h \
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/emscripten/cache/sysroot/include/stdio.h \
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/emscripten/cache/sysroot/include/wasi/api.h \
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/emscripten/cache/sysroot/include/features.h \
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/emscripten/cache/sysroot/include/compat/string.h \
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/emscripten/cache/sysroot/include/string.h \
+  /home/runner/work/_temp/093a3af1-86fa-49c3-ab57-6d77d8c5b1eb/emsdk-main/upstream/emscripten/cache/sysroot/include/strings.h

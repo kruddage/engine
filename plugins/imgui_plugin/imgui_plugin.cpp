@@ -31,7 +31,7 @@ extern "C" {
 #include <GLES3/gl3.h>
 
 /* Defined in plugin_abi.c (main module) via EM_JS; side modules must not
- * use EM_ASM_* — see plugin_abi.c for the explanation. */
+ * use inline-JS macros directly — see plugin_abi.c for the explanation. */
 extern "C" double get_device_pixel_ratio(void);
 #endif
 

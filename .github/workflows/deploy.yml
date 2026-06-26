@@ -22,9 +22,16 @@ jobs:
           emcmake cmake -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build
 
+      - name: Collect web artifacts
+        run: |
+          mkdir -p web
+          find build -maxdepth 1 \( -name "*.html" -o -name "*.js" -o -name "*.wasm" \) \
+            -exec cp {} web/ \;
+          [ -d build/assets ] && cp -r build/assets web/ || true
+
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./build
+          publish_dir: ./web
           keep_files: true

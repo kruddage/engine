@@ -111,7 +111,14 @@ jobs:
           emcmake cmake -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build
 
+      - name: Collect web artifacts
+        run: |
+          mkdir -p web
+          find build -maxdepth 1 \( -name "*.html" -o -name "*.js" -o -name "*.wasm" \) \
+            -exec cp {} web/ \;
+          [ -d build/assets ] && cp -r build/assets web/ || true
+
       - name: Deploy PR preview
         uses: rossjrw/pr-preview-action@v1
         with:
-          source-dir: build
+          source-dir: web

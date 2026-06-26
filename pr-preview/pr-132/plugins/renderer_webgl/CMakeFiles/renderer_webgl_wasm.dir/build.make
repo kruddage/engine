@@ -70,7 +70,7 @@ plugins/renderer_webgl/CMakeFiles/renderer_webgl_wasm: renderer_webgl.wasm
 
 renderer_webgl.wasm: /home/runner/work/engine/engine/plugins/renderer_webgl/renderer_webgl.c
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --blue --bold --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building renderer_webgl SIDE_MODULE"
-	cd /home/runner/work/engine/engine/build/plugins/renderer_webgl && /home/runner/work/_temp/7b576629-e0d6-4e3e-ae78-51a2b76178a9/emsdk-main/upstream/emscripten/emcc -sSIDE_MODULE=1 -O2 -I/home/runner/work/engine/engine/plugins/renderer_webgl -I/home/runner/work/engine/engine/plugins/renderer -I/home/runner/work/engine/engine/modules/core/include -I/home/runner/work/engine/engine/plugins/include -o /home/runner/work/engine/engine/build/renderer_webgl.wasm /home/runner/work/engine/engine/plugins/renderer_webgl/renderer_webgl.c
+	cd /home/runner/work/engine/engine/build/plugins/renderer_webgl && /home/runner/work/_temp/85c4f0f3-9eef-41ca-8ec9-263dfb24a320/emsdk-main/upstream/emscripten/emcc -sSIDE_MODULE=1 -O2 -I/home/runner/work/engine/engine/plugins/renderer_webgl -I/home/runner/work/engine/engine/plugins/renderer -I/home/runner/work/engine/engine/modules/core/include -I/home/runner/work/engine/engine/plugins/include -o /home/runner/work/engine/engine/build/renderer_webgl.wasm /home/runner/work/engine/engine/plugins/renderer_webgl/renderer_webgl.c
 
 plugins/renderer_webgl/CMakeFiles/renderer_webgl_wasm.dir/codegen:
 .PHONY : plugins/renderer_webgl/CMakeFiles/renderer_webgl_wasm.dir/codegen

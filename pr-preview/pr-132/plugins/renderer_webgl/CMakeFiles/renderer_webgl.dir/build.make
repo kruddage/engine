@@ -76,15 +76,15 @@ plugins/renderer_webgl/CMakeFiles/renderer_webgl.dir/renderer_webgl.c.o: plugins
 plugins/renderer_webgl/CMakeFiles/renderer_webgl.dir/renderer_webgl.c.o: /home/runner/work/engine/engine/plugins/renderer_webgl/renderer_webgl.c
 plugins/renderer_webgl/CMakeFiles/renderer_webgl.dir/renderer_webgl.c.o: plugins/renderer_webgl/CMakeFiles/renderer_webgl.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building C object plugins/renderer_webgl/CMakeFiles/renderer_webgl.dir/renderer_webgl.c.o"
-	cd /home/runner/work/engine/engine/build/plugins/renderer_webgl && ccache /home/runner/work/_temp/7b576629-e0d6-4e3e-ae78-51a2b76178a9/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT plugins/renderer_webgl/CMakeFiles/renderer_webgl.dir/renderer_webgl.c.o -MF CMakeFiles/renderer_webgl.dir/renderer_webgl.c.o.d -o CMakeFiles/renderer_webgl.dir/renderer_webgl.c.o -c /home/runner/work/engine/engine/plugins/renderer_webgl/renderer_webgl.c
+	cd /home/runner/work/engine/engine/build/plugins/renderer_webgl && ccache /home/runner/work/_temp/85c4f0f3-9eef-41ca-8ec9-263dfb24a320/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT plugins/renderer_webgl/CMakeFiles/renderer_webgl.dir/renderer_webgl.c.o -MF CMakeFiles/renderer_webgl.dir/renderer_webgl.c.o.d -o CMakeFiles/renderer_webgl.dir/renderer_webgl.c.o -c /home/runner/work/engine/engine/plugins/renderer_webgl/renderer_webgl.c
 
 plugins/renderer_webgl/CMakeFiles/renderer_webgl.dir/renderer_webgl.c.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/renderer_webgl.dir/renderer_webgl.c.i"
-	cd /home/runner/work/engine/engine/build/plugins/renderer_webgl && /home/runner/work/_temp/7b576629-e0d6-4e3e-ae78-51a2b76178a9/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/plugins/renderer_webgl/renderer_webgl.c > CMakeFiles/renderer_webgl.dir/renderer_webgl.c.i
+	cd /home/runner/work/engine/engine/build/plugins/renderer_webgl && /home/runner/work/_temp/85c4f0f3-9eef-41ca-8ec9-263dfb24a320/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/plugins/renderer_webgl/renderer_webgl.c > CMakeFiles/renderer_webgl.dir/renderer_webgl.c.i
 
 plugins/renderer_webgl/CMakeFiles/renderer_webgl.dir/renderer_webgl.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/renderer_webgl.dir/renderer_webgl.c.s"
-	cd /home/runner/work/engine/engine/build/plugins/renderer_webgl && /home/runner/work/_temp/7b576629-e0d6-4e3e-ae78-51a2b76178a9/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/plugins/renderer_webgl/renderer_webgl.c -o CMakeFiles/renderer_webgl.dir/renderer_webgl.c.s
+	cd /home/runner/work/engine/engine/build/plugins/renderer_webgl && /home/runner/work/_temp/85c4f0f3-9eef-41ca-8ec9-263dfb24a320/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/plugins/renderer_webgl/renderer_webgl.c -o CMakeFiles/renderer_webgl.dir/renderer_webgl.c.s
 
 # Object files for target renderer_webgl
 renderer_webgl_OBJECTS = \

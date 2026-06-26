@@ -70,7 +70,7 @@ plugins/kruddboard/CMakeFiles/kruddboard_wasm: kruddboard.wasm
 
 kruddboard.wasm: /home/runner/work/engine/engine/plugins/kruddboard/kruddboard.cpp
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --blue --bold --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building kruddboard SIDE_MODULE"
-	cd /home/runner/work/engine/engine/build/plugins/kruddboard && /home/runner/work/_temp/7b576629-e0d6-4e3e-ae78-51a2b76178a9/emsdk-main/upstream/emscripten/em++ -sSIDE_MODULE=1 -O2 --std=c++17 -fno-exceptions -fno-rtti -I/home/runner/work/engine/engine/plugins/kruddboard -I/home/runner/work/engine/engine/modules/core/include -I/home/runner/work/engine/engine/plugins/include -I/home/runner/work/engine/engine/build/_deps/imgui-src -I/home/runner/work/engine/engine/build/_deps/imgui-src/backends -o /home/runner/work/engine/engine/build/kruddboard.wasm /home/runner/work/engine/engine/plugins/kruddboard/kruddboard.cpp
+	cd /home/runner/work/engine/engine/build/plugins/kruddboard && /home/runner/work/_temp/85c4f0f3-9eef-41ca-8ec9-263dfb24a320/emsdk-main/upstream/emscripten/em++ -sSIDE_MODULE=1 -O2 --std=c++17 -fno-exceptions -fno-rtti -I/home/runner/work/engine/engine/plugins/kruddboard -I/home/runner/work/engine/engine/modules/core/include -I/home/runner/work/engine/engine/plugins/include -I/home/runner/work/engine/engine/build/_deps/imgui-src -I/home/runner/work/engine/engine/build/_deps/imgui-src/backends -o /home/runner/work/engine/engine/build/kruddboard.wasm /home/runner/work/engine/engine/plugins/kruddboard/kruddboard.cpp
 
 plugins/kruddboard/CMakeFiles/kruddboard_wasm.dir/codegen:
 .PHONY : plugins/kruddboard/CMakeFiles/kruddboard_wasm.dir/codegen

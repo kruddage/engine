@@ -27,13 +27,18 @@ jobs:
           emcmake cmake -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build
 
-      # Publish the built site to the gh-pages root. keep_files: true preserves
-      # the pr-preview/ directories that pr-preview-action manages, so main and
-      # PR previews coexist on the same branch.
+      # Stage only the web outputs. Publishing the raw build/ tree would commit
+      # _deps/ (a gitlink) to gh-pages and break the Pages branch build.
+      - name: Stage site
+        run: sh scripts/stage-site.sh build public
+
+      # Publish to the gh-pages root. keep_files: true preserves the pr-preview/
+      # directories that pr-preview-action manages, so main and PR previews
+      # coexist on the same branch.
       - name: Publish to gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./build
+          publish_dir: ./public
           publish_branch: gh-pages
           keep_files: true

@@ -108,3 +108,29 @@ jobs:
 
       - name: Run clang-tidy
         run: run-clang-tidy -p build '.*(modules|plugins)/.*(?<!_test)\.c$'
+
+  preview:
+    if: github.event_name == 'pull_request'
+    needs: [build, sanitizers, coverage, clang-tidy]
+    runs-on: ubuntu-latest
+    # Serialised with deploy.yml so both never push to gh-pages simultaneously.
+    concurrency:
+      group: pages
+      cancel-in-progress: true
+    permissions:
+      contents: write
+      pull-requests: write
+      deployments: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download site artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: public
+
+      - name: Deploy PR preview
+        uses: rossjrw/pr-preview-action@v1
+        with:
+          source-dir: public

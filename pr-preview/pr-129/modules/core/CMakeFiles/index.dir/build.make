@@ -76,15 +76,15 @@ modules/core/CMakeFiles/index.dir/engine.c.o: modules/core/CMakeFiles/index.dir/
 modules/core/CMakeFiles/index.dir/engine.c.o: /home/runner/work/engine/engine/modules/core/engine.c
 modules/core/CMakeFiles/index.dir/engine.c.o: modules/core/CMakeFiles/index.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building C object modules/core/CMakeFiles/index.dir/engine.c.o"
-	cd /home/runner/work/engine/engine/build/modules/core && ccache /home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT modules/core/CMakeFiles/index.dir/engine.c.o -MF CMakeFiles/index.dir/engine.c.o.d -o CMakeFiles/index.dir/engine.c.o -c /home/runner/work/engine/engine/modules/core/engine.c
+	cd /home/runner/work/engine/engine/build/modules/core && ccache /home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT modules/core/CMakeFiles/index.dir/engine.c.o -MF CMakeFiles/index.dir/engine.c.o.d -o CMakeFiles/index.dir/engine.c.o -c /home/runner/work/engine/engine/modules/core/engine.c
 
 modules/core/CMakeFiles/index.dir/engine.c.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/index.dir/engine.c.i"
-	cd /home/runner/work/engine/engine/build/modules/core && /home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/modules/core/engine.c > CMakeFiles/index.dir/engine.c.i
+	cd /home/runner/work/engine/engine/build/modules/core && /home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/modules/core/engine.c > CMakeFiles/index.dir/engine.c.i
 
 modules/core/CMakeFiles/index.dir/engine.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/index.dir/engine.c.s"
-	cd /home/runner/work/engine/engine/build/modules/core && /home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/modules/core/engine.c -o CMakeFiles/index.dir/engine.c.s
+	cd /home/runner/work/engine/engine/build/modules/core && /home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/modules/core/engine.c -o CMakeFiles/index.dir/engine.c.s
 
 # Object files for target index
 index_OBJECTS = \

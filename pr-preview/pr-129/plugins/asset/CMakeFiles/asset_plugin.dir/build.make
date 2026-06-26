@@ -76,15 +76,15 @@ plugins/asset/CMakeFiles/asset_plugin.dir/asset_plugin.c.o: plugins/asset/CMakeF
 plugins/asset/CMakeFiles/asset_plugin.dir/asset_plugin.c.o: /home/runner/work/engine/engine/plugins/asset/asset_plugin.c
 plugins/asset/CMakeFiles/asset_plugin.dir/asset_plugin.c.o: plugins/asset/CMakeFiles/asset_plugin.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building C object plugins/asset/CMakeFiles/asset_plugin.dir/asset_plugin.c.o"
-	cd /home/runner/work/engine/engine/build/plugins/asset && ccache /home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT plugins/asset/CMakeFiles/asset_plugin.dir/asset_plugin.c.o -MF CMakeFiles/asset_plugin.dir/asset_plugin.c.o.d -o CMakeFiles/asset_plugin.dir/asset_plugin.c.o -c /home/runner/work/engine/engine/plugins/asset/asset_plugin.c
+	cd /home/runner/work/engine/engine/build/plugins/asset && ccache /home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT plugins/asset/CMakeFiles/asset_plugin.dir/asset_plugin.c.o -MF CMakeFiles/asset_plugin.dir/asset_plugin.c.o.d -o CMakeFiles/asset_plugin.dir/asset_plugin.c.o -c /home/runner/work/engine/engine/plugins/asset/asset_plugin.c
 
 plugins/asset/CMakeFiles/asset_plugin.dir/asset_plugin.c.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/asset_plugin.dir/asset_plugin.c.i"
-	cd /home/runner/work/engine/engine/build/plugins/asset && /home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/plugins/asset/asset_plugin.c > CMakeFiles/asset_plugin.dir/asset_plugin.c.i
+	cd /home/runner/work/engine/engine/build/plugins/asset && /home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/plugins/asset/asset_plugin.c > CMakeFiles/asset_plugin.dir/asset_plugin.c.i
 
 plugins/asset/CMakeFiles/asset_plugin.dir/asset_plugin.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/asset_plugin.dir/asset_plugin.c.s"
-	cd /home/runner/work/engine/engine/build/plugins/asset && /home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/plugins/asset/asset_plugin.c -o CMakeFiles/asset_plugin.dir/asset_plugin.c.s
+	cd /home/runner/work/engine/engine/build/plugins/asset && /home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/plugins/asset/asset_plugin.c -o CMakeFiles/asset_plugin.dir/asset_plugin.c.s
 
 # Object files for target asset_plugin
 asset_plugin_OBJECTS = \

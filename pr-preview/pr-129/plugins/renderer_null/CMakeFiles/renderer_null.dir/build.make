@@ -76,15 +76,15 @@ plugins/renderer_null/CMakeFiles/renderer_null.dir/renderer_null.c.o: plugins/re
 plugins/renderer_null/CMakeFiles/renderer_null.dir/renderer_null.c.o: /home/runner/work/engine/engine/plugins/renderer_null/renderer_null.c
 plugins/renderer_null/CMakeFiles/renderer_null.dir/renderer_null.c.o: plugins/renderer_null/CMakeFiles/renderer_null.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building C object plugins/renderer_null/CMakeFiles/renderer_null.dir/renderer_null.c.o"
-	cd /home/runner/work/engine/engine/build/plugins/renderer_null && ccache /home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT plugins/renderer_null/CMakeFiles/renderer_null.dir/renderer_null.c.o -MF CMakeFiles/renderer_null.dir/renderer_null.c.o.d -o CMakeFiles/renderer_null.dir/renderer_null.c.o -c /home/runner/work/engine/engine/plugins/renderer_null/renderer_null.c
+	cd /home/runner/work/engine/engine/build/plugins/renderer_null && ccache /home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT plugins/renderer_null/CMakeFiles/renderer_null.dir/renderer_null.c.o -MF CMakeFiles/renderer_null.dir/renderer_null.c.o.d -o CMakeFiles/renderer_null.dir/renderer_null.c.o -c /home/runner/work/engine/engine/plugins/renderer_null/renderer_null.c
 
 plugins/renderer_null/CMakeFiles/renderer_null.dir/renderer_null.c.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/renderer_null.dir/renderer_null.c.i"
-	cd /home/runner/work/engine/engine/build/plugins/renderer_null && /home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/plugins/renderer_null/renderer_null.c > CMakeFiles/renderer_null.dir/renderer_null.c.i
+	cd /home/runner/work/engine/engine/build/plugins/renderer_null && /home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/plugins/renderer_null/renderer_null.c > CMakeFiles/renderer_null.dir/renderer_null.c.i
 
 plugins/renderer_null/CMakeFiles/renderer_null.dir/renderer_null.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/renderer_null.dir/renderer_null.c.s"
-	cd /home/runner/work/engine/engine/build/plugins/renderer_null && /home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/plugins/renderer_null/renderer_null.c -o CMakeFiles/renderer_null.dir/renderer_null.c.s
+	cd /home/runner/work/engine/engine/build/plugins/renderer_null && /home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/plugins/renderer_null/renderer_null.c -o CMakeFiles/renderer_null.dir/renderer_null.c.s
 
 # Object files for target renderer_null
 renderer_null_OBJECTS = \

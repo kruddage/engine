@@ -20,30 +20,30 @@ events:
     checks:
       - "Performing Test mi_has_libpthread"
     directories:
-      source: "/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-2qXglQ"
-      binary: "/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-2qXglQ"
+      source: "/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-gM1ovE"
+      binary: "/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-gM1ovE"
     cmakeVariables:
-      CMAKE_CXX_COMPILER_CLANG_SCAN_DEPS: "/home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/emscan-deps"
+      CMAKE_CXX_COMPILER_CLANG_SCAN_DEPS: "/home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/emscan-deps"
       CMAKE_C_FLAGS: ""
       CMAKE_C_FLAGS_DEBUG: "-g"
       CMAKE_EXE_LINKER_FLAGS: ""
-      CMAKE_MODULE_PATH: "/home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/cmake/Modules;/home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/cmake/Modules;/home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/cmake/Modules;/home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/cmake/Modules;/home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/cmake/Modules"
+      CMAKE_MODULE_PATH: "/home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/cmake/Modules;/home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/cmake/Modules;/home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/cmake/Modules;/home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/cmake/Modules;/home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/cmake/Modules"
     buildResult:
       variable: "mi_has_libpthread"
       cached: true
       stdout: |
-        Change Dir: '/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-2qXglQ'
+        Change Dir: '/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-gM1ovE'
         
-        Run Build Command(s): /usr/local/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_e8c99/fast
-        /usr/bin/gmake  -f CMakeFiles/cmTC_e8c99.dir/build.make CMakeFiles/cmTC_e8c99.dir/build
-        gmake[1]: Entering directory '/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-2qXglQ'
-        Building C object CMakeFiles/cmTC_e8c99.dir/src.c.o
-        /home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/emcc -Dmi_has_libpthread  -std=gnu11 -MD -MT CMakeFiles/cmTC_e8c99.dir/src.c.o -MF CMakeFiles/cmTC_e8c99.dir/src.c.o.d -o CMakeFiles/cmTC_e8c99.dir/src.c.o -c /home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-2qXglQ/src.c
+        Run Build Command(s): /usr/local/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_c26bf/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_c26bf.dir/build.make CMakeFiles/cmTC_c26bf.dir/build
+        gmake[1]: Entering directory '/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-gM1ovE'
+        Building C object CMakeFiles/cmTC_c26bf.dir/src.c.o
+        /home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/emcc -Dmi_has_libpthread  -std=gnu11 -MD -MT CMakeFiles/cmTC_c26bf.dir/src.c.o -MF CMakeFiles/cmTC_c26bf.dir/src.c.o.d -o CMakeFiles/cmTC_c26bf.dir/src.c.o -c /home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-gM1ovE/src.c
         shared:INFO: (Emscripten: Running sanity checks)
-        Linking C executable cmTC_e8c99.js
-        /usr/local/bin/cmake -E cmake_link_script CMakeFiles/cmTC_e8c99.dir/link.txt --verbose=1
-        /home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/emcc -lpthread CMakeFiles/cmTC_e8c99.dir/src.c.o -o cmTC_e8c99.js
-        gmake[1]: Leaving directory '/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-2qXglQ'
+        Linking C executable cmTC_c26bf.js
+        /usr/local/bin/cmake -E cmake_link_script CMakeFiles/cmTC_c26bf.dir/link.txt --verbose=1
+        /home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/emcc -lpthread CMakeFiles/cmTC_c26bf.dir/src.c.o -o cmTC_c26bf.js
+        gmake[1]: Leaving directory '/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-gM1ovE'
         
       exitCode: 0
   -
@@ -57,29 +57,29 @@ events:
     checks:
       - "Performing Test mi_has_librt"
     directories:
-      source: "/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-GjB9CK"
-      binary: "/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-GjB9CK"
+      source: "/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-8qAn6x"
+      binary: "/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-8qAn6x"
     cmakeVariables:
-      CMAKE_CXX_COMPILER_CLANG_SCAN_DEPS: "/home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/emscan-deps"
+      CMAKE_CXX_COMPILER_CLANG_SCAN_DEPS: "/home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/emscan-deps"
       CMAKE_C_FLAGS: ""
       CMAKE_C_FLAGS_DEBUG: "-g"
       CMAKE_EXE_LINKER_FLAGS: ""
-      CMAKE_MODULE_PATH: "/home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/cmake/Modules;/home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/cmake/Modules;/home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/cmake/Modules;/home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/cmake/Modules;/home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/cmake/Modules"
+      CMAKE_MODULE_PATH: "/home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/cmake/Modules;/home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/cmake/Modules;/home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/cmake/Modules;/home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/cmake/Modules;/home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/cmake/Modules"
     buildResult:
       variable: "mi_has_librt"
       cached: true
       stdout: |
-        Change Dir: '/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-GjB9CK'
+        Change Dir: '/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-8qAn6x'
         
-        Run Build Command(s): /usr/local/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_1f9ac/fast
-        /usr/bin/gmake  -f CMakeFiles/cmTC_1f9ac.dir/build.make CMakeFiles/cmTC_1f9ac.dir/build
-        gmake[1]: Entering directory '/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-GjB9CK'
-        Building C object CMakeFiles/cmTC_1f9ac.dir/src.c.o
-        /home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/emcc -Dmi_has_librt  -std=gnu11 -MD -MT CMakeFiles/cmTC_1f9ac.dir/src.c.o -MF CMakeFiles/cmTC_1f9ac.dir/src.c.o.d -o CMakeFiles/cmTC_1f9ac.dir/src.c.o -c /home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-GjB9CK/src.c
-        Linking C executable cmTC_1f9ac.js
-        /usr/local/bin/cmake -E cmake_link_script CMakeFiles/cmTC_1f9ac.dir/link.txt --verbose=1
-        /home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/emcc -lrt CMakeFiles/cmTC_1f9ac.dir/src.c.o -o cmTC_1f9ac.js
-        gmake[1]: Leaving directory '/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-GjB9CK'
+        Run Build Command(s): /usr/local/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_3fe63/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_3fe63.dir/build.make CMakeFiles/cmTC_3fe63.dir/build
+        gmake[1]: Entering directory '/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-8qAn6x'
+        Building C object CMakeFiles/cmTC_3fe63.dir/src.c.o
+        /home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/emcc -Dmi_has_librt  -std=gnu11 -MD -MT CMakeFiles/cmTC_3fe63.dir/src.c.o -MF CMakeFiles/cmTC_3fe63.dir/src.c.o.d -o CMakeFiles/cmTC_3fe63.dir/src.c.o -c /home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-8qAn6x/src.c
+        Linking C executable cmTC_3fe63.js
+        /usr/local/bin/cmake -E cmake_link_script CMakeFiles/cmTC_3fe63.dir/link.txt --verbose=1
+        /home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/emcc -lrt CMakeFiles/cmTC_3fe63.dir/src.c.o -o cmTC_3fe63.js
+        gmake[1]: Leaving directory '/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-8qAn6x'
         
       exitCode: 0
   -
@@ -93,33 +93,33 @@ events:
     checks:
       - "Performing Test mi_has_libatomic"
     directories:
-      source: "/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-iUPO0C"
-      binary: "/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-iUPO0C"
+      source: "/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-dSIkgz"
+      binary: "/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-dSIkgz"
     cmakeVariables:
-      CMAKE_CXX_COMPILER_CLANG_SCAN_DEPS: "/home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/emscan-deps"
+      CMAKE_CXX_COMPILER_CLANG_SCAN_DEPS: "/home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/emscan-deps"
       CMAKE_C_FLAGS: ""
       CMAKE_C_FLAGS_DEBUG: "-g"
       CMAKE_EXE_LINKER_FLAGS: ""
-      CMAKE_MODULE_PATH: "/home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/cmake/Modules;/home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/cmake/Modules;/home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/cmake/Modules;/home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/cmake/Modules;/home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/cmake/Modules"
+      CMAKE_MODULE_PATH: "/home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/cmake/Modules;/home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/cmake/Modules;/home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/cmake/Modules;/home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/cmake/Modules;/home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/cmake/Modules"
     buildResult:
       variable: "mi_has_libatomic"
       cached: true
       stdout: |
-        Change Dir: '/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-iUPO0C'
+        Change Dir: '/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-dSIkgz'
         
-        Run Build Command(s): /usr/local/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_f19ed/fast
-        /usr/bin/gmake  -f CMakeFiles/cmTC_f19ed.dir/build.make CMakeFiles/cmTC_f19ed.dir/build
-        gmake[1]: Entering directory '/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-iUPO0C'
-        Building C object CMakeFiles/cmTC_f19ed.dir/src.c.o
-        /home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/emcc -Dmi_has_libatomic  -std=gnu11 -MD -MT CMakeFiles/cmTC_f19ed.dir/src.c.o -MF CMakeFiles/cmTC_f19ed.dir/src.c.o.d -o CMakeFiles/cmTC_f19ed.dir/src.c.o -c /home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-iUPO0C/src.c
-        Linking C executable cmTC_f19ed.js
-        /usr/local/bin/cmake -E cmake_link_script CMakeFiles/cmTC_f19ed.dir/link.txt --verbose=1
+        Run Build Command(s): /usr/local/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_279bb/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_279bb.dir/build.make CMakeFiles/cmTC_279bb.dir/build
+        gmake[1]: Entering directory '/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-dSIkgz'
+        Building C object CMakeFiles/cmTC_279bb.dir/src.c.o
+        /home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/emcc -Dmi_has_libatomic  -std=gnu11 -MD -MT CMakeFiles/cmTC_279bb.dir/src.c.o -MF CMakeFiles/cmTC_279bb.dir/src.c.o.d -o CMakeFiles/cmTC_279bb.dir/src.c.o -c /home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-dSIkgz/src.c
+        Linking C executable cmTC_279bb.js
+        /usr/local/bin/cmake -E cmake_link_script CMakeFiles/cmTC_279bb.dir/link.txt --verbose=1
         wasm-ld: error: unable to find library -latomic
-        emcc: error: '/home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/bin/wasm-ld -o cmTC_f19ed.wasm /tmp/tmp1bdsqn1alibemscripten_js_symbols.so -Bstatic --strip-debug --export=emscripten_stack_get_end --export=emscripten_stack_get_free --export=emscripten_stack_get_base --export=emscripten_stack_get_current --export=emscripten_stack_init --export=_emscripten_stack_alloc --export=__wasm_call_ctors --export=_emscripten_stack_restore --export-if-defined=__start_em_asm --export-if-defined=__stop_em_asm --export-if-defined=__start_em_lib_deps --export-if-defined=__stop_em_lib_deps --export-if-defined=__start_em_js --export-if-defined=__stop_em_js --export-if-defined=main --export-if-defined=__main_argc_argv --export-if-defined=fflush --export-table -z stack-size=65536 --no-growable-memory --initial-heap=16777216 --no-entry --stack-first --table-base=1 -latomic CMakeFiles/cmTC_f19ed.dir/src.c.o -L/home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/cache/sysroot/lib/wasm32-emscripten -L/home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/src/lib -lGL-getprocaddr -lal -lhtml5 -lstubs-debug -lnoexit -lc-debug -ldlmalloc-debug -lclang_rt.builtins -lc++-debug-noexcept -lc++abi-debug-noexcept -lsockets -mllvm -combiner-global-alias-analysis=false -mllvm -enable-emscripten-sjlj -mllvm -disable-lsr' failed (returned 1)
-        /home/runner/work/_temp/23db3aa1-ca9e-4ad3-bb03-9d7f6dfbfa3d/emsdk-main/upstream/emscripten/emcc -latomic CMakeFiles/cmTC_f19ed.dir/src.c.o -o cmTC_f19ed.js
-        gmake[1]: *** [CMakeFiles/cmTC_f19ed.dir/build.make:103: cmTC_f19ed.js] Error 1
-        gmake[1]: Leaving directory '/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-iUPO0C'
-        gmake: *** [Makefile:134: cmTC_f19ed/fast] Error 2
+        emcc: error: '/home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/bin/wasm-ld -o cmTC_279bb.wasm /tmp/tmpqykk1gx5libemscripten_js_symbols.so -Bstatic --strip-debug --export=emscripten_stack_get_end --export=emscripten_stack_get_free --export=emscripten_stack_get_base --export=emscripten_stack_get_current --export=emscripten_stack_init --export=_emscripten_stack_alloc --export=__wasm_call_ctors --export=_emscripten_stack_restore --export-if-defined=__start_em_asm --export-if-defined=__stop_em_asm --export-if-defined=__start_em_lib_deps --export-if-defined=__stop_em_lib_deps --export-if-defined=__start_em_js --export-if-defined=__stop_em_js --export-if-defined=main --export-if-defined=__main_argc_argv --export-if-defined=fflush --export-table -z stack-size=65536 --no-growable-memory --initial-heap=16777216 --no-entry --stack-first --table-base=1 -latomic CMakeFiles/cmTC_279bb.dir/src.c.o -L/home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/cache/sysroot/lib/wasm32-emscripten -L/home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/src/lib -lGL-getprocaddr -lal -lhtml5 -lstubs-debug -lnoexit -lc-debug -ldlmalloc-debug -lclang_rt.builtins -lc++-debug-noexcept -lc++abi-debug-noexcept -lsockets -mllvm -combiner-global-alias-analysis=false -mllvm -enable-emscripten-sjlj -mllvm -disable-lsr' failed (returned 1)
+        /home/runner/work/_temp/2fdb38d9-4c22-4ff2-a15f-f4734b7e517a/emsdk-main/upstream/emscripten/emcc -latomic CMakeFiles/cmTC_279bb.dir/src.c.o -o cmTC_279bb.js
+        gmake[1]: *** [CMakeFiles/cmTC_279bb.dir/build.make:103: cmTC_279bb.js] Error 1
+        gmake[1]: Leaving directory '/home/runner/work/engine/engine/build/CMakeFiles/CMakeScratch/TryCompile-dSIkgz'
+        gmake: *** [Makefile:134: cmTC_279bb/fast] Error 2
         
       exitCode: 2
 ...

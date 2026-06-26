@@ -5,17 +5,16 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Pages is served from the gh-pages branch (root), so we need to push to it.
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: pages
   cancel-in-progress: false
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,16 +27,13 @@ jobs:
           emcmake cmake -B build -DCMAKE_BUILD_TYPE=Release
           cmake --build build
 
-      - uses: actions/upload-pages-artifact@v3
+      # Publish the built site to the gh-pages root. keep_files: true preserves
+      # the pr-preview/ directories that pr-preview-action manages, so main and
+      # PR previews coexist on the same branch.
+      - name: Publish to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
         with:
-          path: ./build
-
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./build
+          publish_branch: gh-pages
+          keep_files: true

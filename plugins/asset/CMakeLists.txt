@@ -1,10 +1,6 @@
 add_library(asset_plugin asset_plugin.c)
 target_include_directories(asset_plugin PUBLIC .)
-target_include_directories(asset_plugin PRIVATE
-	${CMAKE_SOURCE_DIR}/modules/core
-	${CMAKE_SOURCE_DIR}/modules/log
-	${CMAKE_SOURCE_DIR}/modules/memory
-)
+
 target_link_libraries(asset_plugin PRIVATE log memory subsystem subsystem_manager)
 
 if(NOT EMSCRIPTEN)
@@ -20,7 +16,7 @@ if(EMSCRIPTEN)
 			-sSIDE_MODULE=1
 			-O2
 			-I${CMAKE_CURRENT_SOURCE_DIR}
-			-I${CMAKE_SOURCE_DIR}/modules/core
+			-I${CMAKE_SOURCE_DIR}/modules/core/include
 			-I${CMAKE_SOURCE_DIR}/plugins/include
 			-o ${CMAKE_BINARY_DIR}/asset_plugin.wasm
 			${CMAKE_CURRENT_SOURCE_DIR}/asset_plugin.c

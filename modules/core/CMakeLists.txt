@@ -1,20 +1,20 @@
 configure_file(version.h.in version.h)
 
 add_library(subsystem subsystem.c)
-target_include_directories(subsystem PUBLIC .)
+target_include_directories(subsystem PUBLIC include)
 
 add_library(subsystem_manager subsystem_manager.c)
-target_include_directories(subsystem_manager PUBLIC .)
+target_include_directories(subsystem_manager PUBLIC include)
 
 add_library(plugin_loader plugin_loader.c)
-target_include_directories(plugin_loader PUBLIC .)
+target_include_directories(plugin_loader PUBLIC include)
 target_include_directories(plugin_loader PRIVATE
-	${CMAKE_CURRENT_SOURCE_DIR}/../log
+	${CMAKE_SOURCE_DIR}/modules/log/include
 	${CMAKE_SOURCE_DIR}/plugins/include
 )
 
 add_executable(index engine.c)
-target_include_directories(index PRIVATE . ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_SOURCE_DIR}/plugins/include)
+target_include_directories(index PRIVATE include ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_SOURCE_DIR}/plugins/include)
 target_link_libraries(index PRIVATE subsystem subsystem_manager log memory plugin_loader)
 
 if(NOT EMSCRIPTEN)

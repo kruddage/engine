@@ -8,7 +8,7 @@ if(EMSCRIPTEN)
 			-fno-exceptions
 			-fno-rtti
 			-I${CMAKE_CURRENT_SOURCE_DIR}
-			-I${CMAKE_SOURCE_DIR}/modules/core
+			-I${CMAKE_SOURCE_DIR}/modules/core/include
 			-I${CMAKE_SOURCE_DIR}/plugins/include
 			-I${imgui_SOURCE_DIR}
 			-I${imgui_SOURCE_DIR}/backends

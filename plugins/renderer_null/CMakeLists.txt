@@ -1,8 +1,6 @@
 add_library(renderer_null renderer_null.c)
 target_include_directories(renderer_null PRIVATE
 	${CMAKE_SOURCE_DIR}/plugins/renderer
-	${CMAKE_SOURCE_DIR}/modules/core
-	${CMAKE_SOURCE_DIR}/modules/log
 )
 target_link_libraries(renderer_null PRIVATE log subsystem subsystem_manager)
 
@@ -24,7 +22,7 @@ if(EMSCRIPTEN)
 			-O2
 			-I${CMAKE_CURRENT_SOURCE_DIR}
 			-I${CMAKE_SOURCE_DIR}/plugins/renderer
-			-I${CMAKE_SOURCE_DIR}/modules/core
+			-I${CMAKE_SOURCE_DIR}/modules/core/include
 			-I${CMAKE_SOURCE_DIR}/plugins/include
 			-o ${CMAKE_BINARY_DIR}/renderer_null.wasm
 			${CMAKE_CURRENT_SOURCE_DIR}/renderer_null.c

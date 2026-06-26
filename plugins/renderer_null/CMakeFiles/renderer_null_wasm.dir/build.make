@@ -70,7 +70,7 @@ plugins/renderer_null/CMakeFiles/renderer_null_wasm: renderer_null.wasm
 
 renderer_null.wasm: /home/runner/work/engine/engine/plugins/renderer_null/renderer_null.c
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --blue --bold --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building renderer_null SIDE_MODULE"
-	cd /home/runner/work/engine/engine/build/plugins/renderer_null && /home/runner/work/_temp/aabd50eb-8d7f-4aac-8be8-7418d79559e7/emsdk-main/upstream/emscripten/emcc -sSIDE_MODULE=1 -O2 -I/home/runner/work/engine/engine/plugins/renderer_null -I/home/runner/work/engine/engine/plugins/renderer -I/home/runner/work/engine/engine/modules/core -I/home/runner/work/engine/engine/plugins/include -o /home/runner/work/engine/engine/build/renderer_null.wasm /home/runner/work/engine/engine/plugins/renderer_null/renderer_null.c
+	cd /home/runner/work/engine/engine/build/plugins/renderer_null && /home/runner/work/_temp/d0e7a94f-7c09-4329-b502-98fee9a0b41e/emsdk-main/upstream/emscripten/emcc -sSIDE_MODULE=1 -O2 -I/home/runner/work/engine/engine/plugins/renderer_null -I/home/runner/work/engine/engine/plugins/renderer -I/home/runner/work/engine/engine/modules/core/include -I/home/runner/work/engine/engine/plugins/include -o /home/runner/work/engine/engine/build/renderer_null.wasm /home/runner/work/engine/engine/plugins/renderer_null/renderer_null.c
 
 plugins/renderer_null/CMakeFiles/renderer_null_wasm.dir/codegen:
 .PHONY : plugins/renderer_null/CMakeFiles/renderer_null_wasm.dir/codegen

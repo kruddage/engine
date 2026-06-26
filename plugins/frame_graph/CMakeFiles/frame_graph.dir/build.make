@@ -76,15 +76,15 @@ plugins/frame_graph/CMakeFiles/frame_graph.dir/fg.c.o: plugins/frame_graph/CMake
 plugins/frame_graph/CMakeFiles/frame_graph.dir/fg.c.o: /home/runner/work/engine/engine/plugins/frame_graph/fg.c
 plugins/frame_graph/CMakeFiles/frame_graph.dir/fg.c.o: plugins/frame_graph/CMakeFiles/frame_graph.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building C object plugins/frame_graph/CMakeFiles/frame_graph.dir/fg.c.o"
-	cd /home/runner/work/engine/engine/build/plugins/frame_graph && /home/runner/work/_temp/aabd50eb-8d7f-4aac-8be8-7418d79559e7/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT plugins/frame_graph/CMakeFiles/frame_graph.dir/fg.c.o -MF CMakeFiles/frame_graph.dir/fg.c.o.d -o CMakeFiles/frame_graph.dir/fg.c.o -c /home/runner/work/engine/engine/plugins/frame_graph/fg.c
+	cd /home/runner/work/engine/engine/build/plugins/frame_graph && /home/runner/work/_temp/d0e7a94f-7c09-4329-b502-98fee9a0b41e/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT plugins/frame_graph/CMakeFiles/frame_graph.dir/fg.c.o -MF CMakeFiles/frame_graph.dir/fg.c.o.d -o CMakeFiles/frame_graph.dir/fg.c.o -c /home/runner/work/engine/engine/plugins/frame_graph/fg.c
 
 plugins/frame_graph/CMakeFiles/frame_graph.dir/fg.c.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/frame_graph.dir/fg.c.i"
-	cd /home/runner/work/engine/engine/build/plugins/frame_graph && /home/runner/work/_temp/aabd50eb-8d7f-4aac-8be8-7418d79559e7/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/plugins/frame_graph/fg.c > CMakeFiles/frame_graph.dir/fg.c.i
+	cd /home/runner/work/engine/engine/build/plugins/frame_graph && /home/runner/work/_temp/d0e7a94f-7c09-4329-b502-98fee9a0b41e/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/plugins/frame_graph/fg.c > CMakeFiles/frame_graph.dir/fg.c.i
 
 plugins/frame_graph/CMakeFiles/frame_graph.dir/fg.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/frame_graph.dir/fg.c.s"
-	cd /home/runner/work/engine/engine/build/plugins/frame_graph && /home/runner/work/_temp/aabd50eb-8d7f-4aac-8be8-7418d79559e7/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/plugins/frame_graph/fg.c -o CMakeFiles/frame_graph.dir/fg.c.s
+	cd /home/runner/work/engine/engine/build/plugins/frame_graph && /home/runner/work/_temp/d0e7a94f-7c09-4329-b502-98fee9a0b41e/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/plugins/frame_graph/fg.c -o CMakeFiles/frame_graph.dir/fg.c.s
 
 # Object files for target frame_graph
 frame_graph_OBJECTS = \

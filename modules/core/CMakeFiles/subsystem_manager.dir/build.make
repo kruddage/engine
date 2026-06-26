@@ -76,15 +76,15 @@ modules/core/CMakeFiles/subsystem_manager.dir/subsystem_manager.c.o: modules/cor
 modules/core/CMakeFiles/subsystem_manager.dir/subsystem_manager.c.o: /home/runner/work/engine/engine/modules/core/subsystem_manager.c
 modules/core/CMakeFiles/subsystem_manager.dir/subsystem_manager.c.o: modules/core/CMakeFiles/subsystem_manager.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building C object modules/core/CMakeFiles/subsystem_manager.dir/subsystem_manager.c.o"
-	cd /home/runner/work/engine/engine/build/modules/core && /home/runner/work/_temp/aabd50eb-8d7f-4aac-8be8-7418d79559e7/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT modules/core/CMakeFiles/subsystem_manager.dir/subsystem_manager.c.o -MF CMakeFiles/subsystem_manager.dir/subsystem_manager.c.o.d -o CMakeFiles/subsystem_manager.dir/subsystem_manager.c.o -c /home/runner/work/engine/engine/modules/core/subsystem_manager.c
+	cd /home/runner/work/engine/engine/build/modules/core && /home/runner/work/_temp/d0e7a94f-7c09-4329-b502-98fee9a0b41e/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT modules/core/CMakeFiles/subsystem_manager.dir/subsystem_manager.c.o -MF CMakeFiles/subsystem_manager.dir/subsystem_manager.c.o.d -o CMakeFiles/subsystem_manager.dir/subsystem_manager.c.o -c /home/runner/work/engine/engine/modules/core/subsystem_manager.c
 
 modules/core/CMakeFiles/subsystem_manager.dir/subsystem_manager.c.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/subsystem_manager.dir/subsystem_manager.c.i"
-	cd /home/runner/work/engine/engine/build/modules/core && /home/runner/work/_temp/aabd50eb-8d7f-4aac-8be8-7418d79559e7/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/modules/core/subsystem_manager.c > CMakeFiles/subsystem_manager.dir/subsystem_manager.c.i
+	cd /home/runner/work/engine/engine/build/modules/core && /home/runner/work/_temp/d0e7a94f-7c09-4329-b502-98fee9a0b41e/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/modules/core/subsystem_manager.c > CMakeFiles/subsystem_manager.dir/subsystem_manager.c.i
 
 modules/core/CMakeFiles/subsystem_manager.dir/subsystem_manager.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/subsystem_manager.dir/subsystem_manager.c.s"
-	cd /home/runner/work/engine/engine/build/modules/core && /home/runner/work/_temp/aabd50eb-8d7f-4aac-8be8-7418d79559e7/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/modules/core/subsystem_manager.c -o CMakeFiles/subsystem_manager.dir/subsystem_manager.c.s
+	cd /home/runner/work/engine/engine/build/modules/core && /home/runner/work/_temp/d0e7a94f-7c09-4329-b502-98fee9a0b41e/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/modules/core/subsystem_manager.c -o CMakeFiles/subsystem_manager.dir/subsystem_manager.c.s
 
 # Object files for target subsystem_manager
 subsystem_manager_OBJECTS = \

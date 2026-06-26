@@ -1,9 +1,6 @@
 add_library(renderer_webgl renderer_webgl.c)
 target_include_directories(renderer_webgl PRIVATE
 	${CMAKE_SOURCE_DIR}/plugins/renderer
-	${CMAKE_SOURCE_DIR}/modules/core
-	${CMAKE_SOURCE_DIR}/modules/log
-	${CMAKE_SOURCE_DIR}/plugins/include
 )
 target_link_libraries(renderer_webgl PRIVATE log subsystem subsystem_manager)
 
@@ -15,7 +12,7 @@ if(EMSCRIPTEN)
 			-O2
 			-I${CMAKE_CURRENT_SOURCE_DIR}
 			-I${CMAKE_SOURCE_DIR}/plugins/renderer
-			-I${CMAKE_SOURCE_DIR}/modules/core
+			-I${CMAKE_SOURCE_DIR}/modules/core/include
 			-I${CMAKE_SOURCE_DIR}/plugins/include
 			-o ${CMAKE_BINARY_DIR}/renderer_webgl.wasm
 			${CMAKE_CURRENT_SOURCE_DIR}/renderer_webgl.c

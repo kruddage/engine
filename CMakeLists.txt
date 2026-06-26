@@ -33,6 +33,8 @@ FetchContent_Declare(imgui
 )
 FetchContent_MakeAvailable(imgui)
 
+add_compile_options(-Wall -Werror -Wpedantic)
+
 if(NOT EMSCRIPTEN)
 	set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 	enable_testing()

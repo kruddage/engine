@@ -27,7 +27,6 @@ static void b_init(void)     { record(4); }
 static void b_tick(void)     { record(5); }
 static void b_shutdown(void) { record(6); }
 static void c_init(void)     { record(7); }
-static void c_tick(void)     { record(8); }
 static void c_shutdown(void) { record(9); }
 
 static const struct subsystem static_table[] = {

@@ -29,6 +29,10 @@ extern "C" {
 #ifdef __EMSCRIPTEN__
 #include <emscripten/html5.h>
 #include <GLES3/gl3.h>
+
+/* Defined in plugin_abi.c (main module) via EM_JS; side modules must not
+ * use EM_ASM_* — see plugin_abi.c for the explanation. */
+extern "C" double get_device_pixel_ratio(void);
 #endif
 
 static const struct log_api   *g_log;
@@ -131,7 +135,7 @@ static void imgui_tick(void)
 	int    i;
 
 	emscripten_get_element_css_size("#canvas", &css_w, &css_h);
-	dpr    = EM_ASM_DOUBLE({ return window.devicePixelRatio || 1.0; });
+	dpr    = get_device_pixel_ratio();
 	phys_w = (int)(css_w * dpr + 0.5);
 	phys_h = (int)(css_h * dpr + 0.5);
 	emscripten_set_canvas_element_size("#canvas", phys_w, phys_h);

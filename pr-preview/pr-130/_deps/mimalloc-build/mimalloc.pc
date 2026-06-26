@@ -1,0 +1,11 @@
+prefix=/home/runner/work/_temp/21145d48-5438-4193-8c78-65ee7c02c496/emsdk-main/upstream/emscripten/cache/sysroot
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: libmimalloc
+Description: A compact general purpose allocator with excellent performance
+Version: 2.1
+URL: https://github.com/microsoft/mimalloc/
+Libs: -L${libdir} -lmimalloc
+Libs.private:  -lpthread -lrt
+Cflags: -I${includedir}

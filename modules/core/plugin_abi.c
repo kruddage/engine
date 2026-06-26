@@ -20,7 +20,23 @@
  * that expand to the _on_thread variants; reference those directly so that
  * the compiler sees a proper function identifier rather than an unexpanded
  * macro.
+ *
+ * EM_JS functions below are defined here (main module) so they are included
+ * in asmLibraryArg and reachable by side modules via the dynamic linker.
+ * Side modules must NOT use EM_ASM_* — inline JS strings are registered in
+ * the main module's ASM_CONSTS table at link time, so a side module's inline
+ * JS is never registered and emscripten_asm_const_* becomes a throwing stub.
  */
+
+/*
+ * Returns window.devicePixelRatio for high-DPI canvas scaling.
+ * Called by imgui_plugin.wasm every tick; defined here so the JS function
+ * lands in asmLibraryArg and is reachable by the side module.
+ */
+EM_JS(double, get_device_pixel_ratio, (void), {
+	return window.devicePixelRatio || 1.0;
+})
+
 EMSCRIPTEN_KEEPALIVE void *plugin_abi_refs[] = {
 	/* HTML5 WebGL context — renderer_webgl.wasm */
 	(void *)emscripten_webgl_init_context_attributes,
@@ -41,6 +57,8 @@ EMSCRIPTEN_KEEPALIVE void *plugin_abi_refs[] = {
 	/* HTML5 canvas dimensions — imgui_plugin.wasm */
 	(void *)emscripten_get_element_css_size,
 	(void *)emscripten_set_canvas_element_size,
+	/* Device pixel ratio — imgui_plugin.wasm */
+	(void *)get_device_pixel_ratio,
 	/* Fetch API — asset_plugin.wasm */
 	(void *)emscripten_fetch,
 	(void *)emscripten_fetch_close,

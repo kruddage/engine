@@ -1,0 +1,30 @@
+plugins/renderer_null/CMakeFiles/renderer_null.dir/renderer_null.c.o: \
+  /home/runner/work/engine/engine/plugins/renderer_null/renderer_null.c \
+  /home/runner/work/engine/engine/plugins/renderer/renderer.h \
+  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/lib/clang/23/include/stddef.h \
+  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/cache/sysroot/include/stddef.h \
+  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/lib/clang/23/include/__stddef_header_macro.h \
+  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/lib/clang/23/include/__stddef_ptrdiff_t.h \
+  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/lib/clang/23/include/__stddef_size_t.h \
+  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/lib/clang/23/include/__stddef_wchar_t.h \
+  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/lib/clang/23/include/__stddef_null.h \
+  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/lib/clang/23/include/__stddef_max_align_t.h \
+  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/lib/clang/23/include/__stddef_offsetof.h \
+  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/lib/clang/23/include/stdint.h \
+  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/cache/sysroot/include/stdint.h \
+  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/cache/sysroot/include/bits/alltypes.h \
+  /home/runner/work/engine/engine/plugins/renderer_null/renderer_null.h \
+  /home/runner/work/engine/engine/plugins/include/log_api.h \
+  /home/runner/work/engine/engine/plugins/include/log_level.h \
+  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/cache/sysroot/include/compat/stdarg.h \
+  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/lib/clang/23/include/stdarg.h \
+  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/emscripten/cache/sysroot/include/stdarg.h \
+  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/lib/clang/23/include/__stdarg_header_macro.h \
+  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/lib/clang/23/include/__stdarg___gnuc_va_list.h \
+  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/lib/clang/23/include/__stdarg_va_list.h \
+  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/lib/clang/23/include/__stdarg_va_arg.h \
+  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/lib/clang/23/include/__stdarg___va_copy.h \
+  /home/runner/work/_temp/9a9a12aa-0645-4876-a0b7-edf3a17d96c2/emsdk-main/upstream/lib/clang/23/include/__stdarg_va_copy.h \
+  /home/runner/work/engine/engine/modules/core/subsystem.h \
+  /home/runner/work/engine/engine/modules/core/subsystem_manager.h \
+  /home/runner/work/engine/engine/modules/core/async_subsystem.h

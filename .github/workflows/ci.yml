@@ -113,9 +113,19 @@ jobs:
         with:
           cache: true
 
+      - name: Install ccache
+        run: sudo apt-get install -y ccache
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-preview-${{ github.sha }}
+          restore-keys: ccache-preview-
+
       - name: Build
         run: |
-          emcmake cmake -B build -DCMAKE_BUILD_TYPE=Release
+          emcmake cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache
           cmake --build build
 
       - name: Deploy PR preview

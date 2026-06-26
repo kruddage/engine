@@ -1,0 +1,2 @@
+/home/runner/work/_temp/7c942439-83e4-4cb2-a8de-a1dbe131c8d3/emsdk-main/upstream/emscripten/emar qc libframe_graph.a CMakeFiles/frame_graph.dir/fg.c.o
+/home/runner/work/_temp/7c942439-83e4-4cb2-a8de-a1dbe131c8d3/emsdk-main/upstream/emscripten/emranlib libframe_graph.a

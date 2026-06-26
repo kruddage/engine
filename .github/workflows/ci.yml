@@ -21,6 +21,18 @@ jobs:
           emcmake cmake -B build
           cmake --build build
 
+      - name: Stage site
+        if: github.event_name == 'pull_request'
+        run: sh scripts/stage-site.sh build public
+
+      - name: Upload site artifact
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: public/
+          retention-days: 1
+
   sanitizers:
     runs-on: ubuntu-latest
     steps:
@@ -96,44 +108,3 @@ jobs:
 
       - name: Run clang-tidy
         run: run-clang-tidy -p build '.*(modules|plugins)/.*(?<!_test)\.c$'
-
-  preview:
-    if: github.event_name == 'pull_request'
-    needs: [build, sanitizers, coverage, clang-tidy]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-      deployments: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Emscripten
-        uses: mymindstorm/setup-emsdk@v14
-        with:
-          cache: true
-
-      - name: Install ccache
-        run: sudo apt-get install -y ccache
-
-      - name: Cache ccache
-        uses: actions/cache@v4
-        with:
-          path: ~/.ccache
-          key: ccache-preview-${{ github.sha }}
-          restore-keys: ccache-preview-
-
-      - name: Build
-        run: |
-          emcmake cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache
-          cmake --build build
-
-      # Stage only the web outputs. Publishing the raw build/ tree would commit
-      # _deps/ (a gitlink) to gh-pages and break the Pages branch build.
-      - name: Stage site
-        run: sh scripts/stage-site.sh build public
-
-      - name: Deploy PR preview
-        uses: rossjrw/pr-preview-action@v1
-        with:
-          source-dir: public

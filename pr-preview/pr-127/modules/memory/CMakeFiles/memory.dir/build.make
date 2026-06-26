@@ -76,15 +76,15 @@ modules/memory/CMakeFiles/memory.dir/memory.c.o: modules/memory/CMakeFiles/memor
 modules/memory/CMakeFiles/memory.dir/memory.c.o: /home/runner/work/engine/engine/modules/memory/memory.c
 modules/memory/CMakeFiles/memory.dir/memory.c.o: modules/memory/CMakeFiles/memory.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building C object modules/memory/CMakeFiles/memory.dir/memory.c.o"
-	cd /home/runner/work/engine/engine/build/modules/memory && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT modules/memory/CMakeFiles/memory.dir/memory.c.o -MF CMakeFiles/memory.dir/memory.c.o.d -o CMakeFiles/memory.dir/memory.c.o -c /home/runner/work/engine/engine/modules/memory/memory.c
+	cd /home/runner/work/engine/engine/build/modules/memory && ccache /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT modules/memory/CMakeFiles/memory.dir/memory.c.o -MF CMakeFiles/memory.dir/memory.c.o.d -o CMakeFiles/memory.dir/memory.c.o -c /home/runner/work/engine/engine/modules/memory/memory.c
 
 modules/memory/CMakeFiles/memory.dir/memory.c.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/memory.dir/memory.c.i"
-	cd /home/runner/work/engine/engine/build/modules/memory && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/modules/memory/memory.c > CMakeFiles/memory.dir/memory.c.i
+	cd /home/runner/work/engine/engine/build/modules/memory && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/modules/memory/memory.c > CMakeFiles/memory.dir/memory.c.i
 
 modules/memory/CMakeFiles/memory.dir/memory.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/memory.dir/memory.c.s"
-	cd /home/runner/work/engine/engine/build/modules/memory && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/modules/memory/memory.c -o CMakeFiles/memory.dir/memory.c.s
+	cd /home/runner/work/engine/engine/build/modules/memory && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/modules/memory/memory.c -o CMakeFiles/memory.dir/memory.c.s
 
 # Object files for target memory
 memory_OBJECTS = \

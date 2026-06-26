@@ -76,225 +76,225 @@ _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/alloc.c.o: _deps/mimallo
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/alloc.c.o: _deps/mimalloc-src/src/alloc.c
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/alloc.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building C object _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/alloc.c.o"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/alloc.c.o -MF CMakeFiles/mimalloc-static.dir/src/alloc.c.o.d -o CMakeFiles/mimalloc-static.dir/src/alloc.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/alloc.c
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && ccache /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/alloc.c.o -MF CMakeFiles/mimalloc-static.dir/src/alloc.c.o.d -o CMakeFiles/mimalloc-static.dir/src/alloc.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/alloc.c
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/alloc.c.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/mimalloc-static.dir/src/alloc.c.i"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/alloc.c > CMakeFiles/mimalloc-static.dir/src/alloc.c.i
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/alloc.c > CMakeFiles/mimalloc-static.dir/src/alloc.c.i
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/alloc.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/mimalloc-static.dir/src/alloc.c.s"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/alloc.c -o CMakeFiles/mimalloc-static.dir/src/alloc.c.s
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/alloc.c -o CMakeFiles/mimalloc-static.dir/src/alloc.c.s
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/alloc-aligned.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/flags.make
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/alloc-aligned.c.o: _deps/mimalloc-src/src/alloc-aligned.c
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/alloc-aligned.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_2) "Building C object _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/alloc-aligned.c.o"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/alloc-aligned.c.o -MF CMakeFiles/mimalloc-static.dir/src/alloc-aligned.c.o.d -o CMakeFiles/mimalloc-static.dir/src/alloc-aligned.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/alloc-aligned.c
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && ccache /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/alloc-aligned.c.o -MF CMakeFiles/mimalloc-static.dir/src/alloc-aligned.c.o.d -o CMakeFiles/mimalloc-static.dir/src/alloc-aligned.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/alloc-aligned.c
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/alloc-aligned.c.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/mimalloc-static.dir/src/alloc-aligned.c.i"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/alloc-aligned.c > CMakeFiles/mimalloc-static.dir/src/alloc-aligned.c.i
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/alloc-aligned.c > CMakeFiles/mimalloc-static.dir/src/alloc-aligned.c.i
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/alloc-aligned.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/mimalloc-static.dir/src/alloc-aligned.c.s"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/alloc-aligned.c -o CMakeFiles/mimalloc-static.dir/src/alloc-aligned.c.s
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/alloc-aligned.c -o CMakeFiles/mimalloc-static.dir/src/alloc-aligned.c.s
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/alloc-posix.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/flags.make
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/alloc-posix.c.o: _deps/mimalloc-src/src/alloc-posix.c
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/alloc-posix.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_3) "Building C object _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/alloc-posix.c.o"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/alloc-posix.c.o -MF CMakeFiles/mimalloc-static.dir/src/alloc-posix.c.o.d -o CMakeFiles/mimalloc-static.dir/src/alloc-posix.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/alloc-posix.c
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && ccache /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/alloc-posix.c.o -MF CMakeFiles/mimalloc-static.dir/src/alloc-posix.c.o.d -o CMakeFiles/mimalloc-static.dir/src/alloc-posix.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/alloc-posix.c
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/alloc-posix.c.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/mimalloc-static.dir/src/alloc-posix.c.i"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/alloc-posix.c > CMakeFiles/mimalloc-static.dir/src/alloc-posix.c.i
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/alloc-posix.c > CMakeFiles/mimalloc-static.dir/src/alloc-posix.c.i
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/alloc-posix.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/mimalloc-static.dir/src/alloc-posix.c.s"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/alloc-posix.c -o CMakeFiles/mimalloc-static.dir/src/alloc-posix.c.s
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/alloc-posix.c -o CMakeFiles/mimalloc-static.dir/src/alloc-posix.c.s
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/arena.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/flags.make
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/arena.c.o: _deps/mimalloc-src/src/arena.c
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/arena.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_4) "Building C object _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/arena.c.o"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/arena.c.o -MF CMakeFiles/mimalloc-static.dir/src/arena.c.o.d -o CMakeFiles/mimalloc-static.dir/src/arena.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/arena.c
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && ccache /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/arena.c.o -MF CMakeFiles/mimalloc-static.dir/src/arena.c.o.d -o CMakeFiles/mimalloc-static.dir/src/arena.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/arena.c
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/arena.c.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/mimalloc-static.dir/src/arena.c.i"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/arena.c > CMakeFiles/mimalloc-static.dir/src/arena.c.i
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/arena.c > CMakeFiles/mimalloc-static.dir/src/arena.c.i
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/arena.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/mimalloc-static.dir/src/arena.c.s"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/arena.c -o CMakeFiles/mimalloc-static.dir/src/arena.c.s
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/arena.c -o CMakeFiles/mimalloc-static.dir/src/arena.c.s
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/bitmap.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/flags.make
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/bitmap.c.o: _deps/mimalloc-src/src/bitmap.c
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/bitmap.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_5) "Building C object _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/bitmap.c.o"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/bitmap.c.o -MF CMakeFiles/mimalloc-static.dir/src/bitmap.c.o.d -o CMakeFiles/mimalloc-static.dir/src/bitmap.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/bitmap.c
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && ccache /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/bitmap.c.o -MF CMakeFiles/mimalloc-static.dir/src/bitmap.c.o.d -o CMakeFiles/mimalloc-static.dir/src/bitmap.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/bitmap.c
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/bitmap.c.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/mimalloc-static.dir/src/bitmap.c.i"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/bitmap.c > CMakeFiles/mimalloc-static.dir/src/bitmap.c.i
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/bitmap.c > CMakeFiles/mimalloc-static.dir/src/bitmap.c.i
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/bitmap.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/mimalloc-static.dir/src/bitmap.c.s"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/bitmap.c -o CMakeFiles/mimalloc-static.dir/src/bitmap.c.s
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/bitmap.c -o CMakeFiles/mimalloc-static.dir/src/bitmap.c.s
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/heap.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/flags.make
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/heap.c.o: _deps/mimalloc-src/src/heap.c
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/heap.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_6) "Building C object _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/heap.c.o"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/heap.c.o -MF CMakeFiles/mimalloc-static.dir/src/heap.c.o.d -o CMakeFiles/mimalloc-static.dir/src/heap.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/heap.c
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && ccache /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/heap.c.o -MF CMakeFiles/mimalloc-static.dir/src/heap.c.o.d -o CMakeFiles/mimalloc-static.dir/src/heap.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/heap.c
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/heap.c.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/mimalloc-static.dir/src/heap.c.i"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/heap.c > CMakeFiles/mimalloc-static.dir/src/heap.c.i
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/heap.c > CMakeFiles/mimalloc-static.dir/src/heap.c.i
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/heap.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/mimalloc-static.dir/src/heap.c.s"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/heap.c -o CMakeFiles/mimalloc-static.dir/src/heap.c.s
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/heap.c -o CMakeFiles/mimalloc-static.dir/src/heap.c.s
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/init.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/flags.make
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/init.c.o: _deps/mimalloc-src/src/init.c
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/init.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_7) "Building C object _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/init.c.o"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/init.c.o -MF CMakeFiles/mimalloc-static.dir/src/init.c.o.d -o CMakeFiles/mimalloc-static.dir/src/init.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/init.c
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && ccache /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/init.c.o -MF CMakeFiles/mimalloc-static.dir/src/init.c.o.d -o CMakeFiles/mimalloc-static.dir/src/init.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/init.c
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/init.c.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/mimalloc-static.dir/src/init.c.i"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/init.c > CMakeFiles/mimalloc-static.dir/src/init.c.i
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/init.c > CMakeFiles/mimalloc-static.dir/src/init.c.i
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/init.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/mimalloc-static.dir/src/init.c.s"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/init.c -o CMakeFiles/mimalloc-static.dir/src/init.c.s
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/init.c -o CMakeFiles/mimalloc-static.dir/src/init.c.s
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/libc.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/flags.make
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/libc.c.o: _deps/mimalloc-src/src/libc.c
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/libc.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_8) "Building C object _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/libc.c.o"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/libc.c.o -MF CMakeFiles/mimalloc-static.dir/src/libc.c.o.d -o CMakeFiles/mimalloc-static.dir/src/libc.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/libc.c
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && ccache /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/libc.c.o -MF CMakeFiles/mimalloc-static.dir/src/libc.c.o.d -o CMakeFiles/mimalloc-static.dir/src/libc.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/libc.c
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/libc.c.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/mimalloc-static.dir/src/libc.c.i"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/libc.c > CMakeFiles/mimalloc-static.dir/src/libc.c.i
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/libc.c > CMakeFiles/mimalloc-static.dir/src/libc.c.i
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/libc.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/mimalloc-static.dir/src/libc.c.s"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/libc.c -o CMakeFiles/mimalloc-static.dir/src/libc.c.s
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/libc.c -o CMakeFiles/mimalloc-static.dir/src/libc.c.s
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/options.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/flags.make
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/options.c.o: _deps/mimalloc-src/src/options.c
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/options.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_9) "Building C object _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/options.c.o"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/options.c.o -MF CMakeFiles/mimalloc-static.dir/src/options.c.o.d -o CMakeFiles/mimalloc-static.dir/src/options.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/options.c
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && ccache /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/options.c.o -MF CMakeFiles/mimalloc-static.dir/src/options.c.o.d -o CMakeFiles/mimalloc-static.dir/src/options.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/options.c
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/options.c.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/mimalloc-static.dir/src/options.c.i"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/options.c > CMakeFiles/mimalloc-static.dir/src/options.c.i
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/options.c > CMakeFiles/mimalloc-static.dir/src/options.c.i
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/options.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/mimalloc-static.dir/src/options.c.s"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/options.c -o CMakeFiles/mimalloc-static.dir/src/options.c.s
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/options.c -o CMakeFiles/mimalloc-static.dir/src/options.c.s
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/os.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/flags.make
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/os.c.o: _deps/mimalloc-src/src/os.c
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/os.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_10) "Building C object _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/os.c.o"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/os.c.o -MF CMakeFiles/mimalloc-static.dir/src/os.c.o.d -o CMakeFiles/mimalloc-static.dir/src/os.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/os.c
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && ccache /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/os.c.o -MF CMakeFiles/mimalloc-static.dir/src/os.c.o.d -o CMakeFiles/mimalloc-static.dir/src/os.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/os.c
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/os.c.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/mimalloc-static.dir/src/os.c.i"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/os.c > CMakeFiles/mimalloc-static.dir/src/os.c.i
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/os.c > CMakeFiles/mimalloc-static.dir/src/os.c.i
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/os.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/mimalloc-static.dir/src/os.c.s"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/os.c -o CMakeFiles/mimalloc-static.dir/src/os.c.s
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/os.c -o CMakeFiles/mimalloc-static.dir/src/os.c.s
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/page.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/flags.make
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/page.c.o: _deps/mimalloc-src/src/page.c
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/page.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_11) "Building C object _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/page.c.o"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/page.c.o -MF CMakeFiles/mimalloc-static.dir/src/page.c.o.d -o CMakeFiles/mimalloc-static.dir/src/page.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/page.c
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && ccache /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/page.c.o -MF CMakeFiles/mimalloc-static.dir/src/page.c.o.d -o CMakeFiles/mimalloc-static.dir/src/page.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/page.c
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/page.c.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/mimalloc-static.dir/src/page.c.i"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/page.c > CMakeFiles/mimalloc-static.dir/src/page.c.i
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/page.c > CMakeFiles/mimalloc-static.dir/src/page.c.i
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/page.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/mimalloc-static.dir/src/page.c.s"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/page.c -o CMakeFiles/mimalloc-static.dir/src/page.c.s
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/page.c -o CMakeFiles/mimalloc-static.dir/src/page.c.s
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/random.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/flags.make
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/random.c.o: _deps/mimalloc-src/src/random.c
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/random.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_12) "Building C object _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/random.c.o"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/random.c.o -MF CMakeFiles/mimalloc-static.dir/src/random.c.o.d -o CMakeFiles/mimalloc-static.dir/src/random.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/random.c
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && ccache /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/random.c.o -MF CMakeFiles/mimalloc-static.dir/src/random.c.o.d -o CMakeFiles/mimalloc-static.dir/src/random.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/random.c
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/random.c.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/mimalloc-static.dir/src/random.c.i"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/random.c > CMakeFiles/mimalloc-static.dir/src/random.c.i
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/random.c > CMakeFiles/mimalloc-static.dir/src/random.c.i
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/random.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/mimalloc-static.dir/src/random.c.s"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/random.c -o CMakeFiles/mimalloc-static.dir/src/random.c.s
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/random.c -o CMakeFiles/mimalloc-static.dir/src/random.c.s
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/segment.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/flags.make
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/segment.c.o: _deps/mimalloc-src/src/segment.c
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/segment.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_13) "Building C object _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/segment.c.o"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/segment.c.o -MF CMakeFiles/mimalloc-static.dir/src/segment.c.o.d -o CMakeFiles/mimalloc-static.dir/src/segment.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/segment.c
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && ccache /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/segment.c.o -MF CMakeFiles/mimalloc-static.dir/src/segment.c.o.d -o CMakeFiles/mimalloc-static.dir/src/segment.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/segment.c
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/segment.c.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/mimalloc-static.dir/src/segment.c.i"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/segment.c > CMakeFiles/mimalloc-static.dir/src/segment.c.i
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/segment.c > CMakeFiles/mimalloc-static.dir/src/segment.c.i
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/segment.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/mimalloc-static.dir/src/segment.c.s"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/segment.c -o CMakeFiles/mimalloc-static.dir/src/segment.c.s
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/segment.c -o CMakeFiles/mimalloc-static.dir/src/segment.c.s
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/segment-map.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/flags.make
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/segment-map.c.o: _deps/mimalloc-src/src/segment-map.c
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/segment-map.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_14) "Building C object _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/segment-map.c.o"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/segment-map.c.o -MF CMakeFiles/mimalloc-static.dir/src/segment-map.c.o.d -o CMakeFiles/mimalloc-static.dir/src/segment-map.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/segment-map.c
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && ccache /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/segment-map.c.o -MF CMakeFiles/mimalloc-static.dir/src/segment-map.c.o.d -o CMakeFiles/mimalloc-static.dir/src/segment-map.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/segment-map.c
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/segment-map.c.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/mimalloc-static.dir/src/segment-map.c.i"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/segment-map.c > CMakeFiles/mimalloc-static.dir/src/segment-map.c.i
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/segment-map.c > CMakeFiles/mimalloc-static.dir/src/segment-map.c.i
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/segment-map.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/mimalloc-static.dir/src/segment-map.c.s"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/segment-map.c -o CMakeFiles/mimalloc-static.dir/src/segment-map.c.s
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/segment-map.c -o CMakeFiles/mimalloc-static.dir/src/segment-map.c.s
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/stats.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/flags.make
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/stats.c.o: _deps/mimalloc-src/src/stats.c
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/stats.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_15) "Building C object _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/stats.c.o"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/stats.c.o -MF CMakeFiles/mimalloc-static.dir/src/stats.c.o.d -o CMakeFiles/mimalloc-static.dir/src/stats.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/stats.c
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && ccache /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/stats.c.o -MF CMakeFiles/mimalloc-static.dir/src/stats.c.o.d -o CMakeFiles/mimalloc-static.dir/src/stats.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/stats.c
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/stats.c.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/mimalloc-static.dir/src/stats.c.i"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/stats.c > CMakeFiles/mimalloc-static.dir/src/stats.c.i
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/stats.c > CMakeFiles/mimalloc-static.dir/src/stats.c.i
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/stats.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/mimalloc-static.dir/src/stats.c.s"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/stats.c -o CMakeFiles/mimalloc-static.dir/src/stats.c.s
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/stats.c -o CMakeFiles/mimalloc-static.dir/src/stats.c.s
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/prim/prim.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/flags.make
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/prim/prim.c.o: _deps/mimalloc-src/src/prim/prim.c
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/prim/prim.c.o: _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/compiler_depend.ts
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_16) "Building C object _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/prim/prim.c.o"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/prim/prim.c.o -MF CMakeFiles/mimalloc-static.dir/src/prim/prim.c.o.d -o CMakeFiles/mimalloc-static.dir/src/prim/prim.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/prim/prim.c
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && ccache /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -MD -MT _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/prim/prim.c.o -MF CMakeFiles/mimalloc-static.dir/src/prim/prim.c.o.d -o CMakeFiles/mimalloc-static.dir/src/prim/prim.c.o -c /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/prim/prim.c
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/prim/prim.c.i: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Preprocessing C source to CMakeFiles/mimalloc-static.dir/src/prim/prim.c.i"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/prim/prim.c > CMakeFiles/mimalloc-static.dir/src/prim/prim.c.i
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -E /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/prim/prim.c > CMakeFiles/mimalloc-static.dir/src/prim/prim.c.i
 
 _deps/mimalloc-build/CMakeFiles/mimalloc-static.dir/src/prim/prim.c.s: cmake_force
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --green "Compiling C source to assembly CMakeFiles/mimalloc-static.dir/src/prim/prim.c.s"
-	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/prim/prim.c -o CMakeFiles/mimalloc-static.dir/src/prim/prim.c.s
+	cd /home/runner/work/engine/engine/build/_deps/mimalloc-build && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc $(C_DEFINES) $(C_INCLUDES) $(C_FLAGS) -S /home/runner/work/engine/engine/build/_deps/mimalloc-src/src/prim/prim.c -o CMakeFiles/mimalloc-static.dir/src/prim/prim.c.s
 
 # Object files for target mimalloc-static
 mimalloc__static_OBJECTS = \

@@ -70,7 +70,7 @@ plugins/hello_plugin/CMakeFiles/hello_plugin: hello_plugin.wasm
 
 hello_plugin.wasm: /home/runner/work/engine/engine/plugins/hello_plugin/hello_plugin.c
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --blue --bold --progress-dir=/home/runner/work/engine/engine/build/CMakeFiles --progress-num=$(CMAKE_PROGRESS_1) "Building hello_plugin SIDE_MODULE"
-	cd /home/runner/work/engine/engine/build/plugins/hello_plugin && /home/runner/work/_temp/6334b76f-fb56-472f-841c-8229116d8b27/emsdk-main/upstream/emscripten/emcc -sSIDE_MODULE=1 -O2 -I/home/runner/work/engine/engine/modules/core/include -o /home/runner/work/engine/engine/build/hello_plugin.wasm /home/runner/work/engine/engine/plugins/hello_plugin/hello_plugin.c
+	cd /home/runner/work/engine/engine/build/plugins/hello_plugin && /home/runner/work/_temp/6016bc48-764e-4298-905e-bb999d2e2743/emsdk-main/upstream/emscripten/emcc -sSIDE_MODULE=1 -O2 -I/home/runner/work/engine/engine/modules/core/include -o /home/runner/work/engine/engine/build/hello_plugin.wasm /home/runner/work/engine/engine/plugins/hello_plugin/hello_plugin.c
 
 plugins/hello_plugin/CMakeFiles/hello_plugin.dir/codegen:
 .PHONY : plugins/hello_plugin/CMakeFiles/hello_plugin.dir/codegen

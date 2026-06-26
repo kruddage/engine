@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>KRUDD</title>
+<title>@PROJECT_NAME@ v@PROJECT_VERSION@</title>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -260,7 +260,7 @@ footer {
 
 <header>
 	<span class="wordmark">KRUDD</span>
-	<span class="version">engine v0.1</span>
+	<span class="version">@PROJECT_NAME@ v@PROJECT_VERSION@</span>
 </header>
 
 <div class="canvas-wrap">

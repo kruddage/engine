@@ -1,4 +1,5 @@
 configure_file(version.h.in version.h)
+configure_file(shell.html.in ${CMAKE_CURRENT_BINARY_DIR}/shell.html @ONLY)
 
 add_library(subsystem subsystem.c)
 target_include_directories(subsystem PUBLIC include)
@@ -45,7 +46,7 @@ if(EMSCRIPTEN)
 		-sMAIN_MODULE=1
 		-sFETCH=1
 		--extern-pre-js ${CMAKE_CURRENT_SOURCE_DIR}/error_overlay.js
-		--shell-file ${CMAKE_CURRENT_SOURCE_DIR}/shell.html
+		--shell-file ${CMAKE_CURRENT_BINARY_DIR}/shell.html
 		-sMAX_WEBGL_VERSION=2
 		-sEXPORTED_FUNCTIONS=_main
 	)

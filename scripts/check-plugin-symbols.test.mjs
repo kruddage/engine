@@ -117,7 +117,19 @@ assert.deepEqual(
 	[{ plugin: 'renderer_webgl.wasm', symbol: 'glClear', kind: 'unresolved' }],
 	'expected glClear to be unresolved');
 
-// 4) loadOrder parses the plugins[] table from engine.c verbatim, in order.
+// 4) Weak C++ symbols a module both imports and exports self-resolve and must
+//    not be flagged (regression: imgui_plugin's 92 ImVector<...> weak symbols).
+assert.deepEqual(
+	reconcile({ main, plugins: [
+		p('imgui_plugin.wasm', makeWasm({
+			imports: [env('_ZN8ImVectorIiE9push_backERKi')],
+			exports: ['_ZN8ImVectorIiE9push_backERKi'],
+		})),
+	]}),
+	[],
+	'expected a module’s own weak exports to satisfy its own imports');
+
+// 5) loadOrder parses the plugins[] table from engine.c verbatim, in order.
 const engineSrc = `
 static const char * const plugins[] = {
 	"hello_plugin.wasm",

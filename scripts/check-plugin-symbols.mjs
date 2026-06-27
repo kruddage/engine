@@ -94,8 +94,11 @@ export function reconcile({ main, plugins }) {
 
 	const problems = [];
 	for (let i = 0; i < plugins.length; i++) {
+		// A module resolves its own exported symbols, including the weak C++
+		// template/inline definitions it both imports and exports.
+		const self = exportsOf[i].exports;
 		for (const sym of envFunctionImports(plugins[i].bytes)) {
-			if (provided.has(sym) || ALLOWLIST.has(sym))
+			if (provided.has(sym) || self.has(sym) || ALLOWLIST.has(sym))
 				continue;
 			const later = exportsOf
 				.slice(i + 1)
@@ -106,7 +109,7 @@ export function reconcile({ main, plugins }) {
 				: { plugin: plugins[i].name, symbol: sym,
 				    kind: 'unresolved' });
 		}
-		for (const s of exportsOf[i].exports)
+		for (const s of self)
 			provided.add(s);
 	}
 

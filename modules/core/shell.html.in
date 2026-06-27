@@ -359,7 +359,7 @@ footer {
 	window.kruddShowError = function (title, detail) {
 		document.getElementById('error-label').textContent = title;
 		var body = document.getElementById('error-body');
-		body.dataset.raw = detail;
+		body.dataset.raw = title + ': ' + detail;
 		body.innerHTML = renderMarkdown(errorToMarkdown(detail));
 		document.getElementById('error-backdrop').classList.add('visible');
 		document.getElementById('status-dot').classList.add('error');

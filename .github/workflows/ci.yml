@@ -21,6 +21,14 @@ jobs:
           emcmake cmake -B build
           cmake --build build
 
+      # A side module's function imports are resolved at dlopen time; any that
+      # the main module / other plugins do not provide become stubs that THROW
+      # at runtime (invisible to a link-only build). Trap that class here.
+      - name: Check plugin symbol resolution
+        run: |
+          node scripts/check-plugin-symbols.test.mjs
+          node scripts/check-plugin-symbols.mjs build
+
   sanitizers:
     runs-on: ubuntu-latest
     steps:

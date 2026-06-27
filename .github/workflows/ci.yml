@@ -136,6 +136,15 @@ jobs:
           emcmake cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache
           cmake --build build
 
+      # Gate the exact artifact that ships. The `build` job runs this against a
+      # Debug build; at -O2 some JS-library symbols are wired via GOT.func rather
+      # than env imports, so the Release config the preview deploys must be
+      # checked too, or a Release-only resolution gap would ship unnoticed.
+      - name: Check plugin symbol resolution (release)
+        run: |
+          node scripts/check-plugin-symbols.test.mjs
+          node scripts/check-plugin-symbols.mjs build
+
       # Stage only the web outputs. Publishing the raw build/ tree would commit
       # _deps/ (a gitlink) to gh-pages and break the Pages branch build.
       - name: Stage site

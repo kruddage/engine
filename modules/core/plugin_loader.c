@@ -11,6 +11,9 @@
 
 static struct subsystem_manager  *manager;
 static const char * const        *plugin_list;
+static int32_t                    load_index;
+
+static void load_next(void);
 
 static void on_load(void *user_data, void *handle)
 {
@@ -20,15 +23,42 @@ static void on_load(void *user_data, void *handle)
 	if (!entry) {
 		LOG_INFO("plugin_loader: no plugin_entry in %s",
 			 (const char *)user_data);
-		return;
+	} else {
+		LOG_INFO("plugin_loader: loaded %s", (const char *)user_data);
+		entry(manager);
 	}
-	LOG_INFO("plugin_loader: loaded %s", (const char *)user_data);
-	entry(manager);
+
+	load_next();
 }
 
 static void on_error(void *user_data)
 {
 	LOG_INFO("plugin_loader: failed to load %s", (const char *)user_data);
+	load_next();
+}
+
+/*
+ * Load plugins strictly one at a time, in plugin_list order.  emscripten_dlopen
+ * is asynchronous, so firing every plugin at once races: a plugin's WASM imports
+ * are bound at instantiation, so a dependent (e.g. kruddboard, which calls into
+ * imgui_plugin's ImGui symbols) loaded before its dependency binds those imports
+ * to stubs that throw on first call.  Chaining each load off the previous one's
+ * completion guarantees a plugin's dependencies are already in the global symbol
+ * table — hence RTLD_GLOBAL — before it loads.  plugin_list must therefore be in
+ * dependency order; scripts/check-plugin-symbols.mjs verifies that it is.
+ */
+static void load_next(void)
+{
+	const char *name;
+
+	if (!plugin_list)
+		return;
+	name = plugin_list[load_index];
+	if (!name)
+		return; /* all plugins processed */
+	load_index++;
+	emscripten_dlopen(name, RTLD_NOW | RTLD_GLOBAL, (void *)name,
+			  on_load, on_error);
 }
 #endif /* __EMSCRIPTEN__ */
 
@@ -55,15 +85,8 @@ void plugin_loader_set_plugins(const char * const *plugins)
 void plugin_loader_init(void)
 {
 #ifdef __EMSCRIPTEN__
-	int32_t i;
-
-	if (!plugin_list)
-		return;
-	for (i = 0; plugin_list[i]; i++) {
-		emscripten_dlopen(plugin_list[i], RTLD_NOW,
-				  (void *)plugin_list[i],
-				  on_load, on_error);
-	}
+	load_index = 0;
+	load_next();
 #else
 	/* emscripten_dlopen unavailable on native; nothing to init. */
 #endif

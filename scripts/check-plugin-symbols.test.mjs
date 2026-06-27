@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
-// Self-test for check-plugin-symbols.mjs. It builds tiny synthetic WASM modules
-// in memory (no emcc required) and asserts the reconciliation flags exactly the
-// imports that nothing provides -- so the checker itself is not untested even
-// though the real reconciliation against engine artifacts only runs on CI.
+// Self-test for check-plugin-symbols.mjs. Builds tiny synthetic WASM modules in
+// memory (no emcc required) and asserts the load-order-aware reconciliation
+// flags exactly the imports that nothing provides in time -- so the checker is
+// covered without a toolchain. Only the final reconciliation against the real
+// engine artifacts needs a build, which runs on CI.
 //
 // Run: node scripts/check-plugin-symbols.test.mjs
 
 import assert from 'node:assert/strict';
-import { reconcile } from './check-plugin-symbols.mjs';
+import { reconcile, loadOrder } from './check-plugin-symbols.mjs';
 
 /* --- minimal WASM encoder: functions only, all of type () -> () --- */
 
@@ -50,66 +51,86 @@ function makeWasm({ imports = [], exports = [] } = {}) {
 		...typeSec, ...importSec, ...funcSec, ...exportSec, ...codeSec,
 	]);
 }
+const env = (name) => ({ module: 'env', name });
 
 /* --- fixtures mirroring the real engine's shape --- */
 
+// Main exports an engine symbol and pulls one JS-library fn into asmLibraryArg.
 const main = makeWasm({
-	imports: [{ module: 'env', name: 'emscripten_webgl_create_context' }],
+	imports: [env('emscripten_webgl_create_context')],
 	exports: ['subsystem_manager_register'],
 });
 
-const good = makeWasm({
-	imports: [
-		{ module: 'env', name: 'subsystem_manager_register' },      /* main export      */
-		{ module: 'env', name: 'emscripten_webgl_create_context' }, /* main asmLibraryArg */
-		{ module: 'wasi_snapshot_preview1', name: 'fd_write' },     /* runtime-provided */
-	],
-	exports: ['imgui_register_panel'],
-});
-
-const consumer = makeWasm({
-	imports: [{ module: 'env', name: 'imgui_register_panel' }],     /* from good's exports */
+// renderer: resolves entirely against the main module.
+const renderer = makeWasm({
+	imports: [env('subsystem_manager_register'),
+		  env('emscripten_webgl_create_context')],
 	exports: [],
 });
-
-const bad = makeWasm({
+// imgui: exports the ImGui symbols.
+const imgui = makeWasm({
+	imports: [env('subsystem_manager_register')],
+	exports: ['_ZN5ImGui5BeginEPKcPbi', '_ZN5ImGui3EndEv'],
+});
+// kruddboard: imports ImGui symbols + a runtime import that must be ignored.
+const kruddboard = makeWasm({
 	imports: [
-		{ module: 'env', name: 'glClear' },
-		{ module: 'env', name: 'glClearColor' },
+		env('_ZN5ImGui5BeginEPKcPbi'),
+		env('_ZN5ImGui3EndEv'),
+		{ module: 'wasi_snapshot_preview1', name: 'fd_write' },
 	],
 	exports: [],
 });
+const p = (name, bytes) => ({ name, bytes });
 
 /* --- assertions --- */
 
-// 1) Everything resolves (incl. plugin-to-plugin and runtime imports).
+// 1) Correct load order: imgui before kruddboard -> everything resolves.
 assert.deepEqual(
 	reconcile({ main, plugins: [
-		{ name: 'good.wasm', bytes: good },
-		{ name: 'consumer.wasm', bytes: consumer },
+		p('renderer_webgl.wasm', renderer),
+		p('imgui_plugin.wasm', imgui),
+		p('kruddboard.wasm', kruddboard),
 	]}),
 	[],
-	'expected every import to resolve');
+	'expected every import to resolve in dependency order');
 
-// 2) Unprovided env functions are flagged -- exactly the GL bug we are trapping.
+// 2) Wrong order: kruddboard before imgui -> ORDER violation naming the provider.
 assert.deepEqual(
 	reconcile({ main, plugins: [
-		{ name: 'good.wasm', bytes: good },
-		{ name: 'bad.wasm', bytes: bad },
+		p('kruddboard.wasm', kruddboard),
+		p('imgui_plugin.wasm', imgui),
 	]}),
 	[
-		{ plugin: 'bad.wasm', symbol: 'glClear' },
-		{ plugin: 'bad.wasm', symbol: 'glClearColor' },
+		{ plugin: 'kruddboard.wasm', symbol: '_ZN5ImGui3EndEv',
+		  kind: 'order', provider: 'imgui_plugin.wasm' },
+		{ plugin: 'kruddboard.wasm', symbol: '_ZN5ImGui5BeginEPKcPbi',
+		  kind: 'order', provider: 'imgui_plugin.wasm' },
 	],
-	'expected glClear/glClearColor to be flagged');
+	'expected ordering violations for kruddboard before imgui');
 
-// 3) Runtime-module imports are never flagged, even with a bare main module.
+// 3) Nothing provides it -> UNRESOLVED (the original GL bug class).
 assert.deepEqual(
-	reconcile({ main: makeWasm({}), plugins: [
-		{ name: 'w.wasm', bytes: makeWasm({ imports: [
-			{ module: 'wasi_snapshot_preview1', name: 'fd_write' }] }) },
+	reconcile({ main, plugins: [
+		p('renderer_webgl.wasm', makeWasm({ imports: [env('glClear')] })),
 	]}),
-	[],
-	'expected wasi imports to be ignored');
+	[{ plugin: 'renderer_webgl.wasm', symbol: 'glClear', kind: 'unresolved' }],
+	'expected glClear to be unresolved');
+
+// 4) loadOrder parses the plugins[] table from engine.c verbatim, in order.
+const engineSrc = `
+static const char * const plugins[] = {
+	"hello_plugin.wasm",
+	"asset_plugin.wasm",
+	"renderer_webgl.wasm",
+	"imgui_plugin.wasm",
+	"kruddboard.wasm",
+	NULL,
+};`;
+assert.deepEqual(
+	loadOrder(engineSrc),
+	['hello_plugin.wasm', 'asset_plugin.wasm', 'renderer_webgl.wasm',
+	 'imgui_plugin.wasm', 'kruddboard.wasm'],
+	'expected loadOrder to parse plugins[] in declared order');
 
 console.log('check-plugin-symbols self-test: all assertions passed');

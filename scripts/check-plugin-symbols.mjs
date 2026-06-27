@@ -1,37 +1,40 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
-// Plugin symbol-resolution check.
+// Plugin symbol-resolution check (load-order aware).
 //
-// The engine is an Emscripten MAIN_MODULE; plugins are built as SIDE_MODULEs.
-// A side module's function imports are resolved at dlopen time against the
-// global symbol table, which is exactly:
+// The engine is an Emscripten MAIN_MODULE; plugins are built as SIDE_MODULEs and
+// loaded with emscripten_dlopen. A side module's function imports are bound, once,
+// at instantiation, against the global symbol table as it exists AT THAT MOMENT:
 //
-//   * the main module's WASM exports (its EMSCRIPTEN_KEEPALIVE C functions),
-//   * the JS-library functions the main module pulled into asmLibraryArg --
-//     i.e. precisely the env function imports of the MAIN module, since a
-//     JS-library function is included only when the main module's own WASM
-//     imports it, and
-//   * the WASM exports of every other loaded side module.
+//   * the main module's WASM exports (its EMSCRIPTEN_KEEPALIVE C functions and the
+//     libc/libc++ it statically links),
+//   * the JS-library functions the main module pulled into asmLibraryArg -- i.e.
+//     precisely the env function imports of the MAIN module, since a JS-library
+//     function is included only when the main module's own WASM imports it, and
+//   * the WASM exports of plugins that have ALREADY been loaded.
 //
-// If a plugin imports an `env` function that none of those provide, Emscripten's
-// dynamic linker does NOT error -- it substitutes a stub that THROWS the first
-// time the function is invoked. In the browser that surfaces as an uncaught JS
-// runtime exception (e.g. the renderer calling glClear on the first frame), and
-// it is completely invisible to a compile/link-only CI build.
+// If a plugin imports an `env` function that is not yet provided, Emscripten's
+// dynamic linker does NOT error -- it substitutes a stub that THROWS on first
+// call, surfacing in the browser as an uncaught JS runtime exception. Two ways
+// this happens:
 //
-// This check reconciles every plugin's env function imports against what the
-// main module and the other plugins provide, and fails fast listing any symbol
-// that would become a throwing stub. It is the general guard for the whole class
-// of "a side module needs a symbol nobody wired into the main module" bugs that
-// modules/core/plugin_abi.c exists to fix one at a time.
+//   * UNRESOLVED -- nothing anywhere provides the symbol (e.g. a gl* function the
+//     main module forgot to wire into asmLibraryArg; see modules/core/plugin_abi.c).
+//   * ORDER -- the symbol IS provided by another plugin, but that plugin loads
+//     LATER (e.g. kruddboard calls imgui_plugin's ImGui symbols). Plugins must be
+//     loaded in dependency order; the loader serializes on plugin_list order, so
+//     that list must be a valid topological order.
 //
-// Pure Node -- no emcc, no WABT. It reads already-built .wasm files with the
-// standard WebAssembly reflection API.
+// This check walks the plugins in their declared load order (parsed from the
+// plugins[] table in modules/core/engine.c) and fails fast listing every import
+// that would become a throwing stub, classified as UNRESOLVED or ORDER.
+//
+// Pure Node -- no emcc, no WABT. Reads already-built .wasm via the WebAssembly
+// reflection API.
 //
 // Usage: node scripts/check-plugin-symbols.mjs [BUILD_DIR]   (default: build)
-//        The main module is BUILD_DIR/index.wasm; every other *.wasm is a plugin.
 
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 const MAIN = 'index.wasm';
@@ -66,74 +69,111 @@ export function functionExports(bytes) {
 	return out;
 }
 
-// Returns a sorted list of { plugin, symbol } that would become throwing stubs
-// at runtime because nothing in the loaded set provides them.
+// Parse the ordered list of plugin .wasm names from the plugins[] table in
+// engine.c. This is the order the loader loads them in, and therefore the order
+// in which their exports become available to subsequent plugins.
+export function loadOrder(engineSrc) {
+	const m = engineSrc.match(/plugins\[\]\s*=\s*\{([\s\S]*?)\}/);
+	if (!m)
+		throw new Error('could not find plugins[] table in engine.c');
+	return [...m[1].matchAll(/"([^"]+\.wasm)"/g)].map((x) => x[1]);
+}
+
+// Walk plugins in load order. Returns a sorted list of problems:
+//   { plugin, symbol, kind: 'unresolved' }            -- nothing provides it, or
+//   { plugin, symbol, kind: 'order', provider }       -- provided, but too late.
 export function reconcile({ main, plugins }) {
 	const provided = new Set([
 		...functionExports(main),
 		...envFunctionImports(main),
 	]);
-	for (const p of plugins)
-		for (const sym of functionExports(p.bytes))
-			provided.add(sym);
+	const exportsOf = plugins.map((p) => ({
+		name: p.name,
+		exports: functionExports(p.bytes),
+	}));
 
-	const missing = [];
-	for (const p of plugins) {
-		for (const sym of envFunctionImports(p.bytes)) {
-			if (!provided.has(sym) && !ALLOWLIST.has(sym))
-				missing.push({ plugin: p.name, symbol: sym });
+	const problems = [];
+	for (let i = 0; i < plugins.length; i++) {
+		for (const sym of envFunctionImports(plugins[i].bytes)) {
+			if (provided.has(sym) || ALLOWLIST.has(sym))
+				continue;
+			const later = exportsOf
+				.slice(i + 1)
+				.find((e) => e.exports.has(sym));
+			problems.push(later
+				? { plugin: plugins[i].name, symbol: sym,
+				    kind: 'order', provider: later.name }
+				: { plugin: plugins[i].name, symbol: sym,
+				    kind: 'unresolved' });
 		}
+		for (const s of exportsOf[i].exports)
+			provided.add(s);
 	}
-	missing.sort((a, b) =>
+
+	problems.sort((a, b) =>
 		a.plugin === b.plugin
 			? a.symbol.localeCompare(b.symbol)
 			: a.plugin.localeCompare(b.plugin));
-	return missing;
+	return problems;
 }
 
 function runCli() {
 	const buildDir = process.argv[2] || 'build';
-	const wasm = readdirSync(buildDir).filter((f) => f.endsWith('.wasm'));
 
-	if (!wasm.includes(MAIN)) {
-		console.error(`error: ${join(buildDir, MAIN)} not found -- build first`);
+	const engineSrc = readFileSync(
+		new URL('../modules/core/engine.c', import.meta.url), 'utf8');
+	const order = loadOrder(engineSrc);
+
+	const mainPath = join(buildDir, MAIN);
+	if (!existsSync(mainPath)) {
+		console.error(`error: ${mainPath} not found -- build first`);
 		process.exit(2);
 	}
-	const pluginFiles = wasm.filter((f) => f !== MAIN).sort();
-	if (pluginFiles.length === 0) {
-		console.error(`error: no plugin .wasm found in ${buildDir}`);
-		process.exit(2);
+	const main = readFileSync(mainPath);
+
+	const plugins = [];
+	for (const name of order) {
+		const p = join(buildDir, name);
+		if (!existsSync(p)) {
+			console.error(`error: ${name} is listed in engine.c ` +
+				`plugins[] but ${p} is missing`);
+			process.exit(2);
+		}
+		plugins.push({ name, bytes: readFileSync(p) });
 	}
 
-	const mainBytes = readFileSync(join(buildDir, MAIN));
-	const plugins = pluginFiles.map((f) => ({
-		name: f,
-		bytes: readFileSync(join(buildDir, f)),
-	}));
+	const problems = reconcile({ main, plugins });
 
-	const missing = reconcile({ main: mainBytes, plugins });
-
-	if (missing.length === 0) {
+	if (problems.length === 0) {
 		console.log(
-			`OK: all ${pluginFiles.length} plugin(s) resolve every env ` +
-			`function import against ${MAIN} and each other`);
+			`OK: all ${plugins.length} plugin(s) resolve every env ` +
+			`function import in load order ` +
+			`[${order.join(', ')}]`);
 		return;
 	}
 
 	console.error(
-		'FAIL: plugin function imports with no provider -- each becomes a ' +
-		'stub that throws at runtime:\n');
+		'FAIL: plugin function imports that become stubs which throw at ' +
+		'runtime:\n');
 	let last = '';
-	for (const { plugin, symbol } of missing) {
-		if (plugin !== last) {
-			console.error(`  ${plugin}:`);
-			last = plugin;
+	for (const p of problems) {
+		if (p.plugin !== last) {
+			console.error(`  ${p.plugin}:`);
+			last = p.plugin;
 		}
-		console.error(`      ${symbol}`);
+		if (p.kind === 'order')
+			console.error(`      ${p.symbol}  ` +
+				`(ORDER: provided by ${p.provider}, which loads later)`);
+		else
+			console.error(`      ${p.symbol}  (UNRESOLVED: no provider)`);
 	}
+
+	const orders = problems.filter((p) => p.kind === 'order').length;
+	const unres = problems.length - orders;
 	console.error(
-		`\n${missing.length} unresolved import(s). Wire each into the main ` +
-		`module so it lands in asmLibraryArg (see modules/core/plugin_abi.c).`);
+		`\n${unres} unresolved (wire into the main module -- see ` +
+		`modules/core/plugin_abi.c), ${orders} ordering ` +
+		`violation(s) (fix plugins[] order in engine.c).`);
 	process.exit(1);
 }
 

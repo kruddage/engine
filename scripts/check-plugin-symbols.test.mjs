@@ -34,12 +34,17 @@ function section(id, payload) {
 	return [id, ...uleb(payload.length), ...payload];
 }
 
-// imports: [{ module, name }], exports: [name].  Every function is type 0,
-// the empty signature () -> ().  Exported functions get an empty body.
-function makeWasm({ imports = [], exports = [] } = {}) {
+// imports: [{ module, name }] function imports; globalImports: [{ module, name }]
+// imported i32 globals (used to model GOT.func.<name> address-of entries).
+// exports: [name] exported functions with empty bodies (all type () -> ()).
+function makeWasm({ imports = [], globalImports = [], exports = [] } = {}) {
 	const typeSec = section(1, vec([[0x60, 0x00, 0x00]]));
-	const importSec = section(2, vec(imports.map((i) =>
-		[...str(i.module), ...str(i.name), 0x00, 0x00])));
+	const importSec = section(2, vec([
+		...imports.map((i) =>
+			[...str(i.module), ...str(i.name), 0x00, 0x00]),
+		...globalImports.map((g) =>
+			[...str(g.module), ...str(g.name), 0x03, 0x7f, 0x00]),
+	]));
 	const funcSec = section(3, vec(exports.map(() => [0x00])));
 	const numImported = imports.length;
 	const exportSec = section(7, vec(exports.map((name, i) =>
@@ -129,7 +134,18 @@ assert.deepEqual(
 	[],
 	'expected a module’s own weak exports to satisfy its own imports');
 
-// 5) loadOrder parses the plugins[] table from engine.c verbatim, in order.
+// 5) A symbol the main module only address-takes appears as a GOT.func import
+//    (not env). At -O2 that's all there is, yet it IS callable by side modules,
+//    so it must count as provided (regression: the Release build's gl* symbols).
+assert.deepEqual(
+	reconcile({
+		main: makeWasm({ globalImports: [{ module: 'GOT.func', name: 'glClear' }] }),
+		plugins: [p('renderer_webgl.wasm', makeWasm({ imports: [env('glClear')] }))],
+	}),
+	[],
+	'expected a GOT.func address-of in main to satisfy a plugin’s env import');
+
+// 6) loadOrder parses the plugins[] table from engine.c verbatim, in order.
 const engineSrc = `
 static const char * const plugins[] = {
 	"hello_plugin.wasm",

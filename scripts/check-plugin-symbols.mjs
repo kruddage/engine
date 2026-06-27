@@ -69,6 +69,24 @@ export function functionExports(bytes) {
 	return out;
 }
 
+// Functions whose ADDRESS the main module takes (e.g. the gl_abi_refs /
+// plugin_abi_refs tables) appear as GOT.func.<name> imports rather than env
+// function imports. At -O0 the same reference often also yields an env import,
+// but at -O2 (the Release config the preview ships) only the GOT.func entry
+// remains. Taking the address still forces the JS-library function into
+// asmLibraryArg, so it IS callable by side modules -- verified by running the
+// Release build in a browser. Treat these as provided, or the check
+// false-positives on exactly the symbols plugin_abi.c is wiring up.
+export function gotFunctionImports(bytes) {
+	const mod = new WebAssembly.Module(bytes);
+	const out = new Set();
+	for (const imp of WebAssembly.Module.imports(mod)) {
+		if (imp.module === 'GOT.func')
+			out.add(imp.name);
+	}
+	return out;
+}
+
 // Parse the ordered list of plugin .wasm names from the plugins[] table in
 // engine.c. This is the order the loader loads them in, and therefore the order
 // in which their exports become available to subsequent plugins.
@@ -86,6 +104,7 @@ export function reconcile({ main, plugins }) {
 	const provided = new Set([
 		...functionExports(main),
 		...envFunctionImports(main),
+		...gotFunctionImports(main),
 	]);
 	const exportsOf = plugins.map((p) => ({
 		name: p.name,

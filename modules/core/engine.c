@@ -94,6 +94,17 @@ static void stats_update(void)
 }
 #endif
 
+#ifdef __EMSCRIPTEN__
+/*
+ * Flip the shell's status pill from "loading" to "running". kruddSetRunning is
+ * defined in shell.html; the typeof guard keeps this safe if the shell changes.
+ */
+EM_JS(void, krudd_signal_running, (void), {
+	if (typeof window.kruddSetRunning === 'function')
+		window.kruddSetRunning();
+})
+#endif
+
 void engine_init(void)
 {
 	plugin_loader_set_manager(&manager);
@@ -124,6 +135,7 @@ int main(void)
 {
 	engine_init();
 #ifdef __EMSCRIPTEN__
+	krudd_signal_running();
 	emscripten_set_main_loop(engine_tick, 0, 1);
 #else
 	/* Native main loop not yet implemented; seam for future loop. */

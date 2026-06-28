@@ -5,16 +5,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Pages is served from the gh-pages branch (root), so we need to push to it.
-permissions:
-  contents: write
-
-concurrency:
-  group: pages
-  cancel-in-progress: false
-
 jobs:
-  deploy:
+  # Build and stage the site. This job never touches gh-pages; it only produces
+  # the `site` artifact that the pages-deploy workflow publishes.
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,13 +26,20 @@ jobs:
       - name: Stage site
         run: sh scripts/stage-site.sh build public
 
-      # Publish to the gh-pages root. keep_files: true preserves the pr-preview/
-      # directories that pr-preview-action manages, so main and PR previews
-      # coexist on the same branch.
-      - name: Publish to gh-pages
-        uses: peaceiris/actions-gh-pages@v4
+      - name: Upload staged site
+        uses: actions/upload-artifact@v4
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./public
-          publish_branch: gh-pages
-          keep_files: true
+          name: site
+          path: public
+
+  # Hand the staged site to the single gh-pages writer. The concurrency lock and
+  # keep_files coexistence logic live there, not here.
+  deploy:
+    needs: build
+    permissions:
+      contents: write
+      pull-requests: write
+      deployments: write
+    uses: ./.github/workflows/pages-deploy.yml
+    with:
+      mode: main

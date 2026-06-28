@@ -18,6 +18,9 @@ static void load_next(void);
 static void on_load(void *user_data, void *handle)
 {
 	void (*entry)(struct subsystem_manager *);
+	int32_t prev_count;
+	int32_t wasm_size;
+	int32_t i;
 
 	*(void **)(&entry) = dlsym(handle, "plugin_entry");
 	if (!entry) {
@@ -25,7 +28,29 @@ static void on_load(void *user_data, void *handle)
 			 (const char *)user_data);
 	} else {
 		LOG_INFO("plugin_loader: loaded %s", (const char *)user_data);
+		prev_count = manager->dynamic_count;
 		entry(manager);
+		/*
+		 * Query the Performance Resource Timing API for the decoded
+		 * byte size of the WASM that was just fetched.  The file may
+		 * have been renamed with a commit hash (locateFile), so match
+		 * by base name rather than the exact filename.
+		 */
+		wasm_size = EM_ASM_INT({
+			var name = UTF8ToString($0);
+			var base = name.replace(/\.wasm$/, '');
+			var entries = performance.getEntriesByType('resource');
+			for (var i = entries.length - 1; i >= 0; i--) {
+				var e = entries[i];
+				if (e.name.indexOf(base) !== -1 &&
+				    e.name.endsWith('.wasm'))
+					return e.decodedBodySize ||
+					       e.encodedBodySize || 0;
+			}
+			return 0;
+		}, (const char *)user_data);
+		for (i = prev_count; i < manager->dynamic_count; i++)
+			manager->dynamic[i].wasm_size = (uint32_t)wasm_size;
 	}
 
 	load_next();

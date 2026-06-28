@@ -108,7 +108,8 @@ static void imgui_init(void)
 	ImGui::CreateContext();
 
 	ImGuiIO &io = ImGui::GetIO();
-	io.IniFilename = nullptr;	/* no writable filesystem in WASM */
+	io.IniFilename  = nullptr;	/* no writable filesystem in WASM */
+	io.ConfigFlags |= ImGuiConfigFlags_IsTouchScreen;
 
 	ImGui::StyleColorsDark();
 	ImGui_ImplOpenGL3_Init("#version 300 es");

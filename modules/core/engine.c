@@ -111,7 +111,7 @@ void engine_init(void)
 	plugin_loader_set_plugins(plugins);
 	subsystem_manager_init(&manager, subsystems);
 	frame_count = 0;
-	LOG_INFO("engine: init v" ENGINE_VERSION_STRING);
+	LOG_INFO("engine: init " ENGINE_VERSION_FULL);
 }
 
 void engine_tick(void)

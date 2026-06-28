@@ -1,6 +1,31 @@
 cmake_minimum_required(VERSION 3.20)
 project(krudd VERSION 0.2.0 LANGUAGES C CXX)
 
+find_package(Git QUIET)
+set(ENGINE_BUILD_NUMBER 0)
+if(GIT_FOUND)
+	execute_process(
+		COMMAND ${GIT_EXECUTABLE} log -1 --format=%H
+			-S "VERSION ${PROJECT_VERSION}" -- CMakeLists.txt
+		WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+		OUTPUT_VARIABLE _version_anchor
+		OUTPUT_STRIP_TRAILING_WHITESPACE
+		ERROR_QUIET
+	)
+	if(_version_anchor)
+		execute_process(
+			COMMAND ${GIT_EXECUTABLE} rev-list --count HEAD ^${_version_anchor}
+			WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+			OUTPUT_VARIABLE ENGINE_BUILD_NUMBER
+			OUTPUT_STRIP_TRAILING_WHITESPACE
+			ERROR_QUIET
+		)
+	endif()
+	if(NOT ENGINE_BUILD_NUMBER)
+		set(ENGINE_BUILD_NUMBER 0)
+	endif()
+endif()
+
 set(CMAKE_C_STANDARD 11)
 
 option(COVERAGE "Enable gcov code coverage" OFF)

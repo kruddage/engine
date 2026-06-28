@@ -167,6 +167,155 @@ EM_JS(void, krudd_idb_del, (uint32_t id), {
 	} catch (e) {}
 })
 
+/*
+ * Web text-input bridge for Dear ImGui — desktop keyboard + mobile soft
+ * keyboard support.
+ *
+ * A hidden <input type="text"> element is used as the keyboard capture
+ * target.  On desktop it receives key events; on mobile, focusing it
+ * raises the soft keyboard.  imgui_plugin.wasm drives the lifecycle
+ * via the five functions below.
+ *
+ * All five EM_JS bodies are defined here (main module) so they land in
+ * asmLibraryArg and are reachable by imgui_plugin.wasm at runtime.
+ * See plugin_abi.c header comment for why side modules must not define
+ * EM_JS themselves.
+ */
+
+/*
+ * krudd_text_input_init — call once at imgui_plugin startup.
+ *
+ * Creates the hidden <input> element, attaches it to document.body,
+ * and wires up the event listeners that populate the pending char
+ * string and key-code queue consumed by drain/pop below.
+ *
+ * Key-code mapping (kept in sync with imgui_plugin.cpp):
+ *   Backspace=1  Enter=2    Tab=3       Delete=4
+ *   ArrowLeft=5  ArrowRight=6  ArrowUp=7  ArrowDown=8
+ *   Home=9       End=10     Escape=11
+ *
+ * Printable characters arrive through the 'input' event; navigation /
+ * editing keys arrive through 'keydown' and are preventDefault()ed so
+ * the browser does not act on them (e.g. Tab navigating focus away).
+ */
+EM_JS(void, krudd_text_input_init, (void), {
+	if (Module.__kruddText)
+		return;
+	Module.__kruddText = { chars: '', keys: [] };
+
+	var el = document.createElement('input');
+	el.type           = 'text';
+	el.autocapitalize = 'off';
+	el.autocomplete   = 'off';
+	el.autocorrect    = 'off';
+	el.spellcheck     = false;
+	/* Position offscreen so it never flashes or shifts layout */
+	el.style.position = 'absolute';
+	el.style.left     = '-9999px';
+	el.style.top      = '-9999px';
+	el.style.width    = '1px';
+	el.style.height   = '1px';
+	el.style.opacity  = '0';
+	document.body.appendChild(el);
+	Module.__kruddTextEl = el;
+
+	/* Printable / IME text: append to pending chars and clear value */
+	el.addEventListener('input', function() {
+		Module.__kruddText.chars += el.value;
+		el.value = '';
+	});
+
+	/* Navigation / editing keys: push a small integer code */
+	var KEY_CODES = {
+		'Backspace':  1,
+		'Enter':      2,
+		'Tab':        3,
+		'Delete':     4,
+		'ArrowLeft':  5,
+		'ArrowRight': 6,
+		'ArrowUp':    7,
+		'ArrowDown':  8,
+		'Home':       9,
+		'End':        10,
+		'Escape':     11
+	};
+	el.addEventListener('keydown', function(ev) {
+		var code = KEY_CODES[ev.key];
+		if (code) {
+			Module.__kruddText.keys.push(code);
+			ev.preventDefault();
+		}
+	});
+})
+
+/*
+ * krudd_text_input_show — focus the hidden input element.
+ *
+ * On desktop this begins capturing keyboard events.  On mobile this
+ * raises the soft keyboard.  Must be called from within a user-gesture
+ * handler on iOS (see imgui_plugin.cpp on_touch for the caveat).
+ */
+EM_JS(void, krudd_text_input_show, (void), {
+	if (Module.__kruddTextEl)
+		Module.__kruddTextEl.focus();
+})
+
+/*
+ * krudd_text_input_hide — blur the hidden input element.
+ *
+ * On mobile this dismisses the soft keyboard.
+ */
+EM_JS(void, krudd_text_input_hide, (void), {
+	if (Module.__kruddTextEl)
+		Module.__kruddTextEl.blur();
+})
+
+/*
+ * krudd_text_input_drain_chars — copy pending UTF-8 text into buf.
+ *
+ * Copies at most cap-1 bytes, NUL-terminates, clears the pending
+ * string, and returns the byte count written (excluding NUL).
+ * Returns 0 if nothing is pending.
+ */
+EM_JS(int, krudd_text_input_drain_chars, (char *buf, int cap), {
+	if (!Module.__kruddText || !Module.__kruddText.chars)
+		return 0;
+	var str   = Module.__kruddText.chars;
+	var bytes = lengthBytesUTF8(str);
+	/* Truncate to fit within cap-1 bytes (cap includes the NUL) */
+	if (bytes >= cap) {
+		var truncated = '';
+		var used = 0;
+		for (var i = 0; i < str.length; i++) {
+			var cp   = str.codePointAt(i);
+			var clen = cp > 0x7FF ? (cp > 0xFFFF ? 4 : 3)
+			                      : (cp > 0x7F   ? 2 : 1);
+			if (used + clen >= cap)
+				break;
+			truncated += str[i];
+			if (cp > 0xFFFF)
+				i++; /* surrogate pair: skip low surrogate */
+			used += clen;
+		}
+		str = truncated;
+	}
+	stringToUTF8(str, buf, cap);
+	Module.__kruddText.chars = '';
+	return lengthBytesUTF8(str);
+})
+
+/*
+ * krudd_text_input_pop_key — dequeue one key code.
+ *
+ * Returns the oldest queued key code (1-11) or 0 if the queue is
+ * empty.  The caller loops until 0 is returned.
+ */
+EM_JS(int, krudd_text_input_pop_key, (void), {
+	if (!Module.__kruddText || !Module.__kruddText.keys.length)
+		return 0;
+	return Module.__kruddText.keys.shift();
+})
+
 EMSCRIPTEN_KEEPALIVE void *plugin_abi_refs[] = {
 	/* HTML5 WebGL context — renderer_webgl.wasm */
 	(void *)emscripten_webgl_init_context_attributes,
@@ -201,6 +350,12 @@ EMSCRIPTEN_KEEPALIVE void *plugin_abi_refs[] = {
 	(void *)krudd_idb_del,
 	/* Async polling for backend IDB readiness — backend_plugin.wasm */
 	(void *)emscripten_async_call,
+	/* Web text-input bridge — imgui_plugin.wasm */
+	(void *)krudd_text_input_init,
+	(void *)krudd_text_input_show,
+	(void *)krudd_text_input_hide,
+	(void *)krudd_text_input_drain_chars,
+	(void *)krudd_text_input_pop_key,
 };
 
 /*

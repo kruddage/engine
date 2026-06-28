@@ -52,6 +52,12 @@ if(SANITIZE)
 endif()
 
 include(FetchContent)
+
+# Use the vendored stub for native builds; fetch real mimalloc for WASM.
+if(NOT EMSCRIPTEN)
+	set(FETCHCONTENT_SOURCE_DIR_MIMALLOC
+		${CMAKE_SOURCE_DIR}/vendor/mimalloc-stub)
+endif()
 FetchContent_Declare(mimalloc
 	GIT_REPOSITORY https://github.com/microsoft/mimalloc.git
 	GIT_TAG        v2.1.7
@@ -62,12 +68,15 @@ set(MI_BUILD_TESTS  OFF CACHE BOOL "" FORCE)
 set(MI_OVERRIDE     OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(mimalloc)
 
-FetchContent_Declare(imgui
-	GIT_REPOSITORY https://github.com/ocornut/imgui.git
-	GIT_TAG        v1.90.9
-	GIT_SHALLOW    TRUE
-)
-FetchContent_MakeAvailable(imgui)
+# imgui is only needed for the WASM side-module builds.
+if(EMSCRIPTEN)
+	FetchContent_Declare(imgui
+		GIT_REPOSITORY https://github.com/ocornut/imgui.git
+		GIT_TAG        v1.90.9
+		GIT_SHALLOW    TRUE
+	)
+	FetchContent_MakeAvailable(imgui)
+endif()
 
 add_compile_options(-Wall -Werror -Wpedantic)
 

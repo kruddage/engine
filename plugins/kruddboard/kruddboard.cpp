@@ -133,11 +133,24 @@ static void draw_log(void * /*userdata*/)
 static void draw_subsystems(void * /*userdata*/)
 {
 	int i;
+	float x = 520.0f;
+	float y = 10.0f;
 
 	if (!g_mgr || !g_visible)
 		return;
 
-	ImGui::SetNextWindowPos(ImVec2(520.0f, 10.0f), ImGuiCond_Once);
+	/*
+	 * The right-hand column (x = 520) runs off the edge of narrow
+	 * mobile viewports, hiding this panel entirely. When the work
+	 * area is too narrow to fit it beside the Log panel, stack it
+	 * underneath in the left column so all three panels stay on-screen.
+	 */
+	if (ImGui::GetMainViewport()->WorkSize.x < 800.0f) {
+		x = 10.0f;
+		y = 410.0f;
+	}
+
+	ImGui::SetNextWindowPos(ImVec2(x, y), ImGuiCond_Once);
 	ImGui::SetNextWindowSize(ImVec2(280.0f, 300.0f), ImGuiCond_Once);
 	ImGui::Begin("Subsystems");
 

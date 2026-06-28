@@ -26,6 +26,8 @@ extern "C" {
 #include <string.h>
 #endif
 
+#include <cstdio>
+
 static const struct log_api           *g_log;
 static const struct stats_api         *g_stats;
 static const struct subsystem_manager *g_mgr;

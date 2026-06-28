@@ -13,11 +13,41 @@ static struct subsystem_manager  *manager;
 static const char * const        *plugin_list;
 static int32_t                    load_index;
 
+/*
+ * Query the Performance Resource Timing API for the decoded byte size of
+ * a fetched WASM plugin.  The file may have been renamed with a commit
+ * hash by locateFile, so we match by base name (sans the .wasm suffix).
+ *
+ * EM_JS is used rather than EM_ASM_INT because EM_ASM_INT stringifies
+ * its code argument as a named macro parameter: the C preprocessor
+ * tokenises the body before stringification, so $N arguments trigger
+ * -Wdollar-in-identifier-extension.  EM_JS puts the body in __VA_ARGS__,
+ * so commas are captured and re-emitted by #__VA_ARGS__, and C parameter
+ * names replace $N entirely.
+ */
+EM_JS(int32_t, plugin_loader_wasm_size, (const char *name_c), {
+	var name = UTF8ToString(name_c);
+	var base = name.slice(0, name.length - 5);
+	var entries = performance.getEntriesByType("resource");
+	for (var i = entries.length - 1; i >= 0; i--) {
+		var e = entries[i];
+		if (e.name.indexOf(base) !== -1 &&
+		    e.name.slice(-5) === ".wasm") {
+			var sz = e.decodedBodySize || e.encodedBodySize || 0;
+			if (sz > 0) return sz;
+		}
+	}
+	return 0;
+})
+
 static void load_next(void);
 
 static void on_load(void *user_data, void *handle)
 {
 	void (*entry)(struct subsystem_manager *);
+	int32_t prev_count;
+	int32_t wasm_size;
+	int32_t i;
 
 	*(void **)(&entry) = dlsym(handle, "plugin_entry");
 	if (!entry) {
@@ -25,7 +55,11 @@ static void on_load(void *user_data, void *handle)
 			 (const char *)user_data);
 	} else {
 		LOG_INFO("plugin_loader: loaded %s", (const char *)user_data);
+		prev_count = manager->dynamic_count;
 		entry(manager);
+		wasm_size = plugin_loader_wasm_size((const char *)user_data);
+		for (i = prev_count; i < manager->dynamic_count; i++)
+			manager->dynamic[i].wasm_size = (uint32_t)wasm_size;
 	}
 
 	load_next();

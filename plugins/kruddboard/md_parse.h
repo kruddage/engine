@@ -4,6 +4,10 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /*
  * md_parse — dependency-free markdown parser.
  *
@@ -83,5 +87,9 @@ struct md_block {
  * If max == 0 or src is empty, returns 0 immediately.
  */
 int32_t md_parse(const char *src, struct md_block *out, int32_t max);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* MD_PARSE_H */

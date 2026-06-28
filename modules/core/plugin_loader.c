@@ -35,17 +35,26 @@ static void on_load(void *user_data, void *handle)
 		 * byte size of the WASM that was just fetched.  The file may
 		 * have been renamed with a commit hash (locateFile), so match
 		 * by base name rather than the exact filename.
+		 *
+		 * Regex and single-quoted strings are avoided here: the C
+		 * preprocessor tokenises the EM_ASM body before stringifying
+		 * it, so /\.wasm$/ triggers -Wunknown-escape-sequence and
+		 * -Wdollar-in-identifier-extension, and '' is an empty char
+		 * constant.  Plain string methods with double quotes are safe.
 		 */
 		wasm_size = EM_ASM_INT({
 			var name = UTF8ToString($0);
-			var base = name.replace(/\.wasm$/, '');
-			var entries = performance.getEntriesByType('resource');
-			for (var i = entries.length - 1; i >= 0; i--) {
-				var e = entries[i];
+			var base = name.slice(0, name.length - 5);
+			var entries = performance.getEntriesByType("resource");
+			var i, e, sz;
+			for (i = entries.length - 1; i >= 0; i--) {
+				e = entries[i];
 				if (e.name.indexOf(base) !== -1 &&
-				    e.name.endsWith('.wasm'))
-					return e.decodedBodySize ||
-					       e.encodedBodySize || 0;
+				    e.name.slice(-5) === ".wasm") {
+					sz = e.decodedBodySize ||
+					     e.encodedBodySize || 0;
+					if (sz > 0) return sz;
+				}
 			}
 			return 0;
 		}, (const char *)user_data);

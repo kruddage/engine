@@ -85,6 +85,13 @@ struct asset_api {
 	 * or out is NULL.  id 0 always returns -1 (reserved for "none").
 	 */
 	int32_t  (*find)(uint32_t id, struct asset_info *out);
+	/*
+	 * Borrow an asset's loaded bytes by id.  Returns NULL if id is
+	 * unknown or the asset is not in ASSET_LOADED state.  *out_size
+	 * may be NULL.  The pointer is valid until the entry is evicted
+	 * or mutated.
+	 */
+	const void *(*get_data)(uint32_t id, uint32_t *out_size);
 };
 
 /*

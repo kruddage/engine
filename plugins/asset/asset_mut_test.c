@@ -65,10 +65,36 @@ int main(void)
 	assert(info.type   == ASSET_TYPE_TEXT);
 
 	/* -------------------------------------------------------------- */
+	/* get_data: borrow bytes by stable id                            */
+	/* -------------------------------------------------------------- */
+
+	/* on the newly created asset, bytes and size match */
+	sz   = 0;
+	data = asset_catalog_get_data(id, &sz);
+	assert(data != NULL);
+	assert(sz == TEXT_SIZE);
+	assert(memcmp(data, TEXT_BYTES, (size_t)TEXT_SIZE) == 0);
+
+	/* get_data with NULL out_size is safe */
+	data = asset_catalog_get_data(id, NULL);
+	assert(data != NULL);
+
+	/* unknown id returns NULL */
+	assert(asset_catalog_get_data(0, NULL) == NULL);
+	assert(asset_catalog_get_data(0xdeadbeef, NULL) == NULL);
+
+	/* -------------------------------------------------------------- */
 	/* set_data: replace bytes in place, verify via asset_get         */
 	/* -------------------------------------------------------------- */
 	assert(asset_mut_set_data(id, TEXT2_BYTES, TEXT2_SIZE) == 0);
 	data = asset_get(TEXT_PATH, &sz);
+	assert(data != NULL);
+	assert(sz == TEXT2_SIZE);
+	assert(memcmp(data, TEXT2_BYTES, (size_t)TEXT2_SIZE) == 0);
+
+	/* get_data reflects the new bytes after set_data */
+	sz   = 0;
+	data = asset_catalog_get_data(id, &sz);
 	assert(data != NULL);
 	assert(sz == TEXT2_SIZE);
 	assert(memcmp(data, TEXT2_BYTES, (size_t)TEXT2_SIZE) == 0);

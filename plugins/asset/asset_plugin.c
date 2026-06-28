@@ -368,6 +368,18 @@ int32_t asset_catalog_find(uint32_t id, struct asset_info *out)
 	return 0;
 }
 
+const void *asset_catalog_get_data(uint32_t id, uint32_t *out_size)
+{
+	struct asset_entry *e;
+
+	e = find_entry_by_id(id);
+	if (!e || e->state != ASSET_LOADED)
+		return NULL;
+	if (out_size)
+		*out_size = e->size;
+	return e->data;
+}
+
 /* ------------------------------------------------------------------ */
 /* Built-in declaration descriptors                                    */
 /* ------------------------------------------------------------------ */
@@ -531,6 +543,7 @@ static const struct asset_api catalog_api = {
 	.info     = asset_catalog_info,
 	.describe = asset_catalog_describe,
 	.find     = asset_catalog_find,
+	.get_data = asset_catalog_get_data,
 };
 
 static const struct asset_codec_api codec_api = {

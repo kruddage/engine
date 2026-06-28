@@ -18,6 +18,9 @@ extern "C" {
 #include "stats_api.h"
 #include "imgui_api.h"
 #include "asset_api.h"
+#ifdef __EMSCRIPTEN__
+#include "backend_api.h"
+#endif
 }
 
 #include "imgui.h"
@@ -25,6 +28,8 @@ extern "C" {
 #ifdef __EMSCRIPTEN__
 #include <emscripten/html5.h>
 #include <string.h>
+#include "md_parse.h"
+#include "md_draw.h"
 #endif
 
 #include <cstdio>
@@ -36,6 +41,11 @@ static const struct subsystem_manager *g_mgr;
 static int                             g_visible = 1;
 static int                             g_panels_registered;
 static uint32_t                        g_asset_sel; /* 0 = none */
+
+#ifdef __EMSCRIPTEN__
+static const struct asset_mut_api     *g_asset_mut;
+static const struct backend_api       *g_backend;
+#endif
 
 /* ------------------------------------------------------------------ */
 /* Visibility toggle                                                   */
@@ -231,6 +241,45 @@ static const char *asset_type_str(int32_t t)
 	}
 }
 
+/*
+ * Markdown editor state.  Tracks which asset is loaded into the edit
+ * buffer so we only reload on selection change, not every frame.
+ */
+#ifdef __EMSCRIPTEN__
+#define EDIT_BUF_MAX (64 * 1024)
+static char     g_edit[EDIT_BUF_MAX];
+static uint32_t g_edit_id; /* id whose bytes are in g_edit; 0 = none */
+
+static struct md_block g_blocks[MD_BLOCKS_MAX];
+static int32_t         g_nblocks;
+
+/*
+ * (Re)load the edit buffer from the asset catalog when the selection
+ * changes.  Clamps to EDIT_BUF_MAX - 1 bytes and NUL-terminates.
+ */
+static void maybe_reload_edit(uint32_t id)
+{
+	const void *src;
+	uint32_t    sz;
+
+	if (g_edit_id == id)
+		return;
+	g_edit_id  = id;
+	g_edit[0]  = '\0';
+	g_nblocks  = 0;
+	if (!g_asset_api || !g_asset_api->get_data)
+		return;
+	src = g_asset_api->get_data(id, &sz);
+	if (!src)
+		return;
+	if (sz >= (uint32_t)EDIT_BUF_MAX)
+		sz = (uint32_t)EDIT_BUF_MAX - 1;
+	memcpy(g_edit, src, (size_t)sz);
+	g_edit[sz] = '\0';
+	g_nblocks  = md_parse(g_edit, g_blocks, MD_BLOCKS_MAX);
+}
+#endif /* __EMSCRIPTEN__ */
+
 static void draw_asset_inspector(uint32_t id)
 {
 	struct asset_info       info;
@@ -256,6 +305,89 @@ static void draw_asset_inspector(uint32_t id)
 		asset_type_str(info.type),
 		asset_state_str(info.state),
 		info.read_only ? "read-only" : "mutable");
+
+#ifdef __EMSCRIPTEN__
+	/*
+	 * Authored text assets get the markdown editor/viewer.
+	 * All other assets fall through to the read-only inspector tables.
+	 */
+	if (info.origin == ASSET_ORIGIN_AUTHORED &&
+	    info.type   == ASSET_TYPE_TEXT) {
+		int    can_persist;
+		size_t edit_len;
+
+		can_persist = g_backend &&
+			(g_backend->get_caps() &
+			 BACKEND_CAP_PROJECT_PERSIST);
+
+		maybe_reload_edit(id);
+
+		ImGui::Separator();
+
+		/* -- Source editor -- */
+		if (ImGui::CollapsingHeader("Source",
+					    ImGuiTreeNodeFlags_DefaultOpen)) {
+			if (ImGui::InputTextMultiline(
+				    "##md", g_edit, (size_t)EDIT_BUF_MAX,
+				    ImVec2(-1.0f, 200.0f))) {
+				/* Reparse on every edit keystroke. */
+				g_nblocks = md_parse(g_edit, g_blocks,
+						     MD_BLOCKS_MAX);
+			}
+		}
+
+		ImGui::Separator();
+
+		/* -- Rendered preview -- */
+		if (ImGui::CollapsingHeader("Preview",
+					    ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::BeginChild(
+				"##mdpreview", ImVec2(0.0f, 200.0f),
+				true, ImGuiWindowFlags_HorizontalScrollbar);
+			md_draw_blocks(g_blocks, g_nblocks);
+			ImGui::EndChild();
+		}
+
+		ImGui::Separator();
+
+		/* -- Action buttons -- */
+		edit_len = strlen(g_edit);
+		if (can_persist) {
+			if (ImGui::Button("Save")) {
+				if (g_asset_mut)
+					g_asset_mut->set_data(
+						id, g_edit,
+						(uint32_t)edit_len);
+				g_backend->persist_asset(
+					id, info.path,
+					ASSET_TYPE_TEXT, g_edit,
+					(uint32_t)edit_len);
+			}
+		} else {
+			ImGui::BeginDisabled();
+			ImGui::Button("Save");
+			ImGui::EndDisabled();
+			ImGui::SameLine();
+			ImGui::TextDisabled(
+				"in-memory only (persistence unavailable)");
+		}
+
+		ImGui::SameLine();
+
+		if (ImGui::Button("Delete")) {
+			if (g_asset_mut)
+				g_asset_mut->destroy(id);
+			if (g_backend && can_persist)
+				g_backend->delete_asset(id);
+			g_edit_id   = 0;
+			g_edit[0]   = '\0';
+			g_nblocks   = 0;
+			g_asset_sel = 0;
+		}
+
+		return;
+	}
+#endif /* __EMSCRIPTEN__ */
 
 	ImGui::Separator();
 	ImGui::TextUnformatted("Declaration");
@@ -366,6 +498,58 @@ static void draw_tab_assets(void)
 		ImGui::TextDisabled("(assets unavailable)");
 		return;
 	}
+
+#ifdef __EMSCRIPTEN__
+	/*
+	 * New Asset button — only shown in the list view, not the inspector.
+	 * Uses an inline name-entry row to collect the asset path.
+	 */
+	if (g_asset_sel == 0 && g_asset_mut) {
+		static char new_name[256];
+		static int  naming; /* 1 while the input row is visible */
+
+		if (!naming) {
+			if (ImGui::Button("New Asset")) {
+				naming      = 1;
+				new_name[0] = '\0';
+			}
+		} else {
+			ImGui::SetNextItemWidth(240.0f);
+			bool confirm = ImGui::InputText(
+				"##newname", new_name, sizeof(new_name),
+				ImGuiInputTextFlags_EnterReturnsTrue);
+			ImGui::SameLine();
+			confirm |= ImGui::Button("Create");
+			ImGui::SameLine();
+			if (ImGui::Button("Cancel"))
+				naming = 0;
+
+			if (confirm && new_name[0] != '\0') {
+				uint32_t nid;
+				int      can_persist;
+
+				nid = g_asset_mut->create(
+					new_name, ASSET_TYPE_TEXT,
+					"", 0);
+				if (nid != 0) {
+					can_persist =
+						g_backend &&
+						(g_backend->get_caps() &
+						 BACKEND_CAP_PROJECT_PERSIST);
+					if (can_persist)
+						g_backend->persist_asset(
+							nid, new_name,
+							ASSET_TYPE_TEXT,
+							"", 0);
+					g_asset_sel = nid;
+				}
+				naming = 0;
+			}
+		}
+
+		ImGui::Separator();
+	}
+#endif /* __EMSCRIPTEN__ */
 
 	n = g_asset_api->count();
 	if (n == 0) {
@@ -607,6 +791,10 @@ extern "C" void kruddboard_entry(struct subsystem_manager *mgr)
 		subsystem_manager_get_api(mgr, "stats");
 	g_asset_api = (const struct asset_api *)
 		subsystem_manager_get_api(mgr, "asset");
+	g_asset_mut = (const struct asset_mut_api *)
+		subsystem_manager_get_api(mgr, "asset_mut");
+	g_backend   = (const struct backend_api *)
+		subsystem_manager_get_api(mgr, "backend");
 	g_mgr       = mgr;
 #endif
 

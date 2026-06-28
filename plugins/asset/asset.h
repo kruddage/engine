@@ -52,14 +52,20 @@ void *asset_codec_get_typed(const char *path);
 void asset_init(void);
 
 /* Read-only catalog enumeration (also published as the "asset" subsystem api). */
-uint32_t asset_catalog_count(void);
-int32_t  asset_catalog_info(uint32_t i, struct asset_info *out);
+uint32_t    asset_catalog_count(void);
+int32_t     asset_catalog_info(uint32_t i, struct asset_info *out);
 /*
  * Resolve a stable id to its current catalog entry.
  * Returns 0 on hit (fills *out), -1 on miss or NULL out.
  * id 0 is reserved for "none" and always returns -1.
  */
-int32_t  asset_catalog_find(uint32_t id, struct asset_info *out);
+int32_t     asset_catalog_find(uint32_t id, struct asset_info *out);
+/*
+ * Borrow an asset's loaded bytes by id.  Returns NULL if id is
+ * unknown or the asset is not loaded.  *out_size may be NULL.
+ * Pointer valid until the entry is evicted or mutated.
+ */
+const void *asset_catalog_get_data(uint32_t id, uint32_t *out_size);
 
 /*
  * Mutation API for authored project assets

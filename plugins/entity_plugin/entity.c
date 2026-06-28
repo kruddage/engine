@@ -130,9 +130,9 @@ int32_t world_ingest_scene(struct world *w, const struct scene *s)
 		const struct scene_entity *se = &s->entities[i];
 		struct transform           t;
 
-		memcpy(t.position, se->position, sizeof(t.position));
-		memcpy(t.rotation, se->rotation, sizeof(t.rotation));
-		memcpy(t.scale,    se->scale,    sizeof(t.scale));
+		memcpy(t.position, &se->position, sizeof(t.position));
+		memcpy(t.rotation, &se->rotation, sizeof(t.rotation));
+		memcpy(t.scale,    &se->scale,    sizeof(t.scale));
 
 		w->mask[i]        = se->mask;
 		w->parent[i]      = se->parent;

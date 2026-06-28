@@ -39,34 +39,34 @@ static void write_scene_file(void)
 	/* entity 0: root, named "root", identity transform */
 	ents[0].mask       = COMPONENT_NAME;
 	ents[0].parent     = -1;
-	ents[0].rotation[3] = 1.0f;
-	ents[0].scale[0]   = 1.0f;
-	ents[0].scale[1]   = 1.0f;
-	ents[0].scale[2]   = 1.0f;
+	ents[0].rotation.w = 1.0f;
+	ents[0].scale.x    = 1.0f;
+	ents[0].scale.y    = 1.0f;
+	ents[0].scale.z    = 1.0f;
 	ents[0].name_off   = 0u;
 	ents[0].render_ref = 0u;
 
 	/* entity 1: child of 0, named "child", translated */
 	ents[1].mask        = COMPONENT_NAME;
 	ents[1].parent      = 0;
-	ents[1].position[0] = 1.0f;
-	ents[1].rotation[3] = 1.0f;
-	ents[1].scale[0]    = 1.0f;
-	ents[1].scale[1]    = 1.0f;
-	ents[1].scale[2]    = 1.0f;
+	ents[1].position.x  = 1.0f;
+	ents[1].rotation.w  = 1.0f;
+	ents[1].scale.x     = 1.0f;
+	ents[1].scale.y     = 1.0f;
+	ents[1].scale.z     = 1.0f;
 	ents[1].name_off    = 5u;
 	ents[1].render_ref  = 0u;
 
 	/* entity 2: child of 1, render only */
 	ents[2].mask        = COMPONENT_RENDER;
 	ents[2].parent      = 1;
-	ents[2].position[0] = 2.0f;
-	ents[2].position[1] = 3.0f;
-	ents[2].position[2] = 4.0f;
-	ents[2].rotation[3] = 1.0f;
-	ents[2].scale[0]    = 2.0f;
-	ents[2].scale[1]    = 2.0f;
-	ents[2].scale[2]    = 2.0f;
+	ents[2].position.x  = 2.0f;
+	ents[2].position.y  = 3.0f;
+	ents[2].position.z  = 4.0f;
+	ents[2].rotation.w  = 1.0f;
+	ents[2].scale.x     = 2.0f;
+	ents[2].scale.y     = 2.0f;
+	ents[2].scale.z     = 2.0f;
 	ents[2].name_off    = SCENE_NO_NAME;
 	ents[2].render_ref  = 42u;
 
@@ -96,14 +96,14 @@ static void test_roundtrip(void)
 	/* entity 0: root */
 	assert(s->entities[0].parent == -1);
 	assert(s->entities[0].mask == COMPONENT_NAME);
-	assert(s->entities[0].position[0] == 0.0f);
+	assert(s->entities[0].position.x == 0.0f);
 	assert(s->names != NULL);
 	assert(strcmp(s->names + s->entities[0].name_off, "root") == 0);
 
 	/* entity 1: child of 0 */
 	assert(s->entities[1].parent == 0);
 	assert(s->entities[1].parent < (int32_t)1);
-	assert(s->entities[1].position[0] == 1.0f);
+	assert(s->entities[1].position.x == 1.0f);
 	assert(strcmp(s->names + s->entities[1].name_off, "child") == 0);
 
 	/* entity 2: child of 1, render */
@@ -111,9 +111,9 @@ static void test_roundtrip(void)
 	assert(s->entities[2].parent < (int32_t)2);
 	assert(s->entities[2].mask == COMPONENT_RENDER);
 	assert(s->entities[2].render_ref == 42u);
-	assert(s->entities[2].position[0] == 2.0f);
-	assert(s->entities[2].position[1] == 3.0f);
-	assert(s->entities[2].position[2] == 4.0f);
+	assert(s->entities[2].position.x == 2.0f);
+	assert(s->entities[2].position.y == 3.0f);
+	assert(s->entities[2].position.z == 4.0f);
 	assert(s->entities[2].name_off == SCENE_NO_NAME);
 
 	mem_free(s->entities);

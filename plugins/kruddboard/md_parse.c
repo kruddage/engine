@@ -126,7 +126,7 @@ static void init_block(struct md_block *blk)
 {
 	blk->type       = MD_BLOCK_PARAGRAPH;
 	blk->level      = 0;
-	blk->text[0]    = '\0';
+	memset(blk->text, 0, sizeof(blk->text));
 	blk->span_count = 0;
 }
 

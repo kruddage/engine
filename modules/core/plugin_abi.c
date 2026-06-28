@@ -201,45 +201,45 @@ EM_JS(void, krudd_idb_del, (uint32_t id), {
 EM_JS(void, krudd_text_input_init, (void), {
 	if (Module.__kruddText)
 		return;
-	Module.__kruddText = { chars: '', keys: [] };
+	Module.__kruddText = { chars: "", keys: [] };
 
-	var el = document.createElement('input');
-	el.type           = 'text';
-	el.autocapitalize = 'off';
-	el.autocomplete   = 'off';
-	el.autocorrect    = 'off';
+	var el = document.createElement("input");
+	el.type           = "text";
+	el.autocapitalize = "off";
+	el.autocomplete   = "off";
+	el.autocorrect    = "off";
 	el.spellcheck     = false;
 	/* Position offscreen so it never flashes or shifts layout */
-	el.style.position = 'absolute';
-	el.style.left     = '-9999px';
-	el.style.top      = '-9999px';
-	el.style.width    = '1px';
-	el.style.height   = '1px';
-	el.style.opacity  = '0';
+	el.style.position = "absolute";
+	el.style.left     = "-9999px";
+	el.style.top      = "-9999px";
+	el.style.width    = "1px";
+	el.style.height   = "1px";
+	el.style.opacity  = "0";
 	document.body.appendChild(el);
 	Module.__kruddTextEl = el;
 
 	/* Printable / IME text: append to pending chars and clear value */
-	el.addEventListener('input', function() {
+	el.addEventListener("input", function() {
 		Module.__kruddText.chars += el.value;
-		el.value = '';
+		el.value = "";
 	});
 
 	/* Navigation / editing keys: push a small integer code */
 	var KEY_CODES = {
-		'Backspace':  1,
-		'Enter':      2,
-		'Tab':        3,
-		'Delete':     4,
-		'ArrowLeft':  5,
-		'ArrowRight': 6,
-		'ArrowUp':    7,
-		'ArrowDown':  8,
-		'Home':       9,
-		'End':        10,
-		'Escape':     11
+		"Backspace":  1,
+		"Enter":      2,
+		"Tab":        3,
+		"Delete":     4,
+		"ArrowLeft":  5,
+		"ArrowRight": 6,
+		"ArrowUp":    7,
+		"ArrowDown":  8,
+		"Home":       9,
+		"End":        10,
+		"Escape":     11
 	};
-	el.addEventListener('keydown', function(ev) {
+	el.addEventListener("keydown", function(ev) {
 		var code = KEY_CODES[ev.key];
 		if (code) {
 			Module.__kruddText.keys.push(code);
@@ -284,7 +284,7 @@ EM_JS(int, krudd_text_input_drain_chars, (char *buf, int cap), {
 	var bytes = lengthBytesUTF8(str);
 	/* Truncate to fit within cap-1 bytes (cap includes the NUL) */
 	if (bytes >= cap) {
-		var truncated = '';
+		var truncated = "";
 		var used = 0;
 		for (var i = 0; i < str.length; i++) {
 			var cp   = str.codePointAt(i);
@@ -300,7 +300,7 @@ EM_JS(int, krudd_text_input_drain_chars, (char *buf, int cap), {
 		str = truncated;
 	}
 	stringToUTF8(str, buf, cap);
-	Module.__kruddText.chars = '';
+	Module.__kruddText.chars = "";
 	return lengthBytesUTF8(str);
 })
 

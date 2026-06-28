@@ -3,14 +3,11 @@
 /*
  * kruddboard — engine debug overlay plugin.
  *
- * Registers three ImGui panels via imgui_api:
- *   "Frame Stats"  — FPS, frame time ms, frame count
- *   "Log"          — scrollable live log stream with level filter
- *   "Subsystems"   — loaded plugins, API presence, tick vs. init-only
- *
- * Panels register lazily on the first tick after imgui_api is available,
- * avoiding the async dlopen race where kruddboard loads before imgui_plugin.
- * Toggle visibility with backtick (`). Visible by default.
+ * Single full-width ImGui window anchored to the top of the viewport.
+ * Height auto-sizes to the active tab's content; the Log tab caps at
+ * ~88 % of the viewport height and scrolls internally.  The tab bar
+ * uses FittingPolicyScroll to handle overflow on narrow / phone screens.
+ * Toggle visibility with backtick (`).
  */
 
 extern "C" {
@@ -41,7 +38,7 @@ static int                             g_panels_registered;
 
 #ifdef __EMSCRIPTEN__
 static EM_BOOL on_keydown(int /*type*/, const EmscriptenKeyboardEvent *e,
-			   void * /*ud*/)
+			  void * /*ud*/)
 {
 	if (strcmp(e->code, "Backquote") == 0) {
 		g_visible = !g_visible;
@@ -52,43 +49,45 @@ static EM_BOOL on_keydown(int /*type*/, const EmscriptenKeyboardEvent *e,
 #endif
 
 /* ------------------------------------------------------------------ */
-/* Frame Stats panel                                                   */
+/* Tab: Frame Stats                                                    */
 /* ------------------------------------------------------------------ */
 
-static void draw_stats(void * /*userdata*/)
+static void draw_tab_stats(void)
 {
-	if (!g_stats || !g_visible)
+	if (!g_stats) {
+		ImGui::TextDisabled("(stats unavailable)");
 		return;
-
-	ImGui::SetNextWindowPos(ImVec2(10.0f, 10.0f), ImGuiCond_Once);
-	ImGui::SetNextWindowSize(ImVec2(220.0f, 80.0f), ImGuiCond_Once);
-	ImGui::Begin("Frame Stats");
-	ImGui::Text("FPS (avg): %.1f",  (double)g_stats->fps_avg);
-	ImGui::Text("Frame ms:  %.2f",  (double)g_stats->last_frame_ms);
-	ImGui::Text("Frame:     %u",    g_stats->frame_count);
-	ImGui::End();
+	}
+	ImGui::Text("FPS (avg): %.1f", (double)g_stats->fps_avg);
+	ImGui::Text("Frame ms:  %.2f", (double)g_stats->last_frame_ms);
+	ImGui::Text("Frame:     %u",   g_stats->frame_count);
 }
 
 /* ------------------------------------------------------------------ */
-/* Log viewer panel                                                    */
+/* Tab: Log                                                            */
 /* ------------------------------------------------------------------ */
 
-static void draw_log(void * /*userdata*/)
+static void draw_tab_log(void)
 {
 	static struct log_message msgs[LOG_HISTORY_CAP];
 	static int   filter     = LOG_LEVEL_DEBUG;
 	static bool  autoscroll = true;
 	uint32_t     count;
 	uint32_t     i;
+	float        vp_h;
+	float        scroll_h;
 
-	if (!g_log || !g_visible)
+	if (!g_log) {
+		ImGui::TextDisabled("(log unavailable)");
 		return;
+	}
+
+	vp_h     = ImGui::GetMainViewport()->WorkSize.y;
+	scroll_h = vp_h * 0.88f - 120.0f;
+	if (scroll_h < 80.0f)
+		scroll_h = 80.0f;
 
 	count = g_log->get_history(msgs, LOG_HISTORY_CAP);
-
-	ImGui::SetNextWindowPos(ImVec2(10.0f, 100.0f), ImGuiCond_Once);
-	ImGui::SetNextWindowSize(ImVec2(500.0f, 300.0f), ImGuiCond_Once);
-	ImGui::Begin("Log");
 
 	if (ImGui::SmallButton("DEBUG")) filter = LOG_LEVEL_DEBUG;
 	ImGui::SameLine();
@@ -102,8 +101,8 @@ static void draw_log(void * /*userdata*/)
 
 	ImGui::Separator();
 
-	ImGui::BeginChild("logscroll", ImVec2(0.0f, 0.0f), false,
-			  ImGuiWindowFlags_HorizontalScrollbar);
+	ImGui::BeginChild("##logscroll", ImVec2(0.0f, scroll_h),
+			  false, ImGuiWindowFlags_HorizontalScrollbar);
 
 	static const ImVec4 level_colors[] = {
 		{ 0.6f, 0.6f, 0.6f, 1.0f }, /* DEBUG — grey   */
@@ -123,40 +122,24 @@ static void draw_log(void * /*userdata*/)
 		ImGui::SetScrollHereY(1.0f);
 
 	ImGui::EndChild();
-	ImGui::End();
 }
 
 /* ------------------------------------------------------------------ */
-/* Subsystem list panel                                                */
+/* Tab: Subsystems                                                     */
 /* ------------------------------------------------------------------ */
 
-static void draw_subsystems(void * /*userdata*/)
+static void draw_tab_subsystems(void)
 {
 	int i;
-	float x = 520.0f;
-	float y = 10.0f;
 
-	if (!g_mgr || !g_visible)
+	if (!g_mgr) {
+		ImGui::TextDisabled("(subsystem manager unavailable)");
 		return;
-
-	/*
-	 * The right-hand column (x = 520) runs off the edge of narrow
-	 * mobile viewports, hiding this panel entirely. When the work
-	 * area is too narrow to fit it beside the Log panel, stack it
-	 * underneath in the left column so all three panels stay on-screen.
-	 */
-	if (ImGui::GetMainViewport()->WorkSize.x < 800.0f) {
-		x = 10.0f;
-		y = 410.0f;
 	}
 
-	ImGui::SetNextWindowPos(ImVec2(x, y), ImGuiCond_Once);
-	ImGui::SetNextWindowSize(ImVec2(280.0f, 300.0f), ImGuiCond_Once);
-	ImGui::Begin("Subsystems");
-
-	if (ImGui::BeginTable("subsys", 3,
-			      ImGuiTableFlags_Borders |
-			      ImGuiTableFlags_RowBg   |
+	if (ImGui::BeginTable("##subsys", 3,
+			      ImGuiTableFlags_Borders        |
+			      ImGuiTableFlags_RowBg          |
 			      ImGuiTableFlags_SizingStretchProp)) {
 		ImGui::TableSetupColumn("Name");
 		ImGui::TableSetupColumn("API");
@@ -168,9 +151,11 @@ static void draw_subsystems(void * /*userdata*/)
 			ImGui::TableSetColumnIndex(0);
 			ImGui::TextUnformatted(g_mgr->static_table[i].name);
 			ImGui::TableSetColumnIndex(1);
-			ImGui::TextUnformatted(g_mgr->static_table[i].api  ? "yes" : "-");
+			ImGui::TextUnformatted(
+				g_mgr->static_table[i].api  ? "yes" : "-");
 			ImGui::TableSetColumnIndex(2);
-			ImGui::TextUnformatted(g_mgr->static_table[i].tick ? "yes" : "-");
+			ImGui::TextUnformatted(
+				g_mgr->static_table[i].tick ? "yes" : "-");
 		}
 
 		for (i = 0; i < g_mgr->dynamic_count; i++) {
@@ -178,12 +163,76 @@ static void draw_subsystems(void * /*userdata*/)
 			ImGui::TableSetColumnIndex(0);
 			ImGui::TextUnformatted(g_mgr->dynamic[i].name);
 			ImGui::TableSetColumnIndex(1);
-			ImGui::TextUnformatted(g_mgr->dynamic[i].api  ? "yes" : "-");
+			ImGui::TextUnformatted(
+				g_mgr->dynamic[i].api  ? "yes" : "-");
 			ImGui::TableSetColumnIndex(2);
-			ImGui::TextUnformatted(g_mgr->dynamic[i].tick ? "yes" : "-");
+			ImGui::TextUnformatted(
+				g_mgr->dynamic[i].tick ? "yes" : "-");
 		}
 
 		ImGui::EndTable();
+	}
+}
+
+/* ------------------------------------------------------------------ */
+/* Main board window                                                   */
+/* ------------------------------------------------------------------ */
+
+static void draw_board(void * /*userdata*/)
+{
+	float            vp_w;
+	float            vp_h;
+	float            win_w;
+	float            hint_x;
+	ImGuiWindowFlags flags;
+
+	if (!g_visible)
+		return;
+
+	vp_w  = ImGui::GetMainViewport()->WorkSize.x;
+	vp_h  = ImGui::GetMainViewport()->WorkSize.y;
+	win_w = vp_w - 16.0f; /* 8 px margin each side */
+
+	ImGui::SetNextWindowSizeConstraints(
+		ImVec2(win_w, 0.0f), ImVec2(win_w, vp_h * 0.9f));
+	ImGui::SetNextWindowPos(ImVec2(8.0f, 8.0f), ImGuiCond_Always);
+	ImGui::SetNextWindowBgAlpha(0.86f);
+
+	flags = ImGuiWindowFlags_NoTitleBar
+	      | ImGuiWindowFlags_NoMove
+	      | ImGuiWindowFlags_NoScrollbar
+	      | ImGuiWindowFlags_NoScrollWithMouse
+	      | ImGuiWindowFlags_AlwaysAutoResize
+	      | ImGuiWindowFlags_NoBringToFrontOnFocus;
+
+	if (!ImGui::Begin("##kruddboard", nullptr, flags)) {
+		ImGui::End();
+		return;
+	}
+
+	ImGui::TextDisabled("KRUDD EDITOR");
+	hint_x = ImGui::GetWindowWidth()
+		- ImGui::CalcTextSize("` to hide").x
+		- ImGui::GetStyle().WindowPadding.x;
+	ImGui::SameLine(hint_x);
+	ImGui::TextDisabled("` to hide");
+	ImGui::Separator();
+
+	if (ImGui::BeginTabBar("##tabs",
+			       ImGuiTabBarFlags_FittingPolicyScroll)) {
+		if (ImGui::BeginTabItem("Frame Stats")) {
+			draw_tab_stats();
+			ImGui::EndTabItem();
+		}
+		if (ImGui::BeginTabItem("Log")) {
+			draw_tab_log();
+			ImGui::EndTabItem();
+		}
+		if (ImGui::BeginTabItem("Subsystems")) {
+			draw_tab_subsystems();
+			ImGui::EndTabItem();
+		}
+		ImGui::EndTabBar();
 	}
 
 	ImGui::End();
@@ -217,13 +266,11 @@ static void kruddboard_tick(void)
 	if (!imgui)
 		return;
 
-	imgui->register_panel("Frame Stats", draw_stats,      nullptr);
-	imgui->register_panel("Log",         draw_log,        nullptr);
-	imgui->register_panel("Subsystems",  draw_subsystems,  nullptr);
+	imgui->register_panel("##kruddboard", draw_board, nullptr);
 	g_panels_registered = 1;
 
 	if (g_log)
-		g_log->write(LOG_LEVEL_INFO, "kruddboard: panels registered");
+		g_log->write(LOG_LEVEL_INFO, "kruddboard: board registered");
 #endif
 }
 

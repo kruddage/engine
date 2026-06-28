@@ -34,6 +34,7 @@ struct asset_entry {
 	int32_t  state;    /* asset_state */
 	int32_t  kind;     /* ASSET_KIND_* */
 	int32_t  read_only;
+	int32_t  type;     /* ASSET_TYPE_* */
 };
 
 struct codec_entry {
@@ -81,6 +82,7 @@ static struct asset_entry *alloc_entry(const char *path)
 	e->state     = ASSET_PENDING;
 	e->kind      = ASSET_KIND_NORMAL;
 	e->read_only = 0;
+	e->type      = ASSET_TYPE_UNKNOWN;
 	return e;
 }
 
@@ -123,6 +125,7 @@ static void seed_builtins(void)
 		e->state     = ASSET_LOADED;
 		e->kind      = ASSET_KIND_PRIMITIVE;
 		e->read_only = 1;
+		e->type      = ASSET_TYPE_MESH;
 	}
 }
 
@@ -324,12 +327,94 @@ int32_t asset_catalog_info(uint32_t i, struct asset_info *out)
 	out->refs      = cache[i].refs;
 	out->kind      = cache[i].kind;
 	out->read_only = cache[i].read_only;
+	out->type      = cache[i].type;
+	return 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* Built-in declaration descriptors                                    */
+/* ------------------------------------------------------------------ */
+
+static const struct asset_decl_field cube_decl[] = {
+	{ "topology",   "triangles"             },
+	{ "vertices",   "24"                    },
+	{ "indices",    "36"                    },
+	{ "attributes", "position, normal, uv0" },
+	{ "bounds.min", "{ -0.5, -0.5, -0.5 }" },
+	{ "bounds.max", "{ 0.5, 0.5, 0.5 }"    },
+};
+
+static const struct asset_decl_field sphere_decl[] = {
+	{ "topology",      "triangles"             },
+	{ "segments",      "rings 16, sectors 32"  },
+	{ "vertices",      "561"                   },
+	{ "indices",       "2880"                  },
+	{ "attributes",    "position, normal, uv0" },
+	{ "bounds.radius", "0.5"                   },
+};
+
+static const struct asset_decl_field plane_decl[] = {
+	{ "topology",   "triangles"             },
+	{ "vertices",   "4"                     },
+	{ "indices",    "6"                     },
+	{ "attributes", "position, normal, uv0" },
+	{ "normal",     "{ 0, 1, 0 }"           },
+};
+
+static const struct asset_decl_field pyramid_decl[] = {
+	{ "topology",   "triangles"             },
+	{ "vertices",   "16"                    },
+	{ "indices",    "18"                    },
+	{ "attributes", "position, normal, uv0" },
+};
+
+struct builtin_desc {
+	const char                   *path;
+	const struct asset_decl_field *fields;
+	uint32_t                       count;
+};
+
+#define ARRAY_SIZE(a) ((uint32_t)(sizeof(a) / sizeof((a)[0])))
+
+static const struct builtin_desc builtin_descs[] = {
+	{ "builtin://cube",    cube_decl,    ARRAY_SIZE(cube_decl)    },
+	{ "builtin://sphere",  sphere_decl,  ARRAY_SIZE(sphere_decl)  },
+	{ "builtin://plane",   plane_decl,   ARRAY_SIZE(plane_decl)   },
+	{ "builtin://pyramid", pyramid_decl, ARRAY_SIZE(pyramid_decl) },
+};
+
+#define BUILTIN_DESC_COUNT ARRAY_SIZE(builtin_descs)
+
+uint32_t asset_catalog_describe(uint32_t i,
+				struct asset_decl_field *out,
+				uint32_t max)
+{
+	uint32_t    d;
+	uint32_t    n;
+	const char *path;
+
+	if ((int32_t)i >= cache_count || !out || max == 0)
+		return 0;
+
+	path = cache[i].path;
+	for (d = 0; d < BUILTIN_DESC_COUNT; d++) {
+		if (strncmp(builtin_descs[d].path, path,
+			    ASSET_PATH_MAX) != 0)
+			continue;
+		n = builtin_descs[d].count;
+		if (n > max)
+			n = max;
+		memcpy(out, builtin_descs[d].fields,
+		       n * sizeof(struct asset_decl_field));
+		return n;
+	}
 	return 0;
 }
 
 static const struct asset_api catalog_api = {
-	.count = asset_catalog_count,
-	.info  = asset_catalog_info,
+	.count    = asset_catalog_count,
+	.info     = asset_catalog_info,
+	.describe = asset_catalog_describe,
 };
 
 static const struct asset_codec_api codec_api = {

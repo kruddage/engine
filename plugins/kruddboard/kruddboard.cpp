@@ -35,6 +35,7 @@ static const struct asset_api         *g_asset_api;
 static const struct subsystem_manager *g_mgr;
 static int                             g_visible = 1;
 static int                             g_panels_registered;
+static int                             g_asset_sel = -1;
 
 /* ------------------------------------------------------------------ */
 /* Visibility toggle                                                   */
@@ -216,6 +217,127 @@ static const char *asset_kind_str(int32_t k)
 	return "Normal";
 }
 
+static const char *asset_type_str(int32_t t)
+{
+	switch (t) {
+	case ASSET_TYPE_MESH:     return "Mesh";
+	case ASSET_TYPE_TEXTURE:  return "Texture";
+	case ASSET_TYPE_MATERIAL: return "Material";
+	case ASSET_TYPE_SHADER:   return "Shader";
+	case ASSET_TYPE_FONT:     return "Font";
+	case ASSET_TYPE_SCENE:    return "Scene";
+	default:                  return "Unknown";
+	}
+}
+
+static void draw_asset_inspector(int sel)
+{
+	struct asset_info       info;
+	struct asset_decl_field fields[16];
+	uint32_t                nf;
+	uint32_t                i;
+	char                    buf[32];
+
+	if (g_asset_api->info((uint32_t)sel, &info) != 0)
+		return;
+
+	if (ImGui::SmallButton("<- Back"))
+		g_asset_sel = -1;
+	ImGui::SameLine();
+	ImGui::TextUnformatted(info.path);
+	ImGui::SameLine();
+	ImGui::TextDisabled("[%s | %s | %s]",
+		asset_type_str(info.type),
+		asset_state_str(info.state),
+		info.read_only ? "read-only" : "mutable");
+
+	ImGui::Separator();
+	ImGui::TextUnformatted("Declaration");
+
+	nf = g_asset_api->describe((uint32_t)sel, fields, 16);
+	if (nf == 0) {
+		ImGui::TextDisabled("(no declaration)");
+	} else if (ImGui::BeginTable("##decl", 2,
+				     ImGuiTableFlags_Borders |
+				     ImGuiTableFlags_RowBg   |
+				     ImGuiTableFlags_SizingStretchProp)) {
+		ImGui::TableSetupColumn("Property");
+		ImGui::TableSetupColumn("Value");
+		ImGui::TableHeadersRow();
+		for (i = 0; i < nf; i++) {
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::TextUnformatted(fields[i].key);
+			ImGui::TableSetColumnIndex(1);
+			ImGui::TextUnformatted(fields[i].value);
+		}
+		ImGui::EndTable();
+	}
+
+	ImGui::Separator();
+	ImGui::TextUnformatted("Catalog");
+
+	if (!ImGui::BeginTable("##catalog", 2,
+			       ImGuiTableFlags_Borders |
+			       ImGuiTableFlags_RowBg   |
+			       ImGuiTableFlags_SizingStretchProp))
+		return;
+
+	ImGui::TableSetupColumn("Field");
+	ImGui::TableSetupColumn("Value");
+	ImGui::TableHeadersRow();
+
+	ImGui::TableNextRow();
+	ImGui::TableSetColumnIndex(0);
+	ImGui::TextUnformatted("path");
+	ImGui::TableSetColumnIndex(1);
+	ImGui::TextUnformatted(info.path);
+
+	ImGui::TableNextRow();
+	ImGui::TableSetColumnIndex(0);
+	ImGui::TextUnformatted("kind");
+	ImGui::TableSetColumnIndex(1);
+	ImGui::TextUnformatted(asset_kind_str(info.kind));
+
+	ImGui::TableNextRow();
+	ImGui::TableSetColumnIndex(0);
+	ImGui::TextUnformatted("type");
+	ImGui::TableSetColumnIndex(1);
+	ImGui::TextUnformatted(asset_type_str(info.type));
+
+	ImGui::TableNextRow();
+	ImGui::TableSetColumnIndex(0);
+	ImGui::TextUnformatted("state");
+	ImGui::TableSetColumnIndex(1);
+	ImGui::TextUnformatted(asset_state_str(info.state));
+
+	ImGui::TableNextRow();
+	ImGui::TableSetColumnIndex(0);
+	ImGui::TextUnformatted("size");
+	ImGui::TableSetColumnIndex(1);
+	if (info.size) {
+		snprintf(buf, sizeof(buf), "%u", info.size);
+		ImGui::TextUnformatted(buf);
+	} else {
+		ImGui::TextDisabled("-");
+	}
+
+	ImGui::TableNextRow();
+	ImGui::TableSetColumnIndex(0);
+	ImGui::TextUnformatted("refs");
+	ImGui::TableSetColumnIndex(1);
+	snprintf(buf, sizeof(buf), "%d", info.refs);
+	ImGui::TextUnformatted(buf);
+
+	ImGui::TableNextRow();
+	ImGui::TableSetColumnIndex(0);
+	ImGui::TextUnformatted("read_only");
+	ImGui::TableSetColumnIndex(1);
+	ImGui::TextUnformatted(info.read_only ? "yes" : "no");
+
+	ImGui::EndTable();
+}
+
 static void draw_tab_assets(void)
 {
 	uint32_t          n;
@@ -236,6 +358,15 @@ static void draw_tab_assets(void)
 		return;
 	}
 
+	/* Guard stale selection after a catalog change. */
+	if (g_asset_sel >= (int)n)
+		g_asset_sel = -1;
+
+	if (g_asset_sel >= 0) {
+		draw_asset_inspector(g_asset_sel);
+		return;
+	}
+
 	/* Pre-scan to know which groups are present. */
 	for (i = 0; i < n; i++) {
 		if (g_asset_api->info(i, &info) != 0)
@@ -246,13 +377,14 @@ static void draw_tab_assets(void)
 			has_project = 1;
 	}
 
-	if (!ImGui::BeginTable("##assets", 5,
+	if (!ImGui::BeginTable("##assets", 6,
 			       ImGuiTableFlags_Borders        |
 			       ImGuiTableFlags_RowBg          |
 			       ImGuiTableFlags_SizingStretchProp))
 		return;
 
 	ImGui::TableSetupColumn("Path");
+	ImGui::TableSetupColumn("Type");
 	ImGui::TableSetupColumn("Kind");
 	ImGui::TableSetupColumn("State");
 	ImGui::TableSetupColumn("Size");
@@ -266,24 +398,30 @@ static void draw_tab_assets(void)
 		ImGui::TextDisabled("-- BUILT-IN (read-only) --");
 
 		for (i = 0; i < n; i++) {
-			if (g_asset_api->info(i, &info) != 0 || !info.read_only)
+			if (g_asset_api->info(i, &info) != 0 ||
+			    !info.read_only)
 				continue;
 			ImGui::TableNextRow();
 			ImGui::TableSetColumnIndex(0);
-			ImGui::TextUnformatted(info.path);
+			if (ImGui::Selectable(
+				    info.path, false,
+				    ImGuiSelectableFlags_SpanAllColumns))
+				g_asset_sel = (int)i;
 			ImGui::TableSetColumnIndex(1);
-			ImGui::TextUnformatted(asset_kind_str(info.kind));
+			ImGui::TextUnformatted(asset_type_str(info.type));
 			ImGui::TableSetColumnIndex(2);
-			ImGui::TextUnformatted(asset_state_str(info.state));
+			ImGui::TextUnformatted(asset_kind_str(info.kind));
 			ImGui::TableSetColumnIndex(3);
+			ImGui::TextUnformatted(asset_state_str(info.state));
+			ImGui::TableSetColumnIndex(4);
 			if (info.size) {
-				snprintf(size_buf, sizeof(size_buf), "%u",
-					 info.size);
+				snprintf(size_buf, sizeof(size_buf),
+					 "%u", info.size);
 				ImGui::TextUnformatted(size_buf);
 			} else {
 				ImGui::TextDisabled("-");
 			}
-			ImGui::TableSetColumnIndex(4);
+			ImGui::TableSetColumnIndex(5);
 			ImGui::TextColored(
 				ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "RO");
 		}
@@ -296,24 +434,30 @@ static void draw_tab_assets(void)
 		ImGui::TextDisabled("-- PROJECT --");
 
 		for (i = 0; i < n; i++) {
-			if (g_asset_api->info(i, &info) != 0 || info.read_only)
+			if (g_asset_api->info(i, &info) != 0 ||
+			    info.read_only)
 				continue;
 			ImGui::TableNextRow();
 			ImGui::TableSetColumnIndex(0);
-			ImGui::TextUnformatted(info.path);
+			if (ImGui::Selectable(
+				    info.path, false,
+				    ImGuiSelectableFlags_SpanAllColumns))
+				g_asset_sel = (int)i;
 			ImGui::TableSetColumnIndex(1);
-			ImGui::TextUnformatted(asset_kind_str(info.kind));
+			ImGui::TextUnformatted(asset_type_str(info.type));
 			ImGui::TableSetColumnIndex(2);
-			ImGui::TextUnformatted(asset_state_str(info.state));
+			ImGui::TextUnformatted(asset_kind_str(info.kind));
 			ImGui::TableSetColumnIndex(3);
+			ImGui::TextUnformatted(asset_state_str(info.state));
+			ImGui::TableSetColumnIndex(4);
 			if (info.size) {
-				snprintf(size_buf, sizeof(size_buf), "%u",
-					 info.size);
+				snprintf(size_buf, sizeof(size_buf),
+					 "%u", info.size);
 				ImGui::TextUnformatted(size_buf);
 			} else {
 				ImGui::TextDisabled("-");
 			}
-			ImGui::TableSetColumnIndex(4);
+			ImGui::TableSetColumnIndex(5);
 			ImGui::TextDisabled("-");
 		}
 	}

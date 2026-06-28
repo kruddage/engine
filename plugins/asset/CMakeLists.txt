@@ -16,6 +16,10 @@ if(NOT EMSCRIPTEN)
 	add_executable(asset_api_test asset_api_test.c)
 	target_link_libraries(asset_api_test PRIVATE asset_plugin log memory)
 	add_test(NAME asset_api COMMAND asset_api_test)
+
+	add_executable(asset_mut_test asset_mut_test.c)
+	target_link_libraries(asset_mut_test PRIVATE asset_plugin log memory)
+	add_test(NAME asset_mut COMMAND asset_mut_test)
 endif()
 
 if(EMSCRIPTEN)

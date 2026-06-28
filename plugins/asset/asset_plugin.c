@@ -36,6 +36,7 @@ struct asset_entry {
 	int32_t  read_only;
 	int32_t  type;     /* ASSET_TYPE_* */
 	uint32_t id;       /* stable identity; never 0, never reused */
+	int32_t  origin;   /* ASSET_ORIGIN_* */
 };
 
 struct codec_entry {
@@ -70,6 +71,17 @@ static struct asset_entry *find_entry(const char *path)
 	return NULL;
 }
 
+static struct asset_entry *find_entry_by_id(uint32_t id)
+{
+	int32_t i;
+
+	for (i = 0; i < cache_count; i++) {
+		if (cache[i].id == id)
+			return &cache[i];
+	}
+	return NULL;
+}
+
 static struct asset_entry *alloc_entry(const char *path)
 {
 	struct asset_entry *e;
@@ -87,6 +99,7 @@ static struct asset_entry *alloc_entry(const char *path)
 	e->read_only = 0;
 	e->type      = ASSET_TYPE_UNKNOWN;
 	e->id        = next_asset_id++;
+	e->origin    = ASSET_ORIGIN_FETCHED;
 	return e;
 }
 
@@ -321,41 +334,38 @@ uint32_t asset_catalog_count(void)
 	return (uint32_t)cache_count;
 }
 
+static void fill_info(struct asset_info *out, const struct asset_entry *e)
+{
+	out->path      = e->path;
+	out->state     = e->state;
+	out->size      = e->size;
+	out->refs      = e->refs;
+	out->kind      = e->kind;
+	out->read_only = e->read_only;
+	out->type      = e->type;
+	out->id        = e->id;
+	out->origin    = e->origin;
+}
+
 int32_t asset_catalog_info(uint32_t i, struct asset_info *out)
 {
 	if ((int32_t)i >= cache_count || !out)
 		return -1;
-	out->path      = cache[i].path;
-	out->state     = cache[i].state;
-	out->size      = cache[i].size;
-	out->refs      = cache[i].refs;
-	out->kind      = cache[i].kind;
-	out->read_only = cache[i].read_only;
-	out->type      = cache[i].type;
-	out->id        = cache[i].id;
+	fill_info(out, &cache[i]);
 	return 0;
 }
 
 int32_t asset_catalog_find(uint32_t id, struct asset_info *out)
 {
-	int32_t i;
+	struct asset_entry *e;
 
 	if (!out)
 		return -1;
-	for (i = 0; i < cache_count; i++) {
-		if (cache[i].id != id)
-			continue;
-		out->path      = cache[i].path;
-		out->state     = cache[i].state;
-		out->size      = cache[i].size;
-		out->refs      = cache[i].refs;
-		out->kind      = cache[i].kind;
-		out->read_only = cache[i].read_only;
-		out->type      = cache[i].type;
-		out->id        = cache[i].id;
-		return 0;
-	}
-	return -1;
+	e = find_entry_by_id(id);
+	if (!e)
+		return -1;
+	fill_info(out, e);
+	return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -438,6 +448,82 @@ uint32_t asset_catalog_describe(uint32_t i,
 	return 0;
 }
 
+/* ------------------------------------------------------------------ */
+/* Mutation API — authored project assets                              */
+/* ------------------------------------------------------------------ */
+
+uint32_t asset_mut_create(const char *path, int32_t type,
+			  const void *bytes, uint32_t size)
+{
+	struct asset_entry *e;
+	uint8_t            *buf;
+
+	if (!path || (!bytes && size > 0))
+		return 0;
+	if (find_entry(path))
+		return 0;
+	e = alloc_entry(path);
+	if (!e)
+		return 0;
+
+	if (size > 0) {
+		buf = g_mem->alloc((size_t)size);
+		if (!buf) {
+			/* Undo the alloc_entry; swap-remove ourselves. */
+			cache_count--;
+			return 0;
+		}
+		memcpy(buf, bytes, (size_t)size);
+		e->data = buf;
+	}
+
+	e->size      = size;
+	e->state     = ASSET_LOADED;
+	e->kind      = ASSET_KIND_NORMAL;
+	e->read_only = 0;
+	e->origin    = ASSET_ORIGIN_AUTHORED;
+	e->type      = type;
+	e->refs      = 1;
+	return e->id;
+}
+
+int32_t asset_mut_set_data(uint32_t id, const void *bytes, uint32_t size)
+{
+	struct asset_entry *e;
+	uint8_t            *buf;
+
+	e = find_entry_by_id(id);
+	if (!e || e->origin != ASSET_ORIGIN_AUTHORED)
+		return -1;
+
+	if (size > 0) {
+		buf = g_mem->alloc((size_t)size);
+		if (!buf)
+			return -1;
+		memcpy(buf, bytes, (size_t)size);
+	} else {
+		buf = NULL;
+	}
+
+	if (e->data)
+		g_mem->free(e->data);
+	e->data  = buf;
+	e->size  = size;
+	e->state = ASSET_LOADED;
+	return 0;
+}
+
+int32_t asset_mut_destroy(uint32_t id)
+{
+	struct asset_entry *e;
+
+	e = find_entry_by_id(id);
+	if (!e || e->origin != ASSET_ORIGIN_AUTHORED)
+		return -1;
+	evict_entry(e);
+	return 0;
+}
+
 static const struct asset_api catalog_api = {
 	.count    = asset_catalog_count,
 	.info     = asset_catalog_info,
@@ -450,9 +536,20 @@ static const struct asset_codec_api codec_api = {
 	.get_typed      = asset_codec_get_typed,
 };
 
+static const struct asset_mut_api mut_api = {
+	.create   = asset_mut_create,
+	.set_data = asset_mut_set_data,
+	.destroy  = asset_mut_destroy,
+};
+
 static const struct subsystem codec_desc = {
 	.name = "asset_codec",
 	.api  = &codec_api,
+};
+
+static const struct subsystem mut_desc = {
+	.name = "asset_mut",
+	.api  = &mut_api,
 };
 
 void asset_init(void)
@@ -498,4 +595,5 @@ void asset_plugin_entry(struct subsystem_manager *mgr)
 #endif
 	subsystem_manager_register(mgr, &desc);
 	subsystem_manager_register(mgr, &codec_desc);
+	subsystem_manager_register(mgr, &mut_desc);
 }

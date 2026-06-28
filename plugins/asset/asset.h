@@ -61,4 +61,21 @@ int32_t  asset_catalog_info(uint32_t i, struct asset_info *out);
  */
 int32_t  asset_catalog_find(uint32_t id, struct asset_info *out);
 
+/*
+ * Mutation API for authored project assets
+ * (also published as the "asset_mut" subsystem api).
+ *
+ * create: allocate a born-loaded authored entry from caller-supplied
+ *         bytes.  Returns the new stable id, or 0 on failure (cache
+ *         full, duplicate path, or bad args).
+ * set_data: replace an authored asset's bytes in place (by id).
+ *           Returns 0 on success, -1 on miss / not-authored / OOM.
+ * destroy: delete an authored asset by id.
+ *          Returns 0 on success, -1 on miss / not-authored.
+ */
+uint32_t asset_mut_create(const char *path, int32_t type,
+			  const void *bytes, uint32_t size);
+int32_t  asset_mut_set_data(uint32_t id, const void *bytes, uint32_t size);
+int32_t  asset_mut_destroy(uint32_t id);
+
 #endif /* ASSET_H */

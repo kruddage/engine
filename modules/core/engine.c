@@ -52,6 +52,7 @@ static const char * const plugins[] = {
 	"hello_plugin.wasm",
 	"asset_plugin.wasm",
 	"scene_plugin.wasm",
+	"entity_plugin.wasm",
 	"renderer_webgl.wasm",
 	"imgui_plugin.wasm",
 	"kruddboard.wasm",

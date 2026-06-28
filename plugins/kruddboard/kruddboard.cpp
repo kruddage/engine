@@ -17,6 +17,7 @@ extern "C" {
 #include "log_level.h"
 #include "stats_api.h"
 #include "imgui_api.h"
+#include "asset_api.h"
 }
 
 #include "imgui.h"
@@ -30,6 +31,7 @@ extern "C" {
 
 static const struct log_api           *g_log;
 static const struct stats_api         *g_stats;
+static const struct asset_api         *g_asset_api;
 static const struct subsystem_manager *g_mgr;
 static int                             g_visible = 1;
 static int                             g_panels_registered;
@@ -195,6 +197,131 @@ static void draw_tab_subsystems(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* Tab: Assets                                                         */
+/* ------------------------------------------------------------------ */
+
+static const char *asset_state_str(int32_t s)
+{
+	switch (s) {
+	case 0:  return "Pending";
+	case 1:  return "Loaded";
+	default: return "Error";
+	}
+}
+
+static const char *asset_kind_str(int32_t k)
+{
+	if (k == ASSET_KIND_PRIMITIVE)
+		return "Primitive";
+	return "Normal";
+}
+
+static void draw_tab_assets(void)
+{
+	uint32_t          n;
+	uint32_t          i;
+	struct asset_info info;
+	char              size_buf[32];
+	int               has_builtin = 0;
+	int               has_project = 0;
+
+	if (!g_asset_api) {
+		ImGui::TextDisabled("(assets unavailable)");
+		return;
+	}
+
+	n = g_asset_api->count();
+	if (n == 0) {
+		ImGui::TextDisabled("(no assets)");
+		return;
+	}
+
+	/* Pre-scan to know which groups are present. */
+	for (i = 0; i < n; i++) {
+		if (g_asset_api->info(i, &info) != 0)
+			continue;
+		if (info.read_only)
+			has_builtin = 1;
+		else
+			has_project = 1;
+	}
+
+	if (!ImGui::BeginTable("##assets", 5,
+			       ImGuiTableFlags_Borders        |
+			       ImGuiTableFlags_RowBg          |
+			       ImGuiTableFlags_SizingStretchProp))
+		return;
+
+	ImGui::TableSetupColumn("Path");
+	ImGui::TableSetupColumn("Kind");
+	ImGui::TableSetupColumn("State");
+	ImGui::TableSetupColumn("Size");
+	ImGui::TableSetupColumn("Flags");
+	ImGui::TableHeadersRow();
+
+	/* Group 1: built-in (read-only) primitives */
+	if (has_builtin) {
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(0);
+		ImGui::TextDisabled("-- BUILT-IN (read-only) --");
+
+		for (i = 0; i < n; i++) {
+			if (g_asset_api->info(i, &info) != 0 || !info.read_only)
+				continue;
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::TextUnformatted(info.path);
+			ImGui::TableSetColumnIndex(1);
+			ImGui::TextUnformatted(asset_kind_str(info.kind));
+			ImGui::TableSetColumnIndex(2);
+			ImGui::TextUnformatted(asset_state_str(info.state));
+			ImGui::TableSetColumnIndex(3);
+			if (info.size) {
+				snprintf(size_buf, sizeof(size_buf), "%u",
+					 info.size);
+				ImGui::TextUnformatted(size_buf);
+			} else {
+				ImGui::TextDisabled("-");
+			}
+			ImGui::TableSetColumnIndex(4);
+			ImGui::TextColored(
+				ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "RO");
+		}
+	}
+
+	/* Group 2: project assets */
+	if (has_project) {
+		ImGui::TableNextRow();
+		ImGui::TableSetColumnIndex(0);
+		ImGui::TextDisabled("-- PROJECT --");
+
+		for (i = 0; i < n; i++) {
+			if (g_asset_api->info(i, &info) != 0 || info.read_only)
+				continue;
+			ImGui::TableNextRow();
+			ImGui::TableSetColumnIndex(0);
+			ImGui::TextUnformatted(info.path);
+			ImGui::TableSetColumnIndex(1);
+			ImGui::TextUnformatted(asset_kind_str(info.kind));
+			ImGui::TableSetColumnIndex(2);
+			ImGui::TextUnformatted(asset_state_str(info.state));
+			ImGui::TableSetColumnIndex(3);
+			if (info.size) {
+				snprintf(size_buf, sizeof(size_buf), "%u",
+					 info.size);
+				ImGui::TextUnformatted(size_buf);
+			} else {
+				ImGui::TextDisabled("-");
+			}
+			ImGui::TableSetColumnIndex(4);
+			ImGui::TextDisabled("-");
+		}
+	}
+
+	ImGui::EndTable();
+}
+
+/* ------------------------------------------------------------------ */
 /* Main board window                                                   */
 /* ------------------------------------------------------------------ */
 
@@ -250,6 +377,10 @@ static void draw_board(void * /*userdata*/)
 		}
 		if (ImGui::BeginTabItem("Subsystems")) {
 			draw_tab_subsystems();
+			ImGui::EndTabItem();
+		}
+		if (ImGui::BeginTabItem("Assets")) {
+			draw_tab_assets();
 			ImGui::EndTabItem();
 		}
 		ImGui::EndTabBar();
@@ -315,11 +446,13 @@ extern "C" void kruddboard_entry(struct subsystem_manager *mgr)
 #endif
 {
 #ifdef __EMSCRIPTEN__
-	g_log   = (const struct log_api *)
+	g_log       = (const struct log_api *)
 		subsystem_manager_get_api(mgr, "log");
-	g_stats = (const struct stats_api *)
+	g_stats     = (const struct stats_api *)
 		subsystem_manager_get_api(mgr, "stats");
-	g_mgr   = mgr;
+	g_asset_api = (const struct asset_api *)
+		subsystem_manager_get_api(mgr, "asset");
+	g_mgr       = mgr;
 #endif
 
 	subsystem_manager_register(mgr, &desc);

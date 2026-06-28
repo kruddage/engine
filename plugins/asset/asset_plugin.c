@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "asset.h"
+#include "asset_api.h"
 #include "asset_codec_api.h"
 #include "subsystem.h"
 #include "subsystem_manager.h"
@@ -30,7 +31,9 @@ struct asset_entry {
 	uint8_t *data;
 	uint32_t size;
 	int32_t  refs;
-	int32_t  state; /* asset_state */
+	int32_t  state;    /* asset_state */
+	int32_t  kind;     /* ASSET_KIND_* */
+	int32_t  read_only;
 };
 
 struct codec_entry {
@@ -72,17 +75,55 @@ static struct asset_entry *alloc_entry(const char *path)
 	e = &cache[cache_count++];
 	strncpy(e->path, path, ASSET_PATH_MAX - 1);
 	e->path[ASSET_PATH_MAX - 1] = '\0';
-	e->data  = NULL;
-	e->size  = 0;
-	e->refs  = 0;
-	e->state = ASSET_PENDING;
+	e->data      = NULL;
+	e->size      = 0;
+	e->refs      = 0;
+	e->state     = ASSET_PENDING;
+	e->kind      = ASSET_KIND_NORMAL;
+	e->read_only = 0;
 	return e;
 }
 
 static void evict_entry(struct asset_entry *e)
 {
-	g_mem->free(e->data);
+	if (e->data)
+		g_mem->free(e->data);
 	*e = cache[--cache_count];
+}
+
+/* ------------------------------------------------------------------ */
+/* Built-in primitive asset library                                    */
+/* ------------------------------------------------------------------ */
+
+static const char *builtin_paths[] = {
+	"builtin://cube",
+	"builtin://sphere",
+	"builtin://plane",
+	"builtin://pyramid",
+};
+
+#define BUILTIN_COUNT \
+	((int32_t)(sizeof(builtin_paths) / sizeof(builtin_paths[0])))
+
+static int builtins_seeded;
+
+static void seed_builtins(void)
+{
+	int32_t            i;
+	struct asset_entry *e;
+
+	if (builtins_seeded)
+		return;
+	builtins_seeded = 1;
+
+	for (i = 0; i < BUILTIN_COUNT; i++) {
+		e = alloc_entry(builtin_paths[i]);
+		if (!e)
+			continue;
+		e->state     = ASSET_LOADED;
+		e->kind      = ASSET_KIND_PRIMITIVE;
+		e->read_only = 1;
+	}
 }
 
 #ifdef __EMSCRIPTEN__
@@ -96,10 +137,12 @@ static void on_fetch_success(emscripten_fetch_t *fetch)
 		memcpy(e->data, fetch->data, (size_t)fetch->numBytes);
 		e->size  = (uint32_t)fetch->numBytes;
 		e->state = ASSET_LOADED;
-		g_log->write(LOG_LEVEL_INFO, "asset: loaded %s (%u bytes)", e->path, e->size);
+		g_log->write(LOG_LEVEL_INFO, "asset: loaded %s (%u bytes)",
+			     e->path, e->size);
 	} else {
 		e->state = ASSET_ERROR;
-		g_log->write(LOG_LEVEL_INFO, "asset: out of memory loading %s", e->path);
+		g_log->write(LOG_LEVEL_INFO,
+			     "asset: out of memory loading %s", e->path);
 	}
 	emscripten_fetch_close(fetch);
 }
@@ -109,7 +152,8 @@ static void on_fetch_error(emscripten_fetch_t *fetch)
 	struct asset_entry *e = (struct asset_entry *)fetch->userData;
 
 	e->state = ASSET_ERROR;
-	g_log->write(LOG_LEVEL_INFO, "asset: error loading %s (HTTP %d)", e->path, fetch->status);
+	g_log->write(LOG_LEVEL_INFO, "asset: error loading %s (HTTP %d)",
+		     e->path, fetch->status);
 	emscripten_fetch_close(fetch);
 }
 
@@ -184,7 +228,8 @@ void asset_request(const char *path)
 	}
 	e = alloc_entry(path);
 	if (!e) {
-		g_log->write(LOG_LEVEL_INFO, "asset: cache full, dropping %s", path);
+		g_log->write(LOG_LEVEL_INFO, "asset: cache full, dropping %s",
+			     path);
 		return;
 	}
 	e->refs = 1;
@@ -214,6 +259,8 @@ void asset_release(const char *path)
 	struct asset_entry *e = find_entry(path);
 
 	if (!e || e->refs <= 0)
+		return;
+	if (e->read_only)
 		return;
 	e->refs--;
 	/* Don't evict while a fetch is in flight — callback still holds *e. */
@@ -258,6 +305,33 @@ void *asset_codec_get_typed(const char *path)
 	return NULL;
 }
 
+/* ------------------------------------------------------------------ */
+/* Catalog enumeration API                                             */
+/* ------------------------------------------------------------------ */
+
+uint32_t asset_catalog_count(void)
+{
+	return (uint32_t)cache_count;
+}
+
+int32_t asset_catalog_info(uint32_t i, struct asset_info *out)
+{
+	if ((int32_t)i >= cache_count || !out)
+		return -1;
+	out->path      = cache[i].path;
+	out->state     = cache[i].state;
+	out->size      = cache[i].size;
+	out->refs      = cache[i].refs;
+	out->kind      = cache[i].kind;
+	out->read_only = cache[i].read_only;
+	return 0;
+}
+
+static const struct asset_api catalog_api = {
+	.count = asset_catalog_count,
+	.info  = asset_catalog_info,
+};
+
 static const struct asset_codec_api codec_api = {
 	.register_codec = asset_codec_register,
 	.get_typed      = asset_codec_get_typed,
@@ -268,8 +342,9 @@ static const struct subsystem codec_desc = {
 	.api  = &codec_api,
 };
 
-static void asset_init(void)
+void asset_init(void)
 {
+	seed_builtins();
 	g_log->write(LOG_LEVEL_INFO, "asset: init");
 }
 
@@ -282,14 +357,17 @@ static void asset_shutdown(void)
 {
 	int32_t i;
 
-	for (i = 0; i < cache_count; i++)
-		g_mem->free(cache[i].data);
+	for (i = 0; i < cache_count; i++) {
+		if (cache[i].data)
+			g_mem->free(cache[i].data);
+	}
 	cache_count = 0;
 	g_log->write(LOG_LEVEL_INFO, "asset: shutdown");
 }
 
 static const struct subsystem desc = {
 	.name     = "asset",
+	.api      = &catalog_api,
 	.init     = asset_init,
 	.tick     = asset_tick,
 	.shutdown = asset_shutdown,

@@ -4,6 +4,7 @@
 #include <emscripten/html5.h>
 #include <emscripten/fetch.h>
 #include <GLES3/gl3.h>
+#include <stdint.h>
 
 /*
  * VAO entry points used by Dear ImGui's GLES backend (imgui_plugin.wasm).

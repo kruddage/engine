@@ -48,6 +48,9 @@ extern void krudd_idb_put(uint32_t id, const char *path, int32_t type,
 			  const void *data, uint32_t size);
 extern void krudd_idb_del(uint32_t id);
 
+/* Path buffer for peek; matches ASSET_PATH_MAX in the asset plugin. */
+#define BACKEND_PATH_MAX 256
+
 static void (*g_ready_done)(void *ctx);
 
 /*
@@ -57,7 +60,7 @@ static void (*g_ready_done)(void *ctx);
 static void rehydrate_drain(void)
 {
 	const struct asset_mut_api *am;
-	char                        path[ASSET_PATH_MAX];
+	char                        path[BACKEND_PATH_MAX];
 	uint32_t                    id;
 	int32_t                     type;
 	int                         len;

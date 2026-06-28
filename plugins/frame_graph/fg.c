@@ -36,8 +36,9 @@ struct fg_pass_ctx {
 struct fg_resource {
 	char          name[64];
 	fg_tex_desc   desc;
-	gpu_texture_t handle;      /* set by texture_create during execute */
+	gpu_texture_t handle;      /* transient: set by texture_create; imported: bound at import */
 	uint8_t       allocated;   /* 1 after texture_create, 0 after destroy */
+	uint8_t       imported;    /* 1 = external (backbuffer); graph binds but never owns */
 	uint32_t      reader_count;
 	uint32_t      first_write; /* sorted-order index; UINT32_MAX if unset */
 	uint32_t      last_read;   /* sorted-order index; UINT32_MAX if unset */
@@ -51,6 +52,11 @@ struct fg_pass {
 	uint32_t      write_count;
 	fg_execute_fn execute_fn;
 	void         *userdata;
+	/* Per-pass attachment load config, indexed by color-attachment order */
+	gpu_load_op   color_load_op[GPU_MAX_COLOR_ATTACHMENTS];
+	float         color_clear[GPU_MAX_COLOR_ATTACHMENTS][4];
+	gpu_load_op   depth_load_op;
+	float         depth_clear;
 	uint32_t      ref_count;  /* readers of our outputs among alive passes */
 	uint32_t      in_degree;  /* for Kahn's topo sort */
 	int           alive;
@@ -96,6 +102,33 @@ fg_resource_t fg_declare_transient(struct fg *fg, const char *name,
 	snprintf(r->name, sizeof(r->name), "%s", name);
 	r->desc        = desc;
 	r->handle      = NULL;
+	r->allocated   = 0;
+	r->imported    = 0;
+	r->reader_count = 0;
+	r->first_write = UINT32_MAX;
+	r->last_read   = UINT32_MAX;
+	return r;
+}
+
+fg_resource_t fg_import_backbuffer(struct fg *fg)
+{
+	struct fg_resource *r;
+
+	if (fg->resource_count >= FG_MAX_RESOURCES) {
+		g_log->write(LOG_LEVEL_ERROR, "fg: resource limit (%u) reached", FG_MAX_RESOURCES);
+		return NULL;
+	}
+	r = &fg->resources[fg->resource_count++];
+	snprintf(r->name, sizeof(r->name), "backbuffer");
+	/*
+	 * The default framebuffer / canvas. desc.format is descriptive only;
+	 * the graph never creates storage for it. NULL handle is the backend's
+	 * default-framebuffer sentinel.
+	 */
+	r->desc        = (fg_tex_desc){ .format = GPU_FORMAT_RGBA8_UNORM };
+	r->handle      = NULL;
+	r->allocated   = 0;
+	r->imported    = 1;
 	r->reader_count = 0;
 	r->first_write = UINT32_MAX;
 	r->last_read   = UINT32_MAX;
@@ -136,6 +169,24 @@ void fg_pass_set_execute(fg_pass_t pass, fg_execute_fn cb, void *userdata)
 	pass->userdata   = userdata;
 }
 
+void fg_pass_set_color_clear(fg_pass_t pass, uint32_t index,
+			      const float rgba[4])
+{
+	if (index >= GPU_MAX_COLOR_ATTACHMENTS)
+		return;
+	pass->color_load_op[index] = GPU_LOAD_OP_CLEAR;
+	pass->color_clear[index][0] = rgba[0];
+	pass->color_clear[index][1] = rgba[1];
+	pass->color_clear[index][2] = rgba[2];
+	pass->color_clear[index][3] = rgba[3];
+}
+
+void fg_pass_set_depth_clear(fg_pass_t pass, float depth)
+{
+	pass->depth_load_op = GPU_LOAD_OP_CLEAR;
+	pass->depth_clear   = depth;
+}
+
 /* --- Compile ------------------------------------------------------------- */
 
 void fg_compile(struct fg *fg)
@@ -144,9 +195,13 @@ void fg_compile(struct fg *fg)
 	uint32_t qhead, qtail;
 	uint32_t i, j, k, m;
 
-	/* Reset per-compile state */
+	/*
+	 * Reset per-compile state. Imported resources (the backbuffer) carry
+	 * an implicit external reference so the pass producing them is never
+	 * culled, even though no in-graph pass reads them.
+	 */
 	for (i = 0; i < fg->resource_count; i++)
-		fg->resources[i].reader_count = 0;
+		fg->resources[i].reader_count = fg->resources[i].imported ? 1 : 0;
 	for (i = 0; i < fg->pass_count; i++) {
 		fg->passes[i].alive     = 1;
 		fg->passes[i].ref_count = 0;
@@ -307,11 +362,14 @@ void fg_execute(struct fg *fg)
 	for (i = 0; i < fg->sorted_count; i++) {
 		struct fg_pass *p = &fg->passes[fg->sorted[i]];
 
-		/* Allocate transients whose first write falls on this pass */
+		struct gpu_render_pass_desc rp = { 0 };
+
+		/* Allocate transients whose first write falls on this pass.
+		 * Imported resources (backbuffer) are bound, never created. */
 		for (j = 0; j < fg->resource_count; j++) {
 			struct fg_resource *r = &fg->resources[j];
 
-			if (r->first_write == i) {
+			if (r->first_write == i && !r->imported) {
 				r->handle    = gpu->texture_create(&r->desc);
 				r->allocated = 1;
 			}
@@ -337,10 +395,43 @@ void fg_execute(struct fg *fg)
 			}
 		}
 
+		/*
+		 * Render-pass setup is the graph's job. Build the pass desc
+		 * from declared writes[]: depth-format writes become the depth
+		 * attachment, others become color attachments in declaration
+		 * order, each with this pass's load/clear config.
+		 */
+		for (j = 0; j < p->write_count; j++) {
+			struct fg_resource *r = p->writes[j];
+
+			if (r->desc.format == GPU_FORMAT_DEPTH32_FLOAT) {
+				rp.depth          = r->handle;
+				rp.depth_load_op  = p->depth_load_op;
+				rp.depth_store_op = GPU_STORE_OP_STORE;
+				rp.clear_depth    = p->depth_clear;
+			} else if (rp.color_count < GPU_MAX_COLOR_ATTACHMENTS) {
+				uint32_t c = rp.color_count++;
+
+				rp.color[c].texture  = r->handle;
+				rp.color[c].load_op  = p->color_load_op[c];
+				rp.color[c].store_op = GPU_STORE_OP_STORE;
+				rp.color[c].clear[0] = p->color_clear[c][0];
+				rp.color[c].clear[1] = p->color_clear[c][1];
+				rp.color[c].clear[2] = p->color_clear[c][2];
+				rp.color[c].clear[3] = p->color_clear[c][3];
+			}
+		}
+
+		gpu->cmd_begin_render_pass(cmd, &rp);
+
+		/* The pass records real GPU commands on the lent context. */
 		if (p->execute_fn)
 			p->execute_fn(&ctx, p->userdata);
 
-		/* Free transients whose last read falls on this pass */
+		gpu->cmd_end_render_pass(cmd);
+
+		/* Free transients whose last read falls on this pass.
+		 * Imported resources are never owned, so never freed. */
 		for (j = 0; j < fg->resource_count; j++) {
 			struct fg_resource *r = &fg->resources[j];
 
@@ -355,18 +446,27 @@ void fg_execute(struct fg *fg)
 	gpu->cmd_buf_submit(cmd);
 }
 
-/* --- Pass-context GPU commands ------------------------------------------- */
+/* --- Lent command context ------------------------------------------------ */
 
-void fg_cmd_draw_indexed(struct fg_pass_ctx *ctx,
-			  const struct gpu_draw_indexed_args *args)
+/*
+ * Borrowed-not-kept: these are valid only for the duration of the execute
+ * callback. The pass records commands with gpu->cmd_* on the lent cmd buffer;
+ * it must never cache the api, the cmd buffer, or returned handles.
+ */
+const struct gpu_api *fg_ctx_gpu(struct fg_pass_ctx *ctx)
 {
-	ctx->gpu->cmd_draw_indexed(ctx->cmd, args, NULL);
+	return ctx->gpu;
 }
 
-void fg_cmd_dispatch(struct fg_pass_ctx *ctx,
-		     uint32_t x, uint32_t y, uint32_t z)
+gpu_cmd_buf_t fg_ctx_cmd(struct fg_pass_ctx *ctx)
 {
-	ctx->gpu->cmd_dispatch(ctx->cmd, x, y, z, NULL);
+	return ctx->cmd;
+}
+
+gpu_texture_t fg_ctx_resource(struct fg_pass_ctx *ctx, fg_resource_t r)
+{
+	(void)ctx;
+	return r ? r->handle : NULL;
 }
 
 /* --- Plugin registration ------------------------------------------------- */
@@ -379,13 +479,16 @@ static struct fg *api_create(void)
 }
 
 static const struct fg_api g_fg_api = {
-	.create           = api_create,
-	.destroy          = fg_destroy,
-	.declare_transient = fg_declare_transient,
-	.pass_declare     = fg_pass_declare,
-	.pass_set_execute = fg_pass_set_execute,
-	.compile          = fg_compile,
-	.execute          = fg_execute,
+	.create               = api_create,
+	.destroy              = fg_destroy,
+	.declare_transient    = fg_declare_transient,
+	.import_backbuffer    = fg_import_backbuffer,
+	.pass_declare         = fg_pass_declare,
+	.pass_set_execute     = fg_pass_set_execute,
+	.pass_set_color_clear = fg_pass_set_color_clear,
+	.pass_set_depth_clear = fg_pass_set_depth_clear,
+	.compile              = fg_compile,
+	.execute              = fg_execute,
 };
 
 static void frame_graph_init(void)

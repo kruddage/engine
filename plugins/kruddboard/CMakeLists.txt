@@ -23,3 +23,13 @@ if(EMSCRIPTEN)
 	)
 	add_dependencies(index kruddboard_wasm)
 endif()
+
+if(NOT EMSCRIPTEN)
+	add_library(md_parse md_parse.c)
+	target_include_directories(md_parse PUBLIC
+		${CMAKE_CURRENT_SOURCE_DIR})
+
+	add_executable(md_parse_test md_parse_test.c)
+	target_link_libraries(md_parse_test PRIVATE md_parse)
+	add_test(NAME md_parse COMMAND md_parse_test)
+endif()

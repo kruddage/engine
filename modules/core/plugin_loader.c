@@ -38,7 +38,7 @@ EM_JS(int32_t, plugin_loader_wasm_size, (const char *name_c), {
 		}
 	}
 	return 0;
-});
+})
 
 static void load_next(void);
 

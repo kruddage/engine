@@ -1,5 +1,6 @@
 add_library(asset_plugin asset_plugin.c)
-target_include_directories(asset_plugin PUBLIC .)
+target_include_directories(asset_plugin PUBLIC .
+	${CMAKE_SOURCE_DIR}/plugins/include)
 
 target_link_libraries(asset_plugin PRIVATE log memory subsystem subsystem_manager)
 
@@ -7,6 +8,10 @@ if(NOT EMSCRIPTEN)
 	add_executable(asset_test asset_test.c)
 	target_link_libraries(asset_test PRIVATE asset_plugin log memory)
 	add_test(NAME asset COMMAND asset_test)
+
+	add_executable(asset_codec_test asset_codec_test.c)
+	target_link_libraries(asset_codec_test PRIVATE asset_plugin log memory)
+	add_test(NAME asset_codec COMMAND asset_codec_test)
 endif()
 
 if(EMSCRIPTEN)

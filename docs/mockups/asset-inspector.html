@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
+<!--
+  Asset Inspector — STATIC MOCKUP (no engine code).
+
+  Explores two ideas at once:
+    1. A richer set of read-only, engine-provided built-in assets, spanning
+       several asset *types* (mesh, texture, material, shader, font, scene),
+       not just geometric primitives.
+    2. An inspector pane: select an asset on the left, see a formatted view
+       of its declaration on the right.
+
+  All data below is hand-authored placeholder. Open in any browser.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KRUDD — Asset Inspector (mockup)</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+	--bg:        #0d0d0d;
+	--panel:     #141414;
+	--panel-2:   #181818;
+	--line:      #242424;
+	--line-2:    #2e2e2e;
+	--text:      #e0e0e0;
+	--dim:       #777;
+	--dimmer:    #555;
+	--accent:    #ff9a3c; /* the kruddboard "RO" orange */
+	--accent-2:  #4ec9b0;
+	--blue:      #6fb3ff;
+	--purple:    #c08cff;
+	--green:     #8ad17a;
+	--sel:       #243140;
+	--sel-line:  #3a5a78;
+}
+
+body {
+	background: var(--bg);
+	color: var(--text);
+	font-family: 'Courier New', Courier, monospace;
+	height: 100vh;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+	font-size: 13px;
+}
+
+header {
+	padding: 10px 18px;
+	display: flex;
+	align-items: baseline;
+	gap: 12px;
+	border-bottom: 1px solid var(--line);
+	flex-shrink: 0;
+}
+.wordmark {
+	font-size: 16px; font-weight: bold; letter-spacing: 0.22em; color: #fff;
+}
+.crumb { font-size: 11px; color: var(--dimmer); letter-spacing: 0.1em; }
+.crumb b { color: var(--dim); font-weight: normal; }
+.hint { margin-left: auto; font-size: 11px; color: var(--dimmer); }
+
+.layout { flex: 1; display: flex; min-height: 0; }
+
+/* ---------------- Left: asset list ---------------- */
+.list {
+	width: 340px;
+	flex-shrink: 0;
+	border-right: 1px solid var(--line);
+	background: var(--panel);
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+.toolbar {
+	display: flex; align-items: center; gap: 8px;
+	padding: 8px 10px; border-bottom: 1px solid var(--line);
+}
+.toolbar input {
+	flex: 1; background: var(--bg); border: 1px solid var(--line-2);
+	color: var(--text); font-family: inherit; font-size: 12px;
+	padding: 4px 8px; border-radius: 3px;
+}
+.toolbar input::placeholder { color: var(--dimmer); }
+.count { font-size: 11px; color: var(--dimmer); }
+
+.scroll { overflow-y: auto; flex: 1; }
+
+.group-head {
+	padding: 8px 12px 4px; font-size: 10px; letter-spacing: 0.18em;
+	color: var(--dimmer); text-transform: uppercase;
+	position: sticky; top: 0; background: var(--panel);
+}
+.row {
+	display: flex; align-items: center; gap: 8px;
+	padding: 5px 12px; cursor: pointer; border-left: 2px solid transparent;
+	white-space: nowrap;
+}
+.row:hover { background: var(--panel-2); }
+.row.sel { background: var(--sel); border-left-color: var(--sel-line); }
+.row .ico { width: 16px; text-align: center; color: var(--dim); flex-shrink: 0; }
+.row .name { overflow: hidden; text-overflow: ellipsis; }
+.row .ro { margin-left: auto; color: var(--accent); font-size: 10px; letter-spacing: 0.1em; }
+.type-tag {
+	font-size: 9px; letter-spacing: 0.06em; padding: 1px 5px; border-radius: 3px;
+	color: var(--dim); border: 1px solid var(--line-2); flex-shrink: 0;
+}
+
+/* ---------------- Right: inspector ---------------- */
+.inspector {
+	flex: 1; min-width: 0; overflow-y: auto;
+	background: var(--bg);
+	padding: 0 0 40px;
+}
+.insp-head {
+	padding: 16px 22px 14px; border-bottom: 1px solid var(--line);
+	position: sticky; top: 0; background: var(--bg); z-index: 2;
+}
+.insp-title { font-size: 17px; color: #fff; display: flex; align-items: center; gap: 10px; }
+.insp-title .big-ico { color: var(--dim); }
+.badges { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.badge {
+	font-size: 10px; letter-spacing: 0.08em; padding: 2px 7px; border-radius: 10px;
+	border: 1px solid var(--line-2); color: var(--dim);
+}
+.badge.kind   { color: var(--accent-2); border-color: #2c4a44; }
+.badge.ro     { color: var(--accent);   border-color: #4a3420; }
+.badge.loaded { color: var(--green);    border-color: #2c4226; }
+
+.section { padding: 16px 22px 0; }
+.section h3 {
+	font-size: 10px; letter-spacing: 0.2em; color: var(--dimmer);
+	text-transform: uppercase; margin-bottom: 10px; font-weight: normal;
+}
+
+/* properties grid (the catalog fields, from struct asset_info) */
+.props { display: grid; grid-template-columns: 150px 1fr; row-gap: 7px; column-gap: 14px; }
+.props dt { color: var(--dim); }
+.props dd { color: var(--text); }
+.props dd .muted { color: var(--dimmer); }
+
+/* the "declaration" — formatted, code-styled view of the asset */
+.decl {
+	margin-top: 4px; background: var(--panel); border: 1px solid var(--line);
+	border-radius: 5px; padding: 14px 16px; overflow-x: auto;
+	font-size: 12.5px; line-height: 1.65; white-space: pre;
+}
+.decl .k  { color: var(--purple); }   /* keyword / type   */
+.decl .p  { color: var(--blue); }      /* property name    */
+.decl .s  { color: var(--green); }     /* string           */
+.decl .n  { color: var(--accent-2); }  /* number           */
+.decl .c  { color: var(--dimmer); font-style: italic; } /* comment */
+.decl .b  { color: var(--accent); }    /* builtin path     */
+
+.note {
+	margin: 18px 22px 0; padding: 10px 14px; border-left: 2px solid var(--line-2);
+	color: var(--dim); font-size: 12px; line-height: 1.6; background: var(--panel);
+}
+.empty { padding: 60px 22px; color: var(--dimmer); text-align: center; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+
+<header>
+	<span class="wordmark">KRUDD</span>
+	<span class="crumb"><b>kruddboard</b> / Assets / Inspector</span>
+	<span class="hint">mockup — placeholder data</span>
+</header>
+
+<div class="layout">
+	<!-- ---------------- asset list ---------------- -->
+	<aside class="list">
+		<div class="toolbar">
+			<input type="text" placeholder="filter assets…" disabled>
+			<span class="count" id="count"></span>
+		</div>
+		<div class="scroll" id="rows"></div>
+	</aside>
+
+	<!-- ---------------- inspector ---------------- -->
+	<main class="inspector" id="inspector"></main>
+</div>
+
+<script>
+/*
+ * Each asset carries the catalog fields that exist today (path/state/size/
+ * refs/kind/read_only) plus a `type` discriminator and a `decl` — the
+ * formatted declaration the inspector renders. `decl` is pre-highlighted
+ * HTML for the mockup; in the engine it would be generated from real
+ * per-type metadata.
+ */
+const ICONS = {
+	mesh: '◆', texture: '▦', material: '●', shader: '⌗', font: 'A', scene: '⊞',
+};
+
+const ASSETS = [
+	/* ---- existing built-in primitives (meshes) ---- */
+	{ path:'builtin://cube', type:'mesh', ro:true, state:'Loaded', size:0, refs:0,
+	  decl:
+`<span class="c">// engine-provided unit cube, centered at origin</span>
+<span class="k">mesh</span> <span class="b">builtin://cube</span> {
+    <span class="p">topology</span>     : <span class="k">triangles</span>
+    <span class="p">vertices</span>     : <span class="n">24</span>   <span class="c">// 4 per face, hard normals</span>
+    <span class="p">indices</span>      : <span class="n">36</span>
+    <span class="p">attributes</span>   : [ <span class="s">position</span>, <span class="s">normal</span>, <span class="s">uv0</span> ]
+    <span class="p">bounds.min</span>   : { <span class="n">-0.5</span>, <span class="n">-0.5</span>, <span class="n">-0.5</span> }
+    <span class="p">bounds.max</span>   : { <span class="n">0.5</span>, <span class="n">0.5</span>, <span class="n">0.5</span> }
+}` },
+
+	{ path:'builtin://sphere', type:'mesh', ro:true, state:'Loaded', size:0, refs:2,
+	  decl:
+`<span class="c">// UV sphere, radius 0.5</span>
+<span class="k">mesh</span> <span class="b">builtin://sphere</span> {
+    <span class="p">topology</span>     : <span class="k">triangles</span>
+    <span class="p">segments</span>     : { <span class="p">rings</span>: <span class="n">16</span>, <span class="p">sectors</span>: <span class="n">32</span> }
+    <span class="p">vertices</span>     : <span class="n">561</span>
+    <span class="p">indices</span>      : <span class="n">2880</span>
+    <span class="p">attributes</span>   : [ <span class="s">position</span>, <span class="s">normal</span>, <span class="s">uv0</span> ]
+    <span class="p">bounds.radius</span>: <span class="n">0.5</span>
+}` },
+
+	{ path:'builtin://plane', type:'mesh', ro:true, state:'Loaded', size:0, refs:0,
+	  decl:
+`<span class="c">// 1x1 ground plane on the XZ axis, +Y normal</span>
+<span class="k">mesh</span> <span class="b">builtin://plane</span> {
+    <span class="p">topology</span>     : <span class="k">triangles</span>
+    <span class="p">vertices</span>     : <span class="n">4</span>
+    <span class="p">indices</span>      : <span class="n">6</span>
+    <span class="p">attributes</span>   : [ <span class="s">position</span>, <span class="s">normal</span>, <span class="s">uv0</span> ]
+    <span class="p">normal</span>       : { <span class="n">0</span>, <span class="n">1</span>, <span class="n">0</span> }
+}` },
+
+	{ path:'builtin://pyramid', type:'mesh', ro:true, state:'Loaded', size:0, refs:0,
+	  decl:
+`<span class="c">// square-based pyramid</span>
+<span class="k">mesh</span> <span class="b">builtin://pyramid</span> {
+    <span class="p">topology</span>     : <span class="k">triangles</span>
+    <span class="p">vertices</span>     : <span class="n">16</span>
+    <span class="p">indices</span>      : <span class="n">18</span>
+    <span class="p">attributes</span>   : [ <span class="s">position</span>, <span class="s">normal</span>, <span class="s">uv0</span> ]
+}` },
+
+	/* ---- PROPOSED new built-in types ---- */
+	{ path:'builtin://white', type:'texture', ro:true, state:'Loaded', size:4, refs:5,
+	  decl:
+`<span class="c">// 1x1 opaque white — the "no texture" default</span>
+<span class="k">texture</span> <span class="b">builtin://white</span> {
+    <span class="p">dimensions</span>  : <span class="n">1</span> x <span class="n">1</span>
+    <span class="p">format</span>      : <span class="k">rgba8</span>
+    <span class="p">channels</span>    : <span class="n">4</span>
+    <span class="p">wrap</span>        : <span class="k">repeat</span>
+    <span class="p">pixels</span>      : [ <span class="s">#ffffffff</span> ]
+}` },
+
+	{ path:'builtin://checker', type:'texture', ro:true, state:'Loaded', size:4096, refs:0,
+	  decl:
+`<span class="c">// magenta/black checkerboard — missing-texture stand-in</span>
+<span class="k">texture</span> <span class="b">builtin://checker</span> {
+    <span class="p">dimensions</span>  : <span class="n">32</span> x <span class="n">32</span>
+    <span class="p">format</span>      : <span class="k">rgba8</span>
+    <span class="p">tile</span>        : <span class="n">8</span> px
+    <span class="p">colors</span>      : [ <span class="s">#ff00ff</span>, <span class="s">#000000</span> ]
+    <span class="p">wrap</span>        : <span class="k">repeat</span>
+}` },
+
+	{ path:'builtin://normal', type:'texture', ro:true, state:'Loaded', size:4, refs:0,
+	  decl:
+`<span class="c">// flat tangent-space normal (points straight out)</span>
+<span class="k">texture</span> <span class="b">builtin://normal</span> {
+    <span class="p">dimensions</span>  : <span class="n">1</span> x <span class="n">1</span>
+    <span class="p">format</span>      : <span class="k">rgba8</span>
+    <span class="p">colorspace</span>  : <span class="k">linear</span>
+    <span class="p">pixels</span>      : [ <span class="s">#8080ffff</span> ]  <span class="c">// (0,0,1)</span>
+}` },
+
+	{ path:'builtin://default_material', type:'material', ro:true, state:'Loaded', size:0, refs:3,
+	  decl:
+`<span class="c">// fallback material applied when none is assigned</span>
+<span class="k">material</span> <span class="b">builtin://default_material</span> {
+    <span class="p">shader</span>      : <span class="b">builtin://unlit</span>
+    <span class="p">base_color</span>  : { <span class="n">0.8</span>, <span class="n">0.8</span>, <span class="n">0.8</span>, <span class="n">1.0</span> }
+    <span class="p">albedo_map</span>  : <span class="b">builtin://white</span>
+    <span class="p">metallic</span>    : <span class="n">0.0</span>
+    <span class="p">roughness</span>   : <span class="n">0.5</span>
+    <span class="p">double_sided</span>: <span class="k">false</span>
+}` },
+
+	{ path:'builtin://unlit', type:'shader', ro:true, state:'Loaded', size:0, refs:1,
+	  decl:
+`<span class="c">// minimal unlit shader — color * albedo</span>
+<span class="k">shader</span> <span class="b">builtin://unlit</span> {
+    <span class="p">stage.vertex</span>   : <span class="k">present</span>
+    <span class="p">stage.fragment</span> : <span class="k">present</span>
+    <span class="p">inputs</span>         : [ <span class="s">position</span>, <span class="s">uv0</span> ]
+    <span class="p">uniforms</span>       : [ <span class="s">mvp</span>, <span class="s">base_color</span>, <span class="s">albedo_map</span> ]
+    <span class="p">blend</span>          : <span class="k">opaque</span>
+}` },
+
+	{ path:'builtin://debug_font', type:'font', ro:true, state:'Loaded', size:8192, refs:0,
+	  decl:
+`<span class="c">// bitmap font used by overlays before any font loads</span>
+<span class="k">font</span> <span class="b">builtin://debug_font</span> {
+    <span class="p">kind</span>        : <span class="k">bitmap</span>
+    <span class="p">glyph_size</span>  : <span class="n">8</span> x <span class="n">8</span>
+    <span class="p">range</span>       : <span class="s">ASCII 0x20–0x7E</span>
+    <span class="p">atlas</span>       : <span class="n">128</span> x <span class="n">64</span>
+}` },
+
+	{ path:'builtin://empty_scene', type:'scene', ro:true, state:'Loaded', size:0, refs:0,
+	  decl:
+`<span class="c">// blank scene with a camera + directional light</span>
+<span class="k">scene</span> <span class="b">builtin://empty_scene</span> {
+    <span class="p">entities</span>    : <span class="n">2</span>
+    <span class="p">[0]</span> <span class="k">camera</span>  : { <span class="p">fov</span>: <span class="n">60</span>, <span class="p">pos</span>: { <span class="n">0</span>, <span class="n">1</span>, <span class="n">3</span> } }
+    <span class="p">[1]</span> <span class="k">light</span>   : { <span class="p">type</span>: <span class="s">directional</span> }
+}` },
+
+	/* ---- a couple of project assets for contrast ---- */
+	{ path:'assets/level1.scene', type:'scene', ro:false, state:'Loaded', size:14820, refs:1,
+	  decl:
+`<span class="k">scene</span> <span class="s">assets/level1.scene</span> {
+    <span class="p">entities</span>    : <span class="n">38</span>
+    <span class="p">references</span>  : [ <span class="b">builtin://cube</span>, <span class="s">assets/hero.glb</span> ]
+    <span class="p">source</span>      : <span class="s">scene-format v2</span>
+}` },
+
+	{ path:'assets/hero.glb', type:'mesh', ro:false, state:'Pending', size:0, refs:1,
+	  decl:
+`<span class="c">// fetch in flight…</span>
+<span class="k">mesh</span> <span class="s">assets/hero.glb</span> {
+    <span class="p">state</span>       : <span class="k">pending</span>
+    <span class="p">source</span>      : <span class="s">glTF binary</span>
+}` },
+];
+
+const rowsEl = document.getElementById('rows');
+const inspEl = document.getElementById('inspector');
+const countEl = document.getElementById('count');
+let selected = 0;
+
+function groupOf(a) { return a.ro ? 'built-in (read-only)' : 'project'; }
+
+function renderList() {
+	countEl.textContent = ASSETS.length + ' assets';
+	let html = '';
+	let lastGroup = null;
+	ASSETS.forEach((a, i) => {
+		const g = groupOf(a);
+		if (g !== lastGroup) { html += `<div class="group-head">${g}</div>`; lastGroup = g; }
+		html += `<div class="row ${i === selected ? 'sel' : ''}" data-i="${i}">
+			<span class="ico">${ICONS[a.type] || '?'}</span>
+			<span class="name">${a.path}</span>
+			<span class="type-tag">${a.type}</span>
+			${a.ro ? '<span class="ro">RO</span>' : ''}
+		</div>`;
+	});
+	rowsEl.innerHTML = html;
+	rowsEl.querySelectorAll('.row').forEach(r =>
+		r.addEventListener('click', () => { selected = +r.dataset.i; render(); }));
+}
+
+function renderInspector() {
+	const a = ASSETS[selected];
+	if (!a) { inspEl.innerHTML = '<div class="empty">select an asset</div>'; return; }
+	const stateBadge = a.state === 'Loaded' ? 'loaded' : '';
+	inspEl.innerHTML = `
+		<div class="insp-head">
+			<div class="insp-title"><span class="big-ico">${ICONS[a.type] || '?'}</span>${a.path}</div>
+			<div class="badges">
+				<span class="badge kind">${a.type}</span>
+				<span class="badge ${stateBadge}">${a.state}</span>
+				${a.ro ? '<span class="badge ro">read-only</span>' : ''}
+			</div>
+		</div>
+
+		<div class="section">
+			<h3>Declaration</h3>
+			<div class="decl">${a.decl}</div>
+		</div>
+
+		<div class="section">
+			<h3>Catalog</h3>
+			<dl class="props">
+				<dt>path</dt><dd>${a.path}</dd>
+				<dt>kind</dt><dd>${a.ro ? 'PRIMITIVE' : 'NORMAL'}</dd>
+				<dt>type</dt><dd>${a.type}</dd>
+				<dt>state</dt><dd>${a.state}</dd>
+				<dt>size</dt><dd>${a.size ? a.size + ' bytes' : '<span class="muted">— (generated)</span>'}</dd>
+				<dt>refs</dt><dd>${a.refs}</dd>
+				<dt>read_only</dt><dd>${a.ro ? '1' : '0'}</dd>
+			</dl>
+		</div>
+
+		${a.ro ? `<div class="note">Built-in asset. Seeded at startup, never evicted, cannot be
+		released or overwritten. The declaration above is generated from the engine's
+		definition — there is no file on disk.</div>` : ''}
+	`;
+}
+
+function render() { renderList(); renderInspector(); }
+render();
+</script>
+</body>
+</html>

@@ -3,6 +3,7 @@ project(krudd VERSION 0.2.0 LANGUAGES C CXX)
 
 find_package(Git QUIET)
 set(ENGINE_BUILD_NUMBER 0)
+set(GIT_COMMIT_HASH "unknown")
 if(GIT_FOUND)
 	execute_process(
 		COMMAND ${GIT_EXECUTABLE} log -1 --format=%H
@@ -23,6 +24,16 @@ if(GIT_FOUND)
 	endif()
 	if(NOT ENGINE_BUILD_NUMBER)
 		set(ENGINE_BUILD_NUMBER 0)
+	endif()
+	execute_process(
+		COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+		WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+		OUTPUT_VARIABLE GIT_COMMIT_HASH
+		OUTPUT_STRIP_TRAILING_WHITESPACE
+		ERROR_QUIET
+	)
+	if(NOT GIT_COMMIT_HASH)
+		set(GIT_COMMIT_HASH "unknown")
 	endif()
 endif()
 

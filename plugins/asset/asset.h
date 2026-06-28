@@ -2,6 +2,7 @@
 #ifndef ASSET_H
 #define ASSET_H
 
+#include "asset_api.h"
 #include <stdint.h>
 
 #define ASSET_PATH_MAX 256
@@ -42,5 +43,16 @@ void  asset_codec_register(const char *ext,
  * Caller owns the returned pointer.
  */
 void *asset_codec_get_typed(const char *path);
+
+/*
+ * Initialize the asset subsystem (seeds built-in primitives).
+ * Called automatically by the plugin lifecycle; also exposed so
+ * unit tests can prime the catalog before querying it.
+ */
+void asset_init(void);
+
+/* Read-only catalog enumeration (also published as the "asset" subsystem api). */
+uint32_t asset_catalog_count(void);
+int32_t  asset_catalog_info(uint32_t i, struct asset_info *out);
 
 #endif /* ASSET_H */

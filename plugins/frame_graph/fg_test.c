@@ -47,25 +47,33 @@ static void teardown(void)
 
 /* -------------------------------------------------------------------------
  * Sentinel draw callbacks — pass identity encoded in index_count.
+ *
+ * Each callback records a real draw through the lent command context: it
+ * asks for the GPU api and command buffer, issues the call, and lets them
+ * go. It never caches the context (borrowed, not kept).
  * -------------------------------------------------------------------------
  */
+static void pass_draw(struct fg_pass_ctx *ctx, uint32_t index_count)
+{
+	const struct gpu_api *gpu = fg_ctx_gpu(ctx);
+	struct gpu_draw_indexed_args draw = { .index_count = index_count };
+
+	gpu->cmd_draw_indexed(fg_ctx_cmd(ctx), &draw, NULL);
+}
 static void pass_a_cb(struct fg_pass_ctx *ctx, void *ud)
 {
-	struct gpu_draw_indexed_args draw = { .index_count = 1 };
 	(void)ud;
-	fg_cmd_draw_indexed(ctx, &draw);
+	pass_draw(ctx, 1);
 }
 static void pass_b_cb(struct fg_pass_ctx *ctx, void *ud)
 {
-	struct gpu_draw_indexed_args draw = { .index_count = 2 };
 	(void)ud;
-	fg_cmd_draw_indexed(ctx, &draw);
+	pass_draw(ctx, 2);
 }
 static void pass_c_cb(struct fg_pass_ctx *ctx, void *ud)
 {
-	struct gpu_draw_indexed_args draw = { .index_count = 3 };
 	(void)ud;
-	fg_cmd_draw_indexed(ctx, &draw);
+	pass_draw(ctx, 3);
 }
 
 /* -------------------------------------------------------------------------
@@ -297,12 +305,148 @@ static void test_transient_lifetime(void)
 	teardown();
 }
 
+/* -------------------------------------------------------------------------
+ * Test: render-pass setup
+ *
+ * The graph owns render-pass setup. Pass A writes a color target, so its
+ * draw must be wrapped: BEGIN_RENDER_PASS (one color attachment) before the
+ * draw, END_RENDER_PASS after it.
+ * -------------------------------------------------------------------------
+ */
+static void test_render_pass_setup(void)
+{
+	const struct gpu_call_record *log;
+	fg_resource_t r1;
+	fg_pass_t pa, pc;
+	uint32_t count, i;
+	int begin_before_draw = 0;
+	int end_after_draw    = 0;
+	int saw_one_color     = 0;
+	/* phase: 0=init 1=after begin 2=after A draw 3=after end */
+	int phase = 0;
+	float clear[4] = { 0.1f, 0.2f, 0.3f, 1.0f };
+	fg_tex_desc td = {
+		.format = GPU_FORMAT_RGBA8_UNORM,
+		.width = 4, .height = 4,
+		.mip_levels = 1, .sample_count = 1,
+	};
+
+	setup();
+
+	r1 = fg_declare_transient(g_fg, "R1", td);
+
+	pa = fg_pass_declare(g_fg, "A", NULL, 0, &r1, 1);
+	pc = fg_pass_declare(g_fg, "C", &r1, 1, NULL, 0); /* terminal */
+
+	fg_pass_set_color_clear(pa, 0, clear);
+	fg_pass_set_execute(pa, pass_a_cb, NULL);
+	fg_pass_set_execute(pc, pass_c_cb, NULL);
+
+	fg_compile(g_fg);
+	renderer_null_reset_log();
+	fg_execute(g_fg);
+
+	log = renderer_null_get_log(&count);
+	for (i = 0; i < count; i++) {
+		enum gpu_call_type t = log[i].type;
+
+		if (t == GPU_CALL_CMD_BEGIN_RENDER_PASS) {
+			if (log[i].args.cmd_begin_render_pass.color_count == 1)
+				saw_one_color = 1;
+			if (phase == 0)
+				phase = 1;
+		}
+		if (t == GPU_CALL_CMD_DRAW_INDEXED &&
+		    log[i].args.cmd_draw_indexed.index_count == 1 &&
+		    phase == 1) {
+			begin_before_draw = 1;
+			phase = 2;
+		}
+		if (t == GPU_CALL_CMD_END_RENDER_PASS && phase == 2) {
+			end_after_draw = 1;
+			phase = 3;
+		}
+	}
+
+	assert(saw_one_color);
+	assert(begin_before_draw);
+	assert(end_after_draw);
+
+	teardown();
+}
+
+/* -------------------------------------------------------------------------
+ * Test: backbuffer import
+ *
+ * An imported backbuffer is bound as a write target but is never
+ * texture_create'd or texture_destroy'd, and the pass writing it survives
+ * culling thanks to its implicit external reference.
+ * -------------------------------------------------------------------------
+ */
+static void test_backbuffer_import(void)
+{
+	const struct gpu_call_record *log;
+	fg_resource_t bb;
+	fg_pass_t pp;
+	uint32_t count, i;
+	int tex_creates  = 0;
+	int tex_destroys = 0;
+	int saw_one_color = 0;
+	int saw_draw     = 0;
+	float clear[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+
+	setup();
+
+	bb = fg_import_backbuffer(g_fg);
+	assert(bb != NULL);
+
+	pp = fg_pass_declare(g_fg, "present", NULL, 0, &bb, 1);
+	fg_pass_set_color_clear(pp, 0, clear);
+	fg_pass_set_execute(pp, pass_a_cb, NULL);
+
+	fg_compile(g_fg);
+	renderer_null_reset_log();
+	fg_execute(g_fg);
+
+	log = renderer_null_get_log(&count);
+	for (i = 0; i < count; i++) {
+		switch (log[i].type) {
+		case GPU_CALL_TEXTURE_CREATE:
+			tex_creates++;
+			break;
+		case GPU_CALL_TEXTURE_DESTROY:
+			tex_destroys++;
+			break;
+		case GPU_CALL_CMD_BEGIN_RENDER_PASS:
+			if (log[i].args.cmd_begin_render_pass.color_count == 1)
+				saw_one_color = 1;
+			break;
+		case GPU_CALL_CMD_DRAW_INDEXED:
+			saw_draw = 1;
+			break;
+		default:
+			break;
+		}
+	}
+
+	/* Imported resource is bound, never owned. */
+	assert(tex_creates == 0);
+	assert(tex_destroys == 0);
+	/* Producer of the backbuffer was not culled. */
+	assert(saw_draw);
+	assert(saw_one_color);
+
+	teardown();
+}
+
 int main(void)
 {
 	RUN(topological_ordering);
 	RUN(dead_pass_culling);
 	RUN(barrier_insertion);
 	RUN(transient_lifetime);
+	RUN(render_pass_setup);
+	RUN(backbuffer_import);
 
 	printf("%d/%d tests passed\n", tests_passed, tests_run);
 	return tests_passed == tests_run ? 0 : 1;

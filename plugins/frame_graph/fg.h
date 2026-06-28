@@ -6,15 +6,29 @@
 #include <stdint.h>
 
 /*
- * Frame graph plugin — Unreal/Frostbite-style render graph.
+ * Frame graph plugin — Frostbite/Unreal-style render graph.
  *
- * The frame graph is the sole owner of struct gpu_api *. Higher-level
- * plugins build on the fg_api service; they never touch the GPU directly.
+ * The graph owns resource lifetimes, the pass DAG, automatic barriers, and
+ * render-pass setup (it begins and ends the render pass around each pass from
+ * that pass's declared writes). It does NOT wrap draw calls.
+ *
+ * At execute time the graph LENDS the GPU command API into each pass's execute
+ * callback via struct fg_pass_ctx. Inside the callback a pass records normal
+ * GPU commands (set pipeline, draw, dispatch) on the lent command buffer. The
+ * lent context is borrowed, not kept: it is valid ONLY for the duration of the
+ * callback and must never be cached, stored, or resolved as "renderer".
+ *
+ * Persistent GPU resources (pipeline state objects, static mesh buffers) live
+ * longer than a frame, so they fall outside the lend. A consumer creates them
+ * ONCE by resolving the "renderer" device directly, outside any frame; per-frame
+ * work stays on the lent context. See docs/frame-graph.md.
  *
  * Usage:
  *   struct fg *fg = fg_api->create();
- *   r = fg_api->declare_transient(fg, "depth", desc);
- *   p = fg_api->pass_declare(fg, "main", NULL, 0, &r, 1);
+ *   r  = fg_api->declare_transient(fg, "depth", desc);
+ *   bb = fg_api->import_backbuffer(fg);
+ *   p  = fg_api->pass_declare(fg, "main", NULL, 0, writes, 2);
+ *   fg_api->pass_set_color_clear(p, 0, (float[4]){0, 0, 0, 1});
  *   fg_api->pass_set_execute(p, my_cb, userdata);
  *   fg_api->compile(fg);
  *   fg_api->execute(fg);  // called each frame
@@ -37,16 +51,19 @@ typedef struct gpu_texture_desc fg_tex_desc;
 /* --- Pass execute context ------------------------------------------------ */
 
 /*
- * Opaque context passed to pass execute callbacks. Never exposes gpu_api *.
- * Use fg_cmd_* wrappers to record GPU work from within a pass.
+ * Command context lent to a pass execute callback. The accessors below are
+ * valid ONLY inside the callback (borrowed, not kept) — do not cache them or
+ * the handles they return across frames.
  */
 struct fg_pass_ctx;
 typedef void (*fg_execute_fn)(struct fg_pass_ctx *ctx, void *userdata);
 
-void fg_cmd_draw_indexed(struct fg_pass_ctx *ctx,
-			  const struct gpu_draw_indexed_args *args);
-void fg_cmd_dispatch(struct fg_pass_ctx *ctx,
-		     uint32_t x, uint32_t y, uint32_t z);
+/* The lent GPU API. Record commands; never retain past the callback. */
+const struct gpu_api *fg_ctx_gpu(struct fg_pass_ctx *ctx);
+/* The command buffer the render pass was begun on. */
+gpu_cmd_buf_t         fg_ctx_cmd(struct fg_pass_ctx *ctx);
+/* Resolve a declared resource to its bound GPU texture for this frame. */
+gpu_texture_t         fg_ctx_resource(struct fg_pass_ctx *ctx, fg_resource_t r);
 
 /* --- Frame graph object -------------------------------------------------- */
 
@@ -58,11 +75,28 @@ void       fg_destroy(struct fg *fg);
 fg_resource_t fg_declare_transient(struct fg *fg, const char *name,
 				    fg_tex_desc desc);
 
+/*
+ * Import the backbuffer (canvas / default framebuffer) as a graph resource a
+ * pass can name as a write target. Imported resources are bound by the graph
+ * but never texture_create'd or texture_destroy'd — the graph does not own
+ * their storage.
+ */
+fg_resource_t fg_import_backbuffer(struct fg *fg);
+
 fg_pass_t fg_pass_declare(struct fg *fg, const char *name,
 			   fg_resource_t *reads,  uint32_t read_count,
 			   fg_resource_t *writes, uint32_t write_count);
 
 void fg_pass_set_execute(fg_pass_t pass, fg_execute_fn cb, void *userdata);
+
+/*
+ * Per-pass attachment load configuration. By default every attachment loads
+ * its existing contents. These switch an attachment to CLEAR with the given
+ * value. The color index counts color-format writes in declaration order.
+ */
+void fg_pass_set_color_clear(fg_pass_t pass, uint32_t index,
+			      const float rgba[4]);
+void fg_pass_set_depth_clear(fg_pass_t pass, float depth);
 
 void fg_compile(struct fg *fg);
 void fg_execute(struct fg *fg);
@@ -75,11 +109,15 @@ struct fg_api {
 
 	fg_resource_t (*declare_transient)(struct fg *fg, const char *name,
 					   fg_tex_desc desc);
+	fg_resource_t (*import_backbuffer)(struct fg *fg);
 	fg_pass_t     (*pass_declare)(struct fg *fg, const char *name,
 				      fg_resource_t *reads,  uint32_t read_count,
 				      fg_resource_t *writes, uint32_t write_count);
 	void          (*pass_set_execute)(fg_pass_t pass, fg_execute_fn cb,
 					  void *userdata);
+	void          (*pass_set_color_clear)(fg_pass_t pass, uint32_t index,
+					      const float rgba[4]);
+	void          (*pass_set_depth_clear)(fg_pass_t pass, float depth);
 	void          (*compile)(struct fg *fg);
 	void          (*execute)(struct fg *fg);
 };

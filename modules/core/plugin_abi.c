@@ -219,8 +219,20 @@ EM_JS(void, krudd_text_input_init, (void), {
 	document.body.appendChild(el);
 	Module.__kruddTextEl = el;
 
-	/* Printable / IME text: append to pending chars and clear value */
-	el.addEventListener("input", function() {
+	/*
+	 * Printable / IME text.  A composing keyboard (predictive text,
+	 * many mobile IMEs) fires "input" both mid-composition and again on
+	 * commit; capturing both double-types every character.  Skip events
+	 * while ev.isComposing and take the committed text on
+	 * compositionend instead, so each character is captured exactly once.
+	 */
+	el.addEventListener("input", function(ev) {
+		if (ev.isComposing)
+			return;
+		Module.__kruddText.chars += el.value;
+		el.value = "";
+	});
+	el.addEventListener("compositionend", function() {
 		Module.__kruddText.chars += el.value;
 		el.value = "";
 	});

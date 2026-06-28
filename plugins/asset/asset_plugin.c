@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "asset.h"
+#include "asset_codec_api.h"
 #include "subsystem.h"
 #include "subsystem_manager.h"
 #include "log_api.h"
@@ -21,7 +22,8 @@ static const struct memory_api native_mem = {
 };
 #endif
 
-#define ASSET_CACHE_MAX 64
+#define ASSET_CACHE_MAX  64
+#define CODEC_TABLE_MAX  16
 
 struct asset_entry {
 	char     path[ASSET_PATH_MAX];
@@ -31,8 +33,16 @@ struct asset_entry {
 	int32_t  state; /* asset_state */
 };
 
+struct codec_entry {
+	char  ext[16];
+	void *(*decode)(const void *bytes, uint32_t size);
+};
+
 static struct asset_entry cache[ASSET_CACHE_MAX];
 static int32_t            cache_count;
+
+static struct codec_entry codec_table[CODEC_TABLE_MAX];
+static int32_t            codec_count;
 
 #ifdef __EMSCRIPTEN__
 static const struct log_api    *g_log;
@@ -211,6 +221,53 @@ void asset_release(const char *path)
 		evict_entry(e);
 }
 
+void asset_codec_register(const char *ext,
+			  void *(*decode)(const void *bytes, uint32_t size))
+{
+	if (codec_count >= CODEC_TABLE_MAX)
+		return;
+	strncpy(codec_table[codec_count].ext, ext,
+		sizeof(codec_table[0].ext) - 1);
+	codec_table[codec_count].ext[sizeof(codec_table[0].ext) - 1] = '\0';
+	codec_table[codec_count].decode = decode;
+	codec_count++;
+}
+
+void *asset_codec_get_typed(const char *path)
+{
+	const char *dot;
+	const char *ext;
+	const void *bytes;
+	uint32_t    size;
+	int32_t     i;
+
+	dot = strrchr(path, '.');
+	if (!dot)
+		return NULL;
+	ext = dot + 1;
+
+	bytes = asset_get(path, &size);
+	if (!bytes)
+		return NULL;
+
+	for (i = 0; i < codec_count; i++) {
+		if (strncmp(codec_table[i].ext, ext,
+			    sizeof(codec_table[0].ext) - 1) == 0)
+			return codec_table[i].decode(bytes, size);
+	}
+	return NULL;
+}
+
+static const struct asset_codec_api codec_api = {
+	.register_codec = asset_codec_register,
+	.get_typed      = asset_codec_get_typed,
+};
+
+static const struct subsystem codec_desc = {
+	.name = "asset_codec",
+	.api  = &codec_api,
+};
+
 static void asset_init(void)
 {
 	g_log->write(LOG_LEVEL_INFO, "asset: init");
@@ -249,4 +306,5 @@ void asset_plugin_entry(struct subsystem_manager *mgr)
 	g_mem = subsystem_manager_get_api(mgr, "memory");
 #endif
 	subsystem_manager_register(mgr, &desc);
+	subsystem_manager_register(mgr, &codec_desc);
 }

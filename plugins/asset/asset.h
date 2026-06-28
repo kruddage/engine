@@ -31,4 +31,16 @@ const void *asset_get(const char *path, uint32_t *out_size);
  */
 void asset_release(const char *path);
 
+/* Register a decoder for a file extension (without leading dot). */
+void  asset_codec_register(const char *ext,
+			   void *(*decode)(const void *bytes, uint32_t size));
+
+/*
+ * Extracts the extension from path, retrieves raw bytes via asset_get,
+ * invokes the registered decoder, and returns the result.
+ * Returns NULL if no decoder is registered or the asset is not loaded.
+ * Caller owns the returned pointer.
+ */
+void *asset_codec_get_typed(const char *path);
+
 #endif /* ASSET_H */

@@ -14,8 +14,12 @@ if(EMSCRIPTEN)
 			-I${imgui_SOURCE_DIR}/backends
 			-o ${CMAKE_BINARY_DIR}/kruddboard.wasm
 			${CMAKE_CURRENT_SOURCE_DIR}/kruddboard.cpp
+			${CMAKE_CURRENT_SOURCE_DIR}/md_parse.c
 		DEPENDS
 			${CMAKE_CURRENT_SOURCE_DIR}/kruddboard.cpp
+			${CMAKE_CURRENT_SOURCE_DIR}/md_parse.c
+			${CMAKE_CURRENT_SOURCE_DIR}/md_parse.h
+			${CMAKE_CURRENT_SOURCE_DIR}/md_draw.h
 		COMMENT "Building kruddboard SIDE_MODULE"
 	)
 	add_custom_target(kruddboard_wasm ALL

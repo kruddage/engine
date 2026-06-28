@@ -37,6 +37,7 @@ struct asset_info {
 	int32_t     kind;      /* ASSET_KIND_* */
 	int32_t     read_only; /* 1 = built-in, never evicted */
 	int32_t     type;      /* ASSET_TYPE_* */
+	uint32_t    id;        /* stable catalog id; 0 = none */
 };
 
 /*
@@ -67,6 +68,12 @@ struct asset_api {
 	 */
 	uint32_t (*describe)(uint32_t i, struct asset_decl_field *out,
 			     uint32_t max);
+	/*
+	 * Resolve a stable id to its current catalog entry.
+	 * Returns 0 and fills *out on hit; returns -1 if id is unknown
+	 * or out is NULL.  id 0 always returns -1 (reserved for "none").
+	 */
+	int32_t  (*find)(uint32_t id, struct asset_info *out);
 };
 
 #endif /* ASSET_API_H */

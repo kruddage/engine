@@ -35,6 +35,7 @@ struct asset_entry {
 	int32_t  kind;     /* ASSET_KIND_* */
 	int32_t  read_only;
 	int32_t  type;     /* ASSET_TYPE_* */
+	uint32_t id;       /* stable identity; never 0, never reused */
 };
 
 struct codec_entry {
@@ -47,6 +48,8 @@ static int32_t            cache_count;
 
 static struct codec_entry codec_table[CODEC_TABLE_MAX];
 static int32_t            codec_count;
+
+static uint32_t next_asset_id = 1; /* 0 is reserved for "none" */
 
 #ifdef __EMSCRIPTEN__
 static const struct log_api    *g_log;
@@ -83,6 +86,7 @@ static struct asset_entry *alloc_entry(const char *path)
 	e->kind      = ASSET_KIND_NORMAL;
 	e->read_only = 0;
 	e->type      = ASSET_TYPE_UNKNOWN;
+	e->id        = next_asset_id++;
 	return e;
 }
 
@@ -328,7 +332,30 @@ int32_t asset_catalog_info(uint32_t i, struct asset_info *out)
 	out->kind      = cache[i].kind;
 	out->read_only = cache[i].read_only;
 	out->type      = cache[i].type;
+	out->id        = cache[i].id;
 	return 0;
+}
+
+int32_t asset_catalog_find(uint32_t id, struct asset_info *out)
+{
+	int32_t i;
+
+	if (!out)
+		return -1;
+	for (i = 0; i < cache_count; i++) {
+		if (cache[i].id != id)
+			continue;
+		out->path      = cache[i].path;
+		out->state     = cache[i].state;
+		out->size      = cache[i].size;
+		out->refs      = cache[i].refs;
+		out->kind      = cache[i].kind;
+		out->read_only = cache[i].read_only;
+		out->type      = cache[i].type;
+		out->id        = cache[i].id;
+		return 0;
+	}
+	return -1;
 }
 
 /* ------------------------------------------------------------------ */
@@ -415,6 +442,7 @@ static const struct asset_api catalog_api = {
 	.count    = asset_catalog_count,
 	.info     = asset_catalog_info,
 	.describe = asset_catalog_describe,
+	.find     = asset_catalog_find,
 };
 
 static const struct asset_codec_api codec_api = {

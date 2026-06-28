@@ -372,6 +372,16 @@ footer {
 	};
 </script>
 
+<script>
+var Module = {
+	locateFile: function (path, prefix) {
+		if (path.endsWith('.wasm'))
+			return prefix + path.replace(/\.wasm$/, '.@GIT_COMMIT_HASH@.wasm');
+		return prefix + path;
+	}
+};
+</script>
+
 {{{ SCRIPT }}}
 
 </body>

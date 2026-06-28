@@ -8,25 +8,42 @@
 #
 # Usage: scripts/stage-site.sh [BUILD_DIR] [OUT_DIR]
 #        defaults: BUILD_DIR=build, OUT_DIR=public
+#
+# All JS and WASM outputs are renamed with the git short hash so browsers
+# fetch fresh copies on every deploy.  index.html is patched to match.
 
 set -e
 
 BUILD_DIR="${1:-build}"
 OUT_DIR="${2:-public}"
 
+HASH=$(git rev-parse --short HEAD 2>/dev/null || true)
+if [ -z "$HASH" ]; then
+	HASH="unknown"
+fi
+
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
-# Emscripten entry point and its runtime.
-cp "$BUILD_DIR"/index.html "$BUILD_DIR"/index.js "$OUT_DIR"/
+# Emscripten HTML entry point (fetched with a short cache TTL by GitHub Pages).
+cp "$BUILD_DIR/index.html" "$OUT_DIR/"
 
-# index.wasm plus every plugin SIDE_MODULE .wasm (all emitted at the build root).
-cp "$BUILD_DIR"/*.wasm "$OUT_DIR"/
+# JS loader — renamed with the commit hash so stale cached copies are bypassed.
+cp "$BUILD_DIR/index.js" "$OUT_DIR/index.${HASH}.js"
+
+# index.wasm plus every plugin SIDE_MODULE .wasm — likewise renamed.
+for wasm in "$BUILD_DIR"/*.wasm; do
+	base=$(basename "$wasm" .wasm)
+	cp "$wasm" "$OUT_DIR/${base}.${HASH}.wasm"
+done
+
+# Rewrite the <script src="index.js"> reference in the HTML to match.
+sed -i "s/index\.js/index.${HASH}.js/" "$OUT_DIR/index.html"
 
 # Runtime assets fetched by the asset plugin, if the build produced any.
 if [ -d "$BUILD_DIR/assets" ]; then
 	cp -r "$BUILD_DIR/assets" "$OUT_DIR"/
 fi
 
-printf "Staged site into %s:\n" "$OUT_DIR"
+printf "Staged site into %s (hash %s):\n" "$OUT_DIR" "$HASH"
 ls -1 "$OUT_DIR"

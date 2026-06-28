@@ -12,6 +12,10 @@ if(NOT EMSCRIPTEN)
 	add_executable(asset_codec_test asset_codec_test.c)
 	target_link_libraries(asset_codec_test PRIVATE asset_plugin log memory)
 	add_test(NAME asset_codec COMMAND asset_codec_test)
+
+	add_executable(asset_api_test asset_api_test.c)
+	target_link_libraries(asset_api_test PRIVATE asset_plugin log memory)
+	add_test(NAME asset_api COMMAND asset_api_test)
 endif()
 
 if(EMSCRIPTEN)

@@ -46,13 +46,12 @@ static void on_load(void *user_data, void *handle)
 			var name = UTF8ToString($0);
 			var base = name.slice(0, name.length - 5);
 			var entries = performance.getEntriesByType("resource");
-			var i, e, sz;
-			for (i = entries.length - 1; i >= 0; i--) {
-				e = entries[i];
+			for (var i = entries.length - 1; i >= 0; i--) {
+				var e = entries[i];
 				if (e.name.indexOf(base) !== -1 &&
 				    e.name.slice(-5) === ".wasm") {
-					sz = e.decodedBodySize ||
-					     e.encodedBodySize || 0;
+					var sz = e.decodedBodySize ||
+					         e.encodedBodySize || 0;
 					if (sz > 0) return sz;
 				}
 			}

@@ -30,7 +30,7 @@ if(EMSCRIPTEN)
 			${CMAKE_CURRENT_SOURCE_DIR}/backend_plugin.c
 			${CMAKE_CURRENT_SOURCE_DIR}/backend_record.c
 			${CMAKE_CURRENT_SOURCE_DIR}/backend_record.h
-			${CMAKE_CURRENT_SOURCE_DIR}/backend_api.h
+			${CMAKE_SOURCE_DIR}/plugins/include/backend_api.h
 		COMMENT "Building backend_plugin SIDE_MODULE"
 	)
 	add_custom_target(backend_plugin_wasm ALL

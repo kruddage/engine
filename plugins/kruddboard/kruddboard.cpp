@@ -35,7 +35,7 @@ static const struct asset_api         *g_asset_api;
 static const struct subsystem_manager *g_mgr;
 static int                             g_visible = 1;
 static int                             g_panels_registered;
-static int                             g_asset_sel = -1;
+static uint32_t                        g_asset_sel; /* 0 = none */
 
 /* ------------------------------------------------------------------ */
 /* Visibility toggle                                                   */
@@ -230,19 +230,24 @@ static const char *asset_type_str(int32_t t)
 	}
 }
 
-static void draw_asset_inspector(int sel)
+static void draw_asset_inspector(uint32_t id)
 {
 	struct asset_info       info;
 	struct asset_decl_field fields[16];
 	uint32_t                nf;
 	uint32_t                i;
+	uint32_t                idx;
+	uint32_t                n;
+	struct asset_info       tmp;
 	char                    buf[32];
 
-	if (g_asset_api->info((uint32_t)sel, &info) != 0)
+	if (g_asset_api->find(id, &info) != 0) {
+		g_asset_sel = 0;
 		return;
+	}
 
 	if (ImGui::SmallButton("<- Back"))
-		g_asset_sel = -1;
+		g_asset_sel = 0;
 	ImGui::SameLine();
 	ImGui::TextUnformatted(info.path);
 	ImGui::SameLine();
@@ -254,7 +259,16 @@ static void draw_asset_inspector(int sel)
 	ImGui::Separator();
 	ImGui::TextUnformatted("Declaration");
 
-	nf = g_asset_api->describe((uint32_t)sel, fields, 16);
+	/* Locate the index for describe(), which is index-addressed. */
+	n   = g_asset_api->count();
+	idx = n; /* sentinel: not found */
+	for (i = 0; i < n; i++) {
+		if (g_asset_api->info(i, &tmp) == 0 && tmp.id == id) {
+			idx = i;
+			break;
+		}
+	}
+	nf = (idx < n) ? g_asset_api->describe(idx, fields, 16) : 0;
 	if (nf == 0) {
 		ImGui::TextDisabled("(no declaration)");
 	} else if (ImGui::BeginTable("##decl", 2,
@@ -358,11 +372,7 @@ static void draw_tab_assets(void)
 		return;
 	}
 
-	/* Guard stale selection after a catalog change. */
-	if (g_asset_sel >= (int)n)
-		g_asset_sel = -1;
-
-	if (g_asset_sel >= 0) {
+	if (g_asset_sel != 0) {
 		draw_asset_inspector(g_asset_sel);
 		return;
 	}
@@ -406,7 +416,7 @@ static void draw_tab_assets(void)
 			if (ImGui::Selectable(
 				    info.path, false,
 				    ImGuiSelectableFlags_SpanAllColumns))
-				g_asset_sel = (int)i;
+				g_asset_sel = info.id;
 			ImGui::TableSetColumnIndex(1);
 			ImGui::TextUnformatted(asset_type_str(info.type));
 			ImGui::TableSetColumnIndex(2);
@@ -442,7 +452,7 @@ static void draw_tab_assets(void)
 			if (ImGui::Selectable(
 				    info.path, false,
 				    ImGuiSelectableFlags_SpanAllColumns))
-				g_asset_sel = (int)i;
+				g_asset_sel = info.id;
 			ImGui::TableSetColumnIndex(1);
 			ImGui::TextUnformatted(asset_type_str(info.type));
 			ImGui::TableSetColumnIndex(2);

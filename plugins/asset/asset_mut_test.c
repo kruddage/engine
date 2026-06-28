@@ -73,6 +73,11 @@ int main(void)
 	assert(sz == TEXT2_SIZE);
 	assert(memcmp(data, TEXT2_BYTES, (size_t)TEXT2_SIZE) == 0);
 
+	/* set_data with size > 0 but NULL bytes is rejected, content kept */
+	assert(asset_mut_set_data(id, NULL, TEXT2_SIZE) == -1);
+	data = asset_get(TEXT_PATH, &sz);
+	assert(data != NULL && sz == TEXT2_SIZE);
+
 	/* -------------------------------------------------------------- */
 	/* destroy: removes entry; count drops; find returns -1           */
 	/* -------------------------------------------------------------- */

@@ -495,6 +495,8 @@ int32_t asset_mut_set_data(uint32_t id, const void *bytes, uint32_t size)
 	e = find_entry_by_id(id);
 	if (!e || e->origin != ASSET_ORIGIN_AUTHORED)
 		return -1;
+	if (size > 0 && !bytes)
+		return -1;
 
 	if (size > 0) {
 		buf = g_mem->alloc((size_t)size);

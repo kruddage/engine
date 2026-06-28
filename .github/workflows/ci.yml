@@ -29,6 +29,17 @@ jobs:
           node scripts/check-plugin-symbols.test.mjs
           node scripts/check-plugin-symbols.mjs build
 
+  # EM_ASM_* macros silently break in side modules (SIDE_MODULE=1): no compile
+  # or link error, just a runtime throw. Ban them in plugin sources by path —
+  # a pure source grep, so it needs no toolchain and fails fast.
+  plugin-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ban EM_ASM_* in plugin sources
+        run: sh scripts/check-plugin-no-em-asm.sh plugins
+
   sanitizers:
     runs-on: ubuntu-latest
     steps:
@@ -107,7 +118,7 @@ jobs:
 
   preview:
     if: github.event_name == 'pull_request'
-    needs: [build, sanitizers, coverage, clang-tidy]
+    needs: [plugin-lint, build, sanitizers, coverage, clang-tidy]
     runs-on: ubuntu-latest
     permissions:
       contents: write

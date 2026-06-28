@@ -1,0 +1,64 @@
+name: Pages Deploy
+
+# The single writer to gh-pages. Every path that publishes to Pages — main
+# builds and PR previews alike — funnels through this reusable workflow via
+# workflow_call, so serialisation is structural rather than conventional:
+# one workflow, one concurrency queue, one writer. A new workflow cannot
+# accidentally bypass the lock, because the only way to touch gh-pages is to
+# call this one.
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: >-
+          main = publish the staged site to the gh-pages root;
+          preview = create/update the pr-preview/ subdirectory for this PR.
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  deployments: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    # The structural serialisation guarantee. Both modes share this single
+    # queue, so a main publish and a PR-preview publish can never race to write
+    # gh-pages — they run one at a time, oldest first.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Callers build and stage the site, then hand it over as the `site`
+      # artifact. This workflow only writes; it never builds.
+      - name: Download staged site
+        uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: public
+
+      # Main builds publish to the gh-pages root. keep_files: true preserves the
+      # pr-preview/ directories that the preview path manages, so main and PR
+      # previews coexist on the same branch.
+      - name: Publish to gh-pages root
+        if: inputs.mode == 'main'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public
+          publish_branch: gh-pages
+          keep_files: true
+
+      # PR previews live under pr-preview/pr-<n>/ and are created, updated, and
+      # torn down by pr-preview-action.
+      - name: Deploy PR preview
+        if: inputs.mode == 'preview'
+        uses: rossjrw/pr-preview-action@v1
+        with:
+          source-dir: public

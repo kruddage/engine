@@ -105,14 +105,12 @@ jobs:
       - name: Run clang-tidy
         run: run-clang-tidy -p build '.*(modules|plugins)/.*(?<!_test)\.c$'
 
-  preview:
+  # Build and stage the Release site for the PR preview. This job never touches
+  # gh-pages; it only produces the `site` artifact that pages-deploy publishes.
+  preview-build:
     if: github.event_name == 'pull_request'
     needs: [build, sanitizers, coverage, clang-tidy]
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-      deployments: write
     steps:
       - uses: actions/checkout@v4
 
@@ -150,7 +148,22 @@ jobs:
       - name: Stage site
         run: sh scripts/stage-site.sh build public
 
-      - name: Deploy PR preview
-        uses: rossjrw/pr-preview-action@v1
+      - name: Upload staged site
+        uses: actions/upload-artifact@v4
         with:
-          source-dir: public
+          name: site
+          path: public
+
+  # Hand the staged preview to the single gh-pages writer. Routing through
+  # pages-deploy means the preview shares one serialised queue with the main
+  # deploy — they can never race to write gh-pages.
+  preview-deploy:
+    if: github.event_name == 'pull_request'
+    needs: preview-build
+    permissions:
+      contents: write
+      pull-requests: write
+      deployments: write
+    uses: ./.github/workflows/pages-deploy.yml
+    with:
+      mode: preview

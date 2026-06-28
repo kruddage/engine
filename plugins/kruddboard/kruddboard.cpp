@@ -131,19 +131,21 @@ static void draw_tab_log(void)
 static void draw_tab_subsystems(void)
 {
 	int i;
+	char size_buf[32];
 
 	if (!g_mgr) {
 		ImGui::TextDisabled("(subsystem manager unavailable)");
 		return;
 	}
 
-	if (ImGui::BeginTable("##subsys", 3,
+	if (ImGui::BeginTable("##subsys", 4,
 			      ImGuiTableFlags_Borders        |
 			      ImGuiTableFlags_RowBg          |
 			      ImGuiTableFlags_SizingStretchProp)) {
 		ImGui::TableSetupColumn("Name");
 		ImGui::TableSetupColumn("API");
 		ImGui::TableSetupColumn("Tick");
+		ImGui::TableSetupColumn("WASM Size");
 		ImGui::TableHeadersRow();
 
 		for (i = 0; g_mgr->static_table[i].name; i++) {
@@ -156,6 +158,14 @@ static void draw_tab_subsystems(void)
 			ImGui::TableSetColumnIndex(2);
 			ImGui::TextUnformatted(
 				g_mgr->static_table[i].tick ? "yes" : "-");
+			ImGui::TableSetColumnIndex(3);
+			if (g_mgr->static_table[i].wasm_size) {
+				snprintf(size_buf, sizeof(size_buf), "%u",
+					g_mgr->static_table[i].wasm_size);
+				ImGui::TextUnformatted(size_buf);
+			} else {
+				ImGui::TextDisabled("-");
+			}
 		}
 
 		for (i = 0; i < g_mgr->dynamic_count; i++) {
@@ -168,6 +178,14 @@ static void draw_tab_subsystems(void)
 			ImGui::TableSetColumnIndex(2);
 			ImGui::TextUnformatted(
 				g_mgr->dynamic[i].tick ? "yes" : "-");
+			ImGui::TableSetColumnIndex(3);
+			if (g_mgr->dynamic[i].wasm_size) {
+				snprintf(size_buf, sizeof(size_buf), "%u",
+					g_mgr->dynamic[i].wasm_size);
+				ImGui::TextUnformatted(size_buf);
+			} else {
+				ImGui::TextDisabled("-");
+			}
 		}
 
 		ImGui::EndTable();

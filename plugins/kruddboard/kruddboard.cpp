@@ -226,6 +226,7 @@ static const char *asset_type_str(int32_t t)
 	case ASSET_TYPE_SHADER:   return "Shader";
 	case ASSET_TYPE_FONT:     return "Font";
 	case ASSET_TYPE_SCENE:    return "Scene";
+	case ASSET_TYPE_TEXT:     return "Text";
 	default:                  return "Unknown";
 	}
 }

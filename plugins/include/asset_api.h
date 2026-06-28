@@ -13,6 +13,15 @@
 #define ASSET_KIND_PRIMITIVE 1
 
 /*
+ * Asset origin discriminator.  ASSET_ORIGIN_FETCHED is the default for
+ * assets loaded via asset_request().  ASSET_ORIGIN_AUTHORED marks assets
+ * created from editor-supplied bytes (no fetch); only authored assets are
+ * persisted by the future persistence layer.
+ */
+#define ASSET_ORIGIN_FETCHED  0
+#define ASSET_ORIGIN_AUTHORED 1
+
+/*
  * Asset type discriminator.  Identifies what the asset represents,
  * independent of how it entered the catalog (kind).
  */
@@ -23,6 +32,7 @@
 #define ASSET_TYPE_SHADER   4
 #define ASSET_TYPE_FONT     5
 #define ASSET_TYPE_SCENE    6
+#define ASSET_TYPE_TEXT     7
 
 /*
  * Per-entry snapshot filled by asset_api.info().  path points into the
@@ -38,6 +48,7 @@ struct asset_info {
 	int32_t     read_only; /* 1 = built-in, never evicted */
 	int32_t     type;      /* ASSET_TYPE_* */
 	uint32_t    id;        /* stable catalog id; 0 = none */
+	int32_t     origin;    /* ASSET_ORIGIN_* */
 };
 
 /*
@@ -74,6 +85,37 @@ struct asset_api {
 	 * or out is NULL.  id 0 always returns -1 (reserved for "none").
 	 */
 	int32_t  (*find)(uint32_t id, struct asset_info *out);
+};
+
+/*
+ * Mutation API for authored project assets.  Obtain via
+ * subsystem_manager_get_api(mgr, "asset_mut").
+ *
+ * Authored assets are born-loaded (no fetch) and are the only origin
+ * that the future persistence layer will enumerate and save.  The
+ * create() function is intentionally generic so that other callers
+ * (e.g. file-drop import, #179) can inject bytes with any path/type
+ * without going through emscripten_fetch.
+ */
+struct asset_mut_api {
+	/*
+	 * Create a born-loaded authored project asset from bytes.
+	 * Copies the bytes.  Returns the new stable id, or 0 on failure
+	 * (cache full, duplicate path, or bad args).
+	 */
+	uint32_t (*create)(const char *path, int32_t type,
+			   const void *bytes, uint32_t size);
+	/*
+	 * Replace an authored asset's bytes in place (by id).
+	 * Returns 0 on success, -1 on miss / not-authored / OOM.
+	 */
+	int32_t  (*set_data)(uint32_t id, const void *bytes,
+			     uint32_t size);
+	/*
+	 * Delete an authored asset by id.
+	 * Returns 0 on success, -1 on miss / not-authored.
+	 */
+	int32_t  (*destroy)(uint32_t id);
 };
 
 #endif /* ASSET_API_H */

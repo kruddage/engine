@@ -25,13 +25,13 @@ static void make_entity(struct scene_entity *e, int32_t parent, uint32_t mask,
 	memset(e, 0, sizeof(*e));
 	e->mask        = mask;
 	e->parent      = parent;
-	e->position[0] = x;
-	e->position[1] = y;
-	e->position[2] = z;
-	e->rotation[3] = 1.0f;       /* identity quaternion */
-	e->scale[0]    = s;
-	e->scale[1]    = s;
-	e->scale[2]    = s;
+	e->position.x  = x;
+	e->position.y  = y;
+	e->position.z  = z;
+	e->rotation.w  = 1.0f;       /* identity quaternion */
+	e->scale.x     = s;
+	e->scale.y     = s;
+	e->scale.z     = s;
 	e->name_off    = SCENE_NO_NAME;
 	e->render_ref  = 0;
 }
@@ -87,8 +87,8 @@ static void test_rotation_compose(void)
 	const float         h = 0.70710678f;   /* sin/cos of 45° */
 
 	make_entity(&ents[0], -1, 0u, 0.0f, 0.0f, 0.0f, 1.0f);
-	ents[0].rotation[2] = h;   /* z */
-	ents[0].rotation[3] = h;   /* w */
+	ents[0].rotation.z = h;
+	ents[0].rotation.w = h;
 	make_entity(&ents[1], 0, 0u, 1.0f, 0.0f, 0.0f, 1.0f);
 
 	s.count    = 2;

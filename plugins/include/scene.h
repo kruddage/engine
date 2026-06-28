@@ -2,6 +2,8 @@
 #ifndef SCENE_H
 #define SCENE_H
 
+#include "math_types.h"
+
 #include <stdint.h>
 
 enum component_bit {
@@ -23,9 +25,9 @@ struct scene_header {
 struct scene_entity {
 	uint32_t mask;         /* enum component_bit */
 	int32_t  parent;       /* -1 = root */
-	float    position[3];
-	float    rotation[4];  /* quaternion xyzw */
-	float    scale[3];
+	vec3_t   position;
+	quat_t   rotation;
+	vec3_t   scale;
 	uint32_t name_off;     /* byte offset into name blob; SCENE_NO_NAME = none */
 	uint32_t render_ref;   /* valid iff COMPONENT_RENDER set */
 };

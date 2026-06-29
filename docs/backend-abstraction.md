@@ -53,77 +53,58 @@ readiness — readiness gating is the caller's concern, not the lookup's. The
 Local provider is live after its IndexedDB open succeeds (or after it logs the
 fallback and accepts in-memory-only mode).
 
-### Proposed `backend_api` struct (illustrative — not committed as source)
+### `backend_api` struct (as implemented in `plugins/include/backend_api.h`)
+
+The design was simplified during implementation. The `struct
+backend_project_record` wrapper and the separate `enumerate` / `login` pointers
+were dropped in favour of a flat, minimal vtable:
 
 ```c
 /*
- * Capability flags.  Declared by each provider at registration time.
- * Local provider sets BACKEND_CAP_PROJECT_PERSIST.
- * Remote provider will also set BACKEND_CAP_AUTH | BACKEND_CAP_MESSAGING
- * when those tracks land.
+ * Capability flags.  get_caps() returns a live OR-set of these.
+ * The Local provider sets BACKEND_CAP_PROJECT_PERSIST at startup and
+ * clears it if IndexedDB is unavailable (private-browsing, open error).
+ * AUTH and MESSAGING are reserved for a future Remote provider.
  */
 #define BACKEND_CAP_PROJECT_PERSIST  (1u << 0)
 #define BACKEND_CAP_AUTH             (1u << 1)
 #define BACKEND_CAP_MESSAGING        (1u << 2)
-/* extend here as #23 tracks land */
-
-struct backend_project_record {
-        uint32_t        id;      /* stable id from #187 */
-        char            path[256];
-        int32_t         type;    /* ASSET_TYPE_* from asset_api.h */
-        const uint8_t  *data;
-        uint32_t        size;
-        uint32_t        version; /* record format version; currently 1 */
-};
-
-/*
- * Callback invoked for each record recovered during startup rehydration.
- * The provider drives the loop; the consumer re-injects each record via
- * the #188 injection primitive.  data is valid only for the duration of
- * the callback — copy if you need to hold it.
- */
-typedef void (*backend_rehydrate_cb)(
-        const struct backend_project_record *rec, void *ctx);
 
 struct backend_api {
-        /* Which capabilities this provider supports (BACKEND_CAP_* OR-set). */
-        uint32_t caps;
+        /*
+         * Return the live capability bitmask.  BACKEND_CAP_PROJECT_PERSIST
+         * is cleared at runtime if IndexedDB is unavailable.
+         */
+        uint32_t (*get_caps)(void);
 
         /*
-         * Project persistence — guarded by BACKEND_CAP_PROJECT_PERSIST.
-         *
-         * persist_asset   write-through when an authored asset is created
-         *                 or its content is edited (called from #188 mutation
-         *                 hooks).  Noop if !caps & BACKEND_CAP_PROJECT_PERSIST.
-         * delete_asset    remove a record by stable id.
-         * enumerate       drive the rehydration loop at startup; calls cb
-         *                 once per stored record, then signals completion.
+         * Insert-or-update a persisted record for an authored asset.
+         * id must be non-zero.  size must be <= BACKEND_RECORD_MAX.
+         * Returns 0 on success, -1 on failure (no capability, oversize,
+         * null args, or IndexedDB error).
          */
-        void (*persist_asset)(const struct backend_project_record *rec);
-        void (*delete_asset)(uint32_t id);
-        void (*enumerate)(backend_rehydrate_cb cb, void *ctx,
-                          void (*done)(void *done_ctx), void *done_ctx);
+        int32_t (*persist_asset)(uint32_t id, const char *path,
+                                 int32_t type, const void *bytes,
+                                 uint32_t size);
 
         /*
-         * Auth / messaging stubs — NULL on the Local provider.
-         * Remote provider fills these when those #23 tracks land.
-         * Callers must check (be->caps & BACKEND_CAP_AUTH) before calling.
+         * Remove a persisted record by id.
+         * Returns 0 on success, -1 on failure (no capability or bad id).
          */
-        void (*login)(const char *server, void (*result)(int ok, void *ctx),
-                      void *ctx);
-        /* ... */
+        int32_t (*delete_asset)(uint32_t id);
 };
 ```
 
-The struct is designed to grow by appending new function pointers. Callers
-always check `caps` before calling a capability function; a NULL function
-pointer for an unsupported capability is also acceptable but the capability
-bit is the canonical signal, so both are checked in practice.
-
-The Local provider sets `caps = BACKEND_CAP_PROJECT_PERSIST`. Auth/messaging
-pointers are `NULL`. The Remote provider, when it arrives, will set additional
-bits and fill in `login` and whatever messaging entry points the messaging track
-defines.
+Key differences from the original design sketch:
+- `get_caps()` is a function rather than a static `uint32_t caps` field — this
+  allows the Local provider to reflect the live IDB state (cleared on failure)
+  without callers caching a stale field.
+- `persist_asset` takes flat parameters instead of a `struct
+  backend_project_record` pointer; this matches the EM_JS boundary naturally.
+- `enumerate` is handled inside the backend plugin's `async_init` rather than
+  exposed on the vtable — consumers never call it directly.
+- Auth/messaging stubs (`login`, etc.) are omitted; they will be added when the
+  Remote provider track lands.
 
 ### Why a separate subsystem rather than embedding in the asset plugin
 
@@ -298,12 +279,11 @@ The Local provider handles this gracefully:
 2. The C side detects the failure (e.g. a flag set via an `EM_JS` error path)
    and logs via `g_log->write(LOG_LEVEL_WARN, "backend: IndexedDB unavailable "
    "— running in-memory only (assets will not persist)")`.
-3. All subsequent calls to `persist_asset` and `delete_asset` are no-ops.
-   `caps` is left unchanged — the capability is declared as supported by the
-   Local provider; the degradation is transparent to callers. An alternative
-   is to clear `BACKEND_CAP_PROJECT_PERSIST` on failure and let callers gate on
-   it — the implementor should decide which better matches the #190 editor UX
-   (hide the Save button, or show it but note that persistence is unavailable).
+3. `BACKEND_CAP_PROJECT_PERSIST` is cleared from the live bitmask. Callers
+   that check `get_caps()` will see the capability as absent and can hide or
+   disable persistence affordances accordingly (e.g. the Save button in
+   kruddboard). All subsequent calls to `persist_asset` and `delete_asset`
+   return -1 immediately.
 4. The engine continues to run. In-memory authored assets work for the session;
    they just do not survive a reload.
 
@@ -378,12 +358,10 @@ The following points should be resolved before or during implementation:
    plugin on `"backend"`. The second is more decoupled but requires an event or
    observer mechanism not currently in the subsystem layer.
 
-2. **Clearing `BACKEND_CAP_PROJECT_PERSIST` on IndexedDB failure** — if IDB is
-   unavailable, should `caps` have `BACKEND_CAP_PROJECT_PERSIST` cleared so the
-   editor (#190) can hide or grey out the Save/persist affordance, or should the
-   capability stay declared and the failure be silent-except-for-log? The UX
-   consequence differs: a greyed-out Save button is more honest; a no-op Save
-   avoids new UI state.
+2. **Clearing `BACKEND_CAP_PROJECT_PERSIST` on IndexedDB failure** — resolved.
+   The Local provider clears `BACKEND_CAP_PROJECT_PERSIST` from the live
+   bitmask when IDB is unavailable, so callers can gate on `get_caps()` and
+   hide or grey out the Save affordance. See section 4.
 
 3. **Debounce vs. write-through** — `persist_asset` is described above as
    write-through (every edit triggers an IDB `put`). For a text editor with

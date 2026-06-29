@@ -5,10 +5,33 @@ A game engine: C compiled to WASM via Emscripten, served as a static site.
 ## Architecture
 
 ```
-modules/          C source modules
-  core/           First module — engine heartbeat
-    engine.h      Public C ABI
-    engine.c      Implementation — main(), engine_init/tick/shutdown
+modules/          C source modules (compiled into the main WASM module)
+  core/           Engine heartbeat — init/tick/shutdown, subsystem manager,
+                  plugin loader, ring buffer
+  log/            Structured logging with level filtering and ring-buffer history
+  memory/         Allocator and fixed-size pool allocator
+
+plugins/          Dynamically-loaded WASM side modules
+  include/        Public vtable headers (asset_api.h, entity_api.h,
+                  backend_api.h, renderer.h, math_types.h, …)
+  asset/          Asset catalog — enumeration, mutation, codec registration
+  backend/        Persistence seam — Local provider with IndexedDB
+  entity_plugin/  Runtime entity/scene system ("scene" subsystem)
+  scene_plugin/   .scene v1 binary decoder (registered as asset codec)
+  math/           vec3_t / quat_t / mat4 + camera helpers
+  renderer/       GPU API vtable definition
+  renderer_null/  Headless null renderer (used in native tests)
+  renderer_webgl/ WebGL renderer (WASM only)
+  frame_graph/    Frostbite-style render graph (GPU lent at execute time)
+  imgui_plugin/   ImGui debug UI shell
+  kruddboard/     In-browser tabbed authoring surface + markdown parser
+  hello_plugin/   Minimal example plugin
+
+docs/             Design documentation
+  backend-abstraction.md  Local provider + IndexedDB persistence design
+  entity-system.md        Struct-of-arrays runtime entity system
+  frame-graph.md          Render graph architecture
+  scene-format.md         Binary .scene v1 file format
 
 CMakeLists.txt    Root build — emcmake cmake drives everything
 build/            Build output (gitignored) — index.html, index.js, index.wasm
@@ -55,7 +78,9 @@ number in the PR body (e.g. `Closes #N`).
 
 - C owns the loop. `engine_tick` is the frame callback passed to
   `emscripten_set_main_loop`. No JS/TS shell — Emscripten generates the glue.
-- The `.h` file is the ABI. Changes to exported function signatures are breaking.
-- No WebGPU yet — rendering comes later. Current loop is a pure heartbeat.
-- Native target is planned but not yet implemented. The `#ifdef __EMSCRIPTEN__`
-  guard in `main()` is the seam for a future native loop.
+- The plugin vtable headers in `plugins/include/` are the ABI. Changes to
+  exported function signatures are breaking.
+- Rendering is WebGL via `renderer_webgl`. No WebGPU yet.
+- Native target compiles the modules and plugins for unit testing only; the
+  engine loop does not run natively. The `#ifdef __EMSCRIPTEN__` guard in
+  `main()` is the seam for a future native loop.

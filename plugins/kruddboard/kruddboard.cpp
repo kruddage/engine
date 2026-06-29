@@ -4,10 +4,15 @@
  * kruddboard — engine debug overlay plugin.
  *
  * Single full-width ImGui window anchored to the top of the viewport.
- * Height auto-sizes to the active tab's content; the Log tab caps at
+ * Height auto-sizes to the active tab's content; the Log section caps at
  * ~88 % of the viewport height and scrolls internally.  The tab bar
  * uses FittingPolicyScroll to handle overflow on narrow / phone screens.
  * Toggle visibility with backtick (`).
+ *
+ * Tabs:
+ *   KRUDD  — frame stats, subsystems, log (collapsible sections)
+ *   World  — entity list, create/delete, inspector
+ *   Assets — asset browser and markdown editor
  */
 
 extern "C" {
@@ -18,6 +23,7 @@ extern "C" {
 #include "stats_api.h"
 #include "imgui_api.h"
 #include "asset_api.h"
+#include "entity_api.h"
 #ifdef __EMSCRIPTEN__
 #include "backend_api.h"
 #endif
@@ -41,6 +47,8 @@ static const struct subsystem_manager *g_mgr;
 static int                             g_visible = 1;
 static int                             g_panels_registered;
 static uint32_t                        g_asset_sel; /* 0 = none */
+static const struct entity_api        *g_entity_api;
+static int32_t                         g_entity_sel = -1; /* -1 = none */
 
 #ifdef __EMSCRIPTEN__
 static const struct asset_mut_api     *g_asset_mut;
@@ -661,6 +669,183 @@ static void draw_tab_assets(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* Tab: KRUDD — frame stats, subsystems, log                          */
+/* ------------------------------------------------------------------ */
+
+static void draw_tab_krudd(void)
+{
+	if (ImGui::CollapsingHeader("Frame Stats",
+				    ImGuiTreeNodeFlags_DefaultOpen))
+		draw_tab_stats();
+
+	if (ImGui::CollapsingHeader("Subsystems",
+				    ImGuiTreeNodeFlags_DefaultOpen))
+		draw_tab_subsystems();
+
+	if (ImGui::CollapsingHeader("Log",
+				    ImGuiTreeNodeFlags_DefaultOpen))
+		draw_tab_log();
+}
+
+/* ------------------------------------------------------------------ */
+/* Tab: World — entity list, create/delete, inspector                 */
+/* ------------------------------------------------------------------ */
+
+static void draw_tab_world(void)
+{
+	const struct world     *w = NULL;
+	const struct transform *t;
+	const char             *ename;
+	uint32_t                i;
+	uint32_t                e;
+	float                   pos[3], rot[4], scl[3];
+	char                    fallback[32];
+	char                    name_buf[256];
+	char                    sel_id[72];
+	char                    del_id[16];
+
+	if (g_entity_api)
+		w = g_entity_api->get_world();
+
+	/* ---- Scene header ---- */
+	ImGui::TextUnformatted("Untitled Scene");
+	ImGui::SameLine();
+	ImGui::SetCursorPosX(ImGui::GetWindowWidth()
+		- ImGui::CalcTextSize("Save As...").x
+		- ImGui::GetStyle().FramePadding.x * 2.0f
+		- ImGui::GetStyle().WindowPadding.x);
+	ImGui::BeginDisabled();
+	ImGui::SmallButton("Save As...");
+	ImGui::EndDisabled();
+
+	ImGui::Separator();
+
+	/* ---- Entity list ---- */
+	if (ImGui::CollapsingHeader("Entities",
+				    ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::BeginDisabled();
+		ImGui::SmallButton("+ Entity");
+		ImGui::EndDisabled();
+
+		if (!w || w->count == 0) {
+			ImGui::TextDisabled("(no entities)");
+		} else if (ImGui::BeginTable("##entlist", 2,
+				ImGuiTableFlags_Borders        |
+				ImGuiTableFlags_RowBg          |
+				ImGuiTableFlags_SizingStretchProp)) {
+			ImGui::TableSetupColumn("Name",
+				ImGuiTableColumnFlags_WidthStretch);
+			ImGui::TableSetupColumn("",
+				ImGuiTableColumnFlags_WidthFixed, 24.0f);
+
+			for (i = 0; i < w->count; i++) {
+				if (!w->alive[i])
+					continue;
+				ename = NULL;
+				if ((w->mask[i] & COMPONENT_NAME) &&
+				    w->name_off[i] != SCENE_NO_NAME)
+					ename = w->names + w->name_off[i];
+				if (!ename) {
+					snprintf(fallback, sizeof(fallback),
+						 "entity %u", i);
+					ename = fallback;
+				}
+				ImGui::TableNextRow();
+				ImGui::TableSetColumnIndex(0);
+				snprintf(sel_id, sizeof(sel_id),
+					 "%s##e%u", ename, i);
+				if (ImGui::Selectable(
+					    sel_id,
+					    (int32_t)i == g_entity_sel,
+					    ImGuiSelectableFlags_SpanAllColumns))
+					g_entity_sel = (int32_t)i;
+				ImGui::TableSetColumnIndex(1);
+				ImGui::BeginDisabled();
+				snprintf(del_id, sizeof(del_id), "x##d%u", i);
+				ImGui::SmallButton(del_id);
+				ImGui::EndDisabled();
+			}
+
+			ImGui::EndTable();
+		}
+	}
+
+	ImGui::Separator();
+
+	/* ---- Inspector ---- */
+	if (ImGui::CollapsingHeader("Inspector",
+				    ImGuiTreeNodeFlags_DefaultOpen)) {
+		if (g_entity_sel < 0 || !w ||
+		    (uint32_t)g_entity_sel >= w->count ||
+		    !w->alive[(uint32_t)g_entity_sel]) {
+			ImGui::TextDisabled("(nothing selected)");
+		} else {
+			e     = (uint32_t)g_entity_sel;
+			t     = &w->local[e];
+			ename = NULL;
+			if ((w->mask[e] & COMPONENT_NAME) &&
+			    w->name_off[e] != SCENE_NO_NAME)
+				ename = w->names + w->name_off[e];
+			snprintf(name_buf, sizeof(name_buf),
+				 "%s", ename ? ename : "");
+
+			pos[0] = t->position[0];
+			pos[1] = t->position[1];
+			pos[2] = t->position[2];
+			rot[0] = t->rotation[0];
+			rot[1] = t->rotation[1];
+			rot[2] = t->rotation[2];
+			rot[3] = t->rotation[3];
+			scl[0] = t->scale[0];
+			scl[1] = t->scale[1];
+			scl[2] = t->scale[2];
+
+			ImGui::BeginDisabled();
+
+			ImGui::SetNextItemWidth(-1.0f);
+			ImGui::InputText("##ename", name_buf,
+					 sizeof(name_buf));
+
+			ImGui::Separator();
+
+			if (ImGui::BeginTable("##xform", 2,
+					ImGuiTableFlags_SizingStretchProp)) {
+				ImGui::TableSetupColumn("",
+					ImGuiTableColumnFlags_WidthFixed,
+					64.0f);
+				ImGui::TableSetupColumn("",
+					ImGuiTableColumnFlags_WidthStretch);
+
+				ImGui::TableNextRow();
+				ImGui::TableSetColumnIndex(0);
+				ImGui::TextUnformatted("Position");
+				ImGui::TableSetColumnIndex(1);
+				ImGui::SetNextItemWidth(-1.0f);
+				ImGui::InputFloat3("##pos", pos);
+
+				ImGui::TableNextRow();
+				ImGui::TableSetColumnIndex(0);
+				ImGui::TextUnformatted("Rotation");
+				ImGui::TableSetColumnIndex(1);
+				ImGui::SetNextItemWidth(-1.0f);
+				ImGui::InputFloat4("##rot", rot);
+
+				ImGui::TableNextRow();
+				ImGui::TableSetColumnIndex(0);
+				ImGui::TextUnformatted("Scale");
+				ImGui::TableSetColumnIndex(1);
+				ImGui::SetNextItemWidth(-1.0f);
+				ImGui::InputFloat3("##scl", scl);
+
+				ImGui::EndTable();
+			}
+
+			ImGui::EndDisabled();
+		}
+	}
+}
+
+/* ------------------------------------------------------------------ */
 /* Main board window                                                   */
 /* ------------------------------------------------------------------ */
 
@@ -706,16 +891,12 @@ static void draw_board(void * /*userdata*/)
 
 	if (ImGui::BeginTabBar("##tabs",
 			       ImGuiTabBarFlags_FittingPolicyScroll)) {
-		if (ImGui::BeginTabItem("Frame Stats")) {
-			draw_tab_stats();
+		if (ImGui::BeginTabItem("KRUDD")) {
+			draw_tab_krudd();
 			ImGui::EndTabItem();
 		}
-		if (ImGui::BeginTabItem("Log")) {
-			draw_tab_log();
-			ImGui::EndTabItem();
-		}
-		if (ImGui::BeginTabItem("Subsystems")) {
-			draw_tab_subsystems();
+		if (ImGui::BeginTabItem("World")) {
+			draw_tab_world();
 			ImGui::EndTabItem();
 		}
 		if (ImGui::BeginTabItem("Assets")) {
@@ -791,11 +972,13 @@ extern "C" void kruddboard_entry(struct subsystem_manager *mgr)
 		subsystem_manager_get_api(mgr, "stats");
 	g_asset_api = (const struct asset_api *)
 		subsystem_manager_get_api(mgr, "asset");
-	g_asset_mut = (const struct asset_mut_api *)
+	g_asset_mut  = (const struct asset_mut_api *)
 		subsystem_manager_get_api(mgr, "asset_mut");
-	g_backend   = (const struct backend_api *)
+	g_backend    = (const struct backend_api *)
 		subsystem_manager_get_api(mgr, "backend");
-	g_mgr       = mgr;
+	g_entity_api = (const struct entity_api *)
+		subsystem_manager_get_api(mgr, "scene");
+	g_mgr        = mgr;
 #endif
 
 	subsystem_manager_register(mgr, &desc);

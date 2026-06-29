@@ -57,9 +57,51 @@ static const struct world *scene_get_world(void)
 	return &g_world;
 }
 
+static int32_t scene_create_entity(int32_t parent,
+				   const struct transform *local,
+				   uint32_t mask, uint32_t render_ref)
+{
+	int32_t id = world_create_entity(&g_world, parent, local, mask);
+
+	if (id >= 0 && render_ref)
+		world_set_render_ref(&g_world, id, render_ref);
+	return id;
+}
+
+static void scene_destroy_entity(int32_t id)
+{
+	world_destroy_entity(&g_world, id);
+}
+
+static void scene_set_transform(int32_t id, const struct transform *local)
+{
+	world_set_transform(&g_world, id, local);
+}
+
+static void scene_set_name(int32_t id, const char *name)
+{
+	world_set_name(&g_world, id, name);
+}
+
+static int32_t scene_get_selected(void)
+{
+	return world_get_selected(&g_world);
+}
+
+static void scene_set_selected(int32_t id)
+{
+	world_set_selected(&g_world, id);
+}
+
 static const struct entity_api g_entity_api = {
-	.get_world  = scene_get_world,
-	.load_scene = scene_load,
+	.get_world      = scene_get_world,
+	.load_scene     = scene_load,
+	.create_entity  = scene_create_entity,
+	.destroy_entity = scene_destroy_entity,
+	.set_transform  = scene_set_transform,
+	.set_name       = scene_set_name,
+	.get_selected   = scene_get_selected,
+	.set_selected   = scene_set_selected,
 };
 
 static void scene_init(void)

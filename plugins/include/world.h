@@ -39,6 +39,7 @@ struct transform {
 struct world {
 	uint32_t         count;       /* high-water mark, not the live count */
 	uint32_t         name_bytes;  /* bytes used in names */
+	int32_t          selected;    /* editor selection: -1 none, else live id */
 	uint8_t          alive[WORLD_MAX_ENTITIES];        /* 0 = tombstoned */
 	uint32_t         mask[WORLD_MAX_ENTITIES];         /* component_bit OR-set */
 	int32_t          parent[WORLD_MAX_ENTITIES];       /* -1 root; parent<child */
@@ -63,9 +64,39 @@ int32_t world_create_entity(struct world *w, int32_t parent,
 /*
  * Tombstone entity e and, transitively, every entity parented under it. Slots
  * are never reused, so no surviving entity's id (or stored parent ref) moves.
- * Out-of-range ids are ignored.
+ * Out-of-range ids are ignored. If the selection lands on a tombstoned slot as
+ * a result, it is cleared to -1.
  */
 void world_destroy_entity(struct world *w, int32_t e);
+
+/*
+ * Overwrite a live entity's local transform; out-of-range or tombstoned ids
+ * are ignored. The change reaches world_xform after the next propagate.
+ */
+void world_set_transform(struct world *w, int32_t e,
+			 const struct transform *local);
+
+/*
+ * Name a live entity (setting COMPONENT_NAME). The name is appended to the
+ * blob — any previous name's bytes are abandoned, not reclaimed. A NULL or
+ * empty name clears COMPONENT_NAME instead. Returns 0 on success, or -1 if the
+ * id is out of range / tombstoned or the name would overflow the blob.
+ */
+int32_t world_set_name(struct world *w, int32_t e, const char *name);
+
+/*
+ * Set a live entity's render_ref and COMPONENT_RENDER bit; out-of-range or
+ * tombstoned ids are ignored.
+ */
+void world_set_render_ref(struct world *w, int32_t e, uint32_t render_ref);
+
+/*
+ * Editor selection model. set accepts -1 (none) or a live entity id; any
+ * other value (out of range or tombstoned) is ignored, leaving the selection
+ * unchanged. get returns the current selection (-1 when none).
+ */
+void    world_set_selected(struct world *w, int32_t e);
+int32_t world_get_selected(const struct world *w);
 
 /* The entity's name, or NULL when it has no COMPONENT_NAME / no stored name. */
 const char *world_entity_name(const struct world *w, uint32_t e);

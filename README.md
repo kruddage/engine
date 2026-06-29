@@ -17,8 +17,8 @@ KRUDD is a modular C game engine that targets the browser via WebAssembly. The c
 fixed-timestep loop; subsystems (logging, memory, rendering) attach as plugins through a stable
 WASM ABI.
 
-Current state: heartbeat loop with logging, memory management, and a plugin loader. WebGL
-rendering is in active development.
+Current state: entity/scene runtime, asset pipeline with local IndexedDB persistence,
+WebGL rendering with a frame graph, and an in-browser authoring surface (kruddboard).
 
 ## Architecture
 

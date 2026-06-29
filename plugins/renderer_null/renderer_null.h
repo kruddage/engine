@@ -22,6 +22,11 @@ enum gpu_call_type {
 	GPU_CALL_CMD_BARRIER,
 	GPU_CALL_CMD_DRAW_INDEXED,
 	GPU_CALL_CMD_DISPATCH,
+	GPU_CALL_BUFFER_CREATE,
+	GPU_CALL_BUFFER_DESTROY,
+	GPU_CALL_CMD_BIND_VERTEX_BUFFER,
+	GPU_CALL_CMD_BIND_INDEX_BUFFER,
+	GPU_CALL_CMD_BIND_UNIFORM_BUFFER,
 	GPU_CALL_GPU_MALLOC,
 	GPU_CALL_GPU_FREE,
 	GPU_CALL_GPU_HOST_TO_DEVICE_PTR,
@@ -32,7 +37,11 @@ enum gpu_call_type {
 struct gpu_call_record {
 	enum gpu_call_type type;
 	union {
-		struct { uint32_t color_format_count; } pipeline_create;
+		struct {
+			uint32_t color_format_count;
+			int      has_vert_src; /* 1 if desc->vert.src != NULL */
+			int      has_frag_src; /* 1 if desc->frag.src != NULL */
+		} pipeline_create;
 		struct { uint32_t color_count;        } cmd_begin_render_pass;
 		struct { uint32_t count;              } cmd_barrier;
 		struct {
@@ -40,6 +49,23 @@ struct gpu_call_record {
 			uint32_t instance_count;
 		} cmd_draw_indexed;
 		struct { uint32_t x; uint32_t y; uint32_t z; } cmd_dispatch;
+		struct {
+			size_t   size;
+			uint32_t usage;
+		} buffer_create;
+		struct {
+			uint32_t slot;
+			uint32_t offset;
+		} cmd_bind_vertex_buffer;
+		struct {
+			uint32_t offset;
+			uint32_t fmt; /* gpu_index_format as uint32_t */
+		} cmd_bind_index_buffer;
+		struct {
+			uint32_t slot;
+			uint32_t offset;
+			uint32_t size;
+		} cmd_bind_uniform_buffer;
 		struct { size_t size;                         } gpu_malloc;
 		struct {
 			uint32_t format; /* gpu_format, stored as uint32_t */

@@ -18,6 +18,7 @@
 typedef struct gpu_cmd_buf  *gpu_cmd_buf_t;
 typedef struct gpu_pipeline *gpu_pipeline_t;
 typedef struct gpu_texture  *gpu_texture_t;
+typedef struct gpu_buffer   *gpu_buffer_t;
 
 /* --- Capability flags ---------------------------------------------------- */
 
@@ -25,6 +26,7 @@ typedef enum {
 	GPU_CAP_DRAW_DIRECT  = 1u << 0,
 	GPU_CAP_DRAW_INDEXED = 1u << 1,
 	GPU_CAP_COMPUTE      = 1u << 2,
+	GPU_CAP_BINDLESS     = 1u << 3, /* reserved; enables pointer/bindless path */
 } gpu_cap;
 
 /* --- Enumerations -------------------------------------------------------- */
@@ -59,6 +61,38 @@ typedef enum {
 	GPU_STORE_OP_DONT_CARE,
 } gpu_store_op;
 
+/* --- Buffers ------------------------------------------------------------- */
+
+typedef enum {
+	GPU_BUFFER_USAGE_VERTEX  = 1u << 0,
+	GPU_BUFFER_USAGE_INDEX   = 1u << 1,
+	GPU_BUFFER_USAGE_UNIFORM = 1u << 2,
+	GPU_BUFFER_USAGE_STORAGE = 1u << 3,
+} gpu_buffer_usage;
+
+struct gpu_buffer_desc {
+	size_t      size;
+	uint32_t    usage;        /* bitmask of gpu_buffer_usage */
+	const void *initial_data; /* NULL = no upload */
+};
+
+/* --- Shaders ------------------------------------------------------------- */
+
+typedef enum {
+	GPU_SHADER_STAGE_VERTEX = 0,
+	GPU_SHADER_STAGE_FRAGMENT,
+} gpu_shader_stage;
+
+typedef enum {
+	GPU_SHADER_DIALECT_GLSL_ES_300 = 0,
+} gpu_shader_dialect;
+
+struct gpu_shader_source {
+	const char        *src;
+	gpu_shader_stage   stage;
+	gpu_shader_dialect dialect;
+};
+
 /* --- Pipeline state object ----------------------------------------------- */
 
 #define GPU_MAX_COLOR_ATTACHMENTS 8
@@ -74,6 +108,9 @@ struct gpu_pipeline_desc {
 	gpu_topology    topology;
 	gpu_index_format strip_index_format; /* only used for strip topologies */
 	uint32_t        sample_count;
+	/* Shader sources — renderer owns compile/link at pipeline_create time */
+	struct gpu_shader_source vert;
+	struct gpu_shader_source frag;
 };
 
 /* --- Render passes ------------------------------------------------------- */
@@ -162,6 +199,17 @@ struct gpu_api {
 	void           (*cmd_set_pipeline)(gpu_cmd_buf_t cmd,
 	                                   gpu_pipeline_t pipeline);
 
+	/* Buffers */
+	gpu_buffer_t (*buffer_create)(const struct gpu_buffer_desc *desc);
+	void         (*buffer_destroy)(gpu_buffer_t buf);
+	void         (*cmd_bind_vertex_buffer)(gpu_cmd_buf_t cmd, uint32_t slot,
+	                                       gpu_buffer_t buf, uint32_t offset);
+	void         (*cmd_bind_index_buffer)(gpu_cmd_buf_t cmd, gpu_buffer_t buf,
+	                                      uint32_t offset, gpu_index_format fmt);
+	void         (*cmd_bind_uniform_buffer)(gpu_cmd_buf_t cmd, uint32_t slot,
+	                                        gpu_buffer_t buf, uint32_t offset,
+	                                        uint32_t size);
+
 	/* Render passes */
 	void (*cmd_begin_render_pass)(gpu_cmd_buf_t cmd,
 	                              const struct gpu_render_pass_desc *desc);
@@ -173,20 +221,18 @@ struct gpu_api {
 	                    uint32_t count);
 
 	/*
-	 * data_gpu is a GPU-addressable pointer to the caller-defined root
-	 * data struct; the shader receives it as `const RootData *`.
+	 * Root data is supplied via a uniform buffer bound with
+	 * cmd_bind_uniform_buffer before the draw/dispatch.
 	 */
 	void (*cmd_draw_indexed)(gpu_cmd_buf_t cmd,
-	                         const struct gpu_draw_indexed_args *args,
-	                         void *data_gpu);
+	                         const struct gpu_draw_indexed_args *args);
 	void (*cmd_dispatch)(gpu_cmd_buf_t cmd,
-	                     uint32_t x, uint32_t y, uint32_t z,
-	                     void *data_gpu);
+	                     uint32_t x, uint32_t y, uint32_t z);
 
 	/* Memory — returns CPU-mapped GPU memory */
 	void *(*gpu_malloc)(size_t size);
 	void  (*gpu_free)(void *ptr);
-	/* Returns the GPU-side address of a cpu-mapped allocation. */
+	/* Optional — only valid when GPU_CAP_BINDLESS is set. NULL otherwise. */
 	void *(*gpu_host_to_device_ptr)(void *host_ptr);
 
 	/* Textures */

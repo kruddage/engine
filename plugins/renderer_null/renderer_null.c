@@ -57,6 +57,8 @@ null_pipeline_create(const struct gpu_pipeline_desc *desc)
 		.args = {
 			.pipeline_create = {
 				.color_format_count = desc->color_format_count,
+				.has_vert_src = desc->vert.src != NULL,
+				.has_frag_src = desc->frag.src != NULL,
 			},
 		},
 	});
@@ -118,11 +120,10 @@ static void null_cmd_barrier(gpu_cmd_buf_t cmd,
 }
 
 static void null_cmd_draw_indexed(gpu_cmd_buf_t cmd,
-				  const struct gpu_draw_indexed_args *args,
-				  void *data_gpu)
+				  const struct gpu_draw_indexed_args *args)
 {
-	g_log->write(LOG_LEVEL_INFO, "renderer_null: cmd_draw_indexed cmd=%p index_count=%u data=%p",
-		     (void *)cmd, args->index_count, data_gpu);
+	g_log->write(LOG_LEVEL_INFO, "renderer_null: cmd_draw_indexed cmd=%p index_count=%u",
+		     (void *)cmd, args->index_count);
 	log_append((struct gpu_call_record){
 		.type = GPU_CALL_CMD_DRAW_INDEXED,
 		.args = {
@@ -135,14 +136,88 @@ static void null_cmd_draw_indexed(gpu_cmd_buf_t cmd,
 }
 
 static void null_cmd_dispatch(gpu_cmd_buf_t cmd,
-			      uint32_t x, uint32_t y, uint32_t z,
-			      void *data_gpu)
+			      uint32_t x, uint32_t y, uint32_t z)
 {
-	g_log->write(LOG_LEVEL_INFO, "renderer_null: cmd_dispatch cmd=%p x=%u y=%u z=%u data=%p",
-		     (void *)cmd, x, y, z, data_gpu);
+	g_log->write(LOG_LEVEL_INFO, "renderer_null: cmd_dispatch cmd=%p x=%u y=%u z=%u",
+		     (void *)cmd, x, y, z);
 	log_append((struct gpu_call_record){
 		.type = GPU_CALL_CMD_DISPATCH,
 		.args = { .cmd_dispatch = { .x = x, .y = y, .z = z } },
+	});
+}
+
+static gpu_buffer_t null_buffer_create(const struct gpu_buffer_desc *desc)
+{
+	g_log->write(LOG_LEVEL_INFO, "renderer_null: buffer_create size=%zu usage=%u",
+		     desc->size, desc->usage);
+	log_append((struct gpu_call_record){
+		.type = GPU_CALL_BUFFER_CREATE,
+		.args = {
+			.buffer_create = {
+				.size  = desc->size,
+				.usage = desc->usage,
+			},
+		},
+	});
+	return NULL;
+}
+
+static void null_buffer_destroy(gpu_buffer_t buf)
+{
+	g_log->write(LOG_LEVEL_INFO, "renderer_null: buffer_destroy buf=%p", (void *)buf);
+	log_append((struct gpu_call_record){ .type = GPU_CALL_BUFFER_DESTROY });
+}
+
+static void null_cmd_bind_vertex_buffer(gpu_cmd_buf_t cmd, uint32_t slot,
+					gpu_buffer_t buf, uint32_t offset)
+{
+	g_log->write(LOG_LEVEL_INFO,
+		     "renderer_null: cmd_bind_vertex_buffer cmd=%p slot=%u buf=%p offset=%u",
+		     (void *)cmd, slot, (void *)buf, offset);
+	log_append((struct gpu_call_record){
+		.type = GPU_CALL_CMD_BIND_VERTEX_BUFFER,
+		.args = {
+			.cmd_bind_vertex_buffer = {
+				.slot   = slot,
+				.offset = offset,
+			},
+		},
+	});
+}
+
+static void null_cmd_bind_index_buffer(gpu_cmd_buf_t cmd, gpu_buffer_t buf,
+				       uint32_t offset, gpu_index_format fmt)
+{
+	g_log->write(LOG_LEVEL_INFO,
+		     "renderer_null: cmd_bind_index_buffer cmd=%p buf=%p offset=%u fmt=%u",
+		     (void *)cmd, (void *)buf, offset, (unsigned)fmt);
+	log_append((struct gpu_call_record){
+		.type = GPU_CALL_CMD_BIND_INDEX_BUFFER,
+		.args = {
+			.cmd_bind_index_buffer = {
+				.offset = offset,
+				.fmt    = (uint32_t)fmt,
+			},
+		},
+	});
+}
+
+static void null_cmd_bind_uniform_buffer(gpu_cmd_buf_t cmd, uint32_t slot,
+					 gpu_buffer_t buf, uint32_t offset,
+					 uint32_t size)
+{
+	g_log->write(LOG_LEVEL_INFO,
+		     "renderer_null: cmd_bind_uniform_buffer cmd=%p slot=%u buf=%p offset=%u size=%u",
+		     (void *)cmd, slot, (void *)buf, offset, size);
+	log_append((struct gpu_call_record){
+		.type = GPU_CALL_CMD_BIND_UNIFORM_BUFFER,
+		.args = {
+			.cmd_bind_uniform_buffer = {
+				.slot   = slot,
+				.offset = offset,
+				.size   = size,
+			},
+		},
 	});
 }
 
@@ -204,6 +279,11 @@ static const struct gpu_api null_api = {
 	.pipeline_create        = null_pipeline_create,
 	.pipeline_destroy       = null_pipeline_destroy,
 	.cmd_set_pipeline       = null_cmd_set_pipeline,
+	.buffer_create          = null_buffer_create,
+	.buffer_destroy         = null_buffer_destroy,
+	.cmd_bind_vertex_buffer = null_cmd_bind_vertex_buffer,
+	.cmd_bind_index_buffer  = null_cmd_bind_index_buffer,
+	.cmd_bind_uniform_buffer = null_cmd_bind_uniform_buffer,
 	.cmd_begin_render_pass  = null_cmd_begin_render_pass,
 	.cmd_end_render_pass    = null_cmd_end_render_pass,
 	.cmd_barrier            = null_cmd_barrier,
@@ -211,13 +291,19 @@ static const struct gpu_api null_api = {
 	.cmd_dispatch           = null_cmd_dispatch,
 	.gpu_malloc             = null_gpu_malloc,
 	.gpu_free               = null_gpu_free,
-	.gpu_host_to_device_ptr = null_gpu_host_to_device_ptr,
+	/* Bindless-only; null renderer does not set GPU_CAP_BINDLESS. */
+	.gpu_host_to_device_ptr = NULL,
 	.texture_create         = null_texture_create,
 	.texture_destroy        = null_texture_destroy,
 };
 
 static void renderer_null_init(void)
 {
+	/*
+	 * Referenced so the bindless-only host_to_device_ptr impl is retained
+	 * for a future GPU_CAP_BINDLESS path without tripping -Wunused-function.
+	 */
+	(void)null_gpu_host_to_device_ptr;
 	g_log->write(LOG_LEVEL_INFO, "renderer_null: init");
 	renderer_null_reset_log();
 }

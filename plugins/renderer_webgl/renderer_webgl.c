@@ -167,11 +167,9 @@ static void webgl_cmd_barrier(gpu_cmd_buf_t cmd,
 }
 
 static void webgl_cmd_draw_indexed(gpu_cmd_buf_t cmd,
-				    const struct gpu_draw_indexed_args *args,
-				    void *data_gpu)
+				    const struct gpu_draw_indexed_args *args)
 {
 	(void)cmd;
-	(void)data_gpu;
 #ifdef __EMSCRIPTEN__
 	glDrawElementsInstanced(
 		g_topology,
@@ -192,15 +190,6 @@ static void *webgl_gpu_malloc(size_t size)
 static void webgl_gpu_free(void *ptr)
 {
 	free(ptr);
-}
-
-/*
- * In WASM+WebGL 2 the WASM linear memory is directly viewable as typed
- * arrays on the JS side; CPU and GPU share the same address space.
- */
-static void *webgl_gpu_host_to_device_ptr(void *host_ptr)
-{
-	return host_ptr;
 }
 
 static gpu_texture_t
@@ -264,7 +253,13 @@ static const struct gpu_api webgl_api = {
 	.cmd_dispatch           = NULL, /* no compute shaders in WebGL 2 */
 	.gpu_malloc             = webgl_gpu_malloc,
 	.gpu_free               = webgl_gpu_free,
-	.gpu_host_to_device_ptr = webgl_gpu_host_to_device_ptr,
+	/* Buffer ops + bindless host_to_device_ptr tracked separately. */
+	.buffer_create          = NULL,
+	.buffer_destroy         = NULL,
+	.cmd_bind_vertex_buffer = NULL,
+	.cmd_bind_index_buffer  = NULL,
+	.cmd_bind_uniform_buffer = NULL,
+	.gpu_host_to_device_ptr = NULL,
 	.texture_create         = webgl_texture_create,
 	.texture_destroy        = webgl_texture_destroy,
 };

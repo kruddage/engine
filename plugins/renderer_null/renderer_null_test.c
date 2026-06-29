@@ -48,6 +48,11 @@ static void test_vtable_fully_populated(void)
 	assert(gpu->pipeline_create != NULL);
 	assert(gpu->pipeline_destroy != NULL);
 	assert(gpu->cmd_set_pipeline != NULL);
+	assert(gpu->buffer_create != NULL);
+	assert(gpu->buffer_destroy != NULL);
+	assert(gpu->cmd_bind_vertex_buffer != NULL);
+	assert(gpu->cmd_bind_index_buffer != NULL);
+	assert(gpu->cmd_bind_uniform_buffer != NULL);
 	assert(gpu->cmd_begin_render_pass != NULL);
 	assert(gpu->cmd_end_render_pass != NULL);
 	assert(gpu->cmd_barrier != NULL);
@@ -55,7 +60,8 @@ static void test_vtable_fully_populated(void)
 	assert(gpu->cmd_dispatch != NULL);
 	assert(gpu->gpu_malloc != NULL);
 	assert(gpu->gpu_free != NULL);
-	assert(gpu->gpu_host_to_device_ptr != NULL);
+	/* Bindless-only; NULL because GPU_CAP_BINDLESS is not set. */
+	assert(gpu->gpu_host_to_device_ptr == NULL);
 	assert(gpu->texture_create != NULL);
 	assert(gpu->texture_destroy != NULL);
 }
@@ -78,6 +84,21 @@ static void test_calls_dont_crash(void)
 		.depth_format       = GPU_FORMAT_UNKNOWN,
 		.topology           = GPU_TOPOLOGY_TRIANGLE_LIST,
 		.sample_count       = 1,
+		.vert = {
+			.src     = "#version 300 es\nvoid main(){}",
+			.stage   = GPU_SHADER_STAGE_VERTEX,
+			.dialect = GPU_SHADER_DIALECT_GLSL_ES_300,
+		},
+		.frag = {
+			.src     = "#version 300 es\nvoid main(){}",
+			.stage   = GPU_SHADER_STAGE_FRAGMENT,
+			.dialect = GPU_SHADER_DIALECT_GLSL_ES_300,
+		},
+	};
+	struct gpu_buffer_desc bdesc = {
+		.size         = 256,
+		.usage        = GPU_BUFFER_USAGE_VERTEX,
+		.initial_data = NULL,
 	};
 	struct gpu_color_attachment att = {
 		.texture  = NULL,
@@ -107,14 +128,18 @@ static void test_calls_dont_crash(void)
 	gpu->pipeline_create(&pdesc);
 	gpu->pipeline_destroy(NULL);
 	gpu->cmd_set_pipeline(NULL, NULL);
+	gpu->buffer_create(&bdesc);
+	gpu->buffer_destroy(NULL);
+	gpu->cmd_bind_vertex_buffer(NULL, 0, NULL, 0);
+	gpu->cmd_bind_index_buffer(NULL, NULL, 0, GPU_INDEX_FORMAT_UINT16);
+	gpu->cmd_bind_uniform_buffer(NULL, 0, NULL, 0, 64);
 	gpu->cmd_begin_render_pass(NULL, &rpdesc);
 	gpu->cmd_end_render_pass(NULL);
 	gpu->cmd_barrier(NULL, &barrier, 1);
-	gpu->cmd_draw_indexed(NULL, &draw, NULL);
-	gpu->cmd_dispatch(NULL, 1, 1, 1, NULL);
+	gpu->cmd_draw_indexed(NULL, &draw);
+	gpu->cmd_dispatch(NULL, 1, 1, 1);
 	gpu->gpu_malloc(64);
 	gpu->gpu_free(NULL);
-	gpu->gpu_host_to_device_ptr(NULL);
 	gpu->texture_create(&(struct gpu_texture_desc){
 		.format       = GPU_FORMAT_RGBA8_UNORM,
 		.width        = 256,
@@ -167,6 +192,8 @@ static void test_log_captures_args(void)
 		.color_formats      = { GPU_FORMAT_RGBA8_UNORM,
 					GPU_FORMAT_BGRA8_UNORM },
 		.color_format_count = 2,
+		.vert = { .src = "vert", .stage = GPU_SHADER_STAGE_VERTEX },
+		.frag = { .src = "frag", .stage = GPU_SHADER_STAGE_FRAGMENT },
 	};
 	struct gpu_draw_indexed_args draw = {
 		.index_count    = 6,
@@ -178,12 +205,14 @@ static void test_log_captures_args(void)
 	gpu = (const struct gpu_api *)subsystem_manager_get_api(&mgr, "renderer");
 
 	gpu->pipeline_create(&pdesc);
-	gpu->cmd_draw_indexed(NULL, &draw, NULL);
+	gpu->cmd_draw_indexed(NULL, &draw);
 
 	log = renderer_null_get_log(&count);
 	assert(count == 2);
 	assert(log[0].type == GPU_CALL_PIPELINE_CREATE);
 	assert(log[0].args.pipeline_create.color_format_count == 2);
+	assert(log[0].args.pipeline_create.has_vert_src == 1);
+	assert(log[0].args.pipeline_create.has_frag_src == 1);
 	assert(log[1].type == GPU_CALL_CMD_DRAW_INDEXED);
 	assert(log[1].args.cmd_draw_indexed.index_count == 6);
 	assert(log[1].args.cmd_draw_indexed.instance_count == 4);
@@ -250,6 +279,120 @@ static void test_texture_ops_logged(void)
 	assert(log[1].type == GPU_CALL_TEXTURE_DESTROY);
 }
 
+static void test_buffer_create_destroy_logged(void)
+{
+	const struct gpu_call_record *log;
+	const struct gpu_api *gpu;
+	struct gpu_buffer_desc desc = {
+		.size         = 1024,
+		.usage        = GPU_BUFFER_USAGE_VERTEX | GPU_BUFFER_USAGE_INDEX,
+		.initial_data = NULL,
+	};
+	uint32_t count;
+
+	setup();
+	gpu = (const struct gpu_api *)subsystem_manager_get_api(&mgr, "renderer");
+
+	gpu->buffer_create(&desc);
+	gpu->buffer_destroy(NULL);
+
+	log = renderer_null_get_log(&count);
+	assert(count == 2);
+	assert(log[0].type == GPU_CALL_BUFFER_CREATE);
+	assert(log[0].args.buffer_create.size == 1024);
+	assert(log[0].args.buffer_create.usage ==
+	       (GPU_BUFFER_USAGE_VERTEX | GPU_BUFFER_USAGE_INDEX));
+	assert(log[1].type == GPU_CALL_BUFFER_DESTROY);
+}
+
+static void test_cmd_bind_vertex_buffer_logged(void)
+{
+	const struct gpu_call_record *log;
+	const struct gpu_api *gpu;
+	uint32_t count;
+
+	setup();
+	gpu = (const struct gpu_api *)subsystem_manager_get_api(&mgr, "renderer");
+
+	gpu->cmd_bind_vertex_buffer(NULL, 2, NULL, 16);
+
+	log = renderer_null_get_log(&count);
+	assert(count == 1);
+	assert(log[0].type == GPU_CALL_CMD_BIND_VERTEX_BUFFER);
+	assert(log[0].args.cmd_bind_vertex_buffer.slot == 2);
+	assert(log[0].args.cmd_bind_vertex_buffer.offset == 16);
+}
+
+static void test_cmd_bind_index_buffer_logged(void)
+{
+	const struct gpu_call_record *log;
+	const struct gpu_api *gpu;
+	uint32_t count;
+
+	setup();
+	gpu = (const struct gpu_api *)subsystem_manager_get_api(&mgr, "renderer");
+
+	gpu->cmd_bind_index_buffer(NULL, NULL, 32, GPU_INDEX_FORMAT_UINT32);
+
+	log = renderer_null_get_log(&count);
+	assert(count == 1);
+	assert(log[0].type == GPU_CALL_CMD_BIND_INDEX_BUFFER);
+	assert(log[0].args.cmd_bind_index_buffer.offset == 32);
+	assert(log[0].args.cmd_bind_index_buffer.fmt ==
+	       (uint32_t)GPU_INDEX_FORMAT_UINT32);
+}
+
+static void test_cmd_bind_uniform_buffer_logged(void)
+{
+	const struct gpu_call_record *log;
+	const struct gpu_api *gpu;
+	uint32_t count;
+
+	setup();
+	gpu = (const struct gpu_api *)subsystem_manager_get_api(&mgr, "renderer");
+
+	gpu->cmd_bind_uniform_buffer(NULL, 1, NULL, 64, 128);
+
+	log = renderer_null_get_log(&count);
+	assert(count == 1);
+	assert(log[0].type == GPU_CALL_CMD_BIND_UNIFORM_BUFFER);
+	assert(log[0].args.cmd_bind_uniform_buffer.slot == 1);
+	assert(log[0].args.cmd_bind_uniform_buffer.offset == 64);
+	assert(log[0].args.cmd_bind_uniform_buffer.size == 128);
+}
+
+static void test_pipeline_records_shader_source(void)
+{
+	const struct gpu_call_record *log;
+	const struct gpu_api *gpu;
+	struct gpu_pipeline_desc pdesc = {
+		.color_formats      = { GPU_FORMAT_RGBA8_UNORM },
+		.color_format_count = 1,
+		.vert = {
+			.src     = "#version 300 es\nvoid main(){}",
+			.stage   = GPU_SHADER_STAGE_VERTEX,
+			.dialect = GPU_SHADER_DIALECT_GLSL_ES_300,
+		},
+		.frag = {
+			.src     = "#version 300 es\nvoid main(){}",
+			.stage   = GPU_SHADER_STAGE_FRAGMENT,
+			.dialect = GPU_SHADER_DIALECT_GLSL_ES_300,
+		},
+	};
+	uint32_t count;
+
+	setup();
+	gpu = (const struct gpu_api *)subsystem_manager_get_api(&mgr, "renderer");
+
+	gpu->pipeline_create(&pdesc);
+
+	log = renderer_null_get_log(&count);
+	assert(count == 1);
+	assert(log[0].type == GPU_CALL_PIPELINE_CREATE);
+	assert(log[0].args.pipeline_create.has_vert_src == 1);
+	assert(log[0].args.pipeline_create.has_frag_src == 1);
+}
+
 int main(void)
 {
 	RUN(registers_as_renderer);
@@ -261,6 +404,11 @@ int main(void)
 	RUN(log_captures_args);
 	RUN(log_records_sequence);
 	RUN(texture_ops_logged);
+	RUN(buffer_create_destroy_logged);
+	RUN(cmd_bind_vertex_buffer_logged);
+	RUN(cmd_bind_index_buffer_logged);
+	RUN(cmd_bind_uniform_buffer_logged);
+	RUN(pipeline_records_shader_source);
 	RUN(caps_flags);
 
 	printf("%d/%d tests passed\n", tests_passed, tests_run);

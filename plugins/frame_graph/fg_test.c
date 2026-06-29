@@ -58,7 +58,7 @@ static void pass_draw(struct fg_pass_ctx *ctx, uint32_t index_count)
 	const struct gpu_api *gpu = fg_ctx_gpu(ctx);
 	struct gpu_draw_indexed_args draw = { .index_count = index_count };
 
-	gpu->cmd_draw_indexed(fg_ctx_cmd(ctx), &draw, NULL);
+	gpu->cmd_draw_indexed(fg_ctx_cmd(ctx), &draw);
 }
 static void pass_a_cb(struct fg_pass_ctx *ctx, void *ud)
 {

@@ -184,6 +184,117 @@ static void test_empty_scene(void)
 	assert(w.count == 0);
 }
 
+/* Identity-transform helper for runtime-created entities. */
+static void make_identity(struct transform *t)
+{
+	memset(t, 0, sizeof(*t));
+	t->rotation[3] = 1.0f;
+	t->scale[0] = t->scale[1] = t->scale[2] = 1.0f;
+}
+
+/* set_transform overwrites local and reaches world_xform after a propagate. */
+static void test_set_transform(void)
+{
+	struct transform t;
+	int32_t          e;
+
+	make_identity(&t);
+	world_reset(&w);
+	e = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+
+	t.position[0] = 7.0f;
+	world_set_transform(&w, e, &t);
+	assert(feq(w.local[e].position[0], 7.0f));
+	/* world_xform only catches up on the next propagate. */
+	world_propagate_transforms(&w, 0.0f);
+	assert(feq(w.world_xform[e].position[0], 7.0f));
+
+	/* Dead / out-of-range ids are no-ops, not writes. */
+	world_destroy_entity(&w, e);
+	t.position[0] = 99.0f;
+	world_set_transform(&w, e, &t);
+	world_set_transform(&w, 1000, &t);
+	assert(feq(w.local[e].position[0], 7.0f));
+}
+
+/* set_name toggles COMPONENT_NAME and round-trips through world_entity_name. */
+static void test_set_name(void)
+{
+	struct transform t;
+	int32_t          e;
+
+	make_identity(&t);
+	world_reset(&w);
+	e = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+	assert(world_entity_name(&w, e) == NULL);
+
+	assert(world_set_name(&w, e, "Cube") == 0);
+	assert((w.mask[e] & COMPONENT_NAME) != 0);
+	assert(strcmp(world_entity_name(&w, e), "Cube") == 0);
+
+	/* Renaming appends fresh bytes; the new name reads back. */
+	assert(world_set_name(&w, e, "Sphere") == 0);
+	assert(strcmp(world_entity_name(&w, e), "Sphere") == 0);
+
+	/* Empty / NULL clears the component. */
+	assert(world_set_name(&w, e, "") == 0);
+	assert((w.mask[e] & COMPONENT_NAME) == 0);
+	assert(world_entity_name(&w, e) == NULL);
+
+	/* A dead id can't be named. */
+	world_destroy_entity(&w, e);
+	assert(world_set_name(&w, e, "Ghost") == -1);
+}
+
+/* set_render_ref stores the ref and sets COMPONENT_RENDER. */
+static void test_set_render_ref(void)
+{
+	struct transform t;
+	int32_t          e;
+
+	make_identity(&t);
+	world_reset(&w);
+	e = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+
+	world_set_render_ref(&w, e, 11u);
+	assert(w.render_ref[e] == 11u);
+	assert((w.mask[e] & COMPONENT_RENDER) != 0);
+}
+
+/* Selection takes -1 and live ids, rejects stale ones, clears on death. */
+static void test_selection(void)
+{
+	struct transform t;
+	int32_t          e0, e1;
+
+	make_identity(&t);
+	world_reset(&w);
+	assert(world_get_selected(&w) == -1);          /* reset → none */
+
+	e0 = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+	e1 = world_create_entity(&w, e0, &t, 0u);
+
+	world_set_selected(&w, e1);
+	assert(world_get_selected(&w) == e1);
+
+	/* Out-of-range id is ignored, leaving the selection intact. */
+	world_set_selected(&w, 1000);
+	assert(world_get_selected(&w) == e1);
+
+	/* Explicit clear. */
+	world_set_selected(&w, -1);
+	assert(world_get_selected(&w) == -1);
+
+	/* Destroying the selected entity (via cascade) clears the selection. */
+	world_set_selected(&w, e1);
+	world_destroy_entity(&w, e0);                  /* tombstones e0, e1 */
+	assert(world_get_selected(&w) == -1);
+
+	/* Selecting a tombstoned id is rejected. */
+	world_set_selected(&w, e1);
+	assert(world_get_selected(&w) == -1);
+}
+
 int main(void)
 {
 	test_ingest_and_propagate();
@@ -192,6 +303,10 @@ int main(void)
 	test_create_rejects_bad_parent();
 	test_tick_skips_dead();
 	test_empty_scene();
+	test_set_transform();
+	test_set_name();
+	test_set_render_ref();
+	test_selection();
 
 	printf("entity tests passed\n");
 	return 0;

@@ -45,6 +45,7 @@ static const struct stats_api         *g_stats;
 static const struct asset_api         *g_asset_api;
 static const struct subsystem_manager *g_mgr;
 static int                             g_visible = 1;
+static int                             g_collapsed;
 static int                             g_panels_registered;
 static uint32_t                        g_asset_sel; /* 0 = none */
 static const struct entity_api        *g_entity_api;
@@ -932,6 +933,9 @@ static void draw_board(void * /*userdata*/)
 		return;
 	}
 
+	if (ImGui::SmallButton(g_collapsed ? "[+]" : "[-]"))
+		g_collapsed = !g_collapsed;
+	ImGui::SameLine();
 	ImGui::TextDisabled("KRUDD EDITOR");
 	hint_x = ImGui::GetWindowWidth()
 		- ImGui::CalcTextSize("` to hide").x
@@ -940,21 +944,23 @@ static void draw_board(void * /*userdata*/)
 	ImGui::TextDisabled("` to hide");
 	ImGui::Separator();
 
-	if (ImGui::BeginTabBar("##tabs",
-			       ImGuiTabBarFlags_FittingPolicyScroll)) {
-		if (ImGui::BeginTabItem("KRUDD")) {
-			draw_tab_krudd();
-			ImGui::EndTabItem();
+	if (!g_collapsed) {
+		if (ImGui::BeginTabBar("##tabs",
+				       ImGuiTabBarFlags_FittingPolicyScroll)) {
+			if (ImGui::BeginTabItem("KRUDD")) {
+				draw_tab_krudd();
+				ImGui::EndTabItem();
+			}
+			if (ImGui::BeginTabItem("World")) {
+				draw_tab_world();
+				ImGui::EndTabItem();
+			}
+			if (ImGui::BeginTabItem("Assets")) {
+				draw_tab_assets();
+				ImGui::EndTabItem();
+			}
+			ImGui::EndTabBar();
 		}
-		if (ImGui::BeginTabItem("World")) {
-			draw_tab_world();
-			ImGui::EndTabItem();
-		}
-		if (ImGui::BeginTabItem("Assets")) {
-			draw_tab_assets();
-			ImGui::EndTabItem();
-		}
-		ImGui::EndTabBar();
 	}
 
 	ImGui::End();

@@ -124,7 +124,64 @@ static const char *builtin_paths[] = {
 #define BUILTIN_COUNT \
 	((int32_t)(sizeof(builtin_paths) / sizeof(builtin_paths[0])))
 
+/*
+ * Default proof-of-life shader: a GLSL ES 3.00 vertex/fragment pair seeded
+ * as built-in shader assets.  These carry the same source the WebGL renderer
+ * draws the demo triangle with; the renderer fetches them through the asset
+ * vtable rather than embedding the strings, exercising the "shaders are
+ * assets" delivery seam.  Dialect/stage metadata rides on the describe()
+ * decl-fields below.
+ */
+static const char *TRIANGLE_VERT_SRC =
+	"#version 300 es\n"
+	"layout(location = 0) in vec3 a_pos;\n"
+	"layout(location = 1) in vec3 a_color;\n"
+	"layout(std140) uniform Globals { vec4 u_tint; };\n"
+	"out vec3 v_color;\n"
+	"void main() {\n"
+	"	v_color = a_color * u_tint.rgb;\n"
+	"	gl_Position = vec4(a_pos, 1.0);\n"
+	"}\n";
+
+static const char *TRIANGLE_FRAG_SRC =
+	"#version 300 es\n"
+	"precision mediump float;\n"
+	"in vec3 v_color;\n"
+	"out vec4 frag_color;\n"
+	"void main() {\n"
+	"	frag_color = vec4(v_color, 1.0);\n"
+	"}\n";
+
 static int builtins_seeded;
+
+/*
+ * Seed one built-in shader asset from NUL-terminated GLSL source.  A heap
+ * copy of the source (including its trailing NUL) becomes the asset's bytes,
+ * so consumers can use get_data() directly as a C string and shutdown frees
+ * it uniformly with fetched assets.  size counts the stored bytes (NUL
+ * included).
+ */
+static void seed_shader(const char *path, const char *src)
+{
+	struct asset_entry *e;
+	uint32_t            n;
+
+	e = alloc_entry(path);
+	if (!e)
+		return;
+	n = (uint32_t)strlen(src) + 1;
+	e->data = g_mem->alloc(n);
+	if (!e->data) {
+		e->state = ASSET_ERROR;
+		return;
+	}
+	memcpy(e->data, src, n);
+	e->size      = n;
+	e->state     = ASSET_LOADED;
+	e->kind      = ASSET_KIND_PRIMITIVE;
+	e->read_only = 1;
+	e->type      = ASSET_TYPE_SHADER;
+}
 
 static void seed_builtins(void)
 {
@@ -144,6 +201,9 @@ static void seed_builtins(void)
 		e->read_only = 1;
 		e->type      = ASSET_TYPE_MESH;
 	}
+
+	seed_shader("builtin://shader/triangle.vert", TRIANGLE_VERT_SRC);
+	seed_shader("builtin://shader/triangle.frag", TRIANGLE_FRAG_SRC);
 }
 
 #ifdef __EMSCRIPTEN__
@@ -417,6 +477,21 @@ static const struct asset_decl_field pyramid_decl[] = {
 	{ "attributes", "position, normal, uv0" },
 };
 
+/*
+ * Shader assets carry dialect + stage so the renderer can select the right
+ * compiler without inspecting the source.  This is the forward-looking bit:
+ * a second dialect (e.g. WGSL) slots in here without the renderer changing.
+ */
+static const struct asset_decl_field triangle_vert_decl[] = {
+	{ "dialect", "glsl_es_300" },
+	{ "stage",   "vertex"      },
+};
+
+static const struct asset_decl_field triangle_frag_decl[] = {
+	{ "dialect", "glsl_es_300" },
+	{ "stage",   "fragment"    },
+};
+
 struct builtin_desc {
 	const char                   *path;
 	const struct asset_decl_field *fields;
@@ -430,6 +505,10 @@ static const struct builtin_desc builtin_descs[] = {
 	{ "builtin://sphere",  sphere_decl,  ARRAY_SIZE(sphere_decl)  },
 	{ "builtin://plane",   plane_decl,   ARRAY_SIZE(plane_decl)   },
 	{ "builtin://pyramid", pyramid_decl, ARRAY_SIZE(pyramid_decl) },
+	{ "builtin://shader/triangle.vert", triangle_vert_decl,
+	  ARRAY_SIZE(triangle_vert_decl) },
+	{ "builtin://shader/triangle.frag", triangle_frag_decl,
+	  ARRAY_SIZE(triangle_frag_decl) },
 };
 
 #define BUILTIN_DESC_COUNT ARRAY_SIZE(builtin_descs)

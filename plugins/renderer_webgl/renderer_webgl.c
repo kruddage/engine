@@ -12,6 +12,7 @@
 #ifdef __EMSCRIPTEN__
 #include <emscripten/html5.h>
 #include <GLES3/gl3.h>
+#include "asset_api.h"
 #else
 #include "log.h"
 static const struct log_api native_log = { log_write };
@@ -41,6 +42,7 @@ struct gpu_texture {
 
 #ifdef __EMSCRIPTEN__
 static const struct log_api           *g_log;
+static const struct asset_api         *g_asset;
 static EMSCRIPTEN_WEBGL_CONTEXT_HANDLE g_ctx;
 static unsigned int                    g_topology;   /* active draw topology */
 static unsigned int                    g_index_type = GL_UNSIGNED_SHORT;
@@ -485,26 +487,35 @@ static const struct gpu_api webgl_api = {
 };
 
 #ifdef __EMSCRIPTEN__
-/* GLSL ES 3.00 sources for the proof-of-life triangle. */
-static const char *DEMO_VERT_SRC =
-	"#version 300 es\n"
-	"layout(location = 0) in vec3 a_pos;\n"
-	"layout(location = 1) in vec3 a_color;\n"
-	"layout(std140) uniform Globals { vec4 u_tint; };\n"
-	"out vec3 v_color;\n"
-	"void main() {\n"
-	"	v_color = a_color * u_tint.rgb;\n"
-	"	gl_Position = vec4(a_pos, 1.0);\n"
-	"}\n";
+/* Built-in shader assets the asset plugin seeds at startup. */
+#define DEMO_VERT_ASSET "builtin://shader/triangle.vert"
+#define DEMO_FRAG_ASSET "builtin://shader/triangle.frag"
 
-static const char *DEMO_FRAG_SRC =
-	"#version 300 es\n"
-	"precision mediump float;\n"
-	"in vec3 v_color;\n"
-	"out vec4 frag_color;\n"
-	"void main() {\n"
-	"	frag_color = vec4(v_color, 1.0);\n"
-	"}\n";
+/*
+ * Borrow a shader asset's source by path through the asset vtable. The
+ * read-only api resolves by id, so walk the catalog to map path -> id, then
+ * borrow the bytes. Seeded shader assets are NUL-terminated, so the returned
+ * pointer is usable directly as GLSL source. Returns NULL if the asset plugin
+ * is unavailable or the asset is not loaded.
+ */
+static const char *shader_src_by_path(const char *path)
+{
+	struct asset_info info;
+	uint32_t          i;
+	uint32_t          n;
+
+	if (!g_asset)
+		return NULL;
+	n = g_asset->count();
+	for (i = 0; i < n; i++) {
+		if (g_asset->info(i, &info) != 0)
+			continue;
+		if (strcmp(info.path, path) != 0)
+			continue;
+		return (const char *)g_asset->get_data(info.id, NULL);
+	}
+	return NULL;
+}
 
 /* Interleaved position (vec3) + colour (vec3) for three vertices. */
 static const float DEMO_VERTS[] = {
@@ -525,16 +536,27 @@ static void webgl_demo_setup(void)
 	struct gpu_pipeline_desc pdesc;
 	struct gpu_buffer_desc   bdesc;
 	struct gpu_pipeline     *p;
+	const char              *vsrc;
+	const char              *fsrc;
 	GLuint block;
+
+	/* Source the demo shaders from the asset catalog (issue #205). */
+	vsrc = shader_src_by_path(DEMO_VERT_ASSET);
+	fsrc = shader_src_by_path(DEMO_FRAG_ASSET);
+	if (!vsrc || !fsrc) {
+		g_log->write(LOG_LEVEL_INFO,
+			     "renderer_webgl: demo shader assets unavailable");
+		return;
+	}
 
 	memset(&pdesc, 0, sizeof(pdesc));
 	pdesc.color_formats[0]   = GPU_FORMAT_RGBA8_UNORM;
 	pdesc.color_format_count = 1;
 	pdesc.topology           = GPU_TOPOLOGY_TRIANGLE_LIST;
-	pdesc.vert.src     = DEMO_VERT_SRC;
+	pdesc.vert.src     = vsrc;
 	pdesc.vert.stage   = GPU_SHADER_STAGE_VERTEX;
 	pdesc.vert.dialect = GPU_SHADER_DIALECT_GLSL_ES_300;
-	pdesc.frag.src     = DEMO_FRAG_SRC;
+	pdesc.frag.src     = fsrc;
 	pdesc.frag.stage   = GPU_SHADER_STAGE_FRAGMENT;
 	pdesc.frag.dialect = GPU_SHADER_DIALECT_GLSL_ES_300;
 	g_demo.pipeline = webgl_pipeline_create(&pdesc);
@@ -675,7 +697,8 @@ void renderer_webgl_plugin_entry(struct subsystem_manager *mgr)
 #endif
 {
 #ifdef __EMSCRIPTEN__
-	g_log = subsystem_manager_get_api(mgr, "log");
+	g_log   = subsystem_manager_get_api(mgr, "log");
+	g_asset = subsystem_manager_get_api(mgr, "asset");
 #endif
 	subsystem_manager_register(mgr, &desc);
 }

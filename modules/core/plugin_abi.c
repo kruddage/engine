@@ -389,6 +389,13 @@ EMSCRIPTEN_KEEPALIVE void *gl_abi_refs[] = {
 	(void *)glGenVertexArraysOES,
 	(void *)glBindVertexArrayOES,
 	(void *)glDeleteVertexArraysOES,
+	/* Core GLES3 VAO + UBO entry points — renderer_webgl.wasm */
+	(void *)glGenVertexArrays,
+	(void *)glBindVertexArray,
+	(void *)glDeleteVertexArrays,
+	(void *)glBindBufferRange,
+	(void *)glGetUniformBlockIndex,
+	(void *)glUniformBlockBinding,
 	/* Shaders and programs */
 	(void *)glCreateShader,
 	(void *)glShaderSource,

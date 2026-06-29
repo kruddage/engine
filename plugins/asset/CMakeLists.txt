@@ -20,6 +20,10 @@ if(NOT EMSCRIPTEN)
 	add_executable(asset_mut_test asset_mut_test.c)
 	target_link_libraries(asset_mut_test PRIVATE asset_plugin log memory)
 	add_test(NAME asset_mut COMMAND asset_mut_test)
+
+	add_executable(asset_shader_test asset_shader_test.c)
+	target_link_libraries(asset_shader_test PRIVATE asset_plugin log memory)
+	add_test(NAME asset_shader COMMAND asset_shader_test)
 endif()
 
 if(EMSCRIPTEN)

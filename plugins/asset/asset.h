@@ -55,6 +55,13 @@ void asset_init(void);
 uint32_t    asset_catalog_count(void);
 int32_t     asset_catalog_info(uint32_t i, struct asset_info *out);
 /*
+ * Fill *out (caller array of max fields) with entry i's declaration.
+ * Returns the number of fields written, or 0 if i is out of range or has
+ * no declaration.  Strings point into static storage.
+ */
+uint32_t    asset_catalog_describe(uint32_t i, struct asset_decl_field *out,
+				   uint32_t max);
+/*
  * Resolve a stable id to its current catalog entry.
  * Returns 0 on hit (fills *out), -1 on miss or NULL out.
  * id 0 is reserved for "none" and always returns -1.

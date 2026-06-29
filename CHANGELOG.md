@@ -8,6 +8,20 @@ Entries are grouped by theme — features and fixes that matter to users of the
 engine — rather than by individual commit. Pre-`0.3.0` releases predate this file
 and are summarized at a high level.
 
+## [Unreleased]
+
+### Added
+
+- **Shader authoring in kruddboard** — the Assets tab "New Asset" form now offers
+  a type picker (Text / Shader) and, for shaders, a stage selector; the stage
+  drives both a derived file extension (`.vert`/`.frag`) and the asset's
+  declaration. Authored shaders open in a plain source editor with editable
+  stage/dialect metadata instead of the markdown editor/preview.
+- **Editable asset declarations** — `asset_mut.set_decl` lets editors attach
+  key/value declaration metadata (e.g. shader stage/dialect) to authored assets;
+  `describe()` surfaces it, and synthesizes a shader's stage from its file
+  extension when no explicit declaration is set (e.g. after a reload).
+
 ## [0.3.0] - 2026-06-29
 
 The plugin platform grows up: a real asset pipeline, a runtime entity/scene

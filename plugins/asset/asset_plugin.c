@@ -26,6 +26,20 @@ static const struct memory_api native_mem = {
 #define ASSET_CACHE_MAX  64
 #define CODEC_TABLE_MAX  16
 
+/*
+ * Authored assets may carry a small declaration set (e.g. a shader's
+ * stage/dialect).  Stored inline so describe() can hand out pointers into
+ * the entry's own storage, valid until the entry is evicted or re-declared.
+ */
+#define ASSET_DECL_MAX     8
+#define ASSET_DECL_KEY_MAX 24
+#define ASSET_DECL_VAL_MAX 48
+
+struct asset_decl_store {
+	char key[ASSET_DECL_KEY_MAX];
+	char val[ASSET_DECL_VAL_MAX];
+};
+
 struct asset_entry {
 	char     path[ASSET_PATH_MAX];
 	uint8_t *data;
@@ -37,6 +51,8 @@ struct asset_entry {
 	int32_t  type;     /* ASSET_TYPE_* */
 	uint32_t id;       /* stable identity; never 0, never reused */
 	int32_t  origin;   /* ASSET_ORIGIN_* */
+	struct asset_decl_store decl[ASSET_DECL_MAX];
+	uint32_t ndecl;    /* authored declaration field count; 0 = none */
 };
 
 struct codec_entry {
@@ -100,6 +116,7 @@ static struct asset_entry *alloc_entry(const char *path)
 	e->type      = ASSET_TYPE_UNKNOWN;
 	e->id        = next_asset_id++;
 	e->origin    = ASSET_ORIGIN_FETCHED;
+	e->ndecl     = 0;
 	return e;
 }
 
@@ -513,20 +530,60 @@ static const struct builtin_desc builtin_descs[] = {
 
 #define BUILTIN_DESC_COUNT ARRAY_SIZE(builtin_descs)
 
+/*
+ * Synthesize a shader's declaration from its path when none was set
+ * explicitly (e.g. after a reload from persistence, which restores bytes and
+ * type but not in-memory decl).  Stage derives from the file extension;
+ * dialect defaults to the only one we speak.  All strings are static
+ * literals, valid for the process lifetime.
+ */
+static uint32_t shader_decl_from_path(const char *path,
+				      struct asset_decl_field *out,
+				      uint32_t max)
+{
+	const char *dot;
+	uint32_t    n = 0;
+
+	out[n].key   = "dialect";
+	out[n].value = "glsl_es_300";
+	n++;
+	if (n >= max)
+		return n;
+
+	dot = strrchr(path, '.');
+	out[n].key   = "stage";
+	out[n].value = (dot && strcmp(dot, ".vert") == 0) ? "vertex"
+							  : "fragment";
+	n++;
+	return n;
+}
+
 uint32_t asset_catalog_describe(uint32_t i,
 				struct asset_decl_field *out,
 				uint32_t max)
 {
+	const struct asset_entry *e;
 	uint32_t    d;
 	uint32_t    n;
-	const char *path;
 
 	if ((int32_t)i >= cache_count || !out || max == 0)
 		return 0;
 
-	path = cache[i].path;
+	e = &cache[i];
+
+	/* Authored assets carry their own (editor-set) declaration. */
+	if (e->ndecl > 0) {
+		n = (e->ndecl > max) ? max : e->ndecl;
+		for (d = 0; d < n; d++) {
+			out[d].key   = e->decl[d].key;
+			out[d].value = e->decl[d].val;
+		}
+		return n;
+	}
+
+	/* Built-in primitives carry static descriptors keyed by path. */
 	for (d = 0; d < BUILTIN_DESC_COUNT; d++) {
-		if (strncmp(builtin_descs[d].path, path,
+		if (strncmp(builtin_descs[d].path, e->path,
 			    ASSET_PATH_MAX) != 0)
 			continue;
 		n = builtin_descs[d].count;
@@ -536,6 +593,11 @@ uint32_t asset_catalog_describe(uint32_t i,
 		       n * sizeof(struct asset_decl_field));
 		return n;
 	}
+
+	/* A shader with no explicit decl still reports stage + dialect. */
+	if (e->type == ASSET_TYPE_SHADER)
+		return shader_decl_from_path(e->path, out, max);
+
 	return 0;
 }
 
@@ -617,6 +679,36 @@ int32_t asset_mut_destroy(uint32_t id)
 	return 0;
 }
 
+int32_t asset_mut_set_decl(uint32_t id, const struct asset_decl_field *fields,
+			   uint32_t n)
+{
+	struct asset_entry *e;
+	uint32_t            k;
+
+	e = find_entry_by_id(id);
+	if (!e || e->origin != ASSET_ORIGIN_AUTHORED)
+		return -1;
+	if (n > ASSET_DECL_MAX)
+		return -1;
+	if (n > 0 && !fields)
+		return -1;
+
+	/* Validate up front so a bad field leaves the existing decl intact. */
+	for (k = 0; k < n; k++) {
+		if (!fields[k].key || !fields[k].value)
+			return -1;
+	}
+
+	for (k = 0; k < n; k++) {
+		strncpy(e->decl[k].key, fields[k].key, ASSET_DECL_KEY_MAX - 1);
+		e->decl[k].key[ASSET_DECL_KEY_MAX - 1] = '\0';
+		strncpy(e->decl[k].val, fields[k].value, ASSET_DECL_VAL_MAX - 1);
+		e->decl[k].val[ASSET_DECL_VAL_MAX - 1] = '\0';
+	}
+	e->ndecl = n;
+	return 0;
+}
+
 static const struct asset_api catalog_api = {
 	.count    = asset_catalog_count,
 	.info     = asset_catalog_info,
@@ -634,6 +726,7 @@ static const struct asset_mut_api mut_api = {
 	.create   = asset_mut_create,
 	.set_data = asset_mut_set_data,
 	.destroy  = asset_mut_destroy,
+	.set_decl = asset_mut_set_decl,
 };
 
 static const struct subsystem codec_desc = {

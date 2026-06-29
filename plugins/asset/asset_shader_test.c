@@ -105,6 +105,65 @@ static void check_authored_roundtrip(void)
 	assert(asset_mut_destroy(id) == 0);
 }
 
+/*
+ * Authored shader declarations: with no explicit decl, describe() synthesizes
+ * stage from the file extension and a default dialect; set_decl overrides it;
+ * and it is rejected on read-only assets, on over-capacity counts, and cleared
+ * by n == 0 (which falls back to the synthesized values).
+ */
+static void check_authored_decl(void)
+{
+	struct asset_decl_field one[1];
+	struct asset_decl_field two[2];
+	struct asset_info       info;
+	uint32_t                frag;
+	uint32_t                vert;
+	int32_t                 idx;
+
+	/* No explicit decl: stage derives from the extension. */
+	frag = asset_mut_create("project://shader/ripple.frag",
+				ASSET_TYPE_SHADER, "", 0);
+	vert = asset_mut_create("project://shader/wave.vert",
+				ASSET_TYPE_SHADER, "", 0);
+	assert(frag != 0 && vert != 0);
+
+	idx = index_of("project://shader/ripple.frag");
+	assert(idx >= 0);
+	assert(strcmp(decl_value((uint32_t)idx, "dialect"), "glsl_es_300") == 0);
+	assert(strcmp(decl_value((uint32_t)idx, "stage"), "fragment") == 0);
+
+	idx = index_of("project://shader/wave.vert");
+	assert(idx >= 0);
+	assert(strcmp(decl_value((uint32_t)idx, "stage"), "vertex") == 0);
+
+	/* set_decl overrides the synthesized values. */
+	two[0].key = "dialect"; two[0].value = "glsl_es_300";
+	two[1].key = "stage";   two[1].value = "vertex";
+	assert(asset_mut_set_decl(frag, two, 2) == 0);
+	idx = index_of("project://shader/ripple.frag");
+	assert(strcmp(decl_value((uint32_t)idx, "stage"), "vertex") == 0);
+
+	/* n == 0 clears the decl; describe() falls back to the extension. */
+	assert(asset_mut_set_decl(frag, NULL, 0) == 0);
+	idx = index_of("project://shader/ripple.frag");
+	assert(strcmp(decl_value((uint32_t)idx, "stage"), "fragment") == 0);
+
+	/* An over-capacity count is rejected (max is small and internal). */
+	assert(asset_mut_set_decl(frag, one, 1000) == -1);
+
+	/* null fields with n > 0 is rejected. */
+	assert(asset_mut_set_decl(frag, NULL, 1) == -1);
+
+	/* set_decl on a read-only built-in is rejected. */
+	assert(asset_catalog_info(0, &info) == 0);
+	assert(info.read_only == 1);
+	one[0].key = "stage"; one[0].value = "vertex";
+	assert(asset_mut_set_decl(info.id, one, 1) == -1);
+
+	assert(asset_mut_destroy(frag) == 0);
+	assert(asset_mut_destroy(vert) == 0);
+}
+
 int main(void)
 {
 	mem_init();
@@ -115,6 +174,7 @@ int main(void)
 	check_shader(VERT_PATH, "vertex");
 	check_shader(FRAG_PATH, "fragment");
 	check_authored_roundtrip();
+	check_authored_decl();
 
 	log_shutdown();
 	mem_shutdown();

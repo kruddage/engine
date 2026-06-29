@@ -16,11 +16,35 @@
  * A renderer walks w->count entities, skips tombstones (alive[i] == 0), tests
  * each mask for COMPONENT_RENDER, and draws using world_xform[i] together with
  * render_ref[i].
+ *
+ * Beyond reading the world, editor tools drive it through the runtime mutators
+ * and the shared selection model below: drag-to-spawn is create_entity, the
+ * property panel and gizmo are set_transform / set_name, and all three agree on
+ * the active entity via get_selected / set_selected.
  */
 struct entity_api {
 	const struct world *(*get_world)(void);
 	/* Load and ingest a .scene asset by path; 0 on success, -1 otherwise. */
 	int32_t             (*load_scene)(const char *path);
+
+	/*
+	 * Append an entity under parent (-1 = root) with the given local
+	 * transform and component mask; render_ref is applied (and
+	 * COMPONENT_RENDER set) when non-zero. Returns the new id, or -1 if the
+	 * world is full or parent is not a live entity.
+	 */
+	int32_t (*create_entity)(int32_t parent, const struct transform *local,
+				 uint32_t mask, uint32_t render_ref);
+	/* Tombstone id and its subtree; clears a selection it tombstones. */
+	void    (*destroy_entity)(int32_t id);
+	/* Overwrite id's local transform (visible after the next tick). */
+	void    (*set_transform)(int32_t id, const struct transform *local);
+	/* Rename id; NULL/empty clears its name. */
+	void    (*set_name)(int32_t id, const char *name);
+
+	/* Shared selection: -1 = none. set ignores stale/out-of-range ids. */
+	int32_t (*get_selected)(void);
+	void    (*set_selected)(int32_t id);
 };
 
 #endif /* ENTITY_API_H */

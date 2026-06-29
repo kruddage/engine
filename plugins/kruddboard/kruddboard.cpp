@@ -698,6 +698,7 @@ static void draw_tab_world(void)
 	const char             *ename;
 	uint32_t                i;
 	uint32_t                e;
+	int32_t                 sel;
 	float                   pos[3], rot[4], scl[3];
 	char                    fallback[32];
 	char                    name_buf[256];
@@ -706,6 +707,9 @@ static void draw_tab_world(void)
 
 	if (g_entity_api)
 		w = g_entity_api->get_world();
+
+	/* Selection lives in the scene subsystem; fall back if it's absent. */
+	sel = g_entity_api ? g_entity_api->get_selected() : g_entity_sel;
 
 	/* ---- Scene header ---- */
 	ImGui::TextUnformatted("Untitled Scene");
@@ -723,8 +727,21 @@ static void draw_tab_world(void)
 	/* ---- Entity list ---- */
 	if (ImGui::CollapsingHeader("Entities",
 				    ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::BeginDisabled();
-		ImGui::SmallButton("+ Entity");
+		ImGui::BeginDisabled(!g_entity_api);
+		if (ImGui::SmallButton("+ Entity") && g_entity_api) {
+			struct transform seed = {};  /* identity at origin */
+			int32_t          id;
+
+			seed.rotation[3] = 1.0f;
+			seed.scale[0] = seed.scale[1] = seed.scale[2] = 1.0f;
+			id = g_entity_api->create_entity(WORLD_NO_PARENT, &seed,
+							 0u, 0u);
+			if (id >= 0) {
+				g_entity_api->set_name(id, "Entity");
+				g_entity_api->set_selected(id);
+				sel = id;
+			}
+		}
 		ImGui::EndDisabled();
 
 		if (!w || w->count == 0) {
@@ -756,13 +773,20 @@ static void draw_tab_world(void)
 					 "%s##e%u", ename, i);
 				if (ImGui::Selectable(
 					    sel_id,
-					    (int32_t)i == g_entity_sel,
-					    ImGuiSelectableFlags_SpanAllColumns))
-					g_entity_sel = (int32_t)i;
+					    (int32_t)i == sel,
+					    ImGuiSelectableFlags_SpanAllColumns)) {
+					if (g_entity_api)
+						g_entity_api->set_selected(
+							(int32_t)i);
+					else
+						g_entity_sel = (int32_t)i;
+					sel = (int32_t)i;
+				}
 				ImGui::TableSetColumnIndex(1);
-				ImGui::BeginDisabled();
 				snprintf(del_id, sizeof(del_id), "x##d%u", i);
-				ImGui::SmallButton(del_id);
+				ImGui::BeginDisabled(!g_entity_api);
+				if (ImGui::SmallButton(del_id) && g_entity_api)
+					g_entity_api->destroy_entity((int32_t)i);
 				ImGui::EndDisabled();
 			}
 
@@ -775,12 +799,12 @@ static void draw_tab_world(void)
 	/* ---- Inspector ---- */
 	if (ImGui::CollapsingHeader("Inspector",
 				    ImGuiTreeNodeFlags_DefaultOpen)) {
-		if (g_entity_sel < 0 || !w ||
-		    (uint32_t)g_entity_sel >= w->count ||
-		    !w->alive[(uint32_t)g_entity_sel]) {
+		if (sel < 0 || !w ||
+		    (uint32_t)sel >= w->count ||
+		    !w->alive[(uint32_t)sel]) {
 			ImGui::TextDisabled("(nothing selected)");
 		} else {
-			e     = (uint32_t)g_entity_sel;
+			e     = (uint32_t)sel;
 			t     = &w->local[e];
 			ename = NULL;
 			if ((w->mask[e] & COMPONENT_NAME) &&
@@ -800,11 +824,17 @@ static void draw_tab_world(void)
 			scl[1] = t->scale[1];
 			scl[2] = t->scale[2];
 
-			ImGui::BeginDisabled();
+			bool xform_changed = false;
+
+			ImGui::BeginDisabled(!g_entity_api);
 
 			ImGui::SetNextItemWidth(-1.0f);
 			ImGui::InputText("##ename", name_buf,
 					 sizeof(name_buf));
+			/* Commit once, on focus loss — not every keystroke, so
+			 * the append-only name blob doesn't churn. */
+			if (ImGui::IsItemDeactivatedAfterEdit() && g_entity_api)
+				g_entity_api->set_name((int32_t)e, name_buf);
 
 			ImGui::Separator();
 
@@ -821,26 +851,47 @@ static void draw_tab_world(void)
 				ImGui::TextUnformatted("Position");
 				ImGui::TableSetColumnIndex(1);
 				ImGui::SetNextItemWidth(-1.0f);
-				ImGui::InputFloat3("##pos", pos);
+				xform_changed |=
+					ImGui::InputFloat3("##pos", pos);
 
 				ImGui::TableNextRow();
 				ImGui::TableSetColumnIndex(0);
 				ImGui::TextUnformatted("Rotation");
 				ImGui::TableSetColumnIndex(1);
 				ImGui::SetNextItemWidth(-1.0f);
-				ImGui::InputFloat4("##rot", rot);
+				xform_changed |=
+					ImGui::InputFloat4("##rot", rot);
 
 				ImGui::TableNextRow();
 				ImGui::TableSetColumnIndex(0);
 				ImGui::TextUnformatted("Scale");
 				ImGui::TableSetColumnIndex(1);
 				ImGui::SetNextItemWidth(-1.0f);
-				ImGui::InputFloat3("##scl", scl);
+				xform_changed |=
+					ImGui::InputFloat3("##scl", scl);
 
 				ImGui::EndTable();
 			}
 
 			ImGui::EndDisabled();
+
+			/* Push edited fields back through the mutable API; the
+			 * next tick's propagate refreshes world_xform. */
+			if (xform_changed && g_entity_api) {
+				struct transform nt;
+
+				nt.position[0] = pos[0];
+				nt.position[1] = pos[1];
+				nt.position[2] = pos[2];
+				nt.rotation[0] = rot[0];
+				nt.rotation[1] = rot[1];
+				nt.rotation[2] = rot[2];
+				nt.rotation[3] = rot[3];
+				nt.scale[0]    = scl[0];
+				nt.scale[1]    = scl[1];
+				nt.scale[2]    = scl[2];
+				g_entity_api->set_transform((int32_t)e, &nt);
+			}
 		}
 	}
 }

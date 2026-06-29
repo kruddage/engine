@@ -65,6 +65,7 @@ void world_reset(struct world *w)
 {
 	w->count = 0;
 	w->name_bytes = 0;
+	w->selected = -1;
 }
 
 int32_t world_create_entity(struct world *w, int32_t parent,
@@ -107,6 +108,66 @@ void world_destroy_entity(struct world *w, int32_t e)
 		if (p >= 0 && !w->alive[p])
 			w->alive[i] = 0;
 	}
+
+	/* The cascade may have killed the selected entity; drop a stale ref. */
+	if (w->selected >= 0 && !w->alive[w->selected])
+		w->selected = -1;
+}
+
+void world_set_transform(struct world *w, int32_t e,
+			 const struct transform *local)
+{
+	if (e < 0 || (uint32_t)e >= w->count || !w->alive[e])
+		return;
+	w->local[e] = *local;
+}
+
+int32_t world_set_name(struct world *w, int32_t e, const char *name)
+{
+	size_t len;
+
+	if (e < 0 || (uint32_t)e >= w->count || !w->alive[e])
+		return -1;
+
+	/* No name clears the component rather than storing an empty string. */
+	if (!name || name[0] == '\0') {
+		w->mask[e]     &= ~(uint32_t)COMPONENT_NAME;
+		w->name_off[e]  = WORLD_NO_NAME;
+		return 0;
+	}
+
+	len = strlen(name) + 1;
+	if (w->name_bytes + len > WORLD_NAME_BYTES)
+		return -1;
+
+	memcpy(w->names + w->name_bytes, name, len);
+	w->name_off[e]  = w->name_bytes;
+	w->name_bytes  += (uint32_t)len;
+	w->mask[e]     |= COMPONENT_NAME;
+	return 0;
+}
+
+void world_set_render_ref(struct world *w, int32_t e, uint32_t render_ref)
+{
+	if (e < 0 || (uint32_t)e >= w->count || !w->alive[e])
+		return;
+	w->render_ref[e]  = render_ref;
+	w->mask[e]       |= COMPONENT_RENDER;
+}
+
+void world_set_selected(struct world *w, int32_t e)
+{
+	if (e < 0) {
+		w->selected = -1;
+		return;
+	}
+	if ((uint32_t)e < w->count && w->alive[e])
+		w->selected = e;
+}
+
+int32_t world_get_selected(const struct world *w)
+{
+	return w->selected;
 }
 
 const char *world_entity_name(const struct world *w, uint32_t e)

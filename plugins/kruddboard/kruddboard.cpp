@@ -250,6 +250,35 @@ static const char *asset_type_str(int32_t t)
 	}
 }
 
+#ifdef __EMSCRIPTEN__
+/*
+ * Shader authoring metadata.  These mirror the decl fields the asset system
+ * reports via describe(); index 0 is the default for a freshly created asset.
+ */
+static const char *const SHADER_STAGES[]   = { "fragment", "vertex" };
+static const char *const SHADER_DIALECTS[] = { "glsl_es_300" };
+
+#define SHADER_STAGE_COUNT \
+	((int)(sizeof(SHADER_STAGES) / sizeof(SHADER_STAGES[0])))
+#define SHADER_DIALECT_COUNT \
+	((int)(sizeof(SHADER_DIALECTS) / sizeof(SHADER_DIALECTS[0])))
+
+static int shader_stage_idx(const char *s)
+{
+	return (s && strcmp(s, "vertex") == 0) ? 1 : 0;
+}
+
+/* True if path already ends in a recognized shader extension. */
+static int has_shader_ext(const char *s)
+{
+	const char *dot = strrchr(s, '.');
+
+	return dot && (strcmp(dot, ".vert") == 0 ||
+		       strcmp(dot, ".frag") == 0 ||
+		       strcmp(dot, ".glsl") == 0);
+}
+#endif /* __EMSCRIPTEN__ */
+
 /*
  * Markdown editor state.  Tracks which asset is loaded into the edit
  * buffer so we only reload on selection change, not every frame.
@@ -286,6 +315,36 @@ static void maybe_reload_edit(uint32_t id)
 	memcpy(g_edit, src, (size_t)sz);
 	g_edit[sz] = '\0';
 	g_nblocks  = md_parse(g_edit, g_blocks, MD_BLOCKS_MAX);
+}
+
+/*
+ * Inspector combo state for the selected authored shader.  Loaded from the
+ * asset's declaration when the selection changes, then edited in place by the
+ * stage/dialect combos and written back on Save via asset_mut.set_decl.
+ */
+static uint32_t g_sh_id; /* id whose decl is in the combos; 0 = none */
+static int      g_sh_stage;
+static int      g_sh_dialect;
+
+static void maybe_reload_shader_decl(uint32_t id, uint32_t idx)
+{
+	struct asset_decl_field f[16];
+	uint32_t                n;
+	uint32_t                i;
+
+	if (g_sh_id == id)
+		return;
+	g_sh_id      = id;
+	g_sh_stage   = 0;
+	g_sh_dialect = 0;
+	if (!g_asset_api || !g_asset_api->describe)
+		return;
+	n = g_asset_api->describe(idx, f, 16);
+	for (i = 0; i < n; i++) {
+		if (strcmp(f[i].key, "stage") == 0)
+			g_sh_stage = shader_stage_idx(f[i].value);
+		/* dialect has a single option today; nothing to map. */
+	}
 }
 #endif /* __EMSCRIPTEN__ */
 
@@ -391,6 +450,111 @@ static void draw_asset_inspector(uint32_t id)
 			g_edit_id   = 0;
 			g_edit[0]   = '\0';
 			g_nblocks   = 0;
+			g_asset_sel = 0;
+		}
+
+		return;
+	}
+
+	/*
+	 * Authored shader assets get a plain source editor plus editable
+	 * stage/dialect metadata — no markdown parsing or preview.
+	 */
+	if (info.origin == ASSET_ORIGIN_AUTHORED &&
+	    info.type   == ASSET_TYPE_SHADER) {
+		int      can_persist;
+		size_t   edit_len;
+		uint32_t sh_idx;
+		uint32_t sh_n;
+		uint32_t k;
+
+		can_persist = g_backend &&
+			(g_backend->get_caps() &
+			 BACKEND_CAP_PROJECT_PERSIST);
+
+		/* Resolve the index describe() is addressed by. */
+		sh_n   = g_asset_api->count();
+		sh_idx = sh_n; /* sentinel: not found */
+		for (k = 0; k < sh_n; k++) {
+			if (g_asset_api->info(k, &tmp) == 0 &&
+			    tmp.id == id) {
+				sh_idx = k;
+				break;
+			}
+		}
+
+		maybe_reload_shader_decl(id, sh_idx);
+		maybe_reload_edit(id);
+
+		ImGui::Separator();
+
+		/* -- Declaration (editable) -- */
+		if (ImGui::CollapsingHeader("Declaration",
+					    ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::SetNextItemWidth(160.0f);
+			ImGui::Combo("stage", &g_sh_stage, SHADER_STAGES,
+				     SHADER_STAGE_COUNT);
+			ImGui::SetNextItemWidth(160.0f);
+			ImGui::Combo("dialect", &g_sh_dialect, SHADER_DIALECTS,
+				     SHADER_DIALECT_COUNT);
+		}
+
+		ImGui::Separator();
+
+		/* -- Source editor (plain; no markdown preview) -- */
+		if (ImGui::CollapsingHeader("Source",
+					    ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::InputTextMultiline(
+				"##shader", g_edit, (size_t)EDIT_BUF_MAX,
+				ImVec2(-1.0f, 260.0f));
+		}
+
+		ImGui::Separator();
+
+		/* -- Action buttons -- */
+		edit_len = strlen(g_edit);
+		if (can_persist) {
+			if (ImGui::Button("Save")) {
+				struct asset_decl_field decl[2];
+
+				decl[0].key   = "dialect";
+				decl[0].value = SHADER_DIALECTS[g_sh_dialect];
+				decl[1].key   = "stage";
+				decl[1].value = SHADER_STAGES[g_sh_stage];
+
+				if (g_asset_mut) {
+					g_asset_mut->set_data(
+						id, g_edit,
+						(uint32_t)edit_len);
+					if (g_asset_mut->set_decl)
+						g_asset_mut->set_decl(
+							id, decl, 2);
+				}
+				g_backend->persist_asset(
+					id, info.path,
+					ASSET_TYPE_SHADER, g_edit,
+					(uint32_t)edit_len);
+			}
+		} else {
+			ImGui::BeginDisabled();
+			ImGui::Button("Save");
+			ImGui::EndDisabled();
+			ImGui::SameLine();
+			ImGui::TextDisabled(
+				"in-memory only (persistence unavailable)");
+		}
+
+		ImGui::SameLine();
+
+		if (ImGui::Button("Delete")) {
+			if (g_asset_mut)
+				g_asset_mut->destroy(id);
+			if (g_backend && can_persist)
+				g_backend->delete_asset(id);
+			g_edit_id   = 0;
+			g_edit[0]   = '\0';
+			g_nblocks   = 0;
+			g_sh_id     = 0;
 			g_asset_sel = 0;
 		}
 
@@ -511,44 +675,85 @@ static void draw_tab_assets(void)
 #ifdef __EMSCRIPTEN__
 	/*
 	 * New Asset button — only shown in the list view, not the inspector.
-	 * Uses an inline name-entry row to collect the asset path.
+	 * A small form collects the name, the asset type (Text / Shader), and,
+	 * for shaders, the stage; the stage drives both the decl and a derived
+	 * file extension.
 	 */
 	if (g_asset_sel == 0 && g_asset_mut) {
 		static char new_name[256];
-		static int  naming; /* 1 while the input row is visible */
+		static int  naming;    /* 1 while the form is visible */
+		static int  new_type;  /* 0 = Text, 1 = Shader */
+		static int  new_stage; /* index into SHADER_STAGES */
+
+		static const char *const NEW_TYPES[] = { "Text", "Shader" };
 
 		if (!naming) {
 			if (ImGui::Button("New Asset")) {
 				naming      = 1;
 				new_name[0] = '\0';
+				new_type    = 0;
+				new_stage   = 0;
 			}
 		} else {
 			ImGui::SetNextItemWidth(240.0f);
 			bool confirm = ImGui::InputText(
-				"##newname", new_name, sizeof(new_name),
+				"name", new_name, sizeof(new_name),
 				ImGuiInputTextFlags_EnterReturnsTrue);
-			ImGui::SameLine();
+
+			ImGui::SetNextItemWidth(160.0f);
+			ImGui::Combo("type", &new_type, NEW_TYPES, 2);
+
+			if (new_type == 1) {
+				ImGui::SetNextItemWidth(160.0f);
+				ImGui::Combo("stage", &new_stage,
+					     SHADER_STAGES, SHADER_STAGE_COUNT);
+			}
+
 			confirm |= ImGui::Button("Create");
 			ImGui::SameLine();
 			if (ImGui::Button("Cancel"))
 				naming = 0;
 
 			if (confirm && new_name[0] != '\0') {
+				char     path[256];
+				int32_t  atype;
 				uint32_t nid;
 				int      can_persist;
 
-				nid = g_asset_mut->create(
-					new_name, ASSET_TYPE_TEXT,
-					"", 0);
+				atype = (new_type == 1) ? ASSET_TYPE_SHADER
+							: ASSET_TYPE_TEXT;
+
+				/* Shaders get a stage-derived extension. */
+				if (atype == ASSET_TYPE_SHADER &&
+				    !has_shader_ext(new_name))
+					snprintf(path, sizeof(path), "%s.%s",
+						 new_name,
+						 new_stage == 1 ? "vert"
+								: "frag");
+				else
+					snprintf(path, sizeof(path), "%s",
+						 new_name);
+
+				nid = g_asset_mut->create(path, atype, "", 0);
 				if (nid != 0) {
+					if (atype == ASSET_TYPE_SHADER &&
+					    g_asset_mut->set_decl) {
+						struct asset_decl_field d[2];
+
+						d[0].key   = "dialect";
+						d[0].value = "glsl_es_300";
+						d[1].key   = "stage";
+						d[1].value =
+							SHADER_STAGES[new_stage];
+						g_asset_mut->set_decl(nid, d, 2);
+					}
 					can_persist =
 						g_backend &&
 						(g_backend->get_caps() &
 						 BACKEND_CAP_PROJECT_PERSIST);
 					if (can_persist)
 						g_backend->persist_asset(
-							nid, new_name,
-							ASSET_TYPE_TEXT,
+							nid, path, atype,
 							"", 0);
 					g_asset_sel = nid;
 				}

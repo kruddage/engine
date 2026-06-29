@@ -57,7 +57,9 @@ int32_t     asset_catalog_info(uint32_t i, struct asset_info *out);
 /*
  * Fill *out (caller array of max fields) with entry i's declaration.
  * Returns the number of fields written, or 0 if i is out of range or has
- * no declaration.  Strings point into static storage.
+ * no declaration.  Built-in decl strings live for the process lifetime;
+ * authored decl strings (set via asset_mut_set_decl) are valid until the
+ * entry is evicted or its declaration is next set.
  */
 uint32_t    asset_catalog_describe(uint32_t i, struct asset_decl_field *out,
 				   uint32_t max);
@@ -85,10 +87,15 @@ const void *asset_catalog_get_data(uint32_t id, uint32_t *out_size);
  *           Returns 0 on success, -1 on miss / not-authored / OOM.
  * destroy: delete an authored asset by id.
  *          Returns 0 on success, -1 on miss / not-authored.
+ * set_decl: replace an authored asset's declaration with n key/value pairs.
+ *           n == 0 clears it.  Returns 0 on success, -1 on miss /
+ *           not-authored / n too large / null fields.
  */
 uint32_t asset_mut_create(const char *path, int32_t type,
 			  const void *bytes, uint32_t size);
 int32_t  asset_mut_set_data(uint32_t id, const void *bytes, uint32_t size);
 int32_t  asset_mut_destroy(uint32_t id);
+int32_t  asset_mut_set_decl(uint32_t id, const struct asset_decl_field *fields,
+			    uint32_t n);
 
 #endif /* ASSET_H */

@@ -75,7 +75,9 @@ struct asset_api {
 	/*
 	 * Fill *out (caller-allocated array of max fields) with the
 	 * asset's declaration.  Returns the number of fields written, or
-	 * 0 if i is out of range.  Strings point into static storage.
+	 * 0 if i is out of range.  Built-in decl strings are valid for the
+	 * process lifetime; authored decl strings (set via asset_mut.set_decl)
+	 * are valid until the entry is evicted or its declaration is next set.
 	 */
 	uint32_t (*describe)(uint32_t i, struct asset_decl_field *out,
 			     uint32_t max);
@@ -123,6 +125,16 @@ struct asset_mut_api {
 	 * Returns 0 on success, -1 on miss / not-authored.
 	 */
 	int32_t  (*destroy)(uint32_t id);
+	/*
+	 * Replace an authored asset's declaration metadata (by id) with n
+	 * key/value pairs (e.g. a shader's stage/dialect).  Copies the
+	 * strings; they then surface through asset_api.describe().  n == 0
+	 * clears the declaration.  Returns 0 on success, -1 on miss /
+	 * not-authored / n too large / null fields.
+	 */
+	int32_t  (*set_decl)(uint32_t id,
+			     const struct asset_decl_field *fields,
+			     uint32_t n);
 };
 
 #endif /* ASSET_API_H */

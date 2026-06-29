@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(krudd VERSION 0.2.0 LANGUAGES C CXX)
+project(krudd VERSION 0.3.0 LANGUAGES C CXX)
 
 find_package(Git QUIET)
 set(ENGINE_BUILD_NUMBER 0)

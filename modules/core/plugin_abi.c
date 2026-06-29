@@ -334,6 +334,7 @@ EMSCRIPTEN_KEEPALIVE void *plugin_abi_refs[] = {
 	(void *)emscripten_webgl_create_context,
 	(void *)emscripten_webgl_make_context_current,
 	(void *)emscripten_webgl_destroy_context,
+	(void *)emscripten_webgl_get_drawing_buffer_size,
 	/* HTML5 input events — imgui_plugin.wasm, kruddboard.wasm.
 	 * The emscripten_set_*_callback names are function-like macros;
 	 * use the _on_thread functions they expand to. */

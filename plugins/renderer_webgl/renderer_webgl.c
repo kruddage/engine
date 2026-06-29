@@ -334,9 +334,23 @@ webgl_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 	(void)cmd;
 #ifdef __EMSCRIPTEN__
 	GLbitfield clear_mask = 0;
+	int        dw = 0, dh = 0;
 
 	/* Bind default framebuffer; FBO path deferred to a later pass. */
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	/*
+	 * Establish our own GL state rather than inheriting whatever the
+	 * previous subsystem (the ImGui backend) left behind. ImGui leaves
+	 * GL_SCISSOR_TEST and GL_BLEND enabled with a stale scissor box, which
+	 * otherwise clips the clear and the draw to a corner of the canvas.
+	 */
+	emscripten_webgl_get_drawing_buffer_size(g_ctx, &dw, &dh);
+	glViewport(0, 0, dw, dh);
+	glDisable(GL_SCISSOR_TEST);
+	glDisable(GL_BLEND);
+	glDisable(GL_DEPTH_TEST);
+	glDisable(GL_CULL_FACE);
 
 	if (desc->color_count > 0 &&
 	    desc->color[0].load_op == GPU_LOAD_OP_CLEAR) {

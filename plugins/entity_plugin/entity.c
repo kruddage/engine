@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* a, b, out are xyzw quaternions; out must not alias a or b. */
@@ -220,6 +221,111 @@ int32_t world_ingest_scene(struct world *w, const struct scene *s)
 	w->count = s->count;
 	world_propagate_transforms(w, 0.0f);
 	return 0;
+}
+
+/*
+ * Full-fidelity snapshot of the world's used prefix. Column arrays are sized
+ * to `count` (the high-water mark) and the name blob to `name_bytes`, so a
+ * snapshot costs O(scene) rather than O(WORLD_MAX_ENTITIES). world_xform is
+ * derived and left out — restore re-propagates it.
+ */
+struct world_snapshot {
+	uint32_t          count;
+	uint32_t          name_bytes;
+	int32_t           selected;
+	uint8_t          *alive;
+	uint32_t         *mask;
+	int32_t          *parent;
+	struct transform *local;
+	uint32_t         *name_off;
+	uint32_t         *render_ref;
+	char             *names;
+};
+
+void world_snapshot_free(struct world_snapshot *s)
+{
+	if (!s)
+		return;
+	free(s->alive);
+	free(s->mask);
+	free(s->parent);
+	free(s->local);
+	free(s->name_off);
+	free(s->render_ref);
+	free(s->names);
+	free(s);
+}
+
+/* dup n bytes from src, or return NULL for a zero-length column (not a leak). */
+static void *dup_bytes(const void *src, size_t n)
+{
+	void *p;
+
+	if (n == 0)
+		return NULL;
+	p = malloc(n);
+	if (p)
+		memcpy(p, src, n);
+	return p;
+}
+
+struct world_snapshot *world_snapshot_capture(const struct world *w)
+{
+	struct world_snapshot *s = calloc(1, sizeof(*s));
+	uint32_t               n = w->count;
+
+	if (!s)
+		return NULL;
+
+	s->count      = n;
+	s->name_bytes = w->name_bytes;
+	s->selected   = w->selected;
+
+	s->alive      = (uint8_t *)dup_bytes(w->alive, n);
+	s->mask       = (uint32_t *)dup_bytes(w->mask, n * sizeof(*w->mask));
+	s->parent     = (int32_t *)dup_bytes(w->parent, n * sizeof(*w->parent));
+	s->local      = (struct transform *)
+			dup_bytes(w->local, n * sizeof(*w->local));
+	s->name_off   = (uint32_t *)
+			dup_bytes(w->name_off, n * sizeof(*w->name_off));
+	s->render_ref = (uint32_t *)
+			dup_bytes(w->render_ref, n * sizeof(*w->render_ref));
+	s->names      = (char *)dup_bytes(w->names, w->name_bytes);
+
+	/* A zero-length column dups to NULL; only a real short alloc is OOM. */
+	if ((n && (!s->alive || !s->mask || !s->parent || !s->local ||
+		   !s->name_off || !s->render_ref)) ||
+	    (w->name_bytes && !s->names)) {
+		world_snapshot_free(s);
+		return NULL;
+	}
+	return s;
+}
+
+void world_snapshot_restore(struct world *w, const struct world_snapshot *s)
+{
+	uint32_t n;
+
+	if (!s)
+		return;
+
+	n = s->count;
+	w->count      = n;
+	w->name_bytes = s->name_bytes;
+	w->selected   = s->selected;
+
+	if (n) {
+		memcpy(w->alive,      s->alive,      n);
+		memcpy(w->mask,       s->mask,       n * sizeof(*w->mask));
+		memcpy(w->parent,     s->parent,     n * sizeof(*w->parent));
+		memcpy(w->local,      s->local,      n * sizeof(*w->local));
+		memcpy(w->name_off,   s->name_off,   n * sizeof(*w->name_off));
+		memcpy(w->render_ref, s->render_ref, n * sizeof(*w->render_ref));
+	}
+	if (s->name_bytes)
+		memcpy(w->names, s->names, s->name_bytes);
+
+	world_propagate_transforms(w, 0.0f);
 }
 
 void world_propagate_transforms(struct world *w, float dt)

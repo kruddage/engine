@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
-project(krudd VERSION 0.3.0 LANGUAGES C CXX)
+
+file(READ "${CMAKE_SOURCE_DIR}/VERSION" _krudd_version_raw)
+string(STRIP "${_krudd_version_raw}" _krudd_version)
+
+project(krudd VERSION ${_krudd_version} LANGUAGES C CXX)
 
 find_package(Git QUIET)
 set(ENGINE_BUILD_NUMBER 0)
@@ -7,7 +11,7 @@ set(GIT_COMMIT_HASH "unknown")
 if(GIT_FOUND)
 	execute_process(
 		COMMAND ${GIT_EXECUTABLE} log -1 --format=%H
-			-S "VERSION ${PROJECT_VERSION}" -- CMakeLists.txt
+			-S "${PROJECT_VERSION}" -- VERSION
 		WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
 		OUTPUT_VARIABLE _version_anchor
 		OUTPUT_STRIP_TRAILING_WHITESPACE

@@ -24,6 +24,7 @@ extern "C" {
 #include "imgui_api.h"
 #include "asset_api.h"
 #include "entity_api.h"
+#include "edit_api.h"
 #ifdef __EMSCRIPTEN__
 #include "backend_api.h"
 #endif
@@ -50,6 +51,7 @@ static int                             g_panels_registered;
 static uint32_t                        g_asset_sel; /* 0 = none */
 static const struct entity_api        *g_entity_api;
 static int32_t                         g_entity_sel = -1; /* -1 = none */
+static const struct edit_api          *g_edit_api;  /* NULL = no history */
 
 #ifdef __EMSCRIPTEN__
 static const struct asset_mut_api     *g_asset_mut;
@@ -64,8 +66,36 @@ static const struct backend_api       *g_backend;
 static EM_BOOL on_keydown(int /*type*/, const EmscriptenKeyboardEvent *e,
 			  void * /*ud*/)
 {
+	bool ctrl;
+
 	if (strcmp(e->code, "Backquote") == 0) {
 		g_visible = !g_visible;
+		return EM_TRUE;
+	}
+
+	/*
+	 * Global undo/redo: Ctrl+Z undoes, Ctrl+Y / Ctrl+Shift+Z redo (Cmd on
+	 * mac). Skip entirely when a text widget is capturing keys so a focused
+	 * markdown/shader field keeps its own stb_textedit undo — the shortcut
+	 * must never both edit text and pop the global stack in one press. No
+	 * "edit" service (older engine build) means these are safe no-ops.
+	 */
+	if (!g_edit_api || ImGui::GetIO().WantTextInput)
+		return EM_FALSE;
+
+	ctrl = e->ctrlKey || e->metaKey;
+	if (!ctrl)
+		return EM_FALSE;
+
+	if (strcmp(e->code, "KeyZ") == 0) {
+		if (e->shiftKey)
+			g_edit_api->redo();
+		else
+			g_edit_api->undo();
+		return EM_TRUE;
+	}
+	if (strcmp(e->code, "KeyY") == 0) {
+		g_edit_api->redo();
 		return EM_TRUE;
 	}
 	return EM_FALSE;
@@ -1106,6 +1136,45 @@ static void draw_tab_world(void)
 /* Main board window                                                   */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Editor-global Undo / Redo buttons for the board header. Greyed via
+ * can_undo / can_redo and tooltipped with the next action's label
+ * ("Undo Move Entity"). Nothing is drawn when the "edit" service is absent.
+ */
+static void draw_undo_redo(void)
+{
+	bool can_undo;
+	bool can_redo;
+
+	if (!g_edit_api)
+		return;
+
+	can_undo = g_edit_api->can_undo();
+	can_redo = g_edit_api->can_redo();
+
+	ImGui::SameLine();
+	ImGui::BeginDisabled(!can_undo);
+	if (ImGui::SmallButton("Undo"))
+		g_edit_api->undo();
+	ImGui::EndDisabled();
+	if (can_undo && ImGui::IsItemHovered()) {
+		const char *label = g_edit_api->undo_label();
+
+		ImGui::SetTooltip("Undo %s", label ? label : "");
+	}
+
+	ImGui::SameLine();
+	ImGui::BeginDisabled(!can_redo);
+	if (ImGui::SmallButton("Redo"))
+		g_edit_api->redo();
+	ImGui::EndDisabled();
+	if (can_redo && ImGui::IsItemHovered()) {
+		const char *label = g_edit_api->redo_label();
+
+		ImGui::SetTooltip("Redo %s", label ? label : "");
+	}
+}
+
 static void draw_board(void * /*userdata*/)
 {
 	float            vp_w;
@@ -1142,6 +1211,7 @@ static void draw_board(void * /*userdata*/)
 		g_collapsed = !g_collapsed;
 	ImGui::SameLine();
 	ImGui::TextDisabled("KRUDD EDITOR");
+	draw_undo_redo();
 	hint_x = ImGui::GetWindowWidth()
 		- ImGui::CalcTextSize("` to hide").x
 		- ImGui::GetStyle().WindowPadding.x;
@@ -1240,6 +1310,8 @@ extern "C" void kruddboard_entry(struct subsystem_manager *mgr)
 		subsystem_manager_get_api(mgr, "backend");
 	g_entity_api = (const struct entity_api *)
 		subsystem_manager_get_api(mgr, "scene");
+	g_edit_api   = (const struct edit_api *)
+		subsystem_manager_get_api(mgr, "edit");
 	g_mgr        = mgr;
 #endif
 

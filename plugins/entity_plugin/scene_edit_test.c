@@ -2,6 +2,8 @@
 #include "scene_edit.h"
 #include "world.h"
 #include "edit.h"
+#include "memory.h"
+#include "memory_api.h"
 
 #include <assert.h>
 #include <stdint.h>
@@ -16,6 +18,13 @@
  */
 static struct edit_history g_th;
 static struct world        g_w;
+
+/* Snapshots allocate through the real memory module, same as the plugin. */
+static const struct memory_api g_tmem = {
+	.alloc      = mem_alloc,
+	.alloc_zero = mem_alloc_zero,
+	.free       = mem_free,
+};
 
 static void th_push(const struct edit_cmd *cmd)
 {
@@ -61,47 +70,52 @@ static int32_t live(int32_t id)
 
 static int32_t do_create(int32_t parent, struct transform t)
 {
-	struct world_snapshot *before = world_snapshot_capture(&g_w);
+	struct world_snapshot *before = world_snapshot_capture(&g_w, &g_tmem);
 	int32_t                id;
 
 	id = world_create_entity(&g_w, parent, &t, 0);
 	if (id >= 0)
-		scene_edit_record(&g_tapi, &g_w, before, "Create Entity", 0);
+		scene_edit_record(&g_tapi, &g_tmem, &g_w, before,
+				  "Create Entity", 0);
 	else
-		world_snapshot_free(before);
+		world_snapshot_free(before, &g_tmem);
 	return id;
 }
 
 static void do_destroy(int32_t id)
 {
 	int32_t                ok     = live(id);
-	struct world_snapshot *before = ok ? world_snapshot_capture(&g_w) : NULL;
+	struct world_snapshot *before =
+		ok ? world_snapshot_capture(&g_w, &g_tmem) : NULL;
 
 	world_destroy_entity(&g_w, id);
 	if (ok)
-		scene_edit_record(&g_tapi, &g_w, before, "Delete Entity", 0);
+		scene_edit_record(&g_tapi, &g_tmem, &g_w, before,
+				  "Delete Entity", 0);
 }
 
 static void do_move(int32_t id, struct transform t)
 {
 	int32_t                ok     = live(id);
-	struct world_snapshot *before = ok ? world_snapshot_capture(&g_w) : NULL;
+	struct world_snapshot *before =
+		ok ? world_snapshot_capture(&g_w, &g_tmem) : NULL;
 
 	world_set_transform(&g_w, id, &t);
 	if (ok)
-		scene_edit_record(&g_tapi, &g_w, before, "Move Entity",
+		scene_edit_record(&g_tapi, &g_tmem, &g_w, before, "Move Entity",
 				  scene_edit_key(id, SCENE_EDIT_TRANSFORM));
 }
 
 static void do_rename(int32_t id, const char *name)
 {
-	struct world_snapshot *before = world_snapshot_capture(&g_w);
+	struct world_snapshot *before = world_snapshot_capture(&g_w, &g_tmem);
 
 	if (world_set_name(&g_w, id, name) == 0)
-		scene_edit_record(&g_tapi, &g_w, before, "Rename Entity",
+		scene_edit_record(&g_tapi, &g_tmem, &g_w, before,
+				  "Rename Entity",
 				  scene_edit_key(id, SCENE_EDIT_NAME));
 	else
-		world_snapshot_free(before);
+		world_snapshot_free(before, &g_tmem);
 }
 
 /* AC: create produces an undoable entry; undo removes it, redo re-adds. */
@@ -234,10 +248,10 @@ static void test_no_edit_service(void)
 
 	reset();
 	/* NULL edit: record is a no-op that still frees the snapshot. */
-	before = world_snapshot_capture(&g_w);
+	before = world_snapshot_capture(&g_w, &g_tmem);
 	world_create_entity(&g_w, WORLD_NO_PARENT, &(struct transform){
 		.rotation = {0, 0, 0, 1}, .scale = {1, 1, 1} }, 0);
-	scene_edit_record(NULL, &g_w, before, "Create Entity", 0);
+	scene_edit_record(NULL, &g_tmem, &g_w, before, "Create Entity", 0);
 
 	assert(g_w.count == 1 && g_w.alive[0]);		/* mutation happened */
 	assert(!edit_history_can_undo(&g_th));		/* nothing recorded */
@@ -246,6 +260,7 @@ static void test_no_edit_service(void)
 
 int main(void)
 {
+	mem_init();
 	test_create();
 	test_transform();
 	test_name();

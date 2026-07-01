@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "world.h"
+#include "memory_api.h"
 
 #include <stddef.h>
 #include <stdint.h>
-#include <stdlib.h>
 #include <string.h>
 
 /* a, b, out are xyzw quaternions; out must not alias a or b. */
@@ -242,38 +242,42 @@ struct world_snapshot {
 	char             *names;
 };
 
-void world_snapshot_free(struct world_snapshot *s)
+void world_snapshot_free(struct world_snapshot *s, const struct memory_api *mem)
 {
 	if (!s)
 		return;
-	free(s->alive);
-	free(s->mask);
-	free(s->parent);
-	free(s->local);
-	free(s->name_off);
-	free(s->render_ref);
-	free(s->names);
-	free(s);
+	mem->free(s->alive);
+	mem->free(s->mask);
+	mem->free(s->parent);
+	mem->free(s->local);
+	mem->free(s->name_off);
+	mem->free(s->render_ref);
+	mem->free(s->names);
+	mem->free(s);
 }
 
 /* dup n bytes from src, or return NULL for a zero-length column (not a leak). */
-static void *dup_bytes(const void *src, size_t n)
+static void *dup_bytes(const struct memory_api *mem, const void *src, size_t n)
 {
 	void *p;
 
 	if (n == 0)
 		return NULL;
-	p = malloc(n);
+	p = mem->alloc(n);
 	if (p)
 		memcpy(p, src, n);
 	return p;
 }
 
-struct world_snapshot *world_snapshot_capture(const struct world *w)
+struct world_snapshot *world_snapshot_capture(const struct world *w,
+					      const struct memory_api *mem)
 {
-	struct world_snapshot *s = calloc(1, sizeof(*s));
+	struct world_snapshot *s;
 	uint32_t               n = w->count;
 
+	if (!mem)
+		return NULL;
+	s = mem->alloc_zero(sizeof(*s));
 	if (!s)
 		return NULL;
 
@@ -281,22 +285,23 @@ struct world_snapshot *world_snapshot_capture(const struct world *w)
 	s->name_bytes = w->name_bytes;
 	s->selected   = w->selected;
 
-	s->alive      = (uint8_t *)dup_bytes(w->alive, n);
-	s->mask       = (uint32_t *)dup_bytes(w->mask, n * sizeof(*w->mask));
-	s->parent     = (int32_t *)dup_bytes(w->parent, n * sizeof(*w->parent));
+	s->alive      = (uint8_t *)dup_bytes(mem, w->alive, n);
+	s->mask       = (uint32_t *)dup_bytes(mem, w->mask, n * sizeof(*w->mask));
+	s->parent     = (int32_t *)
+			dup_bytes(mem, w->parent, n * sizeof(*w->parent));
 	s->local      = (struct transform *)
-			dup_bytes(w->local, n * sizeof(*w->local));
+			dup_bytes(mem, w->local, n * sizeof(*w->local));
 	s->name_off   = (uint32_t *)
-			dup_bytes(w->name_off, n * sizeof(*w->name_off));
+			dup_bytes(mem, w->name_off, n * sizeof(*w->name_off));
 	s->render_ref = (uint32_t *)
-			dup_bytes(w->render_ref, n * sizeof(*w->render_ref));
-	s->names      = (char *)dup_bytes(w->names, w->name_bytes);
+			dup_bytes(mem, w->render_ref, n * sizeof(*w->render_ref));
+	s->names      = (char *)dup_bytes(mem, w->names, w->name_bytes);
 
 	/* A zero-length column dups to NULL; only a real short alloc is OOM. */
 	if ((n && (!s->alive || !s->mask || !s->parent || !s->local ||
 		   !s->name_off || !s->render_ref)) ||
 	    (w->name_bytes && !s->names)) {
-		world_snapshot_free(s);
+		world_snapshot_free(s, mem);
 		return NULL;
 	}
 	return s;

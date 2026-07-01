@@ -117,11 +117,17 @@ int32_t world_ingest_scene(struct world *w, const struct scene *s);
  * failure; restore and free tolerate a NULL snapshot. Restoring reinstates the
  * exact entity ids and tombstones (so a destroyed subtree comes back whole)
  * and re-derives world_xform.
+ *
+ * All snapshot storage comes from the injected memory_api (never libc malloc);
+ * free must be handed the same allocator that captured the snapshot.
  */
+struct memory_api;
 struct world_snapshot;
-struct world_snapshot *world_snapshot_capture(const struct world *w);
+struct world_snapshot *world_snapshot_capture(const struct world *w,
+					      const struct memory_api *mem);
 void world_snapshot_restore(struct world *w, const struct world_snapshot *s);
-void world_snapshot_free(struct world_snapshot *s);
+void world_snapshot_free(struct world_snapshot *s,
+			 const struct memory_api *mem);
 
 /*
  * Resolve world_xform for every live entity in one forward pass, relying on

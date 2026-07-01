@@ -4,6 +4,7 @@
 
 #include "world.h"
 #include "edit_api.h"
+#include "memory_api.h"
 
 #include <stdint.h>
 
@@ -36,10 +37,11 @@ uint32_t scene_edit_key(int32_t id, enum scene_edit_field field);
  * caller's before-snapshot into a memento, and pushes an edit_cmd. Takes
  * ownership of `before` and frees it on every path — including when `edit` or
  * `before` is NULL, or on allocation failure — so callers never double-free.
- * `label` must outlive the history entry (a string literal).
+ * All allocation goes through `mem` (the same allocator that captured
+ * `before`). `label` must outlive the history entry (a string literal).
  */
-void scene_edit_record(const struct edit_api *edit, struct world *w,
-		       struct world_snapshot *before, const char *label,
-		       uint32_t coalesce_key);
+void scene_edit_record(const struct edit_api *edit, const struct memory_api *mem,
+		       struct world *w, struct world_snapshot *before,
+		       const char *label, uint32_t coalesce_key);
 
 #endif /* SCENE_EDIT_H */

@@ -19,7 +19,9 @@ if(NOT EMSCRIPTEN)
 	target_include_directories(scene_edit_test PRIVATE .
 		${CMAKE_SOURCE_DIR}/plugins/include
 		${CMAKE_SOURCE_DIR}/plugins/edit_plugin
-		${CMAKE_SOURCE_DIR}/modules/core/include)
+		${CMAKE_SOURCE_DIR}/modules/core/include
+		${CMAKE_SOURCE_DIR}/modules/memory/include)
+	target_link_libraries(scene_edit_test PRIVATE memory)
 	add_test(NAME scene_edit COMMAND scene_edit_test)
 endif()
 

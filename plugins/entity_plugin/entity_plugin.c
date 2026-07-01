@@ -32,7 +32,8 @@ static int32_t entity_is_live(int32_t id)
 /* Snapshot the world before an edit, but only when there's a history to feed. */
 static struct world_snapshot *edit_before(void)
 {
-	return g_edit ? world_snapshot_capture(&g_world) : NULL;
+	return (g_edit && g_mem) ? world_snapshot_capture(&g_world, g_mem)
+				 : NULL;
 }
 
 /*
@@ -85,9 +86,10 @@ static int32_t scene_create_entity(int32_t parent,
 
 	/* Only a real creation is recordable; a failed create changed nothing. */
 	if (id >= 0)
-		scene_edit_record(g_edit, &g_world, before, "Create Entity", 0);
+		scene_edit_record(g_edit, g_mem, &g_world, before,
+				  "Create Entity", 0);
 	else
-		world_snapshot_free(before);
+		world_snapshot_free(before, g_mem);
 	return id;
 }
 
@@ -98,7 +100,8 @@ static void scene_destroy_entity(int32_t id)
 
 	world_destroy_entity(&g_world, id);
 	if (live)
-		scene_edit_record(g_edit, &g_world, before, "Delete Entity", 0);
+		scene_edit_record(g_edit, g_mem, &g_world, before,
+				  "Delete Entity", 0);
 }
 
 static void scene_set_transform(int32_t id, const struct transform *local)
@@ -108,7 +111,7 @@ static void scene_set_transform(int32_t id, const struct transform *local)
 
 	world_set_transform(&g_world, id, local);
 	if (live)
-		scene_edit_record(g_edit, &g_world, before, "Move Entity",
+		scene_edit_record(g_edit, g_mem, &g_world, before, "Move Entity",
 				  scene_edit_key(id, SCENE_EDIT_TRANSFORM));
 }
 
@@ -118,10 +121,11 @@ static void scene_set_name(int32_t id, const char *name)
 
 	/* Record only when the rename actually took (0), not on overflow (-1). */
 	if (world_set_name(&g_world, id, name) == 0)
-		scene_edit_record(g_edit, &g_world, before, "Rename Entity",
+		scene_edit_record(g_edit, g_mem, &g_world, before,
+				  "Rename Entity",
 				  scene_edit_key(id, SCENE_EDIT_NAME));
 	else
-		world_snapshot_free(before);
+		world_snapshot_free(before, g_mem);
 }
 
 static int32_t scene_get_selected(void)

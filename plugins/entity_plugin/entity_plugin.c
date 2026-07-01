@@ -2,6 +2,8 @@
 #include "world.h"
 #include "entity_api.h"
 #include "scene.h"
+#include "scene_edit.h"
+#include "edit_api.h"
 #include "asset_codec_api.h"
 #include "memory_api.h"
 #include "stats_api.h"
@@ -19,6 +21,19 @@ static struct world                  g_world;
 static const struct asset_codec_api *g_codec;
 static const struct memory_api      *g_mem;
 static const struct stats_api       *g_stats;
+static const struct edit_api        *g_edit;  /* NULL = undo unavailable */
+
+/* True when id names a live entity — the precondition for a recordable edit. */
+static int32_t entity_is_live(int32_t id)
+{
+	return id >= 0 && (uint32_t)id < g_world.count && g_world.alive[id];
+}
+
+/* Snapshot the world before an edit, but only when there's a history to feed. */
+static struct world_snapshot *edit_before(void)
+{
+	return g_edit ? world_snapshot_capture(&g_world) : NULL;
+}
 
 /*
  * Path the "scene" subsystem ingests at init. A missing or undecodable asset
@@ -61,26 +76,52 @@ static int32_t scene_create_entity(int32_t parent,
 				   const struct transform *local,
 				   uint32_t mask, uint32_t render_ref)
 {
-	int32_t id = world_create_entity(&g_world, parent, local, mask);
+	struct world_snapshot *before = edit_before();
+	int32_t                id;
 
+	id = world_create_entity(&g_world, parent, local, mask);
 	if (id >= 0 && render_ref)
 		world_set_render_ref(&g_world, id, render_ref);
+
+	/* Only a real creation is recordable; a failed create changed nothing. */
+	if (id >= 0)
+		scene_edit_record(g_edit, &g_world, before, "Create Entity", 0);
+	else
+		world_snapshot_free(before);
 	return id;
 }
 
 static void scene_destroy_entity(int32_t id)
 {
+	int32_t                live   = entity_is_live(id);
+	struct world_snapshot *before = live ? edit_before() : NULL;
+
 	world_destroy_entity(&g_world, id);
+	if (live)
+		scene_edit_record(g_edit, &g_world, before, "Delete Entity", 0);
 }
 
 static void scene_set_transform(int32_t id, const struct transform *local)
 {
+	int32_t                live   = entity_is_live(id);
+	struct world_snapshot *before = live ? edit_before() : NULL;
+
 	world_set_transform(&g_world, id, local);
+	if (live)
+		scene_edit_record(g_edit, &g_world, before, "Move Entity",
+				  scene_edit_key(id, SCENE_EDIT_TRANSFORM));
 }
 
 static void scene_set_name(int32_t id, const char *name)
 {
-	world_set_name(&g_world, id, name);
+	struct world_snapshot *before = edit_before();
+
+	/* Record only when the rename actually took (0), not on overflow (-1). */
+	if (world_set_name(&g_world, id, name) == 0)
+		scene_edit_record(g_edit, &g_world, before, "Rename Entity",
+				  scene_edit_key(id, SCENE_EDIT_NAME));
+	else
+		world_snapshot_free(before);
 }
 
 static int32_t scene_get_selected(void)
@@ -141,5 +182,6 @@ void entity_plugin_entry(struct subsystem_manager *mgr)
 	g_codec = subsystem_manager_get_api(mgr, "asset_codec");
 	g_mem   = subsystem_manager_get_api(mgr, "memory");
 	g_stats = subsystem_manager_get_api(mgr, "stats");
+	g_edit  = subsystem_manager_get_api(mgr, "edit");
 	subsystem_manager_register(mgr, &scene_desc);
 }

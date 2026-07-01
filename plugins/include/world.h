@@ -110,6 +110,20 @@ const char *world_entity_name(const struct world *w, uint32_t e);
 int32_t world_ingest_scene(struct world *w, const struct scene *s);
 
 /*
+ * Editor undo snapshots. A snapshot is a full-fidelity copy of the world's
+ * used prefix — every persistent column, the name blob, and the selection —
+ * sized to the live high-water mark rather than the fixed 4096 cap, so it
+ * stays proportional to scene size. capture returns NULL on allocation
+ * failure; restore and free tolerate a NULL snapshot. Restoring reinstates the
+ * exact entity ids and tombstones (so a destroyed subtree comes back whole)
+ * and re-derives world_xform.
+ */
+struct world_snapshot;
+struct world_snapshot *world_snapshot_capture(const struct world *w);
+void world_snapshot_restore(struct world *w, const struct world_snapshot *s);
+void world_snapshot_free(struct world_snapshot *s);
+
+/*
  * Resolve world_xform for every live entity in one forward pass, relying on
  * the parent-before-child ordering. Roots (parent -1) copy their local
  * transform; children compose parent-world * local. dt is unused but kept to

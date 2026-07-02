@@ -322,6 +322,25 @@ static struct md_block g_blocks[MD_BLOCKS_MAX];
 static int32_t         g_nblocks;
 
 /*
+ * Coalesce boundary for the source editor: an open gesture brackets every
+ * commit (Save) between focus-gain and focus-loss into one history entry,
+ * so a multi-save editing session collapses instead of leaving one entry
+ * per click. asset_mut itself also folds same-id saves by coalesce key, but
+ * the gesture is what actually *closes* the entry on blur -- without it,
+ * saves to the same asset would keep folding together indefinitely.
+ */
+static int g_edit_session_open;
+
+/* Close any open editing-session gesture (e.g. before switching assets). */
+static void close_edit_session(void)
+{
+	if (g_edit_session_open && g_edit_api) {
+		g_edit_api->commit();
+		g_edit_session_open = 0;
+	}
+}
+
+/*
  * (Re)load the edit buffer from the asset catalog when the selection
  * changes.  Clamps to EDIT_BUF_MAX - 1 bytes and NUL-terminates.
  */
@@ -332,6 +351,7 @@ static void maybe_reload_edit(uint32_t id)
 
 	if (g_edit_id == id)
 		return;
+	close_edit_session();
 	g_edit_id  = id;
 	g_edit[0]  = '\0';
 	g_nblocks  = 0;
@@ -432,6 +452,15 @@ static void draw_asset_inspector(uint32_t id)
 				g_nblocks = md_parse(g_edit, g_blocks,
 						     MD_BLOCKS_MAX);
 			}
+			/* ImGui/stb_textedit owns keystroke undo while
+			 * focused; bracket the field's Saves into one
+			 * history entry for the session instead. */
+			if (g_edit_api && ImGui::IsItemActivated()) {
+				g_edit_api->begin("Edit Asset");
+				g_edit_session_open = 1;
+			}
+			if (ImGui::IsItemDeactivated())
+				close_edit_session();
 		}
 
 		ImGui::Separator();
@@ -473,6 +502,7 @@ static void draw_asset_inspector(uint32_t id)
 		ImGui::SameLine();
 
 		if (ImGui::Button("Delete")) {
+			close_edit_session();
 			if (g_asset_mut)
 				g_asset_mut->destroy(id);
 			if (g_backend && can_persist)
@@ -537,6 +567,14 @@ static void draw_asset_inspector(uint32_t id)
 			ImGui::InputTextMultiline(
 				"##shader", g_edit, (size_t)EDIT_BUF_MAX,
 				ImVec2(-1.0f, 260.0f));
+			/* Same coalesce-boundary bracketing as the markdown
+			 * source editor. */
+			if (g_edit_api && ImGui::IsItemActivated()) {
+				g_edit_api->begin("Edit Asset");
+				g_edit_session_open = 1;
+			}
+			if (ImGui::IsItemDeactivated())
+				close_edit_session();
 		}
 
 		ImGui::Separator();
@@ -577,6 +615,7 @@ static void draw_asset_inspector(uint32_t id)
 		ImGui::SameLine();
 
 		if (ImGui::Button("Delete")) {
+			close_edit_session();
 			if (g_asset_mut)
 				g_asset_mut->destroy(id);
 			if (g_backend && can_persist)

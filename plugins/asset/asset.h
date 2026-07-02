@@ -3,6 +3,7 @@
 #define ASSET_H
 
 #include "asset_api.h"
+#include "edit_api.h"
 #include <stdint.h>
 
 #define ASSET_PATH_MAX 256
@@ -97,5 +98,15 @@ int32_t  asset_mut_set_data(uint32_t id, const void *bytes, uint32_t size);
 int32_t  asset_mut_destroy(uint32_t id);
 int32_t  asset_mut_set_decl(uint32_t id, const struct asset_decl_field *fields,
 			    uint32_t n);
+
+/*
+ * Bind the "edit" undo/redo service that asset_mut_create/set_data/destroy
+ * record onto (create/set_data/destroy only; set_decl is not recorded).
+ * The plugin entry point does this from subsystem_manager in a full engine
+ * build; native tests bind a real edit_history directly to drive undo/redo
+ * without the plugin loader. NULL disables recording -- asset_mut keeps
+ * mutating exactly as before.
+ */
+void asset_edit_bind(const struct edit_api *edit);
 
 #endif /* ASSET_H */

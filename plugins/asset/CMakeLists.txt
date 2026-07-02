@@ -24,6 +24,16 @@ if(NOT EMSCRIPTEN)
 	add_executable(asset_shader_test asset_shader_test.c)
 	target_link_libraries(asset_shader_test PRIVATE asset_plugin log memory)
 	add_test(NAME asset_shader COMMAND asset_shader_test)
+
+	# Undo recording: link the edit history directly so the test drives
+	# the same command path asset_mut uses, without the plugin loader.
+	add_executable(asset_edit_test asset_edit_test.c
+		${CMAKE_SOURCE_DIR}/plugins/edit_plugin/edit.c)
+	target_include_directories(asset_edit_test PRIVATE .
+		${CMAKE_SOURCE_DIR}/plugins/include
+		${CMAKE_SOURCE_DIR}/plugins/edit_plugin)
+	target_link_libraries(asset_edit_test PRIVATE asset_plugin log memory)
+	add_test(NAME asset_edit COMMAND asset_edit_test)
 endif()
 
 if(EMSCRIPTEN)

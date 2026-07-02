@@ -68,6 +68,8 @@ static int32_t            codec_count;
 
 static uint32_t next_asset_id = 1; /* 0 is reserved for "none" */
 
+static const struct edit_api *g_edit; /* NULL = undo unavailable */
+
 #ifdef __EMSCRIPTEN__
 static const struct log_api    *g_log;
 static const struct memory_api *g_mem;
@@ -602,6 +604,200 @@ uint32_t asset_catalog_describe(uint32_t i,
 }
 
 /* ------------------------------------------------------------------ */
+/* Undo/redo recording — authored asset edits                          */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Full-fidelity copy of one authored entry: path, type, bytes and decl. The
+ * memento for create/set_data/destroy is a before/after pair of these, so
+ * undo and redo both reduce to "make the catalog match this snapshot for
+ * this id" (asset_snapshot_restore) -- reviving a destroyed entry at its
+ * original id falls out of the same restore path a plain byte-edit uses.
+ */
+struct asset_snapshot {
+	uint32_t                id;
+	char                    path[ASSET_PATH_MAX];
+	int32_t                 type;
+	uint8_t                *data;
+	uint32_t                size;
+	struct asset_decl_store decl[ASSET_DECL_MAX];
+	uint32_t                ndecl;
+};
+
+/* Capture entry `id`'s current state, or NULL if id is unknown/OOM. */
+static struct asset_snapshot *asset_snapshot_capture(uint32_t id)
+{
+	struct asset_entry    *e;
+	struct asset_snapshot *s;
+
+	e = find_entry_by_id(id);
+	if (!e)
+		return NULL;
+
+	s = g_mem->alloc(sizeof(*s));
+	if (!s)
+		return NULL;
+
+	s->id   = e->id;
+	strncpy(s->path, e->path, ASSET_PATH_MAX - 1);
+	s->path[ASSET_PATH_MAX - 1] = '\0';
+	s->type = e->type;
+	s->size = e->size;
+	s->data = NULL;
+	if (e->size > 0) {
+		s->data = g_mem->alloc((size_t)e->size);
+		if (!s->data) {
+			g_mem->free(s);
+			return NULL;
+		}
+		memcpy(s->data, e->data, (size_t)e->size);
+	}
+	memcpy(s->decl, e->decl, sizeof(s->decl));
+	s->ndecl = e->ndecl;
+	return s;
+}
+
+static void asset_snapshot_free(struct asset_snapshot *s)
+{
+	if (!s)
+		return;
+	if (s->data)
+		g_mem->free(s->data);
+	g_mem->free(s);
+}
+
+/*
+ * Make the catalog match `snap` for `id`: snap == NULL means id must not
+ * exist (evict it if it does); otherwise revive a missing entry at the same
+ * id or overwrite a live one in place. Drives both undo (restore "before")
+ * and redo (restore "after") for every asset_mut op from one code path.
+ */
+static void asset_snapshot_restore(uint32_t id,
+				   const struct asset_snapshot *snap)
+{
+	struct asset_entry *e;
+
+	e = find_entry_by_id(id);
+
+	if (!snap) {
+		if (e)
+			evict_entry(e);
+		return;
+	}
+
+	if (e) {
+		if (e->data)
+			g_mem->free(e->data);
+	} else {
+		if (cache_count >= ASSET_CACHE_MAX)
+			return; /* cannot revive: cache full */
+		e = &cache[cache_count++];
+	}
+
+	strncpy(e->path, snap->path, ASSET_PATH_MAX - 1);
+	e->path[ASSET_PATH_MAX - 1] = '\0';
+	e->id        = snap->id;
+	e->type      = snap->type;
+	e->size      = snap->size;
+	e->refs      = 1;
+	e->state     = ASSET_LOADED;
+	e->kind      = ASSET_KIND_NORMAL;
+	e->read_only = 0;
+	e->origin    = ASSET_ORIGIN_AUTHORED;
+	e->data      = NULL;
+	if (snap->size > 0) {
+		e->data = g_mem->alloc((size_t)snap->size);
+		if (e->data)
+			memcpy(e->data, snap->data, (size_t)snap->size);
+		else
+			e->size = 0; /* OOM: degrade rather than crash */
+	}
+	memcpy(e->decl, snap->decl, sizeof(e->decl));
+	e->ndecl = snap->ndecl;
+}
+
+struct asset_edit_memento {
+	uint32_t               id;
+	struct asset_snapshot *before; /* NULL: id did not exist before */
+	struct asset_snapshot *after;  /* NULL: id does not exist after */
+};
+
+static void asset_edit_apply(void *memento)
+{
+	struct asset_edit_memento *m = memento;
+
+	asset_snapshot_restore(m->id, m->after);
+}
+
+static void asset_edit_revert(void *memento)
+{
+	struct asset_edit_memento *m = memento;
+
+	asset_snapshot_restore(m->id, m->before);
+}
+
+static void asset_edit_free(void *memento)
+{
+	struct asset_edit_memento *m = memento;
+
+	if (!m)
+		return;
+	asset_snapshot_free(m->before);
+	asset_snapshot_free(m->after);
+	g_mem->free(m);
+}
+
+/*
+ * Record a completed asset_mut edit. Takes ownership of `before` -- frees it
+ * on every path, including when "edit" is unavailable, so callers never
+ * double-free. `after` is captured here, right after the mutation, so the
+ * memento always reflects live state. coalesce_key 0 never coalesces
+ * (create/destroy); set_data passes the asset id so a run of saves against
+ * the same asset collapses into one history entry.
+ */
+static void asset_edit_record(uint32_t id, struct asset_snapshot *before,
+			      const char *label, uint32_t coalesce_key)
+{
+	struct asset_edit_memento *m;
+	struct asset_snapshot     *after;
+	struct edit_cmd            cmd;
+
+	if (!g_edit) {
+		asset_snapshot_free(before);
+		return;
+	}
+
+	after = asset_snapshot_capture(id);
+	m     = g_mem->alloc(sizeof(*m));
+	if (!m) {
+		/* The mutation already happened; we just can't record it. */
+		asset_snapshot_free(before);
+		asset_snapshot_free(after);
+		return;
+	}
+
+	m->id     = id;
+	m->before = before;
+	m->after  = after;
+
+	cmd.apply        = asset_edit_apply;
+	cmd.revert       = asset_edit_revert;
+	cmd.free         = asset_edit_free;
+	cmd.memento      = m;
+	cmd.coalesce_key = coalesce_key;
+	cmd.label        = label;
+
+	/* push() re-applies `after` (already the live state) -- a no-op --
+	 * then records the entry. */
+	g_edit->push(&cmd);
+}
+
+void asset_edit_bind(const struct edit_api *edit)
+{
+	g_edit = edit;
+}
+
+/* ------------------------------------------------------------------ */
 /* Mutation API — authored project assets                              */
 /* ------------------------------------------------------------------ */
 
@@ -637,13 +833,17 @@ uint32_t asset_mut_create(const char *path, int32_t type,
 	e->origin    = ASSET_ORIGIN_AUTHORED;
 	e->type      = type;
 	e->refs      = 1;
+
+	/* Undo inverts a create to a destroy: nothing existed before. */
+	asset_edit_record(e->id, NULL, "Create Asset", 0);
 	return e->id;
 }
 
 int32_t asset_mut_set_data(uint32_t id, const void *bytes, uint32_t size)
 {
-	struct asset_entry *e;
-	uint8_t            *buf;
+	struct asset_entry     *e;
+	uint8_t                *buf;
+	struct asset_snapshot  *before;
 
 	e = find_entry_by_id(id);
 	if (!e || e->origin != ASSET_ORIGIN_AUTHORED)
@@ -660,22 +860,32 @@ int32_t asset_mut_set_data(uint32_t id, const void *bytes, uint32_t size)
 		buf = NULL;
 	}
 
+	before = asset_snapshot_capture(id);
+
 	if (e->data)
 		g_mem->free(e->data);
 	e->data  = buf;
 	e->size  = size;
 	e->state = ASSET_LOADED;
+
+	/* Coalesce key = id: a run of saves against the same asset (one
+	 * editing session) collapses into a single history entry. */
+	asset_edit_record(id, before, "Edit Asset", id);
 	return 0;
 }
 
 int32_t asset_mut_destroy(uint32_t id)
 {
-	struct asset_entry *e;
+	struct asset_entry    *e;
+	struct asset_snapshot *before;
 
 	e = find_entry_by_id(id);
 	if (!e || e->origin != ASSET_ORIGIN_AUTHORED)
 		return -1;
+	before = asset_snapshot_capture(id);
 	evict_entry(e);
+	/* Undo inverts a destroy to a recreate at the same stable id. */
+	asset_edit_record(id, before, "Delete Asset", 0);
 	return 0;
 }
 
@@ -780,6 +990,7 @@ void asset_plugin_entry(struct subsystem_manager *mgr)
 	g_log = subsystem_manager_get_api(mgr, "log");
 	g_mem = subsystem_manager_get_api(mgr, "memory");
 #endif
+	g_edit = subsystem_manager_get_api(mgr, "edit");
 	subsystem_manager_register(mgr, &desc);
 	subsystem_manager_register(mgr, &codec_desc);
 	subsystem_manager_register(mgr, &mut_desc);

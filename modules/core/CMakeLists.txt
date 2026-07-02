@@ -52,8 +52,9 @@ if(EMSCRIPTEN)
 		--extern-pre-js ${CMAKE_CURRENT_SOURCE_DIR}/error_overlay.js
 		--shell-file ${CMAKE_CURRENT_BINARY_DIR}/shell.html
 		-sMAX_WEBGL_VERSION=2
-		# Export malloc/free so -sMALLOC=none keeps (and dynamically exports to
-		# side modules) the shim object that defines the malloc family.
-		-sEXPORTED_FUNCTIONS=_main,_malloc,_free
+		# MAIN_MODULE=1 exports every symbol (so side modules resolve malloc/
+		# free from the shim via the dynamic linker); listing more here is
+		# ignored with a warning.
+		-sEXPORTED_FUNCTIONS=_main
 	)
 endif()

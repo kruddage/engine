@@ -25,6 +25,7 @@
 
 #include <mimalloc.h>
 
+#include <emscripten/heap.h>
 #include <malloc.h>
 #include <stdlib.h>
 
@@ -66,6 +67,37 @@ int posix_memalign(void **memptr, size_t alignment, size_t size)
 size_t malloc_usable_size(void *ptr)
 {
 	return mi_usable_size(ptr);
+}
+
+/*
+ * With -sMALLOC=none, Emscripten's own runtime still calls the "builtin"
+ * allocator entry points directly (bypassing any malloc override) — most
+ * notably _mmap_js / _munmap_js, which back dlopen of the side-module plugins.
+ * Point them at mimalloc too so the loader shares the one heap.
+ */
+void *emscripten_builtin_malloc(size_t size)
+{
+	return mi_malloc(size);
+}
+
+void emscripten_builtin_free(void *ptr)
+{
+	mi_free(ptr);
+}
+
+void *emscripten_builtin_calloc(size_t nmemb, size_t size)
+{
+	return mi_calloc(nmemb, size);
+}
+
+void *emscripten_builtin_realloc(void *ptr, size_t size)
+{
+	return mi_realloc(ptr, size);
+}
+
+void *emscripten_builtin_memalign(size_t alignment, size_t size)
+{
+	return mi_malloc_aligned(size, alignment);
 }
 
 #endif /* __EMSCRIPTEN__ */

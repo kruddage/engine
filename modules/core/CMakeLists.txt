@@ -50,7 +50,7 @@ if(EMSCRIPTEN)
 		# pairing for the second (the linker then chokes trying to link the
 		# orphaned .js file). SHELL: makes each flag+value pair a single,
 		# distinct list item so neither is dropped.
-		"SHELL:--extern-pre-js ${CMAKE_CURRENT_SOURCE_DIR}/random_fill_shim.js"
+		"SHELL:--extern-pre-js ${CMAKE_CURRENT_SOURCE_DIR}/resizable_buffer_shim.js"
 		"SHELL:--extern-pre-js ${CMAKE_CURRENT_SOURCE_DIR}/error_overlay.js"
 		--shell-file ${CMAKE_CURRENT_BINARY_DIR}/shell.html
 		-sMAX_WEBGL_VERSION=2

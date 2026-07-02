@@ -3,10 +3,10 @@
 #include "subsystem.h"
 #include "subsystem_manager.h"
 #include "log_api.h"
+#include "memory_api.h"
 
 #include <stddef.h>
 #include <stdint.h>
-#include <stdlib.h>
 #include <string.h>
 
 #ifdef __EMSCRIPTEN__
@@ -15,7 +15,12 @@
 #include "asset_api.h"
 #else
 #include "log.h"
-static const struct log_api native_log = { log_write };
+#include "memory.h"
+static const struct log_api    native_log = { log_write };
+static const struct memory_api native_mem = {
+	mem_alloc, mem_alloc_zero, mem_free,
+	mem_pool_create, mem_pool_alloc, mem_pool_free, mem_pool_destroy,
+};
 #endif
 
 /*
@@ -42,6 +47,7 @@ struct gpu_texture {
 
 #ifdef __EMSCRIPTEN__
 static const struct log_api           *g_log;
+static const struct memory_api        *g_mem;
 static const struct asset_api         *g_asset;
 static EMSCRIPTEN_WEBGL_CONTEXT_HANDLE g_ctx;
 static unsigned int                    g_topology;   /* active draw topology */
@@ -64,7 +70,8 @@ struct webgl_demo {
 };
 static struct webgl_demo g_demo;
 #else
-static const struct log_api *g_log = &native_log;
+static const struct log_api    *g_log = &native_log;
+static const struct memory_api *g_mem = &native_mem;
 #endif
 
 /* Single static sentinel — WebGL 2 is immediate-mode; no real cmd buf. */
@@ -176,7 +183,7 @@ webgl_pipeline_create(const struct gpu_pipeline_desc *desc)
 {
 	struct gpu_pipeline *p;
 
-	p = malloc(sizeof(*p));
+	p = g_mem->alloc(sizeof(*p));
 	if (!p)
 		return NULL;
 #ifdef __EMSCRIPTEN__
@@ -200,7 +207,7 @@ static void webgl_pipeline_destroy(gpu_pipeline_t pipeline)
 	if (p->program)
 		glDeleteProgram(p->program);
 #endif
-	free(p);
+	g_mem->free(p);
 }
 
 static void webgl_cmd_set_pipeline(gpu_cmd_buf_t cmd,
@@ -227,7 +234,7 @@ static gpu_buffer_t webgl_buffer_create(const struct gpu_buffer_desc *desc)
 	GLuint id;
 #endif
 
-	b = malloc(sizeof(*b));
+	b = g_mem->alloc(sizeof(*b));
 	if (!b)
 		return NULL;
 	b->id     = 0;
@@ -261,7 +268,7 @@ static void webgl_buffer_destroy(gpu_buffer_t buf)
 		glDeleteBuffers(1, &id);
 	}
 #endif
-	free(b);
+	g_mem->free(b);
 }
 
 static void webgl_cmd_bind_vertex_buffer(gpu_cmd_buf_t cmd, uint32_t slot,
@@ -406,12 +413,12 @@ static void webgl_cmd_draw_indexed(gpu_cmd_buf_t cmd,
 
 static void *webgl_gpu_malloc(size_t size)
 {
-	return malloc(size);
+	return g_mem->alloc(size);
 }
 
 static void webgl_gpu_free(void *ptr)
 {
-	free(ptr);
+	g_mem->free(ptr);
 }
 
 static gpu_texture_t
@@ -422,7 +429,7 @@ webgl_texture_create(const struct gpu_texture_desc *desc)
 	GLuint tex_id;
 #endif
 
-	t = malloc(sizeof(*t));
+	t = g_mem->alloc(sizeof(*t));
 	if (!t)
 		return NULL;
 	t->gl_tex = 0;
@@ -457,7 +464,7 @@ static void webgl_texture_destroy(gpu_texture_t texture)
 		glDeleteTextures(1, &tex_id);
 	}
 #endif
-	free(t);
+	g_mem->free(t);
 }
 
 static const struct gpu_api webgl_api = {
@@ -698,6 +705,7 @@ void renderer_webgl_plugin_entry(struct subsystem_manager *mgr)
 {
 #ifdef __EMSCRIPTEN__
 	g_log   = subsystem_manager_get_api(mgr, "log");
+	g_mem   = subsystem_manager_get_api(mgr, "memory");
 	g_asset = subsystem_manager_get_api(mgr, "asset");
 #endif
 	subsystem_manager_register(mgr, &desc);

@@ -6,7 +6,7 @@
 
 /*
  * Decisions (see edit_api.h for the contract):
- *   - Memento ownership: per-cmd free() hook. The domain chooses its memento
+ *   - Memento ownership: per-cmd free hook. The domain chooses its memento
  *     shape and how to release it; the service just calls the hook once per
  *     allocation it drops.
  *   - Nested transactions: flattened. Inner begin/commit adjust the depth but

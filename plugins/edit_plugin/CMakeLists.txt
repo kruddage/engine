@@ -9,6 +9,7 @@ if(NOT EMSCRIPTEN)
 	add_executable(edit_test edit_test.c edit.c)
 	target_include_directories(edit_test PRIVATE .
 		${CMAKE_SOURCE_DIR}/plugins/include)
+	target_link_libraries(edit_test PRIVATE memory)
 	add_test(NAME edit COMMAND edit_test)
 endif()
 

@@ -12,7 +12,7 @@
  * A change is a memento pair: apply() drives the state to its "after" value
  * (do / redo) and revert() drives it back to "before" (undo). Both read the
  * same opaque memento the domain allocates. The service owns that memento's
- * lifetime once pushed and releases it through the optional free() hook when
+ * lifetime once pushed and releases it through the optional free hook when
  * the entry is dropped (redo cleared, ring overflow, clear, or shutdown).
  *
  * Gestures. A gizmo drag or a multi-field property edit is one user action,

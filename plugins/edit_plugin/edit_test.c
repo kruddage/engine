@@ -1,10 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "edit.h"
+#include "memory.h"
 
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 
 /*
  * Fake commands drive a single shared integer so undo/redo correctness is
@@ -36,14 +36,14 @@ static void set_revert(void *m)
 
 static void set_free(void *m)
 {
-	free(m);
+	mem_free(m);
 	g_live_mementos--;
 }
 
 /* Build a "set g_value to after" command; before is the current value. */
 static struct edit_cmd set_cmd(int32_t after, uint32_t key, const char *label)
 {
-	struct set_memento *sm = malloc(sizeof(*sm));
+	struct set_memento *sm = mem_alloc(sizeof(*sm));
 	struct edit_cmd     cmd;
 
 	sm->target = &g_value;

@@ -3,7 +3,7 @@ target_include_directories(frame_graph PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(frame_graph PRIVATE
 	${CMAKE_SOURCE_DIR}/plugins/renderer
 )
-target_link_libraries(frame_graph PRIVATE log subsystem subsystem_manager)
+target_link_libraries(frame_graph PRIVATE log memory subsystem subsystem_manager)
 
 if(NOT EMSCRIPTEN)
 	add_executable(fg_test fg_test.c)
@@ -12,7 +12,7 @@ if(NOT EMSCRIPTEN)
 		${CMAKE_SOURCE_DIR}/plugins/renderer
 		${CMAKE_SOURCE_DIR}/plugins/renderer_null
 	)
-	target_link_libraries(fg_test PRIVATE frame_graph renderer_null log subsystem_manager)
+	target_link_libraries(fg_test PRIVATE frame_graph renderer_null log memory subsystem_manager)
 	add_test(NAME fg COMMAND fg_test)
 endif()
 

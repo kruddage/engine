@@ -42,6 +42,21 @@ jobs:
       - name: Ban EM_ASM_* in plugin sources
         run: sh scripts/check-plugin-no-em-asm.sh plugins
 
+  # Modules and plugins must allocate through the memory subsystem
+  # (mem_alloc/mem_alloc_zero/mem_free, or memory_api for side modules) --
+  # never libc malloc/calloc/realloc/free directly. A raw call bypasses the
+  # engine allocator (and, on WASM, the mimalloc heap the memory module
+  # owns). Only review caught this before; make it a hard CI gate.
+  allocation-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ban raw libc allocation calls outside the memory subsystem
+        run: |
+          node scripts/check-allocations.test.mjs
+          node scripts/check-allocations.mjs .
+
   sanitizers:
     runs-on: ubuntu-latest
     steps:
@@ -122,7 +137,7 @@ jobs:
   # gh-pages; it only produces the `site` artifact that pages-deploy publishes.
   preview-build:
     if: github.event_name == 'pull_request'
-    needs: [plugin-lint, build, sanitizers, coverage, clang-tidy]
+    needs: [plugin-lint, allocation-lint, build, sanitizers, coverage, clang-tidy]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

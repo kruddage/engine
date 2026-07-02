@@ -2,7 +2,7 @@ add_library(renderer_webgl renderer_webgl.c)
 target_include_directories(renderer_webgl PRIVATE
 	${CMAKE_SOURCE_DIR}/plugins/renderer
 )
-target_link_libraries(renderer_webgl PRIVATE log subsystem subsystem_manager)
+target_link_libraries(renderer_webgl PRIVATE log memory subsystem subsystem_manager)
 
 if(EMSCRIPTEN)
 	add_custom_command(

@@ -4,21 +4,28 @@
 #include "subsystem.h"
 #include "subsystem_manager.h"
 #include "log_api.h"
+#include "memory_api.h"
 
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 #ifndef __EMSCRIPTEN__
 #include "log.h"
+#include "memory.h"
 static const struct log_api native_log = { log_write };
+static const struct memory_api native_mem = {
+	mem_alloc, mem_alloc_zero, mem_free,
+	mem_pool_create, mem_pool_alloc, mem_pool_free, mem_pool_destroy,
+};
 #endif
 
 #ifdef __EMSCRIPTEN__
 static const struct log_api *g_log;
+static const struct memory_api *g_mem;
 #else
 static const struct log_api *g_log = &native_log;
+static const struct memory_api *g_mem = &native_mem;
 #endif
 
 #define FG_MAX_PASSES     64
@@ -76,7 +83,7 @@ struct fg {
 
 struct fg *fg_create(const struct gpu_api *gpu)
 {
-	struct fg *fg = calloc(1, sizeof(*fg));
+	struct fg *fg = g_mem->alloc_zero(sizeof(*fg));
 
 	if (!fg)
 		return NULL;
@@ -86,7 +93,7 @@ struct fg *fg_create(const struct gpu_api *gpu)
 
 void fg_destroy(struct fg *fg)
 {
-	free(fg);
+	g_mem->free(fg);
 }
 
 fg_resource_t fg_declare_transient(struct fg *fg, const char *name,
@@ -521,6 +528,7 @@ void fg_plugin_entry(struct subsystem_manager *mgr)
 {
 #ifdef __EMSCRIPTEN__
 	g_log = subsystem_manager_get_api(mgr, "log");
+	g_mem = subsystem_manager_get_api(mgr, "memory");
 #endif
 	g_gpu = subsystem_manager_get_api(mgr, "renderer");
 	if (!g_gpu)

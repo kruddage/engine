@@ -1,66 +1,78 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "memory.h"
 
-#include <mimalloc.h>
-#include <stddef.h>
+#include <stdlib.h>
 
-struct mem_pool {
-	mi_heap_t *heap;
-	size_t     obj_size;
-};
+/*
+ * The allocator seam. Everything in the engine allocates through here (or the
+ * plugin memory_api vtable) so there is a single, swappable heap.
+ *
+ * These wrappers deliberately call the libc malloc family directly. On the
+ * WASM target the main module is linked -sMALLOC=mimalloc, so libc malloc IS
+ * mimalloc — libc, the FETCH and dynamic-linker runtimes, every side-module
+ * plugin, and this seam all share one mimalloc heap. On native builds it is the
+ * platform libc. Either way there is exactly one allocator over the heap;
+ * routing this file through a second, independently-linked allocator is what
+ * previously corrupted memory once the WASM heap grew.
+ *
+ * modules/memory/ is the sole place check-no-raw-malloc.sh permits the raw
+ * malloc family.
+ */
 
 void mem_init(void)
 {
-	mi_option_disable(mi_option_verbose);
 }
 
 void mem_shutdown(void)
 {
-	mi_collect(1);
 }
 
 void *mem_alloc(size_t size)
 {
-	return mi_malloc(size);
+	return malloc(size);
 }
 
 void *mem_alloc_zero(size_t size)
 {
-	return mi_zalloc(size);
+	return calloc(1, size);
 }
 
 void mem_free(void *ptr)
 {
-	mi_free(ptr);
+	free(ptr);
 }
+
+/*
+ * The pool allocator is a thin wrapper over the shared heap: it remembers the
+ * fixed object size so callers allocate without repeating it. No separate
+ * arena — freeing an object returns it straight to the heap.
+ */
+struct mem_pool {
+	size_t obj_size;
+};
 
 struct mem_pool *mem_pool_create(size_t obj_size)
 {
-	struct mem_pool *pool = mi_zalloc(sizeof(*pool));
+	struct mem_pool *pool = malloc(sizeof(*pool));
+
 	if (!pool)
 		return NULL;
-	pool->heap = mi_heap_new();
-	if (!pool->heap) {
-		mi_free(pool);
-		return NULL;
-	}
 	pool->obj_size = obj_size;
 	return pool;
 }
 
 void *mem_pool_alloc(struct mem_pool *pool)
 {
-	return mi_heap_malloc(pool->heap, pool->obj_size);
+	return malloc(pool->obj_size);
 }
 
 void mem_pool_free(struct mem_pool *pool, void *ptr)
 {
 	(void)pool;
-	mi_free(ptr);
+	free(ptr);
 }
 
 void mem_pool_destroy(struct mem_pool *pool)
 {
-	mi_heap_destroy(pool->heap);
-	mi_free(pool);
+	free(pool);
 }

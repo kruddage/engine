@@ -57,20 +57,9 @@ endif()
 
 include(FetchContent)
 
-# Use the vendored stub for native builds; fetch real mimalloc for WASM.
-if(NOT EMSCRIPTEN)
-	set(FETCHCONTENT_SOURCE_DIR_MIMALLOC
-		${CMAKE_SOURCE_DIR}/vendor/mimalloc-stub)
-endif()
-FetchContent_Declare(mimalloc
-	GIT_REPOSITORY https://github.com/microsoft/mimalloc.git
-	GIT_TAG        v2.1.7
-)
-set(MI_BUILD_SHARED OFF CACHE BOOL "" FORCE)
-set(MI_BUILD_OBJECT OFF CACHE BOOL "" FORCE)
-set(MI_BUILD_TESTS  OFF CACHE BOOL "" FORCE)
-set(MI_OVERRIDE     OFF CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(mimalloc)
+# mimalloc is not linked separately: on WASM it is supplied by the toolchain via
+# -sMALLOC=mimalloc (modules/core/CMakeLists.txt), and modules/memory allocates
+# through libc, so there is a single heap. Native builds use the platform libc.
 
 # imgui is only needed for the WASM side-module builds.
 if(EMSCRIPTEN)

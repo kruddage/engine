@@ -42,12 +42,18 @@ if(EMSCRIPTEN)
 	target_link_options(index PRIVATE
 		-sENVIRONMENT=web
 		-sALLOW_MEMORY_GROWTH=1
-		-sMALLOC=emmalloc
+		# No Emscripten allocator: modules/memory/mi_libc_shim.c supplies the
+		# libc malloc family on top of mimalloc, so libc and the engine's
+		# memory_api share one heap. Two allocators over one growable heap
+		# corrupted on growth.
+		-sMALLOC=none
 		-sMAIN_MODULE=1
 		-sFETCH=1
 		--extern-pre-js ${CMAKE_CURRENT_SOURCE_DIR}/error_overlay.js
 		--shell-file ${CMAKE_CURRENT_BINARY_DIR}/shell.html
 		-sMAX_WEBGL_VERSION=2
-		-sEXPORTED_FUNCTIONS=_main
+		# Export malloc/free so -sMALLOC=none keeps (and dynamically exports to
+		# side modules) the shim object that defines the malloc family.
+		-sEXPORTED_FUNCTIONS=_main,_malloc,_free
 	)
 endif()

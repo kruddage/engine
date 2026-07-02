@@ -45,6 +45,7 @@ if(EMSCRIPTEN)
 		-sMALLOC=emmalloc
 		-sMAIN_MODULE=1
 		-sFETCH=1
+		--extern-pre-js ${CMAKE_CURRENT_SOURCE_DIR}/random_fill_shim.js
 		--extern-pre-js ${CMAKE_CURRENT_SOURCE_DIR}/error_overlay.js
 		--shell-file ${CMAKE_CURRENT_BINARY_DIR}/shell.html
 		-sMAX_WEBGL_VERSION=2

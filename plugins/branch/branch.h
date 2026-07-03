@@ -61,6 +61,14 @@ int32_t branches_create(struct branches *b, const char *name,
 /* Set HEAD to `index`.  Returns 0 on success, -1 if index is invalid. */
 int32_t branches_set_active(struct branches *b, int32_t index);
 
+/*
+ * Reset a branch's working manifest directly, without changing HEAD — the
+ * primitive snapshot restore (#216) uses to roll a branch back to an earlier
+ * state.  Returns 0 on success, -1 on an invalid index.
+ */
+int32_t branches_set_manifest(struct branches *b, int32_t index,
+			      cas_hash_t manifest);
+
 /* Current HEAD index (BRANCH_NONE before the first save). */
 int32_t branches_active(const struct branches *b);
 

@@ -86,6 +86,15 @@ int32_t branches_set_active(struct branches *b, int32_t index)
 	return 0;
 }
 
+int32_t branches_set_manifest(struct branches *b, int32_t index,
+			      cas_hash_t manifest)
+{
+	if (index < 0 || (uint32_t)index >= b->count)
+		return -1;
+	b->list[index].manifest = manifest;
+	return 0;
+}
+
 int32_t branches_active(const struct branches *b)
 {
 	return b->active;

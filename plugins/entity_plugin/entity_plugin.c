@@ -36,13 +36,6 @@ static struct world_snapshot *edit_before(void)
 				 : NULL;
 }
 
-/*
- * Path the "scene" subsystem ingests at init. A missing or undecodable asset
- * leaves the world empty rather than failing — requesting the asset is the
- * host application's job; this plugin only owns ingest and the per-frame tick.
- */
-#define DEFAULT_SCENE_PATH "main.scene"
-
 /* The decoder hands back three caller-owned allocations; release all three. */
 static void free_scene(struct scene *s)
 {
@@ -149,10 +142,15 @@ static const struct entity_api g_entity_api = {
 	.set_selected   = scene_set_selected,
 };
 
+/*
+ * Start with an empty world. Requesting a scene is the host application's
+ * job — it loads one through the entity_api load_scene() entry (e.g. from
+ * local storage) when it has one to show. This plugin owns ingest and the
+ * per-frame tick, not asset acquisition, so it fetches nothing at init.
+ */
 static void scene_init(void)
 {
 	world_reset(&g_world);
-	scene_load(DEFAULT_SCENE_PATH);
 }
 
 static void scene_tick(void)

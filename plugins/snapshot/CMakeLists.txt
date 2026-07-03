@@ -16,6 +16,8 @@ if(NOT EMSCRIPTEN)
 	target_include_directories(snapshot_test PRIVATE .
 		${CMAKE_SOURCE_DIR}/plugins/include
 		${CMAKE_SOURCE_DIR}/plugins/cas
-		${CMAKE_SOURCE_DIR}/plugins/branch)
+		${CMAKE_SOURCE_DIR}/plugins/branch
+		${CMAKE_SOURCE_DIR}/modules/memory/include)
+	target_link_libraries(snapshot_test PRIVATE memory)
 	add_test(NAME snapshot COMMAND snapshot_test)
 endif()

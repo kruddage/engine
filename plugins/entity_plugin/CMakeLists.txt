@@ -9,7 +9,9 @@ if(NOT EMSCRIPTEN)
 	add_executable(entity_test entity_test.c entity.c)
 	target_include_directories(entity_test PRIVATE .
 		${CMAKE_SOURCE_DIR}/plugins/include
-		${CMAKE_SOURCE_DIR}/modules/core/include)
+		${CMAKE_SOURCE_DIR}/modules/core/include
+		${CMAKE_SOURCE_DIR}/modules/memory/include)
+	target_link_libraries(entity_test PRIVATE memory)
 	add_test(NAME entity COMMAND entity_test)
 
 	# Snapshot-based undo recording: link the world ops + the edit history

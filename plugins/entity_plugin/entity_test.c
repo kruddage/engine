@@ -2,24 +2,20 @@
 #include "world.h"
 #include "scene.h"
 #include "memory_api.h"
+#include "memory.h"
 
 #include <assert.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 /* One world instance reused across tests; ~400 KB, too big for the stack. */
 static struct world w;
 
-/* libc-backed allocator for the export tests (world ops themselves allocate
+/* Engine allocator for the export tests (world ops themselves allocate
  * nothing; world_export_scene needs an injected memory_api). */
-static void *t_alloc_zero(size_t n)
-{
-	return calloc(1, n);
-}
-
 static const struct memory_api test_mem = {
-	malloc, t_alloc_zero, free, NULL, NULL, NULL, NULL,
+	mem_alloc, mem_alloc_zero, mem_free,
+	mem_pool_create, mem_pool_alloc, mem_pool_free, mem_pool_destroy,
 };
 
 static int feq(float a, float b)
@@ -389,6 +385,8 @@ static void test_export_ingest_roundtrip(void)
 
 int main(void)
 {
+	mem_init();
+
 	test_ingest_and_propagate();
 	test_rotation_compose();
 	test_destroy_subtree();
@@ -402,6 +400,7 @@ int main(void)
 	test_export_compaction();
 	test_export_ingest_roundtrip();
 
+	mem_shutdown();
 	printf("entity tests passed\n");
 	return 0;
 }

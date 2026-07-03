@@ -3,19 +3,15 @@
 #include "cas.h"
 #include "cas_mem.h"
 #include "memory_api.h"
+#include "memory.h"
 
 #include <assert.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
-static void *t_alloc_zero(size_t n)
-{
-	return calloc(1, n);
-}
-
 static const struct memory_api test_mem = {
-	malloc, t_alloc_zero, free, NULL, NULL, NULL, NULL,
+	mem_alloc, mem_alloc_zero, mem_free,
+	mem_pool_create, mem_pool_alloc, mem_pool_free, mem_pool_destroy,
 };
 
 static cas_hash_t put_blob(struct cas *s, const char *bytes)
@@ -224,12 +220,15 @@ static void test_set_active_bounds(void)
 
 int main(void)
 {
+	mem_init();
+
 	test_bootstrap();
 	test_live_save_advance();
 	test_fork_and_switch();
 	test_name_rules();
 	test_set_active_bounds();
 
+	mem_shutdown();
 	printf("branch tests passed\n");
 	return 0;
 }

@@ -22,8 +22,8 @@ struct scene;
  * the encoding of decode(bytes) reproduces bytes exactly.
  *
  * The buffer is allocated via the module memory_api; the caller owns it and
- * frees it with a single free().  *out_size (may be NULL) receives the byte
- * length.  Returns NULL on allocation failure.
+ * releases it with a single deallocation.  *out_size (may be NULL) receives the
+ * byte length.  Returns NULL on allocation failure.
  */
 void *scene_encode(const struct scene *s, uint32_t *out_size);
 

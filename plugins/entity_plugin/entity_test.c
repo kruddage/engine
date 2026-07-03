@@ -1,13 +1,26 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "world.h"
 #include "scene.h"
+#include "memory_api.h"
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* One world instance reused across tests; ~400 KB, too big for the stack. */
 static struct world w;
+
+/* libc-backed allocator for the export tests (world ops themselves allocate
+ * nothing; world_export_scene needs an injected memory_api). */
+static void *t_alloc_zero(size_t n)
+{
+	return calloc(1, n);
+}
+
+static const struct memory_api test_mem = {
+	malloc, t_alloc_zero, free, NULL, NULL, NULL, NULL,
+};
 
 static int feq(float a, float b)
 {
@@ -295,6 +308,85 @@ static void test_selection(void)
 	assert(world_get_selected(&w) == -1);
 }
 
+/*
+ * world_export_scene drops tombstoned slots and remaps parent indices onto the
+ * compacted ordering, re-packing names gap-free.
+ */
+static void test_export_compaction(void)
+{
+	struct transform t;
+	struct scene    *s;
+	int32_t          e0, e1, e2;
+
+	make_identity(&t);
+	world_reset(&w);
+	e0 = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);  /* root */
+	e1 = world_create_entity(&w, e0, &t, 0u);               /* killed subtree */
+	e2 = world_create_entity(&w, e0, &t, 0u);               /* survivor */
+	(void)world_create_entity(&w, e1, &t, 0u);              /* grandchild dies */
+	world_set_name(&w, e0, "root");
+	world_set_name(&w, e2, "keep");
+	world_set_render_ref(&w, e2, 7u);
+	world_destroy_entity(&w, e1);                           /* kills e1 + child */
+
+	s = world_export_scene(&w, &test_mem);
+	assert(s != NULL);
+	assert(s->count == 2);                     /* e0, e2 survive */
+
+	/* e0 -> compacted 0 (root); e2 -> compacted 1, parent remapped to 0. */
+	assert(s->entities[0].parent == -1);
+	assert(strcmp(s->names + s->entities[0].name_off, "root") == 0);
+	assert(s->entities[1].parent == 0);
+	assert(strcmp(s->names + s->entities[1].name_off, "keep") == 0);
+	assert((s->entities[1].mask & COMPONENT_RENDER) != 0);
+	assert(s->entities[1].render_ref == 7u);
+
+	test_mem.free(s->entities);
+	test_mem.free(s->names);
+	test_mem.free(s);
+}
+
+/* export then re-ingest reproduces the world column-for-column (no tombstones). */
+static void test_export_ingest_roundtrip(void)
+{
+	static struct world w2;
+	static char         names[] = "root\0child";
+	struct scene_entity ents[3];
+	struct scene        s0;
+	struct scene       *s;
+	uint32_t            i;
+
+	make_entity(&ents[0], -1, COMPONENT_NAME, 0.0f, 0.0f, 0.0f, 1.0f);
+	ents[0].name_off = 0;
+	make_entity(&ents[1], 0, COMPONENT_NAME, 1.0f, 0.0f, 0.0f, 1.0f);
+	ents[1].name_off = 5;
+	make_entity(&ents[2], 1, COMPONENT_RENDER, 2.0f, 3.0f, 4.0f, 2.0f);
+	ents[2].render_ref = 42u;
+	s0.count    = 3;
+	s0.entities = ents;
+	s0.names    = names;
+	assert(world_ingest_scene(&w, &s0) == 0);
+
+	s = world_export_scene(&w, &test_mem);
+	assert(s != NULL && s->count == 3);
+	assert(world_ingest_scene(&w2, s) == 0);
+
+	assert(w2.count == w.count);
+	for (i = 0; i < w.count; i++) {
+		assert(w2.mask[i] == w.mask[i]);
+		assert(w2.parent[i] == w.parent[i]);
+		assert(w2.render_ref[i] == w.render_ref[i]);
+		assert(feq(w2.local[i].position[0], w.local[i].position[0]));
+	}
+	assert(strcmp(world_entity_name(&w2, 0), "root") == 0);
+	assert(strcmp(world_entity_name(&w2, 1), "child") == 0);
+	assert(world_entity_name(&w2, 2) == NULL);
+
+	test_mem.free(s->entities);
+	test_mem.free(s->names);
+	test_mem.free(s);
+}
+
 int main(void)
 {
 	test_ingest_and_propagate();
@@ -307,6 +399,8 @@ int main(void)
 	test_set_name();
 	test_set_render_ref();
 	test_selection();
+	test_export_compaction();
+	test_export_ingest_roundtrip();
 
 	printf("entity tests passed\n");
 	return 0;

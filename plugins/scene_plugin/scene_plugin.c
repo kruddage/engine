@@ -84,6 +84,63 @@ void *scene_decode(const void *bytes, uint32_t size)
 	return s;
 }
 
+/*
+ * Size of the name blob actually referenced by named entities: the highest
+ * name offset plus the length of the string stored there.  A scene emitted by
+ * world_export_scene packs names gap-free, so this reproduces its exact blob
+ * size; returns 0 when nothing is named.
+ */
+static uint32_t scene_blob_size(const struct scene *s)
+{
+	uint32_t i, end = 0;
+
+	if (!s->names)
+		return 0;
+
+	for (i = 0; i < s->count; i++) {
+		const struct scene_entity *e = &s->entities[i];
+		uint32_t                   stop;
+
+		if (!(e->mask & COMPONENT_NAME) || e->name_off == SCENE_NO_NAME)
+			continue;
+		stop = e->name_off + (uint32_t)strlen(s->names + e->name_off) + 1u;
+		if (stop > end)
+			end = stop;
+	}
+	return end;
+}
+
+void *scene_encode(const struct scene *s, uint32_t *out_size)
+{
+	struct scene_header *hdr;
+	uint8_t             *buf;
+	uint32_t             string_bytes;
+	size_t               ent_bytes, total;
+
+	string_bytes = scene_blob_size(s);
+	ent_bytes    = (size_t)s->count * sizeof(struct scene_entity);
+	total        = sizeof(*hdr) + ent_bytes + (size_t)string_bytes;
+
+	buf = g_mem->alloc(total);
+	if (!buf)
+		return NULL;
+
+	hdr = (struct scene_header *)buf;
+	memcpy(hdr->magic, "KSCN", 4);
+	hdr->version      = 1u;
+	hdr->entity_count = s->count;
+	hdr->string_bytes = string_bytes;
+
+	if (ent_bytes)
+		memcpy(buf + sizeof(*hdr), s->entities, ent_bytes);
+	if (string_bytes)
+		memcpy(buf + sizeof(*hdr) + ent_bytes, s->names, string_bytes);
+
+	if (out_size)
+		*out_size = (uint32_t)total;
+	return buf;
+}
+
 #ifdef __EMSCRIPTEN__
 void plugin_entry(struct subsystem_manager *mgr)
 #else

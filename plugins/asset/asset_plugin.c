@@ -640,6 +640,45 @@ uint32_t asset_mut_create(const char *path, int32_t type,
 	return e->id;
 }
 
+int32_t asset_mut_inject(uint32_t id, const char *path, int32_t type,
+			 const void *bytes, uint32_t size)
+{
+	struct asset_entry *e;
+	uint8_t            *buf;
+
+	if (id == 0 || !path || (!bytes && size > 0))
+		return -1;
+	if (find_entry(path) || find_entry_by_id(id))
+		return -1;
+	e = alloc_entry(path);
+	if (!e)
+		return -1;
+
+	if (size > 0) {
+		buf = g_mem->alloc((size_t)size);
+		if (!buf) {
+			cache_count--;   /* undo the alloc_entry */
+			return -1;
+		}
+		memcpy(buf, bytes, (size_t)size);
+		e->data = buf;
+	}
+
+	e->id        = id;   /* restore the persisted identity, not a fresh one */
+	e->size      = size;
+	e->state     = ASSET_LOADED;
+	e->kind      = ASSET_KIND_NORMAL;
+	e->read_only = 0;
+	e->origin    = ASSET_ORIGIN_AUTHORED;
+	e->type      = type;
+	e->refs      = 1;
+
+	/* Keep the allocator monotonic and collision-free with the restored id. */
+	if (id >= next_asset_id)
+		next_asset_id = id + 1u;
+	return 0;
+}
+
 int32_t asset_mut_set_data(uint32_t id, const void *bytes, uint32_t size)
 {
 	struct asset_entry *e;
@@ -727,6 +766,7 @@ static const struct asset_mut_api mut_api = {
 	.set_data = asset_mut_set_data,
 	.destroy  = asset_mut_destroy,
 	.set_decl = asset_mut_set_decl,
+	.inject   = asset_mut_inject,
 };
 
 static const struct subsystem codec_desc = {

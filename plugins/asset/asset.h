@@ -93,6 +93,8 @@ const void *asset_catalog_get_data(uint32_t id, uint32_t *out_size);
  */
 uint32_t asset_mut_create(const char *path, int32_t type,
 			  const void *bytes, uint32_t size);
+int32_t  asset_mut_inject(uint32_t id, const char *path, int32_t type,
+			  const void *bytes, uint32_t size);
 int32_t  asset_mut_set_data(uint32_t id, const void *bytes, uint32_t size);
 int32_t  asset_mut_destroy(uint32_t id);
 int32_t  asset_mut_set_decl(uint32_t id, const struct asset_decl_field *fields,

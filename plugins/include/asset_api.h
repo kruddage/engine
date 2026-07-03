@@ -135,6 +135,18 @@ struct asset_mut_api {
 	int32_t  (*set_decl)(uint32_t id,
 			     const struct asset_decl_field *fields,
 			     uint32_t n);
+	/*
+	 * Inject a born-loaded authored asset under a caller-supplied stable
+	 * id — the id-preserving counterpart to create(), used to rehydrate a
+	 * persisted asset so its identity survives a reload (the persistence
+	 * key stays valid across sessions).  Copies the bytes and advances the
+	 * id allocator past `id` so a later create() never reuses it.  Returns
+	 * 0 on success, -1 on failure (id 0, cache full, or a duplicate id or
+	 * path).  Intended for the startup rehydration path, before the user
+	 * authors new assets.  ABI-additive: appended after the original four.
+	 */
+	int32_t  (*inject)(uint32_t id, const char *path, int32_t type,
+			   const void *bytes, uint32_t size);
 };
 
 #endif /* ASSET_API_H */

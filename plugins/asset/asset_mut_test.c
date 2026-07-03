@@ -138,6 +138,47 @@ int main(void)
 				TEXT_BYTES, TEXT_SIZE) == 0);
 
 	/* -------------------------------------------------------------- */
+	/* inject: restore an authored asset under its persisted id       */
+	/* -------------------------------------------------------------- */
+	{
+		uint32_t persisted_id = 900001u;   /* as if from a prior session */
+		uint32_t next_id;
+
+		assert(asset_mut_inject(persisted_id, "authored://reload.md",
+					ASSET_TYPE_TEXT, TEXT_BYTES, TEXT_SIZE)
+		       == 0);
+
+		/* Identity is exactly the persisted id, born authored/loaded. */
+		assert(asset_catalog_find(persisted_id, &info) == 0);
+		assert(info.id     == persisted_id);
+		assert(info.origin == ASSET_ORIGIN_AUTHORED);
+		assert(info.type   == ASSET_TYPE_TEXT);
+		sz   = 0;
+		data = asset_catalog_get_data(persisted_id, &sz);
+		assert(data && sz == TEXT_SIZE
+		       && memcmp(data, TEXT_BYTES, (size_t)TEXT_SIZE) == 0);
+
+		/* A later create() never hands back an id <= the injected one. */
+		next_id = asset_mut_create("authored://after.md", ASSET_TYPE_TEXT,
+					   TEXT_BYTES, TEXT_SIZE);
+		assert(next_id > persisted_id);
+
+		/* Reject: duplicate id, duplicate path, id 0. */
+		assert(asset_mut_inject(persisted_id, "authored://dup_id.md",
+					ASSET_TYPE_TEXT, TEXT_BYTES, TEXT_SIZE)
+		       == -1);
+		assert(asset_mut_inject(700000u, "authored://reload.md",
+					ASSET_TYPE_TEXT, TEXT_BYTES, TEXT_SIZE)
+		       == -1);
+		assert(asset_mut_inject(0u, "authored://zero.md",
+					ASSET_TYPE_TEXT, TEXT_BYTES, TEXT_SIZE)
+		       == -1);
+
+		assert(asset_mut_destroy(persisted_id) == 0);
+		assert(asset_mut_destroy(next_id) == 0);
+	}
+
+	/* -------------------------------------------------------------- */
 	/* create fills cache; next create returns 0                      */
 	/* -------------------------------------------------------------- */
 	{

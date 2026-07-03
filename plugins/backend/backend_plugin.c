@@ -88,7 +88,12 @@ static void rehydrate_drain(void)
 		}
 		krudd_idb_pop(buf);
 
-		if (am->create(path, type, buf, (uint32_t)len) != 0)
+		/*
+		 * Restore under the persisted id (not a fresh one) so the
+		 * asset's identity survives the reload — the manifest/persist
+		 * key stays valid across sessions.
+		 */
+		if (am->inject(id, path, type, buf, (uint32_t)len) == 0)
 			g_log->write(LOG_LEVEL_INFO,
 				     "backend: rehydrated %s", path);
 		else

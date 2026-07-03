@@ -2,19 +2,15 @@
 #include "cas.h"
 #include "cas_mem.h"
 #include "memory_api.h"
+#include "memory.h"
 
 #include <assert.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
-static void *t_alloc_zero(size_t n)
-{
-	return calloc(1, n);
-}
-
 static const struct memory_api test_mem = {
-	malloc, t_alloc_zero, free, NULL, NULL, NULL, NULL,
+	mem_alloc, mem_alloc_zero, mem_free,
+	mem_pool_create, mem_pool_alloc, mem_pool_free, mem_pool_destroy,
 };
 
 /* Hash is deterministic, content-sensitive, and never 0. */
@@ -256,6 +252,8 @@ static void test_collision_refused(void)
 
 int main(void)
 {
+	mem_init();
+
 	test_hash();
 	test_put_get_dedup();
 	test_empty_blob();
@@ -265,6 +263,7 @@ int main(void)
 	test_grow();
 	test_collision_refused();
 
+	mem_shutdown();
 	printf("cas tests passed\n");
 	return 0;
 }

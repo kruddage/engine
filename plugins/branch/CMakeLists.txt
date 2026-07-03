@@ -12,7 +12,8 @@ if(NOT EMSCRIPTEN)
 		${CMAKE_SOURCE_DIR}/plugins/cas/cas_mem.c)
 	target_include_directories(branch_test PRIVATE .
 		${CMAKE_SOURCE_DIR}/plugins/include
-		${CMAKE_SOURCE_DIR}/plugins/cas)
-	target_link_libraries(branch_test PRIVATE branch cas)
+		${CMAKE_SOURCE_DIR}/plugins/cas
+		${CMAKE_SOURCE_DIR}/modules/memory/include)
+	target_link_libraries(branch_test PRIVATE branch cas memory)
 	add_test(NAME branch COMMAND branch_test)
 endif()

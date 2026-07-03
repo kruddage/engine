@@ -9,7 +9,8 @@ target_include_directories(cas PUBLIC .
 if(NOT EMSCRIPTEN)
 	add_executable(cas_test cas_test.c cas_mem.c)
 	target_include_directories(cas_test PRIVATE .
-		${CMAKE_SOURCE_DIR}/plugins/include)
-	target_link_libraries(cas_test PRIVATE cas)
+		${CMAKE_SOURCE_DIR}/plugins/include
+		${CMAKE_SOURCE_DIR}/modules/memory/include)
+	target_link_libraries(cas_test PRIVATE cas memory)
 	add_test(NAME cas COMMAND cas_test)
 endif()

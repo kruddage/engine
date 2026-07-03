@@ -42,6 +42,14 @@ if(EMSCRIPTEN)
 	target_link_options(index PRIVATE
 		-sENVIRONMENT=web
 		-sALLOW_MEMORY_GROWTH=1
+		# Emscripten 6.0.2 flipped GROWABLE_ARRAYBUFFERS to default =1, which
+		# backs the heap with a real resizable ArrayBuffer. Web APIs reject
+		# views over a resizable buffer — Firefox's crypto.getRandomValues
+		# (reached at startup via WASI random_get) throws "Argument 1 can't be
+		# a resizable ArrayBuffer or ArrayBufferView". Opting out keeps memory
+		# growth (copy into a fresh plain ArrayBuffer on grow), which the Web
+		# Crypto API accepts.
+		-sGROWABLE_ARRAYBUFFERS=0
 		# mimalloc is the one allocator: libc, FETCH, the dynamic linker, every
 		# side module, and modules/memory (which allocates through libc) all
 		# share this single heap. Previously libc used emmalloc while the engine

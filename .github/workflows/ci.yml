@@ -16,6 +16,7 @@ jobs:
       - name: Install Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:
+          version: 6.0.2
           cache: true
 
       - name: Build
@@ -144,6 +145,7 @@ jobs:
       - name: Install Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:
+          version: 6.0.2
           cache: true
 
       - name: Install ccache

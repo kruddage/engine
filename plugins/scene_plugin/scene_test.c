@@ -221,6 +221,96 @@ static void test_empty_scene(void)
 	mem_free(s);
 }
 
+/*
+ * scene_encode is the exact inverse of scene_decode: encoding a decoded scene
+ * reproduces the original bytes, and encoding is deterministic.
+ */
+static void test_encode_roundtrip(void)
+{
+	struct scene_header hdr;
+	struct scene_entity ents[3];
+	uint8_t             src[sizeof(struct scene_header)
+			      + 3 * sizeof(struct scene_entity)
+			      + sizeof(names_blob)];
+	struct scene       *s;
+	void               *enc, *enc2;
+	uint32_t            enc_size = 0, enc2_size = 0;
+
+	memset(&hdr, 0, sizeof(hdr));
+	hdr.magic[0]     = 'K';
+	hdr.magic[1]     = 'S';
+	hdr.magic[2]     = 'C';
+	hdr.magic[3]     = 'N';
+	hdr.version      = 1u;
+	hdr.entity_count = 3u;
+	hdr.string_bytes = (uint32_t)sizeof(names_blob);
+
+	memset(ents, 0, sizeof(ents));
+	ents[0].mask       = COMPONENT_NAME;
+	ents[0].parent     = -1;
+	ents[0].rotation.w = 1.0f;
+	ents[0].scale.x    = ents[0].scale.y = ents[0].scale.z = 1.0f;
+	ents[0].name_off   = 0u;
+	ents[1].mask       = COMPONENT_NAME;
+	ents[1].parent     = 0;
+	ents[1].position.x = 1.0f;
+	ents[1].rotation.w = 1.0f;
+	ents[1].scale.x    = ents[1].scale.y = ents[1].scale.z = 1.0f;
+	ents[1].name_off   = 5u;
+	ents[2].mask       = COMPONENT_RENDER;
+	ents[2].parent     = 1;
+	ents[2].position.x = 2.0f;
+	ents[2].position.y = 3.0f;
+	ents[2].position.z = 4.0f;
+	ents[2].rotation.w = 1.0f;
+	ents[2].scale.x    = ents[2].scale.y = ents[2].scale.z = 2.0f;
+	ents[2].name_off   = SCENE_NO_NAME;
+	ents[2].render_ref = 42u;
+
+	memcpy(src, &hdr, sizeof(hdr));
+	memcpy(src + sizeof(hdr), ents, sizeof(ents));
+	memcpy(src + sizeof(hdr) + sizeof(ents), names_blob, sizeof(names_blob));
+
+	s = scene_decode(src, (uint32_t)sizeof(src));
+	assert(s != NULL);
+
+	enc = scene_encode(s, &enc_size);
+	assert(enc != NULL);
+	assert(enc_size == (uint32_t)sizeof(src));
+	assert(memcmp(enc, src, enc_size) == 0);   /* canonical: inverse of decode */
+
+	enc2 = scene_encode(s, &enc2_size);
+	assert(enc2 != NULL);
+	assert(enc2_size == enc_size);
+	assert(memcmp(enc, enc2, enc_size) == 0);   /* deterministic */
+
+	mem_free(enc);
+	mem_free(enc2);
+	mem_free(s->entities);
+	mem_free(s->names);
+	mem_free(s);
+}
+
+/* Encoding an empty scene yields a bare, decodable header. */
+static void test_encode_empty(void)
+{
+	struct scene s = { 0u, NULL, NULL };
+	struct scene *back;
+	void         *enc;
+	uint32_t      enc_size = 0;
+
+	enc = scene_encode(&s, &enc_size);
+	assert(enc != NULL);
+	assert(enc_size == (uint32_t)sizeof(struct scene_header));
+
+	back = scene_decode(enc, enc_size);
+	assert(back != NULL);
+	assert(back->count == 0u);
+
+	mem_free(enc);
+	mem_free(back);
+}
+
 int main(void)
 {
 	mem_init();
@@ -232,6 +322,8 @@ int main(void)
 	test_truncated();
 	test_bad_topology();
 	test_empty_scene();
+	test_encode_roundtrip();
+	test_encode_empty();
 
 	log_shutdown();
 	mem_shutdown();

@@ -223,6 +223,94 @@ int32_t world_ingest_scene(struct world *w, const struct scene *s)
 	return 0;
 }
 
+struct scene *world_export_scene(const struct world *w,
+				 const struct memory_api *mem)
+{
+	struct scene *s;
+	int32_t      *remap;
+	uint32_t      i, live = 0, name_bytes = 0, no = 0;
+
+	if (!mem)
+		return NULL;
+	s = mem->alloc_zero(sizeof(*s));
+	if (!s)
+		return NULL;
+	if (w->count == 0)
+		return s;   /* empty world -> valid empty scene */
+
+	remap = mem->alloc(w->count * sizeof(*remap));
+	if (!remap) {
+		mem->free(s);
+		return NULL;
+	}
+
+	/* Pass 1: assign compacted indices to live entities and tally names. */
+	for (i = 0; i < w->count; i++) {
+		if (!w->alive[i]) {
+			remap[i] = -1;
+			continue;
+		}
+		remap[i] = (int32_t)live++;
+		if ((w->mask[i] & COMPONENT_NAME)
+		    && w->name_off[i] != WORLD_NO_NAME)
+			name_bytes += (uint32_t)strlen(w->names
+						       + w->name_off[i]) + 1u;
+	}
+
+	s->count = live;
+	if (live == 0) {
+		mem->free(remap);
+		return s;   /* everything tombstoned */
+	}
+
+	s->entities = mem->alloc(live * sizeof(*s->entities));
+	if (!s->entities)
+		goto oom;
+	if (name_bytes) {
+		s->names = mem->alloc(name_bytes);
+		if (!s->names)
+			goto oom;
+	}
+
+	/* Pass 2: emit compacted records with remapped parents and packed names. */
+	for (i = 0; i < w->count; i++) {
+		struct scene_entity *se;
+
+		if (!w->alive[i])
+			continue;
+		se         = &s->entities[remap[i]];
+		se->mask   = w->mask[i];
+		se->parent = (w->parent[i] < 0) ? -1 : remap[w->parent[i]];
+		memcpy(&se->position, w->local[i].position, sizeof(se->position));
+		memcpy(&se->rotation, w->local[i].rotation, sizeof(se->rotation));
+		memcpy(&se->scale,    w->local[i].scale,    sizeof(se->scale));
+		se->render_ref = (w->mask[i] & COMPONENT_RENDER)
+				 ? w->render_ref[i] : 0u;
+
+		if ((w->mask[i] & COMPONENT_NAME)
+		    && w->name_off[i] != WORLD_NO_NAME) {
+			const char *nm  = w->names + w->name_off[i];
+			uint32_t    len = (uint32_t)strlen(nm) + 1u;
+
+			memcpy(s->names + no, nm, len);
+			se->name_off = no;
+			no += len;
+		} else {
+			se->name_off = SCENE_NO_NAME;
+		}
+	}
+
+	mem->free(remap);
+	return s;
+
+oom:
+	mem->free(remap);
+	mem->free(s->entities);
+	mem->free(s->names);
+	mem->free(s);
+	return NULL;
+}
+
 /*
  * Full-fidelity snapshot of the world's used prefix. Column arrays are sized
  * to `count` (the high-water mark) and the name blob to `name_bytes`, so a

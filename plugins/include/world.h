@@ -130,6 +130,22 @@ void world_snapshot_free(struct world_snapshot *s,
 			 const struct memory_api *mem);
 
 /*
+ * Export the world's live entities as an at-rest struct scene — the inverse of
+ * world_ingest_scene, and the serialization side of scene_encode.  Tombstoned
+ * slots are dropped and parent indices remapped onto the compacted ordering
+ * (which stays topological: a live entity never has a tombstoned parent, since
+ * destroy cascades).  Names are re-packed into a gap-free blob.  The editor
+ * selection is session-local and is deliberately not exported.
+ *
+ * Allocates through mem; on success the caller owns the result and frees
+ * entities, names, then the struct — matching scene_decode's contract.  An
+ * all-tombstoned (or empty) world yields a valid zero-entity scene.  Returns
+ * NULL on a NULL mem or allocation failure.
+ */
+struct scene *world_export_scene(const struct world *w,
+				 const struct memory_api *mem);
+
+/*
  * Resolve world_xform for every live entity in one forward pass, relying on
  * the parent-before-child ordering. Roots (parent -1) copy their local
  * transform; children compose parent-world * local. dt is unused but kept to

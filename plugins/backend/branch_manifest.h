@@ -4,6 +4,7 @@
 
 #include "cas.h"
 
+#include <stddef.h>
 #include <stdint.h>
 
 /*
@@ -29,6 +30,17 @@
  *     seeded assets are NOT captured — only authored/mutable ones, matching
  *     what the persistence layer already saves.
  *
+ *   - The PATHS entry: at most one, at reserved id MANIFEST_ID_PATHS / kind
+ *     MANIFEST_KIND_PATHS.  Its blob is an id-keyed side table of the authored
+ *     assets' catalog paths (see the layout below).  Asset blobs stay pure
+ *     content (raw bytes, maximal dedup); the flat cas_entry carries no path,
+ *     but a faithful catalog swap on ingest needs each asset's real path — an
+ *     asset the target branch holds but the live catalog lacks is injected, and
+ *     inject() needs the path so the entry does not surface under a synthetic
+ *     name.  Present only when the state has at least one authored asset; a
+ *     manifest without it (older states / a foreign store) still ingests, just
+ *     falling back to a synthesized path.
+ *
  * Reserved ids never collide with asset stable ids, which start at 1 and only
  * grow (next_asset_id in the asset plugin).  We reserve the top of the id space
  * for engine-owned manifest entries so an asset id can never alias one.
@@ -36,12 +48,14 @@
 
 /* Engine-reserved manifest ids live at the top of the u32 space. */
 #define MANIFEST_ID_SCENE   0xFFFFFFFFu   /* the one canonical scene blob */
+#define MANIFEST_ID_PATHS   0xFFFFFFFEu   /* the id->path side table */
 
 /* Entry kinds.  Asset entries carry the asset's own ASSET_TYPE_* as `kind`
  * is NOT reused here — we tag by role so ingest can dispatch without guessing.
  * The asset's ASSET_TYPE_* is recoverable from its bytes/catalog on ingest. */
 #define MANIFEST_KIND_SCENE 1u            /* the reserved scene entry */
 #define MANIFEST_KIND_ASSET 2u            /* an authored catalog asset */
+#define MANIFEST_KIND_PATHS 3u            /* the reserved path side table */
 
 /*
  * NOTE on asset type: the flat cas_entry has one `kind` field.  For asset
@@ -67,6 +81,69 @@ static inline uint32_t manifest_kind_role(uint32_t kind)
 static inline int32_t manifest_kind_asset_type(uint32_t kind)
 {
 	return (int32_t)(kind >> MANIFEST_KIND_TYPE_SHIFT);
+}
+
+/*
+ * Path side-table blob (the reserved MANIFEST_ID_PATHS entry).  Little-endian,
+ * entries sorted by id so the blob is canonical (equal path sets hash equal and
+ * dedup under CoW):
+ *
+ *   u32 count
+ *   count x { u32 id; u32 len; u8 path[len]; }   // path NOT NUL-terminated
+ *
+ * The two u32 accessors keep the byte order explicit and endian-independent;
+ * manifest_paths_find() is the bounds-checked reader ingest uses.
+ */
+static inline uint32_t manifest_paths_get_u32(const uint8_t *p)
+{
+	return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+	       ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static inline void manifest_paths_put_u32(uint8_t *p, uint32_t v)
+{
+	p[0] = (uint8_t)(v);
+	p[1] = (uint8_t)(v >> 8);
+	p[2] = (uint8_t)(v >> 16);
+	p[3] = (uint8_t)(v >> 24);
+}
+
+/*
+ * Locate `id` in a paths blob.  On a hit returns the (non-NUL-terminated) path
+ * bytes within `blob` and writes *out_len; on a miss (or a NULL / truncated /
+ * foreign blob) returns NULL.  Every field read is bounds-checked against
+ * `size`, so a corrupt or non-paths blob can never over-read.
+ */
+static inline const char *manifest_paths_find(const void *blob, uint32_t size,
+					      uint32_t id, uint32_t *out_len)
+{
+	const uint8_t *p = (const uint8_t *)blob;
+	uint32_t       off, count, i;
+
+	if (!p || size < 4)
+		return NULL;
+
+	count = manifest_paths_get_u32(p);
+	off   = 4;
+
+	for (i = 0; i < count; i++) {
+		uint32_t eid, len;
+
+		if (off + 8 > size)
+			return NULL;   /* header runs past the blob */
+		eid = manifest_paths_get_u32(p + off);
+		len = manifest_paths_get_u32(p + off + 4);
+		off += 8;
+		if (off + len > size)
+			return NULL;   /* body runs past the blob */
+		if (eid == id) {
+			if (out_len)
+				*out_len = len;
+			return (const char *)(p + off);
+		}
+		off += len;
+	}
+	return NULL;
 }
 
 #endif /* BRANCH_MANIFEST_H */

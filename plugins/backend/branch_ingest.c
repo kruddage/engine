@@ -10,6 +10,7 @@
 
 #include <stddef.h>
 #include <stdio.h>
+#include <string.h>
 
 /*
  * Pure decode core (native-testable without a live world/catalog): resolve a
@@ -25,6 +26,7 @@
 struct ingest_plan {
 	int32_t           has_scene;
 	cas_hash_t        scene_hash;
+	cas_hash_t        paths_hash;   /* CAS_HASH_NONE when absent */
 	struct cas_entry *assets;
 	uint32_t          asset_count;
 };
@@ -45,6 +47,7 @@ static int32_t ingest_decode(struct cas *store, cas_hash_t manifest,
 
 	plan->has_scene  = 0;
 	plan->scene_hash = CAS_HASH_NONE;
+	plan->paths_hash = CAS_HASH_NONE;
 	w = 0;
 
 	for (i = 0; i < (uint32_t)n; i++) {
@@ -53,6 +56,10 @@ static int32_t ingest_decode(struct cas *store, cas_hash_t manifest,
 		if (e.id == MANIFEST_ID_SCENE) {
 			plan->has_scene  = 1;
 			plan->scene_hash = e.hash;
+			continue;
+		}
+		if (e.id == MANIFEST_ID_PATHS) {
+			plan->paths_hash = e.hash;
 			continue;
 		}
 		if (manifest_kind_role(e.kind) != MANIFEST_KIND_ASSET)
@@ -77,12 +84,57 @@ static int32_t plan_has_asset(const struct ingest_plan *plan, uint32_t id)
 }
 
 /*
+ * Inject asset `e` under its manifest path.  The paths side table
+ * (branch_manifest.h) holds each authored asset's real catalog path; use it so
+ * a swapped-in asset keeps its name.  A manifest without the table (an older
+ * state) falls back to a synthesized, unique path — entities reference assets
+ * by stable id (render_ref), not path, so that fallback is cosmetic only.
+ * inject() copies the path, so a transient NUL-terminated buffer suffices.
+ */
+static int32_t inject_asset(const struct cas_entry *e, const void *bytes,
+			    uint32_t size, const void *paths,
+			    uint32_t paths_size,
+			    const struct asset_mut_api *mut,
+			    const struct memory_api *mem)
+{
+	const char *p;
+	uint32_t    plen = 0;
+	char       *path;
+	int32_t     rc;
+
+	p = manifest_paths_find(paths, paths_size, e->id, &plen);
+	if (p) {
+		path = mem->alloc((size_t)plen + 1);
+		if (!path)
+			return -1;
+		if (plen)
+			memcpy(path, p, plen);
+		path[plen] = '\0';
+		rc = mut->inject(e->id, path,
+				 manifest_kind_asset_type(e->kind),
+				 bytes, size);
+		mem->free(path);
+		return rc;
+	}
+
+	{
+		char syn[48];
+
+		snprintf(syn, sizeof(syn), "branch-asset:%u", e->id);
+		return mut->inject(e->id, syn,
+				   manifest_kind_asset_type(e->kind),
+				   bytes, size);
+	}
+}
+
+/*
  * Apply the decoded asset set to the live catalog: inject/set_data every
  * manifest asset under its stable id, then destroy any authored asset the
  * manifest no longer lists.  Called after the scene has already been
  * swapped, so this is the second half of the atomic reload.
  */
 static int32_t apply_assets(struct cas *store, const struct ingest_plan *plan,
+			    const void *paths, uint32_t paths_size,
 			    const struct asset_api *ast,
 			    const struct asset_mut_api *mut,
 			    const struct memory_api *mem)
@@ -107,22 +159,9 @@ static int32_t apply_assets(struct cas *store, const struct ingest_plan *plan,
 			continue;
 		}
 
-		/*
-		 * v1 manifests carry no path (branch_manifest.h keeps the
-		 * shape flat: id/kind/hash only), so synthesize a stable,
-		 * unique one from the id to satisfy inject()'s path-
-		 * uniqueness check.  Entities reference assets by stable id
-		 * (render_ref), not path, so this is cosmetic only.
-		 */
-		{
-			char path[48];
-
-			snprintf(path, sizeof(path), "branch-asset:%u", e->id);
-			if (mut->inject(e->id, path,
-					manifest_kind_asset_type(e->kind),
-					bytes, size) != 0)
-				return -1;
-		}
+		if (inject_asset(e, bytes, size, paths, paths_size,
+				 mut, mem) != 0)
+			return -1;
 	}
 
 	/*
@@ -171,7 +210,9 @@ int32_t branch_ingest_apply(struct cas *store, struct subsystem_manager *mgr,
 	const struct asset_api     *ast;
 	const struct asset_mut_api *mut;
 	const void                 *scene_bytes;
+	const void                 *paths_bytes = NULL;
 	uint32_t                    scene_size = 0;
+	uint32_t                    paths_size = 0;
 	int32_t                     rc;
 
 	if (!store || !store->mem || !mgr)
@@ -203,6 +244,11 @@ int32_t branch_ingest_apply(struct cas *store, struct subsystem_manager *mgr,
 		return -1;
 	}
 
+	/* The path side table is optional; a state without one still ingests
+	 * (inject falls back to a synthesized path). */
+	if (plan.paths_hash != CAS_HASH_NONE)
+		paths_bytes = cas_get_blob(store, plan.paths_hash, &paths_size);
+
 	/* Apply as one atomic reload: the world first, then the catalog it
 	 * references. */
 	if (ent->ingest_scene_bytes(scene_bytes, scene_size) != 0) {
@@ -210,7 +256,8 @@ int32_t branch_ingest_apply(struct cas *store, struct subsystem_manager *mgr,
 		return -1;
 	}
 
-	rc = apply_assets(store, &plan, ast, mut, store->mem);
+	rc = apply_assets(store, &plan, paths_bytes, paths_size, ast, mut,
+			  store->mem);
 
 	store->mem->free(scratch);
 	return rc;

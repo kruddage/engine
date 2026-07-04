@@ -9,18 +9,84 @@
 #include "subsystem_manager.h"
 
 #include <stddef.h>
+#include <string.h>
 
 /*
  * One already-gathered authored asset: raw bytes plus the identity needed to
- * place it in the manifest (branch_manifest.h).  `bytes`/`size` are borrowed
- * from the live catalog; the pure core below only reads them.
+ * place it in the manifest (branch_manifest.h).  `bytes`/`size`/`path` are
+ * borrowed from the live catalog; the pure core below only reads them.
  */
 struct branch_serialize_asset {
 	uint32_t    id;
 	int32_t     type;
 	const void *bytes;
 	uint32_t    size;
+	const char *path;   /* catalog path, borrowed; NULL treated as empty */
 };
+
+/*
+ * Serialize the authored assets' paths into a canonical MANIFEST_ID_PATHS blob
+ * (branch_manifest.h layout) and store it.  Entries are emitted sorted by id so
+ * two states with the same path set produce the same blob and dedup under CoW.
+ * Returns 0 and writes *out on success; -1 on OOM / cas failure.
+ */
+static int32_t serialize_put_paths(struct cas *store,
+				   const struct branch_serialize_asset *assets,
+				   uint32_t asset_count, cas_hash_t *out)
+{
+	uint32_t  total = 4;   /* u32 count */
+	uint32_t *order;
+	uint8_t  *buf;
+	uint32_t  i, j, off;
+	int32_t   rc;
+
+	order = store->mem->alloc((size_t)asset_count * sizeof(*order));
+	if (!order)
+		return -1;
+
+	/* Insertion sort of indices by asset id (asset_count is small). */
+	for (i = 0; i < asset_count; i++) {
+		uint32_t k = i;
+
+		while (k > 0 && assets[order[k - 1]].id > assets[i].id) {
+			order[k] = order[k - 1];
+			k--;
+		}
+		order[k] = i;
+	}
+
+	for (i = 0; i < asset_count; i++) {
+		const char *p = assets[i].path;
+
+		total += 8 + (uint32_t)(p ? strlen(p) : 0);
+	}
+
+	buf = store->mem->alloc(total);
+	if (!buf) {
+		store->mem->free(order);
+		return -1;
+	}
+
+	manifest_paths_put_u32(buf, asset_count);
+	off = 4;
+	for (i = 0; i < asset_count; i++) {
+		const struct branch_serialize_asset *a = &assets[order[i]];
+		const char                          *p = a->path ? a->path : "";
+		uint32_t                             len = (uint32_t)strlen(p);
+
+		manifest_paths_put_u32(buf + off, a->id);
+		manifest_paths_put_u32(buf + off + 4, len);
+		off += 8;
+		for (j = 0; j < len; j++)
+			buf[off + j] = (uint8_t)p[j];
+		off += len;
+	}
+
+	rc = cas_put_blob(store, buf, total, out);
+	store->mem->free(buf);
+	store->mem->free(order);
+	return rc;
+}
 
 /* Undo cas_put_blob for the first n entries of ents (best-effort cleanup on a
  * failure partway through a capture, so an aborted capture does not pin
@@ -59,11 +125,11 @@ static int32_t branch_serialize_build_manifest(
 		return -1;
 	if ((scene_size && !scene_bytes) || (asset_count && !assets))
 		return -1;
-	/* The scene entry takes one of the CAS_MANIFEST_MAX slots. */
-	if (asset_count >= CAS_MANIFEST_MAX)
+	/* Scene and paths entries take two of the CAS_MANIFEST_MAX slots. */
+	if (asset_count + 2 > CAS_MANIFEST_MAX)
 		return -1;
 
-	ents = store->mem->alloc((size_t)(asset_count + 1) * sizeof(*ents));
+	ents = store->mem->alloc((size_t)(asset_count + 2) * sizeof(*ents));
 	if (!ents)
 		return -1;
 
@@ -80,6 +146,19 @@ static int32_t branch_serialize_build_manifest(
 		ents[n].kind = manifest_kind_asset(assets[i].type);
 		if (cas_put_blob(store, assets[i].bytes, assets[i].size,
 				 &ents[n].hash) != 0) {
+			serialize_release(store, ents, n);
+			store->mem->free(ents);
+			return -1;
+		}
+		n++;
+	}
+
+	/* Path side table — only when there is at least one authored asset. */
+	if (asset_count) {
+		ents[n].id   = MANIFEST_ID_PATHS;
+		ents[n].kind = MANIFEST_KIND_PATHS;
+		if (serialize_put_paths(store, assets, asset_count,
+					&ents[n].hash) != 0) {
 			serialize_release(store, ents, n);
 			store->mem->free(ents);
 			return -1;
@@ -162,6 +241,7 @@ int32_t branch_serialize_capture(struct cas *store,
 		assets[n].type  = info.type;
 		assets[n].bytes = data;
 		assets[n].size  = size;
+		assets[n].path  = info.path;
 		n++;
 	}
 

@@ -36,6 +36,10 @@ typedef enum {
 	GPU_FORMAT_RGBA8_UNORM,
 	GPU_FORMAT_BGRA8_UNORM,
 	GPU_FORMAT_DEPTH32_FLOAT,
+	/* Float-vector formats, used to type vertex attributes. */
+	GPU_FORMAT_RG32_FLOAT,
+	GPU_FORMAT_RGB32_FLOAT,
+	GPU_FORMAT_RGBA32_FLOAT,
 } gpu_format;
 
 typedef enum {
@@ -93,13 +97,35 @@ struct gpu_shader_source {
 	gpu_shader_dialect dialect;
 };
 
+/* --- Vertex input layout ------------------------------------------------- */
+
+#define GPU_MAX_VERTEX_ATTRS 8
+
+/*
+ * One vertex attribute: the shader input `location`, its byte `offset` within
+ * the vertex, and its component `format` (a float-vector gpu_format). All
+ * attributes source from vertex buffer slot 0 (single interleaved stream).
+ */
+struct gpu_vertex_attr {
+	uint32_t   location;
+	uint32_t   offset;
+	gpu_format format;
+};
+
+struct gpu_vertex_layout {
+	struct gpu_vertex_attr attrs[GPU_MAX_VERTEX_ATTRS];
+	uint32_t               attr_count; /* 0 = no vertex input declared */
+	uint32_t               stride;     /* bytes between consecutive vertices */
+};
+
 /* --- Pipeline state object ----------------------------------------------- */
 
 #define GPU_MAX_COLOR_ATTACHMENTS 8
 
 /*
- * Minimal baked state: render target formats, topology, sample count.
- * Depth-stencil and blend state are set independently via cmd calls.
+ * Minimal baked state: render target formats, topology, sample count, and the
+ * vertex input layout. Depth-stencil and blend state are set independently via
+ * cmd calls.
  */
 struct gpu_pipeline_desc {
 	gpu_format      color_formats[GPU_MAX_COLOR_ATTACHMENTS];
@@ -108,6 +134,7 @@ struct gpu_pipeline_desc {
 	gpu_topology    topology;
 	gpu_index_format strip_index_format; /* only used for strip topologies */
 	uint32_t        sample_count;
+	struct gpu_vertex_layout vertex_layout;
 	/* Shader sources — renderer owns compile/link at pipeline_create time */
 	struct gpu_shader_source vert;
 	struct gpu_shader_source frag;
@@ -202,6 +229,13 @@ struct gpu_api {
 	/* Buffers */
 	gpu_buffer_t (*buffer_create)(const struct gpu_buffer_desc *desc);
 	void         (*buffer_destroy)(gpu_buffer_t buf);
+	/*
+	 * Overwrite size bytes at byte offset of a buffer's contents. The write
+	 * path for per-frame root data (e.g. a UBO's viewproj/model) that
+	 * buffer_create's initial_data cannot supply.
+	 */
+	void         (*buffer_update)(gpu_buffer_t buf, uint32_t offset,
+	                              const void *data, uint32_t size);
 	void         (*cmd_bind_vertex_buffer)(gpu_cmd_buf_t cmd, uint32_t slot,
 	                                       gpu_buffer_t buf, uint32_t offset);
 	void         (*cmd_bind_index_buffer)(gpu_cmd_buf_t cmd, gpu_buffer_t buf,

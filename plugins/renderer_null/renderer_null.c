@@ -168,6 +168,16 @@ static void null_buffer_destroy(gpu_buffer_t buf)
 	log_append((struct gpu_call_record){ .type = GPU_CALL_BUFFER_DESTROY });
 }
 
+static void null_buffer_update(gpu_buffer_t buf, uint32_t offset,
+			       const void *data, uint32_t size)
+{
+	(void)data;
+	g_log->write(LOG_LEVEL_INFO,
+		     "renderer_null: buffer_update buf=%p offset=%u size=%u",
+		     (void *)buf, offset, size);
+	/* No record type needed; the scene renderer test asserts on draws. */
+}
+
 static void null_cmd_bind_vertex_buffer(gpu_cmd_buf_t cmd, uint32_t slot,
 					gpu_buffer_t buf, uint32_t offset)
 {
@@ -281,6 +291,7 @@ static const struct gpu_api null_api = {
 	.cmd_set_pipeline       = null_cmd_set_pipeline,
 	.buffer_create          = null_buffer_create,
 	.buffer_destroy         = null_buffer_destroy,
+	.buffer_update          = null_buffer_update,
 	.cmd_bind_vertex_buffer = null_cmd_bind_vertex_buffer,
 	.cmd_bind_index_buffer  = null_cmd_bind_index_buffer,
 	.cmd_bind_uniform_buffer = null_cmd_bind_uniform_buffer,

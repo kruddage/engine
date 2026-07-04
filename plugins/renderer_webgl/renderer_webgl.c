@@ -12,7 +12,6 @@
 #ifdef __EMSCRIPTEN__
 #include <emscripten/html5.h>
 #include <GLES3/gl3.h>
-#include "asset_api.h"
 #else
 #include "log.h"
 #include "memory.h"
@@ -34,6 +33,8 @@ struct gpu_cmd_buf {
 struct gpu_pipeline {
 	unsigned int program;     /* GLuint; 0 until shaders are compiled */
 	unsigned int gl_topology; /* GLenum translated from gpu_topology */
+	unsigned int vao;         /* GLuint; attribute layout captured here */
+	struct gpu_vertex_layout layout;
 };
 
 struct gpu_buffer {
@@ -48,27 +49,11 @@ struct gpu_texture {
 #ifdef __EMSCRIPTEN__
 static const struct log_api           *g_log;
 static const struct memory_api        *g_mem;
-static const struct asset_api         *g_asset;
 static EMSCRIPTEN_WEBGL_CONTEXT_HANDLE g_ctx;
 static unsigned int                    g_topology;   /* active draw topology */
 static unsigned int                    g_index_type = GL_UNSIGNED_SHORT;
 static unsigned int                    g_index_size = 2; /* bytes per index */
-
-/*
- * Throwaway scaffolding: a single hardcoded triangle drawn through the full
- * gpu_api each frame to prove the WebGL backend in isolation. The scene
- * renderer (#172) replaces this with entity-driven draws through the frame
- * graph.
- */
-struct webgl_demo {
-	int            ready;
-	gpu_pipeline_t pipeline;
-	gpu_buffer_t   vbo;
-	gpu_buffer_t   ebo;
-	gpu_buffer_t   ubo;
-	unsigned int   vao; /* GLuint */
-};
-static struct webgl_demo g_demo;
+static struct gpu_pipeline            *g_cur_pipeline; /* bound by set_pipeline */
 #else
 static const struct log_api    *g_log = &native_log;
 static const struct memory_api *g_mem = &native_mem;
@@ -86,6 +71,17 @@ static unsigned int translate_topology(gpu_topology topo)
 	case GPU_TOPOLOGY_LINE_LIST:      return GL_LINES;
 	case GPU_TOPOLOGY_POINT_LIST:     return GL_POINTS;
 	default:                          return GL_TRIANGLES;
+	}
+}
+
+/* Float components in a vertex-attribute format (0 if not a float vector). */
+static int format_components(gpu_format fmt)
+{
+	switch (fmt) {
+	case GPU_FORMAT_RG32_FLOAT:   return 2;
+	case GPU_FORMAT_RGB32_FLOAT:  return 3;
+	case GPU_FORMAT_RGBA32_FLOAT: return 4;
+	default:                      return 0;
 	}
 }
 
@@ -186,13 +182,33 @@ webgl_pipeline_create(const struct gpu_pipeline_desc *desc)
 	p = g_mem->alloc(sizeof(*p));
 	if (!p)
 		return NULL;
+	p->layout = desc->vertex_layout;
 #ifdef __EMSCRIPTEN__
 	p->program     = build_program(desc);
 	p->gl_topology = translate_topology(desc->topology);
+	/*
+	 * Bind each uniform block to the binding point matching its index, so a
+	 * consumer with no GL access can bind its UBO to cmd_bind_uniform_buffer
+	 * slot == block index (the sole block lands at slot 0).
+	 */
+	if (p->program) {
+		GLint nblocks = 0, bi;
+
+		glGetProgramiv(p->program, GL_ACTIVE_UNIFORM_BLOCKS, &nblocks);
+		for (bi = 0; bi < nblocks; bi++)
+			glUniformBlockBinding(p->program, (GLuint)bi, (GLuint)bi);
+	}
+	/*
+	 * A VAO owns the pipeline's attribute state. WebGL 2 (GLES 3.0) has no
+	 * separate attrib-format API, so the attribute pointers are (re)specified
+	 * against the mesh's vertex buffer at bind time (see bind_vertex_buffer);
+	 * the VAO just holds the enabled attributes and index-buffer binding.
+	 */
+	glGenVertexArrays(1, &p->vao);
 #else
-	(void)desc;
 	p->program     = 0;
 	p->gl_topology = 0;
+	p->vao         = 0;
 #endif
 	return p;
 }
@@ -204,6 +220,11 @@ static void webgl_pipeline_destroy(gpu_pipeline_t pipeline)
 	if (!p)
 		return;
 #ifdef __EMSCRIPTEN__
+	if (p->vao) {
+		if (g_cur_pipeline == p)
+			g_cur_pipeline = NULL;
+		glDeleteVertexArrays(1, &p->vao);
+	}
 	if (p->program)
 		glDeleteProgram(p->program);
 #endif
@@ -219,6 +240,9 @@ static void webgl_cmd_set_pipeline(gpu_cmd_buf_t cmd,
 	if (!p)
 		return;
 #ifdef __EMSCRIPTEN__
+	g_cur_pipeline = p;
+	if (p->vao)
+		glBindVertexArray(p->vao);
 	if (p->program)
 		glUseProgram(p->program);
 	g_topology = p->gl_topology;
@@ -271,25 +295,57 @@ static void webgl_buffer_destroy(gpu_buffer_t buf)
 	g_mem->free(b);
 }
 
+static void webgl_buffer_update(gpu_buffer_t buf, uint32_t offset,
+				 const void *data, uint32_t size)
+{
+	struct gpu_buffer *b = (struct gpu_buffer *)buf;
+
+	if (!b)
+		return;
+#ifdef __EMSCRIPTEN__
+	glBindBuffer(b->target, b->id);
+	glBufferSubData(b->target, (GLintptr)offset, (GLsizeiptr)size, data);
+	glBindBuffer(b->target, 0);
+#else
+	(void)offset;
+	(void)data;
+	(void)size;
+#endif
+}
+
 static void webgl_cmd_bind_vertex_buffer(gpu_cmd_buf_t cmd, uint32_t slot,
 					  gpu_buffer_t buf, uint32_t offset)
 {
 	(void)cmd;
 	(void)slot;
-	(void)offset;
 #ifdef __EMSCRIPTEN__
 	struct gpu_buffer *b = (struct gpu_buffer *)buf;
+	uint32_t           i;
 
+	if (!b || !g_cur_pipeline)
+		return;
 	/*
-	 * The vertex attribute layout lives in the VAO (configured once at
-	 * demo setup; renderer.h has no vertex-format descriptor yet). Bind
-	 * that VAO and re-attach the array buffer for completeness.
+	 * WebGL 2 captures the array-buffer binding into glVertexAttribPointer at
+	 * call time, so re-specify the current pipeline's attribute pointers
+	 * against this mesh's vertex buffer. slot 0 is the only stream.
 	 */
-	glBindVertexArray(g_demo.vao);
-	if (b)
-		glBindBuffer(GL_ARRAY_BUFFER, b->id);
+	glBindVertexArray(g_cur_pipeline->vao);
+	glBindBuffer(GL_ARRAY_BUFFER, b->id);
+	for (i = 0; i < g_cur_pipeline->layout.attr_count; i++) {
+		const struct gpu_vertex_attr *a =
+			&g_cur_pipeline->layout.attrs[i];
+		int comps = format_components(a->format);
+
+		if (comps == 0)
+			continue;
+		glEnableVertexAttribArray(a->location);
+		glVertexAttribPointer(a->location, comps, GL_FLOAT, GL_FALSE,
+				      (GLsizei)g_cur_pipeline->layout.stride,
+				      (const void *)(uintptr_t)(offset + a->offset));
+	}
 #else
 	(void)buf;
+	(void)offset;
 #endif
 }
 
@@ -301,7 +357,8 @@ static void webgl_cmd_bind_index_buffer(gpu_cmd_buf_t cmd, gpu_buffer_t buf,
 #ifdef __EMSCRIPTEN__
 	struct gpu_buffer *b = (struct gpu_buffer *)buf;
 
-	glBindVertexArray(g_demo.vao);
+	if (g_cur_pipeline)
+		glBindVertexArray(g_cur_pipeline->vao);
 	if (b)
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, b->id);
 	if (fmt == GPU_INDEX_FORMAT_UINT32) {
@@ -358,8 +415,16 @@ webgl_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 	glViewport(0, 0, dw, dh);
 	glDisable(GL_SCISSOR_TEST);
 	glDisable(GL_BLEND);
-	glDisable(GL_DEPTH_TEST);
 	glDisable(GL_CULL_FACE);
+	/*
+	 * Depth test against the canvas's own depth buffer. The frame graph
+	 * scopes offscreen depth targets out for now, so 3D passes rendering to
+	 * the backbuffer rely on this default-framebuffer depth. glDepthMask
+	 * must be enabled for the depth clear below to take effect.
+	 */
+	glEnable(GL_DEPTH_TEST);
+	glDepthFunc(GL_LESS);
+	glDepthMask(GL_TRUE);
 
 	if (desc->color_count > 0 &&
 	    desc->color[0].load_op == GPU_LOAD_OP_CLEAR) {
@@ -368,10 +433,13 @@ webgl_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 		glClearColor(c[0], c[1], c[2], c[3]);
 		clear_mask |= GL_COLOR_BUFFER_BIT;
 	}
-	if (desc->depth && desc->depth_load_op == GPU_LOAD_OP_CLEAR) {
-		glClearDepthf(desc->clear_depth);
-		clear_mask |= GL_DEPTH_BUFFER_BIT;
-	}
+	/*
+	 * Clear the backbuffer depth each pass. Honour an explicit clear value
+	 * when the pass supplies one, else reset to the far plane (1.0).
+	 */
+	glClearDepthf(desc->depth_load_op == GPU_LOAD_OP_CLEAR
+		      ? desc->clear_depth : 1.0f);
+	clear_mask |= GL_DEPTH_BUFFER_BIT;
 	if (clear_mask)
 		glClear(clear_mask);
 #else
@@ -477,6 +545,7 @@ static const struct gpu_api webgl_api = {
 	.cmd_set_pipeline       = webgl_cmd_set_pipeline,
 	.buffer_create          = webgl_buffer_create,
 	.buffer_destroy         = webgl_buffer_destroy,
+	.buffer_update          = webgl_buffer_update,
 	.cmd_bind_vertex_buffer = webgl_cmd_bind_vertex_buffer,
 	.cmd_bind_index_buffer  = webgl_cmd_bind_index_buffer,
 	.cmd_bind_uniform_buffer = webgl_cmd_bind_uniform_buffer,
@@ -493,141 +562,6 @@ static const struct gpu_api webgl_api = {
 	.texture_destroy        = webgl_texture_destroy,
 };
 
-#ifdef __EMSCRIPTEN__
-/* Built-in shader assets the asset plugin seeds at startup. */
-#define DEMO_VERT_ASSET "builtin://shader/triangle.vert"
-#define DEMO_FRAG_ASSET "builtin://shader/triangle.frag"
-
-/*
- * Borrow a shader asset's source by path through the asset vtable. The
- * read-only api resolves by id, so walk the catalog to map path -> id, then
- * borrow the bytes. Seeded shader assets are NUL-terminated, so the returned
- * pointer is usable directly as GLSL source. Returns NULL if the asset plugin
- * is unavailable or the asset is not loaded.
- */
-static const char *shader_src_by_path(const char *path)
-{
-	struct asset_info info;
-	uint32_t          i;
-	uint32_t          n;
-
-	if (!g_asset)
-		return NULL;
-	n = g_asset->count();
-	for (i = 0; i < n; i++) {
-		if (g_asset->info(i, &info) != 0)
-			continue;
-		if (strcmp(info.path, path) != 0)
-			continue;
-		return (const char *)g_asset->get_data(info.id, NULL);
-	}
-	return NULL;
-}
-
-/* Interleaved position (vec3) + colour (vec3) for three vertices. */
-static const float DEMO_VERTS[] = {
-	 0.0f,  0.6f, 0.0f,  1.0f, 0.2f, 0.2f,
-	-0.6f, -0.5f, 0.0f,  0.2f, 1.0f, 0.3f,
-	 0.6f, -0.5f, 0.0f,  0.3f, 0.4f, 1.0f,
-};
-static const uint16_t DEMO_INDICES[] = { 0, 1, 2 };
-static const float    DEMO_TINT[4]   = { 1.0f, 1.0f, 1.0f, 1.0f };
-
-/*
- * Build the throwaway triangle's GPU resources through the gpu_api, then
- * configure a VAO with the matching attribute layout. The context must be
- * current before this runs.
- */
-static void webgl_demo_setup(void)
-{
-	struct gpu_pipeline_desc pdesc;
-	struct gpu_buffer_desc   bdesc;
-	struct gpu_pipeline     *p;
-	const char              *vsrc;
-	const char              *fsrc;
-	GLuint block;
-
-	/* Source the demo shaders from the asset catalog (issue #205). */
-	vsrc = shader_src_by_path(DEMO_VERT_ASSET);
-	fsrc = shader_src_by_path(DEMO_FRAG_ASSET);
-	if (!vsrc || !fsrc) {
-		g_log->write(LOG_LEVEL_INFO,
-			     "renderer_webgl: demo shader assets unavailable");
-		return;
-	}
-
-	memset(&pdesc, 0, sizeof(pdesc));
-	pdesc.color_formats[0]   = GPU_FORMAT_RGBA8_UNORM;
-	pdesc.color_format_count = 1;
-	pdesc.topology           = GPU_TOPOLOGY_TRIANGLE_LIST;
-	pdesc.vert.src     = vsrc;
-	pdesc.vert.stage   = GPU_SHADER_STAGE_VERTEX;
-	pdesc.vert.dialect = GPU_SHADER_DIALECT_GLSL_ES_300;
-	pdesc.frag.src     = fsrc;
-	pdesc.frag.stage   = GPU_SHADER_STAGE_FRAGMENT;
-	pdesc.frag.dialect = GPU_SHADER_DIALECT_GLSL_ES_300;
-	g_demo.pipeline = webgl_pipeline_create(&pdesc);
-
-	memset(&bdesc, 0, sizeof(bdesc));
-	bdesc.size         = sizeof(DEMO_VERTS);
-	bdesc.usage        = GPU_BUFFER_USAGE_VERTEX;
-	bdesc.initial_data = DEMO_VERTS;
-	g_demo.vbo = webgl_buffer_create(&bdesc);
-
-	bdesc.size         = sizeof(DEMO_INDICES);
-	bdesc.usage        = GPU_BUFFER_USAGE_INDEX;
-	bdesc.initial_data = DEMO_INDICES;
-	g_demo.ebo = webgl_buffer_create(&bdesc);
-
-	bdesc.size         = sizeof(DEMO_TINT);
-	bdesc.usage        = GPU_BUFFER_USAGE_UNIFORM;
-	bdesc.initial_data = DEMO_TINT;
-	g_demo.ubo = webgl_buffer_create(&bdesc);
-
-	/*
-	 * Capture the attribute layout into a VAO: location 0 = vec3 position,
-	 * location 1 = vec3 colour, interleaved with a 6-float stride. The
-	 * element buffer binding is captured by the VAO too.
-	 */
-	glGenVertexArrays(1, &g_demo.vao);
-	glBindVertexArray(g_demo.vao);
-	glBindBuffer(GL_ARRAY_BUFFER, ((struct gpu_buffer *)g_demo.vbo)->id);
-	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE,
-			      6 * (GLsizei)sizeof(float), (const void *)0);
-	glEnableVertexAttribArray(1);
-	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE,
-			      6 * (GLsizei)sizeof(float),
-			      (const void *)(3 * sizeof(float)));
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,
-		     ((struct gpu_buffer *)g_demo.ebo)->id);
-	glBindVertexArray(0);
-
-	/* Wire the shader's Globals uniform block to binding point 0. */
-	p = (struct gpu_pipeline *)g_demo.pipeline;
-	if (p && p->program) {
-		block = glGetUniformBlockIndex(p->program, "Globals");
-		if (block != GL_INVALID_INDEX)
-			glUniformBlockBinding(p->program, block, 0);
-	}
-
-	g_demo.ready = 1;
-	g_log->write(LOG_LEVEL_INFO, "renderer_webgl: triangle demo ready");
-}
-
-static void webgl_demo_teardown(void)
-{
-	if (!g_demo.ready)
-		return;
-	glDeleteVertexArrays(1, &g_demo.vao);
-	webgl_buffer_destroy(g_demo.ubo);
-	webgl_buffer_destroy(g_demo.ebo);
-	webgl_buffer_destroy(g_demo.vbo);
-	webgl_pipeline_destroy(g_demo.pipeline);
-	g_demo.ready = 0;
-}
-#endif /* __EMSCRIPTEN__ */
-
 static void renderer_webgl_init(void)
 {
 #ifdef __EMSCRIPTEN__
@@ -636,55 +570,23 @@ static void renderer_webgl_init(void)
 	emscripten_webgl_init_context_attributes(&attrs);
 	attrs.majorVersion = 2;
 	attrs.minorVersion = 0;
+	attrs.depth        = EM_TRUE; /* backbuffer depth for 3D passes */
 	g_ctx = emscripten_webgl_create_context("#canvas", &attrs);
 	emscripten_webgl_make_context_current(g_ctx);
-	webgl_demo_setup();
 #endif
 	g_log->write(LOG_LEVEL_INFO, "renderer_webgl: init");
 }
 
-static void renderer_webgl_tick(void)
-{
-#ifdef __EMSCRIPTEN__
-	struct gpu_render_pass_desc  pass;
-	struct gpu_draw_indexed_args draw;
-	gpu_cmd_buf_t                cmd;
-
-	if (!g_demo.ready)
-		return;
-
-	memset(&pass, 0, sizeof(pass));
-	pass.color_count       = 1;
-	pass.color[0].load_op  = GPU_LOAD_OP_CLEAR;
-	pass.color[0].store_op = GPU_STORE_OP_STORE;
-	pass.color[0].clear[0] = 0.18f;
-	pass.color[0].clear[1] = 0.20f;
-	pass.color[0].clear[2] = 0.25f;
-	pass.color[0].clear[3] = 1.0f;
-
-	memset(&draw, 0, sizeof(draw));
-	draw.index_count    = 3;
-	draw.instance_count = 1;
-
-	/* Drive the hardcoded triangle entirely through the gpu_api. */
-	cmd = webgl_cmd_buf_begin();
-	webgl_cmd_begin_render_pass(cmd, &pass);
-	webgl_cmd_set_pipeline(cmd, g_demo.pipeline);
-	webgl_cmd_bind_uniform_buffer(cmd, 0, g_demo.ubo, 0,
-				      (uint32_t)sizeof(DEMO_TINT));
-	webgl_cmd_bind_vertex_buffer(cmd, 0, g_demo.vbo, 0);
-	webgl_cmd_bind_index_buffer(cmd, g_demo.ebo, 0, GPU_INDEX_FORMAT_UINT16);
-	webgl_cmd_draw_indexed(cmd, &draw);
-	webgl_cmd_end_render_pass(cmd);
-	webgl_cmd_buf_submit(cmd);
-#endif
-}
+/*
+ * The renderer subsystem no longer drives per-frame drawing: the scene renderer
+ * (#172) records draws through the frame graph on the "renderer" device. This
+ * backend just owns the GL context and the gpu_api vtable, so there is no tick.
+ */
 
 static void renderer_webgl_shutdown(void)
 {
 	g_log->write(LOG_LEVEL_INFO, "renderer_webgl: shutdown");
 #ifdef __EMSCRIPTEN__
-	webgl_demo_teardown();
 	emscripten_webgl_destroy_context(g_ctx);
 #endif
 }
@@ -693,7 +595,6 @@ static const struct subsystem desc = {
 	.name     = "renderer",
 	.api      = &webgl_api,
 	.init     = renderer_webgl_init,
-	.tick     = renderer_webgl_tick,
 	.shutdown = renderer_webgl_shutdown,
 };
 
@@ -704,9 +605,8 @@ void renderer_webgl_plugin_entry(struct subsystem_manager *mgr)
 #endif
 {
 #ifdef __EMSCRIPTEN__
-	g_log   = subsystem_manager_get_api(mgr, "log");
-	g_mem   = subsystem_manager_get_api(mgr, "memory");
-	g_asset = subsystem_manager_get_api(mgr, "asset");
+	g_log = subsystem_manager_get_api(mgr, "log");
+	g_mem = subsystem_manager_get_api(mgr, "memory");
 #endif
 	subsystem_manager_register(mgr, &desc);
 }

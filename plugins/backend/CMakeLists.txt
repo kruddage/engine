@@ -52,6 +52,22 @@ if(NOT EMSCRIPTEN)
 	# links it even though those subsystems aren't registered in-test.
 	target_link_libraries(backend_branch_test PRIVATE memory subsystem_manager)
 	add_test(NAME backend_branch COMMAND backend_branch_test)
+
+	# End-to-end round-trip test: registers fake scene/asset/asset_mut
+	# subsystems on a real manager and drives serialize -> fork -> switch ->
+	# ingest, proving the live world+catalog swap and the manifest path
+	# round-trip natively (the browser proof-of-life's data-runtime layer).
+	add_executable(backend_branch_roundtrip_test branch_roundtrip_test.c
+		${BRANCH_HOST_SRCS})
+	target_include_directories(backend_branch_roundtrip_test PRIVATE .
+		${CMAKE_SOURCE_DIR}/plugins/include
+		${BRANCH_HOST_INCS}
+		${CMAKE_SOURCE_DIR}/modules/core/include
+		${CMAKE_SOURCE_DIR}/modules/memory/include)
+	target_link_libraries(backend_branch_roundtrip_test
+		PRIVATE memory subsystem_manager)
+	add_test(NAME backend_branch_roundtrip
+		COMMAND backend_branch_roundtrip_test)
 endif()
 
 if(EMSCRIPTEN)

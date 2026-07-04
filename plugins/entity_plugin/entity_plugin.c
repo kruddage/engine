@@ -61,6 +61,47 @@ static int32_t scene_load(const char *path)
 	return rc;
 }
 
+/*
+ * Serialize the live world to canonical .scene bytes for content-addressing
+ * (#214/#235): export to an at-rest struct scene, then hand it to the scene
+ * encoder registered on the codec.  The intermediate scene is freed here; the
+ * caller owns the returned byte buffer.
+ */
+static void *scene_export_bytes(uint32_t *out_size)
+{
+	struct scene *s;
+	void         *bytes;
+
+	if (!g_codec || !g_mem)
+		return NULL;
+	s = world_export_scene(&g_world, g_mem);
+	if (!s)
+		return NULL;
+	bytes = g_codec->encode("scene", s, out_size);
+	free_scene(s);
+	return bytes;
+}
+
+/*
+ * Replace the live world with the scene decoded from raw bytes — the atomic
+ * reload behind a branch switch / snapshot restore (#215/#216).  Decodes off
+ * the bytes directly (not an asset path) via the codec, then ingests.
+ */
+static int32_t scene_ingest_bytes(const void *bytes, uint32_t size)
+{
+	struct scene *s;
+	int32_t       rc;
+
+	if (!g_codec)
+		return -1;
+	s = g_codec->decode_bytes("scene", bytes, size);
+	if (!s)
+		return -1;
+	rc = world_ingest_scene(&g_world, s);
+	free_scene(s);
+	return rc;
+}
+
 static const struct world *scene_get_world(void)
 {
 	return &g_world;
@@ -140,6 +181,8 @@ static const struct entity_api g_entity_api = {
 	.set_name       = scene_set_name,
 	.get_selected   = scene_get_selected,
 	.set_selected   = scene_set_selected,
+	.export_scene_bytes = scene_export_bytes,
+	.ingest_scene_bytes = scene_ingest_bytes,
 };
 
 /*

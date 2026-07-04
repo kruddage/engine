@@ -38,8 +38,12 @@ if(NOT EMSCRIPTEN)
 	target_include_directories(backend_branch_test PRIVATE .
 		${CMAKE_SOURCE_DIR}/plugins/include
 		${BRANCH_HOST_INCS}
+		${CMAKE_SOURCE_DIR}/modules/core/include
 		${CMAKE_SOURCE_DIR}/modules/memory/include)
-	target_link_libraries(backend_branch_test PRIVATE memory)
+	# subsystem_manager: the serialize/ingest glue reaches the world & catalog
+	# through vtables looked up on the manager (get_api), so the native test
+	# links it even though those subsystems aren't registered in-test.
+	target_link_libraries(backend_branch_test PRIVATE memory subsystem_manager)
 	add_test(NAME backend_branch COMMAND backend_branch_test)
 endif()
 

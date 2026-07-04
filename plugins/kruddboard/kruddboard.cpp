@@ -10,9 +10,10 @@
  * Toggle visibility with backtick (`).
  *
  * Tabs:
- *   KRUDD  — frame stats, subsystems, log (collapsible sections)
- *   World  — entity list, create/delete, inspector
- *   Assets — asset browser and markdown editor
+ *   KRUDD    — frame stats, subsystems, log (collapsible sections)
+ *   World    — entity list, create/delete, inspector
+ *   Assets   — asset browser and markdown editor
+ *   Branches — branch/snapshot browser (#213/#217)
  */
 
 extern "C" {
@@ -27,6 +28,7 @@ extern "C" {
 #include "edit_api.h"
 #ifdef __EMSCRIPTEN__
 #include "backend_api.h"
+#include "branch_api.h"
 #endif
 }
 
@@ -905,6 +907,173 @@ static void draw_tab_assets(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* Tab: Branches — branch/snapshot browser (#213/#217)                */
+/* ------------------------------------------------------------------ */
+
+#ifdef __EMSCRIPTEN__
+/*
+ * New-branch name buffer and the selected row in the active branch's
+ * snapshot timeline (-1 = none). Selection is keyed to the *active* branch,
+ * so a branch_switch() / snapshot_restore() invalidates it — reset whenever
+ * branch_active() changes underneath us.
+ */
+static char    g_branch_new_name[BRANCH_API_NAME_MAX];
+static int32_t g_branch_snap_sel    = -1;
+static int32_t g_branch_last_active = -2; /* sentinel: force first reset */
+#endif
+
+static void draw_tab_branches(void)
+{
+#ifdef __EMSCRIPTEN__
+	const struct branch_api *br;
+	uint32_t                 n;
+	uint32_t                 i;
+	int32_t                  active;
+	int                      merge_ok;
+	struct branch_api_desc   desc;
+	struct branch_api_snapshot snap;
+
+	br = (g_backend && (g_backend->get_caps() & BACKEND_CAP_BRANCHING))
+		? g_backend->branching() : NULL;
+
+	if (!br) {
+		ImGui::TextDisabled("(branching unavailable)");
+		return;
+	}
+
+	active = br->branch_active();
+	if (active != g_branch_last_active) {
+		g_branch_last_active = active;
+		g_branch_snap_sel    = -1;
+	}
+
+	/* ---- Branch list ---- */
+	if (ImGui::CollapsingHeader("Branches",
+				    ImGuiTreeNodeFlags_DefaultOpen)) {
+		n = br->branch_count();
+		if (n == 0) {
+			ImGui::TextDisabled("(no branches)");
+		} else if (ImGui::BeginTable("##branches", 2,
+					     ImGuiTableFlags_Borders |
+					     ImGuiTableFlags_RowBg   |
+					     ImGuiTableFlags_SizingStretchProp)) {
+			ImGui::TableSetupColumn("Name");
+			ImGui::TableSetupColumn("Base");
+			ImGui::TableHeadersRow();
+
+			for (i = 0; i < n; i++) {
+				char row_id[80];
+
+				if (br->branch_get((int32_t)i, &desc) != 0)
+					continue;
+				ImGui::TableNextRow();
+				ImGui::TableSetColumnIndex(0);
+				snprintf(row_id, sizeof(row_id), "%s%s##br%u",
+					 desc.name, desc.active ? " *" : "",
+					 i);
+				if (ImGui::Selectable(
+					    row_id, desc.active != 0,
+					    ImGuiSelectableFlags_SpanAllColumns) &&
+				    !desc.active)
+					br->branch_switch(desc.index);
+				ImGui::TableSetColumnIndex(1);
+				ImGui::TextUnformatted(
+					desc.has_base ? "snapshot" : "-");
+			}
+
+			ImGui::EndTable();
+		}
+
+		ImGui::Separator();
+
+		/* -- New branch -- */
+		ImGui::SetNextItemWidth(200.0f);
+		ImGui::InputText("##newbranch", g_branch_new_name,
+				 sizeof(g_branch_new_name));
+
+		ImGui::SameLine();
+		ImGui::BeginDisabled(g_branch_new_name[0] == '\0');
+		if (ImGui::SmallButton("New from head") &&
+		    g_branch_new_name[0] != '\0') {
+			if (br->branch_fork(g_branch_new_name,
+					    BRANCH_FROM_HEAD) >= 0)
+				g_branch_new_name[0] = '\0';
+		}
+		ImGui::EndDisabled();
+
+		ImGui::SameLine();
+		ImGui::BeginDisabled(g_branch_new_name[0] == '\0' ||
+				     g_branch_snap_sel < 0);
+		if (ImGui::SmallButton("New from snapshot") &&
+		    g_branch_new_name[0] != '\0' && g_branch_snap_sel >= 0) {
+			if (br->branch_fork(g_branch_new_name,
+					    g_branch_snap_sel) >= 0)
+				g_branch_new_name[0] = '\0';
+		}
+		ImGui::EndDisabled();
+	}
+
+	ImGui::Separator();
+
+	/* ---- Snapshots of the active branch ---- */
+	if (ImGui::CollapsingHeader("Snapshots",
+				    ImGuiTreeNodeFlags_DefaultOpen)) {
+		n = br->snapshot_count();
+		if (n == 0) {
+			ImGui::TextDisabled("(no snapshots)");
+		} else if (ImGui::BeginTable("##snapshots", 4,
+					     ImGuiTableFlags_Borders |
+					     ImGuiTableFlags_RowBg   |
+					     ImGuiTableFlags_SizingStretchProp)) {
+			ImGui::TableSetupColumn("Index");
+			ImGui::TableSetupColumn("Seq");
+			ImGui::TableSetupColumn("Label");
+			ImGui::TableSetupColumn("");
+			ImGui::TableHeadersRow();
+
+			for (i = 0; i < n; i++) {
+				char row_id[32];
+				char restore_id[24];
+
+				if (br->snapshot_get(i, &snap) != 0)
+					continue;
+				ImGui::TableNextRow();
+				ImGui::TableSetColumnIndex(0);
+				snprintf(row_id, sizeof(row_id), "%u##sn%u",
+					 snap.index, i);
+				if (ImGui::Selectable(
+					    row_id,
+					    g_branch_snap_sel == (int32_t)i,
+					    ImGuiSelectableFlags_SpanAllColumns))
+					g_branch_snap_sel = (int32_t)i;
+				ImGui::TableSetColumnIndex(1);
+				ImGui::Text("%u", snap.seq);
+				ImGui::TableSetColumnIndex(2);
+				ImGui::Text("%u", snap.label);
+				ImGui::TableSetColumnIndex(3);
+				snprintf(restore_id, sizeof(restore_id),
+					 "Restore##r%u", i);
+				if (ImGui::SmallButton(restore_id))
+					br->snapshot_restore(i);
+			}
+
+			ImGui::EndTable();
+		}
+	}
+
+	ImGui::Separator();
+
+	/* ---- Merge (declared, unimplemented in v1) ---- */
+	merge_ok = br->merge_supported() != 0;
+	ImGui::BeginDisabled(!merge_ok);
+	ImGui::SmallButton("Merge... (coming soon)");
+	ImGui::EndDisabled();
+#else
+	ImGui::TextDisabled("(branching unavailable)");
+#endif /* __EMSCRIPTEN__ */
+}
+
+/* ------------------------------------------------------------------ */
 /* Tab: KRUDD — frame stats, subsystems, log                          */
 /* ------------------------------------------------------------------ */
 
@@ -1232,6 +1401,10 @@ static void draw_board(void * /*userdata*/)
 			}
 			if (ImGui::BeginTabItem("Assets")) {
 				draw_tab_assets();
+				ImGui::EndTabItem();
+			}
+			if (ImGui::BeginTabItem("Branches")) {
+				draw_tab_branches();
 				ImGui::EndTabItem();
 			}
 			ImGui::EndTabBar();

@@ -57,10 +57,10 @@ struct vscript_port {
 struct vscript_node_type {
 	const char                *name;
 	const struct vscript_port *inputs;
-	uint32_t                   input_count;
 	const struct vscript_port *outputs;
-	uint32_t                   output_count;
 	const void                *user;
+	uint32_t                   input_count;
+	uint32_t                   output_count;
 };
 
 struct vscript_api {

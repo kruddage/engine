@@ -171,6 +171,41 @@ static const char *TRIANGLE_FRAG_SRC =
 	"	frag_color = vec4(v_color, 1.0);\n"
 	"}\n";
 
+/*
+ * Scene shader: the entity-driven pipeline the scene renderer (#172) compiles.
+ * Consumes the mesh_vertex layout (position/normal/uv0) and a std140 Camera
+ * block carrying view_proj and per-draw model. The single uniform block binds
+ * at point 0 by default, matching the renderer's slot-0 UBO binding. The
+ * fragment stage shades from the world normal (readable 3D, no lighting system).
+ */
+static const char *SCENE_VERT_SRC =
+	"#version 300 es\n"
+	"layout(location = 0) in vec3 a_pos;\n"
+	"layout(location = 1) in vec3 a_normal;\n"
+	"layout(location = 2) in vec2 a_uv0;\n"
+	"layout(std140) uniform Camera {\n"
+	"	mat4 view_proj;\n"
+	"	mat4 model;\n"
+	"};\n"
+	"out vec3 v_normal;\n"
+	"void main() {\n"
+	"	v_normal = mat3(model) * a_normal;\n"
+	"	gl_Position = view_proj * model * vec4(a_pos, 1.0);\n"
+	"}\n";
+
+static const char *SCENE_FRAG_SRC =
+	"#version 300 es\n"
+	"precision mediump float;\n"
+	"in vec3 v_normal;\n"
+	"out vec4 frag_color;\n"
+	"void main() {\n"
+	"	vec3 n = normalize(v_normal);\n"
+	"	vec3 base = 0.5 + 0.5 * n;\n"
+	"	float diff = max(dot(n, normalize(vec3(0.5, 0.8, 0.4))), 0.0);\n"
+	"	vec3 col = base * (0.35 + 0.65 * diff);\n"
+	"	frag_color = vec4(col, 1.0);\n"
+	"}\n";
+
 static int builtins_seeded;
 
 /*
@@ -226,6 +261,8 @@ static void seed_builtins(void)
 
 	seed_shader("builtin://shader/triangle.vert", TRIANGLE_VERT_SRC);
 	seed_shader("builtin://shader/triangle.frag", TRIANGLE_FRAG_SRC);
+	seed_shader("builtin://shader/scene.vert", SCENE_VERT_SRC);
+	seed_shader("builtin://shader/scene.frag", SCENE_FRAG_SRC);
 }
 
 #ifdef __EMSCRIPTEN__
@@ -573,6 +610,16 @@ static const struct asset_decl_field triangle_frag_decl[] = {
 	{ "stage",   "fragment"    },
 };
 
+static const struct asset_decl_field scene_vert_decl[] = {
+	{ "dialect", "glsl_es_300" },
+	{ "stage",   "vertex"      },
+};
+
+static const struct asset_decl_field scene_frag_decl[] = {
+	{ "dialect", "glsl_es_300" },
+	{ "stage",   "fragment"    },
+};
+
 struct builtin_desc {
 	const char                   *path;
 	const struct asset_decl_field *fields;
@@ -590,6 +637,10 @@ static const struct builtin_desc builtin_descs[] = {
 	  ARRAY_SIZE(triangle_vert_decl) },
 	{ "builtin://shader/triangle.frag", triangle_frag_decl,
 	  ARRAY_SIZE(triangle_frag_decl) },
+	{ "builtin://shader/scene.vert", scene_vert_decl,
+	  ARRAY_SIZE(scene_vert_decl) },
+	{ "builtin://shader/scene.frag", scene_frag_decl,
+	  ARRAY_SIZE(scene_frag_decl) },
 };
 
 #define BUILTIN_DESC_COUNT ARRAY_SIZE(builtin_descs)

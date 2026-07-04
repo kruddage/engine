@@ -857,6 +857,19 @@ static void draw_tab_assets(void)
 				    info.path, false,
 				    ImGuiSelectableFlags_SpanAllColumns))
 				g_asset_sel = info.id;
+			/*
+			 * Mesh rows are drag sources: the payload is the asset
+			 * id, which becomes the spawned entity's render_ref
+			 * (drag-to-spawn, #176).
+			 */
+			if (info.type == ASSET_TYPE_MESH &&
+			    ImGui::BeginDragDropSource(
+				    ImGuiDragDropFlags_None)) {
+				ImGui::SetDragDropPayload("ASSET_ID", &info.id,
+							  sizeof(info.id));
+				ImGui::Text("Spawn %s", info.path);
+				ImGui::EndDragDropSource();
+			}
 			ImGui::TableSetColumnIndex(1);
 			ImGui::TextUnformatted(asset_type_str(info.type));
 			ImGui::TableSetColumnIndex(2);
@@ -893,6 +906,19 @@ static void draw_tab_assets(void)
 				    info.path, false,
 				    ImGuiSelectableFlags_SpanAllColumns))
 				g_asset_sel = info.id;
+			/*
+			 * Mesh rows are drag sources: the payload is the asset
+			 * id, which becomes the spawned entity's render_ref
+			 * (drag-to-spawn, #176).
+			 */
+			if (info.type == ASSET_TYPE_MESH &&
+			    ImGui::BeginDragDropSource(
+				    ImGuiDragDropFlags_None)) {
+				ImGui::SetDragDropPayload("ASSET_ID", &info.id,
+							  sizeof(info.id));
+				ImGui::Text("Spawn %s", info.path);
+				ImGui::EndDragDropSource();
+			}
 			ImGui::TableSetColumnIndex(1);
 			ImGui::TextUnformatted(asset_type_str(info.type));
 			ImGui::TableSetColumnIndex(2);
@@ -2050,6 +2076,69 @@ static void draw_tab_shader_graph(void)
 	}
 }
 
+/*
+ * Spawn a dragged mesh asset as a live entity: identity transform at the
+ * origin, render_ref = the asset id (which sets COMPONENT_RENDER), then select
+ * it. Placement is fixed for v1; cursor-raycast placement needs camera unproject
+ * (#171) and is a noted follow-up. No-op if the scene api or asset is missing.
+ */
+static void spawn_asset_entity(uint32_t asset_id)
+{
+	struct transform t;
+	int32_t          id;
+
+	if (!g_entity_api || !g_entity_api->create_entity || asset_id == 0)
+		return;
+
+	memset(&t, 0, sizeof(t));
+	t.rotation[3] = 1.0f;
+	t.scale[0] = t.scale[1] = t.scale[2] = 1.0f;
+	id = g_entity_api->create_entity(WORLD_NO_PARENT, &t, 0u, asset_id);
+	if (id >= 0 && g_entity_api->set_selected)
+		g_entity_api->set_selected(id);
+}
+
+/*
+ * A viewport-sized invisible drop target for drag-to-spawn (#176). The 3D
+ * viewport is not an ImGui window, so there is no natural drop target there;
+ * this fullscreen window supplies one. It is submitted only while an ASSET_ID
+ * drag is in flight (so it never captures the mouse otherwise) and before the
+ * kruddboard overlay, so the overlay stays interactable on top.
+ */
+static void draw_spawn_drop_target(void)
+{
+	const ImGuiPayload *active = ImGui::GetDragDropPayload();
+	ImGuiViewport      *vp;
+	ImGuiWindowFlags    flags;
+
+	if (!active || !active->IsDataType("ASSET_ID"))
+		return;
+
+	vp    = ImGui::GetMainViewport();
+	flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize
+	      | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar
+	      | ImGuiWindowFlags_NoBackground
+	      | ImGuiWindowFlags_NoBringToFrontOnFocus
+	      | ImGuiWindowFlags_NoFocusOnAppearing
+	      | ImGuiWindowFlags_NoNavFocus;
+
+	ImGui::SetNextWindowPos(vp->Pos);
+	ImGui::SetNextWindowSize(vp->Size);
+	if (ImGui::Begin("##viewport_drop", nullptr, flags)) {
+		ImGui::InvisibleButton("##viewport_drop_area", vp->Size);
+		if (ImGui::BeginDragDropTarget()) {
+			const ImGuiPayload *pl =
+				ImGui::AcceptDragDropPayload("ASSET_ID");
+
+			if (pl && pl->DataSize == (int)sizeof(uint32_t))
+				spawn_asset_entity(
+					*(const uint32_t *)pl->Data);
+			ImGui::EndDragDropTarget();
+		}
+	}
+	ImGui::End();
+}
+
 static void draw_board(void * /*userdata*/)
 {
 	float            vp_w;
@@ -2060,6 +2149,9 @@ static void draw_board(void * /*userdata*/)
 
 	if (!g_visible)
 		return;
+
+	/* Behind the overlay: catches asset drops onto the viewport. */
+	draw_spawn_drop_target();
 
 	vp_w  = ImGui::GetMainViewport()->WorkSize.x;
 	vp_h  = ImGui::GetMainViewport()->WorkSize.y;

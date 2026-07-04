@@ -7,7 +7,11 @@
 #include "branch.h"
 #include "snapshot.h"
 #include "cas.h"
+#ifdef __EMSCRIPTEN__
+#include "cas_idb.h"
+#else
 #include "cas_mem.h"
+#endif
 
 #include <stddef.h>
 
@@ -190,8 +194,13 @@ int32_t branch_host_init(struct subsystem_manager *mgr,
 	if (!mem)
 		return -1;
 
+#ifdef __EMSCRIPTEN__
+	if (cas_idb_init(&g.store, mem) != 0)
+		return -1;
+#else
 	if (cas_mem_init(&g.store, mem) != 0)
 		return -1;
+#endif
 
 	branches_init(&g.branches, &g.store);
 	snapshots_init(&g.snaps);
@@ -208,7 +217,11 @@ void branch_host_shutdown(void)
 {
 	if (!g.ready)
 		return;
+#ifdef __EMSCRIPTEN__
+	cas_idb_shutdown(&g.store);
+#else
 	cas_mem_shutdown(&g.store);
+#endif
 	g.ready = 0;
 	g.mgr   = NULL;
 }
@@ -220,7 +233,14 @@ const struct branch_api *branch_host_api(void)
 
 void branch_host_tick(void)
 {
-	if (!g.ready || !g.dirty)
+	if (!g.ready)
+		return;
+#ifdef __EMSCRIPTEN__
+	/* Drain the IndexedDB blob load queue into the cas store's table; a
+	 * no-op before the async open resolves and after it fully drains. */
+	cas_idb_poll(&g.store);
+#endif
+	if (!g.dirty)
 		return;
 	if (g.debounce > 0)
 		g.debounce--;

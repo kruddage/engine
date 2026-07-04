@@ -5,15 +5,22 @@ target_include_directories(backend_record PUBLIC .
 # The branching host (#213) and the content-addressed store it owns (#214/#215/
 # #216).  These sources compile INTO the backend side module (plugins are
 # self-contained side modules — they cannot link another module's symbols), and
-# into the native branch test.  Track A swaps cas_mem.c -> cas_idb.c under
-# EMSCRIPTEN once the IndexedDB backing lands; until then the store is in-memory
-# on every target.
+# into the native branch test.  The cas backing is target-specific: EMSCRIPTEN
+# uses the IndexedDB binding (cas_idb.c), which makes branches/snapshots
+# durable across a reload; every other target (native, unit tests) keeps the
+# in-memory binding (cas_mem.c), since cas_idb.c is browser-only.
+if(EMSCRIPTEN)
+	set(CAS_BACKING_SRC ${CMAKE_SOURCE_DIR}/plugins/cas/cas_idb.c)
+else()
+	set(CAS_BACKING_SRC ${CMAKE_SOURCE_DIR}/plugins/cas/cas_mem.c)
+endif()
+
 set(BRANCH_HOST_SRCS
 	${CMAKE_CURRENT_SOURCE_DIR}/branch_host.c
 	${CMAKE_CURRENT_SOURCE_DIR}/branch_serialize.c
 	${CMAKE_CURRENT_SOURCE_DIR}/branch_ingest.c
 	${CMAKE_SOURCE_DIR}/plugins/cas/cas.c
-	${CMAKE_SOURCE_DIR}/plugins/cas/cas_mem.c
+	${CAS_BACKING_SRC}
 	${CMAKE_SOURCE_DIR}/plugins/branch/branch.c
 	${CMAKE_SOURCE_DIR}/plugins/snapshot/snapshot.c)
 set(BRANCH_HOST_INCS
@@ -75,7 +82,8 @@ if(EMSCRIPTEN)
 			${CMAKE_CURRENT_SOURCE_DIR}/branch_ingest.h
 			${CMAKE_CURRENT_SOURCE_DIR}/branch_manifest.h
 			${CMAKE_SOURCE_DIR}/plugins/cas/cas.c
-			${CMAKE_SOURCE_DIR}/plugins/cas/cas_mem.c
+			${CMAKE_SOURCE_DIR}/plugins/cas/cas_idb.c
+			${CMAKE_SOURCE_DIR}/plugins/cas/cas_idb.h
 			${CMAKE_SOURCE_DIR}/plugins/branch/branch.c
 			${CMAKE_SOURCE_DIR}/plugins/snapshot/snapshot.c
 			${CMAKE_SOURCE_DIR}/plugins/include/backend_api.h

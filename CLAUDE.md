@@ -14,7 +14,8 @@ modules/          C source modules (compiled into the main WASM module)
 plugins/          Dynamically-loaded WASM side modules
   include/        Public vtable headers (asset_api.h, entity_api.h,
                   backend_api.h, renderer.h, math_types.h, …)
-  asset/          Asset catalog — enumeration, mutation, codec registration
+  asset/          Asset catalog — enumeration, mutation, codec registration;
+                  built-in primitive geometry (primitives.c)
   backend/        Persistence seam — Local provider with IndexedDB
   entity_plugin/  Runtime entity/scene system ("scene" subsystem)
   scene_plugin/   .scene v1 binary decoder (registered as asset codec)
@@ -23,6 +24,7 @@ plugins/          Dynamically-loaded WASM side modules
   renderer_null/  Headless null renderer (used in native tests)
   renderer_webgl/ WebGL renderer (WASM only)
   frame_graph/    Frostbite-style render graph (GPU lent at execute time)
+  scene_renderer/ Draws COMPONENT_RENDER entities via the frame graph (#172)
   imgui_plugin/   ImGui debug UI shell
   kruddboard/     In-browser tabbed authoring surface + markdown parser
   hello_plugin/   Minimal example plugin
@@ -31,6 +33,7 @@ docs/             Design documentation
   backend-abstraction.md  Local provider + IndexedDB persistence design
   entity-system.md        Struct-of-arrays runtime entity system
   frame-graph.md          Render graph architecture
+  scene-renderer.md       Entity rendering through the frame graph
   scene-format.md         Binary .scene v1 file format
 
 CMakeLists.txt    Root build — emcmake cmake drives everything

@@ -5,6 +5,8 @@
 #include "scene_edit.h"
 #include "edit_api.h"
 #include "asset_codec_api.h"
+#include "backend_api.h"
+#include "branch_api.h"
 #include "memory_api.h"
 #include "stats_api.h"
 #include "subsystem_manager.h"
@@ -22,6 +24,28 @@ static const struct asset_codec_api *g_codec;
 static const struct memory_api      *g_mem;
 static const struct stats_api       *g_stats;
 static const struct edit_api        *g_edit;  /* NULL = undo unavailable */
+static struct subsystem_manager     *g_mgr;    /* for lazy backend lookup */
+static const struct branch_api      *g_branch; /* NULL = branching off */
+
+/*
+ * A recordable scene edit just landed — signal the branching host so it
+ * debounces a live-save + auto-snapshot of the active branch (#213).  The
+ * backend may register after this plugin and branching is absent on providers
+ * without it, so the branch api is resolved lazily and a NULL one is a safe
+ * no-op (undo/redo and editing still work without branching).
+ */
+static void note_scene_edit(void)
+{
+	if (!g_branch && g_mgr) {
+		const struct backend_api *be =
+			subsystem_manager_get_api(g_mgr, "backend");
+
+		if (be && (be->get_caps() & BACKEND_CAP_BRANCHING))
+			g_branch = be->branching();
+	}
+	if (g_branch)
+		g_branch->mark_dirty();
+}
 
 /* True when id names a live entity — the precondition for a recordable edit. */
 static int32_t entity_is_live(int32_t id)
@@ -119,11 +143,13 @@ static int32_t scene_create_entity(int32_t parent,
 		world_set_render_ref(&g_world, id, render_ref);
 
 	/* Only a real creation is recordable; a failed create changed nothing. */
-	if (id >= 0)
+	if (id >= 0) {
 		scene_edit_record(g_edit, g_mem, &g_world, before,
 				  "Create Entity", 0);
-	else
+		note_scene_edit();
+	} else {
 		world_snapshot_free(before, g_mem);
+	}
 	return id;
 }
 
@@ -133,9 +159,11 @@ static void scene_destroy_entity(int32_t id)
 	struct world_snapshot *before = live ? edit_before() : NULL;
 
 	world_destroy_entity(&g_world, id);
-	if (live)
+	if (live) {
 		scene_edit_record(g_edit, g_mem, &g_world, before,
 				  "Delete Entity", 0);
+		note_scene_edit();
+	}
 }
 
 static void scene_set_transform(int32_t id, const struct transform *local)
@@ -144,9 +172,11 @@ static void scene_set_transform(int32_t id, const struct transform *local)
 	struct world_snapshot *before = live ? edit_before() : NULL;
 
 	world_set_transform(&g_world, id, local);
-	if (live)
+	if (live) {
 		scene_edit_record(g_edit, g_mem, &g_world, before, "Move Entity",
 				  scene_edit_key(id, SCENE_EDIT_TRANSFORM));
+		note_scene_edit();
+	}
 }
 
 static void scene_set_name(int32_t id, const char *name)
@@ -154,12 +184,14 @@ static void scene_set_name(int32_t id, const char *name)
 	struct world_snapshot *before = edit_before();
 
 	/* Record only when the rename actually took (0), not on overflow (-1). */
-	if (world_set_name(&g_world, id, name) == 0)
+	if (world_set_name(&g_world, id, name) == 0) {
 		scene_edit_record(g_edit, g_mem, &g_world, before,
 				  "Rename Entity",
 				  scene_edit_key(id, SCENE_EDIT_NAME));
-	else
+		note_scene_edit();
+	} else {
 		world_snapshot_free(before, g_mem);
+	}
 }
 
 static int32_t scene_get_selected(void)
@@ -228,5 +260,8 @@ void entity_plugin_entry(struct subsystem_manager *mgr)
 	g_mem   = subsystem_manager_get_api(mgr, "memory");
 	g_stats = subsystem_manager_get_api(mgr, "stats");
 	g_edit  = subsystem_manager_get_api(mgr, "edit");
+	/* Kept for a lazy "backend" lookup: it may register after this plugin,
+	 * so note_scene_edit() resolves branching on first edit, not here. */
+	g_mgr   = mgr;
 	subsystem_manager_register(mgr, &scene_desc);
 }

@@ -395,6 +395,96 @@ static uint32_t node_count(vscript_graph_t g)
 	return g ? g->node_count : 0;
 }
 
+static int32_t node_id_at(vscript_graph_t g, uint32_t index)
+{
+	if (!g || index >= g->node_count)
+		return -1;
+	return g->nodes[index].id;
+}
+
+/* Drop connection slot i by compacting the tail down over it. */
+static void conn_erase(vscript_graph_t g, uint32_t i)
+{
+	uint32_t k;
+
+	for (k = i + 1; k < g->conn_count; k++)
+		g->conns[k - 1] = g->conns[k];
+	g->conn_count--;
+}
+
+static int32_t remove_node(vscript_graph_t g, int32_t id)
+{
+	uint32_t i;
+
+	if (!node_by_id(g, id))
+		return -1;
+
+	/* Drop every connection touching the node (iterate in place). */
+	i = 0;
+	while (i < g->conn_count) {
+		if (g->conns[i].from_node == id
+				|| g->conns[i].to_node == id)
+			conn_erase(g, i);
+		else
+			i++;
+	}
+
+	for (i = 0; i < g->node_count; i++) {
+		if (g->nodes[i].id != id)
+			continue;
+		for (; i + 1 < g->node_count; i++)
+			g->nodes[i] = g->nodes[i + 1];
+		g->node_count--;
+		return 0;
+	}
+	return -1;
+}
+
+static int32_t set_param(vscript_graph_t g, int32_t id, const char *param)
+{
+	struct node *n = node_by_id(g, id);
+	size_t       len;
+
+	if (!n)
+		return -1;
+	n->has_param = 0;
+	n->param[0]  = '\0';
+	if (param) {
+		len = strlen(param);
+		if (len >= VSCRIPT_PARAM_MAX)
+			return -1;
+		memcpy(n->param, param, len + 1);
+		n->has_param = 1;
+	}
+	return 0;
+}
+
+static int32_t disconnect(vscript_graph_t g, int32_t to_node, uint32_t to_port)
+{
+	uint32_t i;
+
+	if (!g)
+		return -1;
+	for (i = 0; i < g->conn_count; i++) {
+		if (g->conns[i].to_node == to_node
+				&& g->conns[i].to_port == to_port) {
+			conn_erase(g, i);
+			return 0;
+		}
+	}
+	return -1;
+}
+
+static uint32_t type_count(void)
+{
+	return g_type_count;
+}
+
+static const char *type_name_at(uint32_t index)
+{
+	return index < g_type_count ? g_types[index].name : NULL;
+}
+
 /* --- Binary .vscript codec ---------------------------------------------- */
 
 struct vscript_header {
@@ -598,6 +688,12 @@ static const struct vscript_api g_vscript_api = {
 	.port_type          = port_type,
 	.input_source       = input_source,
 	.node_count         = node_count,
+	.node_id_at         = node_id_at,
+	.remove_node        = remove_node,
+	.disconnect         = disconnect,
+	.set_param          = set_param,
+	.type_count         = type_count,
+	.type_name_at       = type_name_at,
 };
 
 const struct vscript_api *vscript_native_api(void)

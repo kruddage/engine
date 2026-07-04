@@ -133,6 +133,26 @@ struct vscript_api {
 				    uint32_t *out_port);
 	/* Number of live nodes in the graph. */
 	uint32_t    (*node_count)(vscript_graph_t g);
+	/* Node id at index [0, node_count) in insertion order; -1 if out. */
+	int32_t     (*node_id_at)(vscript_graph_t g, uint32_t index);
+
+	/* --- Editing (an editor keys on the stable node ids) ---------- */
+
+	/* Remove a node and every connection incident to it. 0 / -1. */
+	int32_t (*remove_node)(vscript_graph_t g, int32_t node);
+	/* Remove the single connection driving (to_node, to_port). 0 / -1. */
+	int32_t (*disconnect)(vscript_graph_t g, int32_t to_node,
+			      uint32_t to_port);
+	/* Replace a node's param string (NULL clears it). 0 / -1. */
+	int32_t (*set_param)(vscript_graph_t g, int32_t node,
+			     const char *param);
+
+	/* --- Registry enumeration (populate an editor's node palette) - */
+
+	/* Number of registered node types (process-wide). */
+	uint32_t    (*type_count)(void);
+	/* Name of the registered type at index, or NULL if out of range. */
+	const char *(*type_name_at)(uint32_t index);
 };
 
 #endif /* VSCRIPT_API_H */

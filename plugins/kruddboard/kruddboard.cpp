@@ -24,8 +24,12 @@ extern "C" {
 #include "stats_api.h"
 #include "imgui_api.h"
 #include "asset_api.h"
+#include "asset_codec_api.h"
 #include "entity_api.h"
 #include "edit_api.h"
+#include "vscript_api.h"
+#include "shader_graph_api.h"
+#include "memory_api.h"
 #ifdef __EMSCRIPTEN__
 #include "backend_api.h"
 #include "branch_api.h"
@@ -58,6 +62,10 @@ static const struct edit_api          *g_edit_api;  /* NULL = no history */
 #ifdef __EMSCRIPTEN__
 static const struct asset_mut_api     *g_asset_mut;
 static const struct backend_api       *g_backend;
+static const struct vscript_api       *g_vscript;
+static const struct shader_graph_api  *g_shader_graph;
+static const struct asset_codec_api   *g_codec;
+static const struct memory_api        *g_mem;
 #endif
 
 /* ------------------------------------------------------------------ */
@@ -278,6 +286,7 @@ static const char *asset_type_str(int32_t t)
 	case ASSET_TYPE_FONT:     return "Font";
 	case ASSET_TYPE_SCENE:    return "Scene";
 	case ASSET_TYPE_TEXT:     return "Text";
+	case ASSET_TYPE_VSCRIPT:  return "Visual Script";
 	default:                  return "Unknown";
 	}
 }
@@ -1344,6 +1353,703 @@ static void draw_undo_redo(void)
 	}
 }
 
+/* ------------------------------------------------------------------ */
+/* Shader Graph tab — hand-rolled node canvas over ImDrawList          */
+/* ------------------------------------------------------------------ */
+
+/* Canvas geometry, in graph (world) units before pan/zoom. */
+#define SG_NODE_W    148.0f
+#define SG_TITLE_H    24.0f
+#define SG_PIN_SP     20.0f
+#define SG_PIN_R       5.0f
+#define SG_POS_MAX   128
+
+struct sg_pos { int32_t id; float x; float y; };
+
+static vscript_graph_t g_sg_graph;           /* live document (NULL = none) */
+static uint32_t        g_sg_asset;           /* source .vscript id (0=new)  */
+static uint32_t        g_sg_shader;          /* last compiled shader id (0) */
+static int32_t         g_sg_sel = -1;        /* selected node id (-1)       */
+static int32_t         g_sg_link_from = -1;  /* pending-link source node    */
+static uint32_t        g_sg_link_port;       /* pending-link output port    */
+static int32_t         g_sg_drag = -1;       /* node being dragged (-1)     */
+static int             g_sg_add_sel;         /* palette combo index         */
+static float           g_sg_zoom = 1.0f;
+static char            g_sg_name[96] = "untitled";
+static char            g_sg_status[160];
+static ImVec2          g_sg_pan;
+static ImVec2          g_sg_origin;          /* canvas top-left this frame  */
+static ImVec2          g_sg_canvas_sz;
+static struct sg_pos   g_sg_positions[SG_POS_MAX];
+static uint32_t        g_sg_npos;
+
+static void sg_status(const char *s)
+{
+	snprintf(g_sg_status, sizeof(g_sg_status), "%s", s);
+}
+
+static void sg_pos_set(int32_t id, float x, float y)
+{
+	uint32_t i;
+
+	for (i = 0; i < g_sg_npos; i++) {
+		if (g_sg_positions[i].id == id) {
+			g_sg_positions[i].x = x;
+			g_sg_positions[i].y = y;
+			return;
+		}
+	}
+	if (g_sg_npos < SG_POS_MAX) {
+		g_sg_positions[g_sg_npos].id = id;
+		g_sg_positions[g_sg_npos].x  = x;
+		g_sg_positions[g_sg_npos].y  = y;
+		g_sg_npos++;
+	}
+}
+
+static void sg_pos_get(int32_t id, float *x, float *y)
+{
+	uint32_t i;
+
+	for (i = 0; i < g_sg_npos; i++) {
+		if (g_sg_positions[i].id == id) {
+			*x = g_sg_positions[i].x;
+			*y = g_sg_positions[i].y;
+			return;
+		}
+	}
+	*x = 40.0f;
+	*y = 40.0f;
+}
+
+static ImVec2 sg_screen(float wx, float wy)
+{
+	return ImVec2(g_sg_origin.x + g_sg_pan.x + wx * g_sg_zoom,
+		      g_sg_origin.y + g_sg_pan.y + wy * g_sg_zoom);
+}
+
+static float sg_node_h(int32_t id)
+{
+	uint32_t nin  = g_vscript->node_input_count(g_sg_graph, id);
+	uint32_t nout = g_vscript->node_output_count(g_sg_graph, id);
+	uint32_t rows = nin > nout ? nin : nout;
+
+	if (rows == 0)
+		rows = 1;
+	return SG_TITLE_H + (float)rows * SG_PIN_SP + 6.0f;
+}
+
+static ImVec2 sg_in_pin(int32_t id, uint32_t port)
+{
+	float x, y;
+
+	sg_pos_get(id, &x, &y);
+	return sg_screen(x, y + SG_TITLE_H + SG_PIN_SP * ((float)port + 0.5f));
+}
+
+static ImVec2 sg_out_pin(int32_t id, uint32_t port)
+{
+	float x, y;
+
+	sg_pos_get(id, &x, &y);
+	return sg_screen(x + SG_NODE_W,
+			 y + SG_TITLE_H + SG_PIN_SP * ((float)port + 0.5f));
+}
+
+static bool sg_near(ImVec2 a, ImVec2 b, float r)
+{
+	float dx = a.x - b.x;
+	float dy = a.y - b.y;
+
+	return dx * dx + dy * dy <= r * r;
+}
+
+/* Topmost node whose body contains screen point p, or -1. */
+static int32_t sg_node_at(ImVec2 p)
+{
+	uint32_t n = g_vscript->node_count(g_sg_graph);
+	int32_t  hit = -1;
+	uint32_t i;
+
+	for (i = 0; i < n; i++) {
+		int32_t id = g_vscript->node_id_at(g_sg_graph, i);
+		float   x, y;
+		ImVec2  a, b;
+
+		sg_pos_get(id, &x, &y);
+		a = sg_screen(x, y);
+		b = sg_screen(x + SG_NODE_W, y + sg_node_h(id));
+		if (p.x >= a.x && p.x <= b.x && p.y >= a.y && p.y <= b.y)
+			hit = id;
+	}
+	return hit;
+}
+
+static bool sg_out_pin_at(ImVec2 p, int32_t *node, uint32_t *port)
+{
+	uint32_t n = g_vscript->node_count(g_sg_graph);
+	float    r = SG_PIN_R * g_sg_zoom + 5.0f;
+	uint32_t i, j;
+
+	for (i = 0; i < n; i++) {
+		int32_t  id = g_vscript->node_id_at(g_sg_graph, i);
+		uint32_t no = g_vscript->node_output_count(g_sg_graph, id);
+
+		for (j = 0; j < no; j++) {
+			if (sg_near(p, sg_out_pin(id, j), r)) {
+				*node = id;
+				*port = j;
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+static bool sg_in_pin_at(ImVec2 p, int32_t *node, uint32_t *port)
+{
+	uint32_t n = g_vscript->node_count(g_sg_graph);
+	float    r = SG_PIN_R * g_sg_zoom + 5.0f;
+	uint32_t i, j;
+
+	for (i = 0; i < n; i++) {
+		int32_t  id = g_vscript->node_id_at(g_sg_graph, i);
+		uint32_t ni = g_vscript->node_input_count(g_sg_graph, id);
+
+		for (j = 0; j < ni; j++) {
+			if (sg_near(p, sg_in_pin(id, j), r)) {
+				*node = id;
+				*port = j;
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+static void sg_try_connect(int32_t from, uint32_t fport, int32_t to,
+			   uint32_t tport)
+{
+	if (from == to) {
+		sg_status("cannot wire a node to itself");
+		return;
+	}
+	if (g_vscript->connect(g_sg_graph, from, fport, to, tport) != 0) {
+		sg_status("rejected: type mismatch or input already driven");
+		return;
+	}
+	if (g_vscript->validate(g_sg_graph) != 0) {
+		g_vscript->disconnect(g_sg_graph, to, tport);
+		sg_status("rejected: would create a cycle");
+		return;
+	}
+	sg_status("connected");
+}
+
+static void sg_new(void)
+{
+	int32_t o;
+
+	if (!g_vscript)
+		return;
+	if (g_sg_graph)
+		g_vscript->destroy(g_sg_graph);
+	g_sg_graph     = g_vscript->create(VSCRIPT_TARGET_SHADER);
+	g_sg_npos      = 0;
+	g_sg_sel       = -1;
+	g_sg_asset     = 0;
+	g_sg_shader    = 0;
+	g_sg_link_from = -1;
+	g_sg_drag      = -1;
+	snprintf(g_sg_name, sizeof(g_sg_name), "%s", "untitled");
+	o = g_vscript->add_node(g_sg_graph, "output", nullptr);
+	sg_pos_set(o, 320.0f, 140.0f);
+	sg_status("new graph — add nodes, wire into Output, Compile");
+}
+
+static void sg_add_selected(void)
+{
+	const char *type;
+	int32_t     id;
+	float       wx, wy;
+
+	if (!g_sg_graph)
+		return;
+	type = g_vscript->type_name_at((uint32_t)g_sg_add_sel);
+	if (!type)
+		return;
+	id = g_vscript->add_node(g_sg_graph, type, "");
+	if (id < 1) {
+		sg_status("add failed (graph full?)");
+		return;
+	}
+	wx = (g_sg_canvas_sz.x * 0.5f - g_sg_pan.x) / g_sg_zoom;
+	wy = (g_sg_canvas_sz.y * 0.5f - g_sg_pan.y) / g_sg_zoom;
+	sg_pos_set(id, wx, wy);
+	g_sg_sel = id;
+}
+
+static void sg_compile(void)
+{
+	char     path[128];
+	uint32_t sid;
+
+	if (!g_sg_graph || !g_shader_graph) {
+		sg_status("no shader_graph service");
+		return;
+	}
+	/* Recompiling reuses the derived path, so drop the previous asset. */
+	if (g_sg_shader && g_asset_mut) {
+		g_asset_mut->destroy(g_sg_shader);
+		if (g_backend &&
+		    (g_backend->get_caps() & BACKEND_CAP_PROJECT_PERSIST))
+			g_backend->delete_asset(g_sg_shader);
+		g_sg_shader = 0;
+	}
+	snprintf(path, sizeof(path), "%s.frag", g_sg_name);
+	sid = g_shader_graph->compile(g_sg_graph, path);
+	if (!sid) {
+		sg_status("compile failed: need one Output, all inputs wired");
+		return;
+	}
+	g_sg_shader = sid;
+	if (g_backend &&
+	    (g_backend->get_caps() & BACKEND_CAP_PROJECT_PERSIST)) {
+		uint32_t    sz  = 0;
+		const void *src = g_asset_api->get_data(sid, &sz);
+
+		if (src)
+			g_backend->persist_asset(sid, path,
+						 ASSET_TYPE_SHADER, src, sz);
+	}
+	snprintf(g_sg_status, sizeof(g_sg_status), "compiled -> %s", path);
+}
+
+static void sg_save(void)
+{
+	struct asset_decl_field decl[1];
+	char     path[128];
+	void    *bytes;
+	uint32_t sz = 0;
+
+	if (!g_sg_graph || !g_codec || !g_asset_mut) {
+		sg_status("save unavailable");
+		return;
+	}
+	bytes = g_codec->encode("vscript", g_sg_graph, &sz);
+	if (!bytes) {
+		sg_status("encode failed");
+		return;
+	}
+	snprintf(path, sizeof(path), "%s.vscript", g_sg_name);
+	decl[0].key   = "target";
+	decl[0].value = "shader";
+
+	if (g_sg_asset == 0) {
+		uint32_t id = g_asset_mut->create(path, ASSET_TYPE_VSCRIPT,
+						  bytes, sz);
+		if (id) {
+			if (g_asset_mut->set_decl)
+				g_asset_mut->set_decl(id, decl, 1);
+			g_sg_asset = id;
+		}
+	} else {
+		g_asset_mut->set_data(g_sg_asset, bytes, sz);
+		if (g_asset_mut->set_decl)
+			g_asset_mut->set_decl(g_sg_asset, decl, 1);
+	}
+	if (g_sg_asset && g_backend &&
+	    (g_backend->get_caps() & BACKEND_CAP_PROJECT_PERSIST))
+		g_backend->persist_asset(g_sg_asset, path,
+					 ASSET_TYPE_VSCRIPT, bytes, sz);
+	if (g_mem)
+		g_mem->free(bytes);
+	snprintf(g_sg_status, sizeof(g_sg_status), "saved -> %s", path);
+}
+
+/* Lay opened graphs out left-to-right by longest-path depth. */
+static void sg_auto_layout(void)
+{
+	int32_t order[SG_POS_MAX];
+	int32_t level[SG_POS_MAX];
+	int32_t rowcount[SG_POS_MAX];
+	int32_t n, i, k;
+
+	if (!g_sg_graph)
+		return;
+	n = g_vscript->topo_order(g_sg_graph, order, SG_POS_MAX);
+	if (n < 0) {
+		uint32_t c = g_vscript->node_count(g_sg_graph);
+		uint32_t i2;
+
+		for (i2 = 0; i2 < c; i2++)
+			sg_pos_set(g_vscript->node_id_at(g_sg_graph, i2),
+				   40.0f + (float)(i2 % 4) * 170.0f,
+				   40.0f + (float)(i2 / 4) * 110.0f);
+		return;
+	}
+	for (i = 0; i < n; i++) {
+		level[i]    = 0;
+		rowcount[i] = 0;
+	}
+	for (i = 0; i < n; i++) {
+		int32_t  id = order[i];
+		uint32_t ni = g_vscript->node_input_count(g_sg_graph, id);
+		uint32_t p;
+
+		for (p = 0; p < ni; p++) {
+			int32_t src;
+
+			if (g_vscript->input_source(g_sg_graph, id, p,
+						    &src, nullptr) != 0)
+				continue;
+			for (k = 0; k < n; k++) {
+				if (order[k] == src && level[k] + 1 > level[i])
+					level[i] = level[k] + 1;
+			}
+		}
+	}
+	for (i = 0; i < n; i++) {
+		int32_t lv = level[i];
+
+		sg_pos_set(order[i], 40.0f + (float)lv * 180.0f,
+			   40.0f + (float)rowcount[lv] * 96.0f);
+		rowcount[lv]++;
+	}
+}
+
+static void sg_open(uint32_t asset_id)
+{
+	struct asset_info info;
+	const void       *bytes;
+	uint32_t          sz = 0;
+	vscript_graph_t   g;
+	const char       *base;
+	char             *dot;
+
+	if (!g_codec || !g_asset_api)
+		return;
+	if (g_asset_api->find(asset_id, &info) != 0)
+		return;
+	bytes = g_asset_api->get_data(asset_id, &sz);
+	if (!bytes) {
+		sg_status("open: no data");
+		return;
+	}
+	g = (vscript_graph_t)g_codec->decode_bytes("vscript", bytes, sz);
+	if (!g) {
+		sg_status("open: decode failed");
+		return;
+	}
+	if (g_vscript->require_target(g, VSCRIPT_TARGET_SHADER) != 0) {
+		g_vscript->destroy(g);
+		sg_status("open: not a shader graph");
+		return;
+	}
+	if (g_sg_graph)
+		g_vscript->destroy(g_sg_graph);
+	g_sg_graph  = g;
+	g_sg_asset  = asset_id;
+	g_sg_shader = 0;
+	g_sg_sel    = -1;
+	g_sg_npos   = 0;
+	base = strrchr(info.path, '/');
+	base = base ? base + 1 : info.path;
+	snprintf(g_sg_name, sizeof(g_sg_name), "%s", base);
+	dot = strrchr(g_sg_name, '.');
+	if (dot)
+		*dot = '\0';
+	sg_auto_layout();
+	snprintf(g_sg_status, sizeof(g_sg_status), "opened %s", info.path);
+}
+
+/* True if catalog entry idx declares target=shader (cheap decl filter). */
+static bool sg_is_shader_target(uint32_t idx)
+{
+	struct asset_decl_field f[8];
+	uint32_t                m, k;
+
+	m = g_asset_api->describe(idx, f, 8);
+	for (k = 0; k < m; k++) {
+		if (strcmp(f[k].key, "target") == 0)
+			return strcmp(f[k].value, "shader") == 0;
+	}
+	return false;
+}
+
+static void draw_sg_open_list(void)
+{
+	uint32_t n, i;
+	int      any = 0;
+
+	if (!g_asset_api)
+		return;
+	n = g_asset_api->count();
+	for (i = 0; i < n; i++) {
+		struct asset_info info;
+		char              label[192];
+
+		if (g_asset_api->info(i, &info) != 0)
+			continue;
+		if (info.type != ASSET_TYPE_VSCRIPT || info.read_only)
+			continue;
+		if (!sg_is_shader_target(i))
+			continue;
+		any = 1;
+		snprintf(label, sizeof(label), "Open  %s", info.path);
+		if (ImGui::Button(label))
+			sg_open(info.id);
+	}
+	if (!any)
+		ImGui::TextDisabled("(no saved shader graphs)");
+}
+
+static void draw_tab_shader_graph(void)
+{
+	ImDrawList *dl;
+	ImVec2      canvas_p1;
+	ImGuiIO    &io = ImGui::GetIO();
+	uint32_t    n, i, j;
+	bool        hovered;
+
+	if (!g_vscript) {
+		ImGui::TextDisabled("vscript service unavailable");
+		return;
+	}
+
+	/* Toolbar. */
+	if (ImGui::Button("New"))
+		sg_new();
+	if (g_sg_graph) {
+		ImGui::SameLine();
+		if (ImGui::Button("Compile"))
+			sg_compile();
+		ImGui::SameLine();
+		{
+			bool can_persist = g_backend &&
+				(g_backend->get_caps() &
+				 BACKEND_CAP_PROJECT_PERSIST);
+
+			if (can_persist) {
+				if (ImGui::Button("Save"))
+					sg_save();
+			} else {
+				ImGui::BeginDisabled();
+				ImGui::Button("Save");
+				ImGui::EndDisabled();
+			}
+		}
+		ImGui::SameLine();
+		ImGui::SetNextItemWidth(140.0f);
+		ImGui::InputText("name", g_sg_name, sizeof(g_sg_name));
+	}
+
+	if (g_sg_status[0])
+		ImGui::TextDisabled("%s", g_sg_status);
+
+	if (!g_sg_graph) {
+		ImGui::TextDisabled("New starts a shader graph. Or open one:");
+		draw_sg_open_list();
+		return;
+	}
+
+	/* Node palette. */
+	{
+		const char *names[64];
+		uint32_t    tc = g_vscript->type_count();
+
+		if (tc > 64)
+			tc = 64;
+		for (i = 0; i < tc; i++)
+			names[i] = g_vscript->type_name_at(i);
+		if (g_sg_add_sel >= (int)tc)
+			g_sg_add_sel = 0;
+		ImGui::SetNextItemWidth(160.0f);
+		ImGui::Combo("##addtype", &g_sg_add_sel, names, (int)tc);
+		ImGui::SameLine();
+		if (ImGui::Button("Add Node"))
+			sg_add_selected();
+		ImGui::SameLine();
+		ImGui::TextDisabled(
+			"drag out->in to wire | click in-pin to unwire | "
+			"right-drag pan | wheel zoom");
+	}
+
+	if (ImGui::CollapsingHeader("Open saved graph"))
+		draw_sg_open_list();
+
+	/* Inspector for the selected node. */
+	if (g_sg_sel >= 0) {
+		const char *tn = g_vscript->node_type_name(g_sg_graph,
+							   g_sg_sel);
+
+		if (!tn) {
+			g_sg_sel = -1;
+		} else {
+			const char *pv = g_vscript->node_param(g_sg_graph,
+							       g_sg_sel);
+			char        pbuf[64];
+
+			snprintf(pbuf, sizeof(pbuf), "%s", pv ? pv : "");
+			ImGui::Text("Node %d: %s", g_sg_sel, tn);
+			ImGui::SameLine();
+			ImGui::SetNextItemWidth(160.0f);
+			if (ImGui::InputText("param", pbuf, sizeof(pbuf)))
+				g_vscript->set_param(g_sg_graph, g_sg_sel,
+						     pbuf);
+			ImGui::SameLine();
+			if (ImGui::Button("Delete Node")) {
+				g_vscript->remove_node(g_sg_graph, g_sg_sel);
+				g_sg_sel = -1;
+			}
+		}
+	}
+
+	/* Canvas. */
+	g_sg_canvas_sz   = ImGui::GetContentRegionAvail();
+	if (g_sg_canvas_sz.x < 320.0f)
+		g_sg_canvas_sz.x = 320.0f;
+	g_sg_canvas_sz.y = 440.0f;
+	g_sg_origin      = ImGui::GetCursorScreenPos();
+	canvas_p1 = ImVec2(g_sg_origin.x + g_sg_canvas_sz.x,
+			   g_sg_origin.y + g_sg_canvas_sz.y);
+
+	ImGui::InvisibleButton("sg_canvas", g_sg_canvas_sz,
+			       ImGuiButtonFlags_MouseButtonLeft |
+			       ImGuiButtonFlags_MouseButtonRight);
+	hovered = ImGui::IsItemHovered();
+
+	dl = ImGui::GetWindowDrawList();
+	dl->PushClipRect(g_sg_origin, canvas_p1, true);
+	dl->AddRectFilled(g_sg_origin, canvas_p1, IM_COL32(24, 24, 28, 255));
+	dl->AddRect(g_sg_origin, canvas_p1, IM_COL32(60, 60, 68, 255));
+
+	if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
+		g_sg_pan.x += io.MouseDelta.x;
+		g_sg_pan.y += io.MouseDelta.y;
+	}
+	if (hovered && io.MouseWheel != 0.0f) {
+		g_sg_zoom *= (io.MouseWheel > 0.0f) ? 1.1f : 0.9f;
+		if (g_sg_zoom < 0.4f)
+			g_sg_zoom = 0.4f;
+		if (g_sg_zoom > 2.5f)
+			g_sg_zoom = 2.5f;
+	}
+
+	n = g_vscript->node_count(g_sg_graph);
+
+	/* Links behind nodes. */
+	for (i = 0; i < n; i++) {
+		int32_t  id = g_vscript->node_id_at(g_sg_graph, i);
+		uint32_t ni = g_vscript->node_input_count(g_sg_graph, id);
+
+		for (j = 0; j < ni; j++) {
+			int32_t  src;
+			uint32_t sport;
+			ImVec2   a, b;
+			float    dx;
+
+			if (g_vscript->input_source(g_sg_graph, id, j,
+						    &src, &sport) != 0)
+				continue;
+			a  = sg_out_pin(src, sport);
+			b  = sg_in_pin(id, j);
+			dx = (b.x - a.x) * 0.5f;
+			if (dx < 20.0f)
+				dx = 20.0f;
+			dl->AddBezierCubic(a, ImVec2(a.x + dx, a.y),
+					   ImVec2(b.x - dx, b.y), b,
+					   IM_COL32(180, 180, 90, 255), 2.0f);
+		}
+	}
+
+	if (g_sg_link_from >= 0) {
+		ImVec2 a  = sg_out_pin(g_sg_link_from, g_sg_link_port);
+		ImVec2 b  = io.MousePos;
+		float  dx = (b.x - a.x) * 0.5f;
+
+		if (dx < 20.0f)
+			dx = 20.0f;
+		dl->AddBezierCubic(a, ImVec2(a.x + dx, a.y),
+				   ImVec2(b.x - dx, b.y), b,
+				   IM_COL32(240, 240, 140, 255), 2.0f);
+	}
+
+	/* Nodes. */
+	for (i = 0; i < n; i++) {
+		int32_t     id = g_vscript->node_id_at(g_sg_graph, i);
+		const char *tn = g_vscript->node_type_name(g_sg_graph, id);
+		uint32_t    ni = g_vscript->node_input_count(g_sg_graph, id);
+		uint32_t    no = g_vscript->node_output_count(g_sg_graph, id);
+		float       x, y;
+		ImVec2      a, b, tp;
+
+		sg_pos_get(id, &x, &y);
+		a = sg_screen(x, y);
+		b = sg_screen(x + SG_NODE_W, y + sg_node_h(id));
+
+		dl->AddRectFilled(a, b, IM_COL32(44, 46, 54, 240), 5.0f);
+		dl->AddRectFilled(a, ImVec2(b.x, a.y + SG_TITLE_H * g_sg_zoom),
+				  IM_COL32(70, 74, 92, 255), 5.0f);
+		dl->AddRect(a, b,
+			    id == g_sg_sel ? IM_COL32(250, 220, 120, 255)
+					   : IM_COL32(90, 92, 104, 255),
+			    5.0f, 0, id == g_sg_sel ? 2.0f : 1.0f);
+		tp = ImVec2(a.x + 6.0f, a.y + 4.0f);
+		dl->AddText(tp, IM_COL32(235, 235, 240, 255), tn ? tn : "?");
+
+		for (j = 0; j < ni; j++)
+			dl->AddCircleFilled(sg_in_pin(id, j), SG_PIN_R,
+					    IM_COL32(120, 200, 120, 255));
+		for (j = 0; j < no; j++)
+			dl->AddCircleFilled(sg_out_pin(id, j), SG_PIN_R,
+					    IM_COL32(210, 160, 90, 255));
+	}
+
+	dl->PopClipRect();
+
+	/* Interaction. */
+	if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+		int32_t  pn;
+		uint32_t pp;
+
+		if (sg_out_pin_at(io.MousePos, &pn, &pp)) {
+			g_sg_link_from = pn;
+			g_sg_link_port = pp;
+		} else if (sg_in_pin_at(io.MousePos, &pn, &pp)) {
+			if (g_vscript->disconnect(g_sg_graph, pn, pp) == 0)
+				sg_status("unwired");
+		} else {
+			int32_t nid = sg_node_at(io.MousePos);
+
+			g_sg_sel  = nid;
+			g_sg_drag = nid;
+		}
+	}
+
+	if (g_sg_drag >= 0 && g_sg_link_from < 0 &&
+	    ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+		float x, y;
+
+		sg_pos_get(g_sg_drag, &x, &y);
+		sg_pos_set(g_sg_drag, x + io.MouseDelta.x / g_sg_zoom,
+			   y + io.MouseDelta.y / g_sg_zoom);
+	}
+
+	if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+		if (g_sg_link_from >= 0) {
+			int32_t  tn2;
+			uint32_t tp2;
+
+			if (sg_in_pin_at(io.MousePos, &tn2, &tp2))
+				sg_try_connect(g_sg_link_from, g_sg_link_port,
+					       tn2, tp2);
+			g_sg_link_from = -1;
+		}
+		g_sg_drag = -1;
+	}
+}
+
 static void draw_board(void * /*userdata*/)
 {
 	float            vp_w;
@@ -1401,6 +2107,10 @@ static void draw_board(void * /*userdata*/)
 			}
 			if (ImGui::BeginTabItem("Assets")) {
 				draw_tab_assets();
+				ImGui::EndTabItem();
+			}
+			if (ImGui::BeginTabItem("Shader Graph")) {
+				draw_tab_shader_graph();
 				ImGui::EndTabItem();
 			}
 			if (ImGui::BeginTabItem("Branches")) {
@@ -1485,6 +2195,14 @@ extern "C" void kruddboard_entry(struct subsystem_manager *mgr)
 		subsystem_manager_get_api(mgr, "scene");
 	g_edit_api   = (const struct edit_api *)
 		subsystem_manager_get_api(mgr, "edit");
+	g_vscript    = (const struct vscript_api *)
+		subsystem_manager_get_api(mgr, "vscript");
+	g_shader_graph = (const struct shader_graph_api *)
+		subsystem_manager_get_api(mgr, "shader_graph");
+	g_codec      = (const struct asset_codec_api *)
+		subsystem_manager_get_api(mgr, "asset_codec");
+	g_mem        = (const struct memory_api *)
+		subsystem_manager_get_api(mgr, "memory");
 	g_mgr        = mgr;
 #endif
 

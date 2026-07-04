@@ -58,6 +58,7 @@ struct asset_entry {
 struct codec_entry {
 	char  ext[16];
 	void *(*decode)(const void *bytes, uint32_t size);
+	void *(*encode)(const void *typed, uint32_t *out_size);
 };
 
 static struct asset_entry cache[ASSET_CACHE_MAX];
@@ -365,16 +366,75 @@ void asset_release(const char *path)
 		evict_entry(e);
 }
 
+/* Find the codec slot for ext, or NULL. */
+static struct codec_entry *find_codec(const char *ext)
+{
+	int32_t i;
+
+	for (i = 0; i < codec_count; i++) {
+		if (strncmp(codec_table[i].ext, ext,
+			    sizeof(codec_table[0].ext) - 1) == 0)
+			return &codec_table[i];
+	}
+	return NULL;
+}
+
+/* Find the codec slot for ext, appending a fresh one if absent (or NULL if
+ * the table is full).  Both register_codec and register_encoder attach to the
+ * same slot, so one codec can hold both directions. */
+static struct codec_entry *find_or_add_codec(const char *ext)
+{
+	struct codec_entry *e = find_codec(ext);
+
+	if (e)
+		return e;
+	if (codec_count >= CODEC_TABLE_MAX)
+		return NULL;
+	e = &codec_table[codec_count++];
+	strncpy(e->ext, ext, sizeof(e->ext) - 1);
+	e->ext[sizeof(e->ext) - 1] = '\0';
+	e->decode = NULL;
+	e->encode = NULL;
+	return e;
+}
+
 void asset_codec_register(const char *ext,
 			  void *(*decode)(const void *bytes, uint32_t size))
 {
-	if (codec_count >= CODEC_TABLE_MAX)
-		return;
-	strncpy(codec_table[codec_count].ext, ext,
-		sizeof(codec_table[0].ext) - 1);
-	codec_table[codec_count].ext[sizeof(codec_table[0].ext) - 1] = '\0';
-	codec_table[codec_count].decode = decode;
-	codec_count++;
+	struct codec_entry *e = find_or_add_codec(ext);
+
+	if (e)
+		e->decode = decode;
+}
+
+void asset_codec_register_encoder(const char *ext,
+				  void *(*encode)(const void *typed,
+						  uint32_t *out_size))
+{
+	struct codec_entry *e = find_or_add_codec(ext);
+
+	if (e)
+		e->encode = encode;
+}
+
+void *asset_codec_decode_bytes(const char *ext, const void *bytes,
+			       uint32_t size)
+{
+	struct codec_entry *e = find_codec(ext);
+
+	if (!e || !e->decode)
+		return NULL;
+	return e->decode(bytes, size);
+}
+
+void *asset_codec_encode(const char *ext, const void *typed,
+			 uint32_t *out_size)
+{
+	struct codec_entry *e = find_codec(ext);
+
+	if (!e || !e->encode)
+		return NULL;
+	return e->encode(typed, out_size);
 }
 
 void *asset_codec_get_typed(const char *path)
@@ -757,8 +817,11 @@ static const struct asset_api catalog_api = {
 };
 
 static const struct asset_codec_api codec_api = {
-	.register_codec = asset_codec_register,
-	.get_typed      = asset_codec_get_typed,
+	.register_codec   = asset_codec_register,
+	.get_typed        = asset_codec_get_typed,
+	.register_encoder = asset_codec_register_encoder,
+	.decode_bytes     = asset_codec_decode_bytes,
+	.encode           = asset_codec_encode,
 };
 
 static const struct asset_mut_api mut_api = {

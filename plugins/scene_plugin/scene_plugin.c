@@ -141,6 +141,12 @@ void *scene_encode(const struct scene *s, uint32_t *out_size)
 	return buf;
 }
 
+/* Adapter matching the codec encoder signature (typed -> bytes). */
+static void *scene_encode_typed(const void *typed, uint32_t *out_size)
+{
+	return scene_encode((const struct scene *)typed, out_size);
+}
+
 #ifdef __EMSCRIPTEN__
 void plugin_entry(struct subsystem_manager *mgr)
 #else
@@ -153,6 +159,8 @@ void scene_plugin_entry(struct subsystem_manager *mgr)
 	g_mem = subsystem_manager_get_api(mgr, "memory");
 #endif
 	codec = subsystem_manager_get_api(mgr, "asset_codec");
-	if (codec)
+	if (codec) {
 		codec->register_codec("scene", scene_decode);
+		codec->register_encoder("scene", scene_encode_typed);
+	}
 }

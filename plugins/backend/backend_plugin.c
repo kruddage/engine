@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "backend_record.h"
 #include "backend_api.h"
+#include "branch_api.h"
+#include "branch_host.h"
 #include "asset_api.h"
 #include "log_api.h"
 #include "memory_api.h"
@@ -140,7 +142,17 @@ static void backend_poll(void *ctx)
 
 static uint32_t backend_get_caps(void)
 {
-	return backend_record_get_caps();
+	uint32_t caps = backend_record_get_caps();
+
+	/* Branching is live iff the host stood up (Local provider, v1). */
+	if (branch_host_api())
+		caps |= BACKEND_CAP_BRANCHING;
+	return caps;
+}
+
+static const struct branch_api *backend_branching(void)
+{
+	return branch_host_api();
 }
 
 static int32_t backend_persist_asset(uint32_t id, const char *path,
@@ -181,7 +193,17 @@ static const struct backend_api g_backend_api = {
 	.get_caps      = backend_get_caps,
 	.persist_asset = backend_persist_asset,
 	.delete_asset  = backend_delete_asset,
+	.branching     = backend_branching,
 };
+
+/*
+ * Per-frame tick: drive the branching host's debounce clock so a burst of edits
+ * coalesces into one manifest advance + auto-snapshot on quiescence.
+ */
+static void backend_tick(void)
+{
+	branch_host_tick();
+}
 
 /* ------------------------------------------------------------------ */
 /* Subsystem lifecycle                                                 */
@@ -205,6 +227,7 @@ static void backend_async_init(void (*done)(void *ctx), void *ctx)
 
 static void backend_shutdown(void)
 {
+	branch_host_shutdown();
 	g_log->write(LOG_LEVEL_INFO, "backend: shutdown");
 }
 
@@ -212,7 +235,7 @@ static const struct async_subsystem desc = {
 	.name       = "backend",
 	.api        = &g_backend_api,
 	.async_init = backend_async_init,
-	.tick       = NULL,
+	.tick       = backend_tick,
 	.shutdown   = backend_shutdown,
 };
 
@@ -231,5 +254,15 @@ void backend_plugin_entry(struct subsystem_manager *mgr)
 	g_mem = subsystem_manager_get_api(mgr, "memory");
 #endif
 	g_mgr = mgr;
+
+	/*
+	 * Stand up the branching host (#213) over the in-memory store.  This
+	 * lights BACKEND_CAP_BRANCHING; if memory is unavailable it stays clear
+	 * and branching() returns NULL, so consumers degrade safely.
+	 */
+	if (branch_host_init(mgr, subsystem_manager_get_api(mgr, "memory")) != 0)
+		g_log->write(LOG_LEVEL_WARN,
+			     "backend: branching host unavailable");
+
 	subsystem_manager_register_async(mgr, &desc);
 }

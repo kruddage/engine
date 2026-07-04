@@ -20,6 +20,33 @@ struct asset_codec_api {
 	 * the asset is not yet loaded.  Caller owns the returned pointer.
 	 */
 	void *(*get_typed)(const char *path);
+
+	/*
+	 * Register an encoder (the inverse of a decoder) for an extension.
+	 * `encode` serializes a typed object back to a freshly allocated byte
+	 * buffer, writing its size to *out_size; the caller owns the buffer.
+	 * Attaches to the same ext slot as register_codec, so one codec holds
+	 * both directions.  Added for content-addressing (#214/#235): the
+	 * branching runtime encodes the live scene to canonical bytes to hash it.
+	 */
+	void  (*register_encoder)(const char *ext,
+				  void *(*encode)(const void *typed,
+						  uint32_t *out_size));
+
+	/*
+	 * Decode a raw byte range with the codec registered for `ext`, bypassing
+	 * the asset lookup that get_typed does — used to rehydrate content
+	 * addressed by hash rather than by path.  Returns NULL if no decoder is
+	 * registered for ext.  Caller owns the returned pointer.
+	 */
+	void *(*decode_bytes)(const char *ext, const void *bytes, uint32_t size);
+
+	/*
+	 * Encode a typed object to bytes with the encoder registered for `ext`.
+	 * Writes the size to *out_size.  Returns NULL if no encoder is registered
+	 * for ext.  Caller owns the returned buffer.
+	 */
+	void *(*encode)(const char *ext, const void *typed, uint32_t *out_size);
 };
 
 #endif /* ASSET_CODEC_API_H */

@@ -561,6 +561,8 @@ EMSCRIPTEN_KEEPALIVE void *gl_abi_refs[] = {
 	(void *)glEnable,
 	(void *)glDisable,
 	(void *)glIsEnabled,
+	(void *)glDepthFunc,
+	(void *)glDepthMask,
 	(void *)glGetIntegerv,
 	(void *)glBlendEquation,
 	(void *)glBlendEquationSeparate,

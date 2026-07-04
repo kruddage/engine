@@ -7,11 +7,11 @@
 #include "mesh.h"
 #include "primitives.h"
 #include "subsystem_manager.h"
+#include "memory.h"
 
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 void renderer_null_plugin_entry(struct subsystem_manager *mgr);
@@ -23,11 +23,10 @@ void scene_renderer_plugin_entry(struct subsystem_manager *mgr);
 /* two scene shaders, addressed by stable id (index + 1).              */
 /* ------------------------------------------------------------------ */
 
-static void *tmalloc(size_t n) { return malloc(n); }
-static void *tzalloc(size_t n) { return calloc(1, n); }
-static void  tfree(void *p)    { free(p); }
+/* Route through modules/memory (raw malloc is banned outside it). */
 static const struct memory_api TEST_MEM = {
-	tmalloc, tzalloc, tfree, NULL, NULL, NULL, NULL,
+	mem_alloc, mem_alloc_zero, mem_free,
+	mem_pool_create, mem_pool_alloc, mem_pool_free, mem_pool_destroy,
 };
 
 static const char *const CAT_PATHS[] = {
@@ -154,6 +153,8 @@ int main(void)
 	uint32_t idx_count = 0;
 	int      k;
 
+	mem_init();
+
 	/* Real primitive geometry for the fake catalog to serve. */
 	for (k = 0; k < 4; k++) {
 		g_blob[k] = primitive_generate((enum primitive_kind)k,
@@ -183,7 +184,8 @@ int main(void)
 
 	subsystem_manager_shutdown(&mgr);
 	for (k = 0; k < 4; k++)
-		tfree(g_blob[k]);
+		mem_free(g_blob[k]);
+	mem_shutdown();
 
 	printf("scene_renderer tests passed\n");
 	return 0;

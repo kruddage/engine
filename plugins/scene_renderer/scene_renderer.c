@@ -50,9 +50,9 @@ static int            g_ready;
 
 /* One uploaded mesh, selected by an entity's render_ref (== asset id). */
 struct mesh_gpu {
-	uint32_t     render_ref;
 	gpu_buffer_t vbo;
 	gpu_buffer_t ebo;
+	uint32_t     render_ref;
 	uint32_t     index_count;
 };
 
@@ -251,7 +251,6 @@ static void scene_renderer_init(void)
 			upload_mesh(gpu, ref);
 	}
 
-	memset(&g_ubo, 0, sizeof(g_ubo));
 	{
 		struct gpu_buffer_desc bd;
 

@@ -3,6 +3,7 @@
 #define SHADER_GRAPH_H
 
 #include "vscript_api.h"
+#include "shader_graph_api.h"
 #include "memory_api.h"
 #include "asset_api.h"
 #include "subsystem_manager.h"
@@ -68,17 +69,6 @@ void sg_set_mem(const struct memory_api *mem);
 
 /* Native accessor for the "shader_graph" service vtable (tests). */
 const struct shader_graph_api *shader_graph_native_api(void);
-
-/*
- * Cross-plugin shader-graph service, published as "shader_graph".  Handles are
- * opaque vscript graphs owned by the caller; the backend reads them through the
- * "vscript" api it resolved at entry.
- */
-struct shader_graph_api {
-	char     *(*emit_fragment)(vscript_graph_t g, uint32_t *out_size);
-	uint32_t  (*compile)(vscript_graph_t g, const char *out_path);
-	const char *(*vertex_source)(void);
-};
 
 #ifndef __EMSCRIPTEN__
 void shader_graph_plugin_entry(struct subsystem_manager *mgr);

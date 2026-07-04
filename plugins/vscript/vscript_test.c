@@ -173,6 +173,65 @@ static void test_target_checks(void)
 	vs->destroy(g);
 }
 
+static void test_editing(void)
+{
+	vscript_graph_t g = vs->create(VSCRIPT_TARGET_SHADER);
+	int32_t a, m, s;
+	int32_t dummy = 0;
+
+	a = vs->add_node(g, "src", NULL);
+	m = vs->add_node(g, "mid", NULL);
+	s = vs->add_node(g, "sink", NULL);
+	assert(vs->connect(g, a, 0, m, 0) == 0);
+	assert(vs->connect(g, m, 0, s, 0) == 0);
+	assert(vs->node_count(g) == 3);
+
+	/* node_id_at enumerates the live nodes. */
+	assert(vs->node_id_at(g, 0) == a);
+	assert(vs->node_id_at(g, 2) == s);
+	assert(vs->node_id_at(g, 3) == -1);
+
+	/* disconnect drops a single wire and frees the input. */
+	assert(vs->disconnect(g, s, 0) == 0);
+	assert(vs->input_source(g, s, 0, NULL, NULL) == -1);
+	assert(vs->disconnect(g, s, 0) == -1); /* already gone */
+	assert(vs->connect(g, m, 0, s, 0) == 0); /* re-wire now allowed */
+
+	/* set_param edits a node's param in place. */
+	assert(vs->set_param(g, a, "edited") == 0);
+	assert(strcmp(vs->node_param(g, a), "edited") == 0);
+	assert(vs->set_param(g, a, NULL) == 0);
+	assert(vs->node_param(g, a) == NULL);
+	assert(vs->set_param(g, 9999, "x") == -1); /* unknown node */
+
+	/* remove_node drops the node and its incident connections. */
+	assert(vs->remove_node(g, m) == 0);
+	assert(vs->node_count(g) == 2);
+	assert(vs->node_type_name(g, m) == NULL);
+	assert(vs->input_source(g, s, 0, &dummy, NULL) == -1); /* m->s gone */
+	assert(vs->remove_node(g, m) == -1);                   /* already gone */
+
+	vs->destroy(g);
+}
+
+static void test_registry_enum(void)
+{
+	uint32_t n = vs->type_count();
+	uint32_t i;
+	int      saw_src = 0;
+
+	assert(n >= 4); /* src, mid, sink, loop from test_registry */
+	for (i = 0; i < n; i++) {
+		const char *name = vs->type_name_at(i);
+
+		assert(name != NULL);
+		if (strcmp(name, "src") == 0)
+			saw_src = 1;
+	}
+	assert(saw_src);
+	assert(vs->type_name_at(n) == NULL);
+}
+
 /* Encode a graph, decode it back, and confirm structure + ids survive. */
 static void test_codec_roundtrip(void)
 {
@@ -292,6 +351,8 @@ int main(void)
 	test_topo_order();
 	test_cycle_rejected();
 	test_introspection();
+	test_editing();
+	test_registry_enum();
 	test_target_checks();
 	test_codec_roundtrip();
 	test_asset_target_mirror();

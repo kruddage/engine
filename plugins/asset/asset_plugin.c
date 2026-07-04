@@ -2,6 +2,7 @@
 #include "asset.h"
 #include "asset_api.h"
 #include "asset_codec_api.h"
+#include "primitives.h"
 #include "subsystem.h"
 #include "subsystem_manager.h"
 #include "log_api.h"
@@ -210,11 +211,14 @@ static void seed_builtins(void)
 		return;
 	builtins_seeded = 1;
 
+	/* builtin_paths order matches enum primitive_kind (cube, sphere, ...). */
 	for (i = 0; i < BUILTIN_COUNT; i++) {
 		e = alloc_entry(builtin_paths[i]);
 		if (!e)
 			continue;
-		e->state     = ASSET_LOADED;
+		e->data = primitive_generate((enum primitive_kind)i, g_mem,
+					     &e->size);
+		e->state     = e->data ? ASSET_LOADED : ASSET_ERROR;
 		e->kind      = ASSET_KIND_PRIMITIVE;
 		e->read_only = 1;
 		e->type      = ASSET_TYPE_MESH;

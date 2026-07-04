@@ -1,8 +1,8 @@
-add_library(asset_plugin asset_plugin.c)
+add_library(asset_plugin asset_plugin.c primitives.c)
 target_include_directories(asset_plugin PUBLIC .
 	${CMAKE_SOURCE_DIR}/plugins/include)
 
-target_link_libraries(asset_plugin PRIVATE log memory subsystem subsystem_manager)
+target_link_libraries(asset_plugin PRIVATE log memory subsystem subsystem_manager m)
 
 if(NOT EMSCRIPTEN)
 	add_executable(asset_test asset_test.c)
@@ -24,6 +24,10 @@ if(NOT EMSCRIPTEN)
 	add_executable(asset_shader_test asset_shader_test.c)
 	target_link_libraries(asset_shader_test PRIVATE asset_plugin log memory)
 	add_test(NAME asset_shader COMMAND asset_shader_test)
+
+	add_executable(asset_mesh_test asset_mesh_test.c)
+	target_link_libraries(asset_mesh_test PRIVATE asset_plugin log memory)
+	add_test(NAME asset_mesh COMMAND asset_mesh_test)
 endif()
 
 if(EMSCRIPTEN)
@@ -37,7 +41,12 @@ if(EMSCRIPTEN)
 			-I${CMAKE_SOURCE_DIR}/plugins/include
 			-o ${CMAKE_BINARY_DIR}/asset_plugin.wasm
 			${CMAKE_CURRENT_SOURCE_DIR}/asset_plugin.c
-		DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/asset_plugin.c
+			${CMAKE_CURRENT_SOURCE_DIR}/primitives.c
+		DEPENDS
+			${CMAKE_CURRENT_SOURCE_DIR}/asset_plugin.c
+			${CMAKE_CURRENT_SOURCE_DIR}/primitives.c
+			${CMAKE_CURRENT_SOURCE_DIR}/primitives.h
+			${CMAKE_SOURCE_DIR}/plugins/include/mesh.h
 		COMMENT "Building asset_plugin SIDE_MODULE"
 	)
 	add_custom_target(asset_plugin_wasm ALL

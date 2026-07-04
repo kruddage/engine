@@ -155,6 +155,23 @@ static const struct branch_api *backend_branching(void)
 	return branch_host_api();
 }
 
+#ifdef __EMSCRIPTEN__
+/*
+ * An authored asset just changed (save or delete).  Signal the branching host
+ * so it debounces a live-save + auto-snapshot of the active branch (#213).  A
+ * no-op when branching is absent (a provider without it), so asset persistence
+ * keeps working whether or not the store bootstraps `main`.  Only reachable on
+ * the browser path, where persistence — and thus branching — actually runs.
+ */
+static void backend_note_project_changed(void)
+{
+	const struct branch_api *br = branch_host_api();
+
+	if (br)
+		br->mark_dirty();
+}
+#endif
+
 static int32_t backend_persist_asset(uint32_t id, const char *path,
 				     int32_t type, const void *bytes,
 				     uint32_t size)
@@ -168,6 +185,7 @@ static int32_t backend_persist_asset(uint32_t id, const char *path,
 	}
 #ifdef __EMSCRIPTEN__
 	krudd_idb_put(id, path, type, bytes, size);
+	backend_note_project_changed();
 	return 0;
 #else
 	(void)type;
@@ -183,6 +201,7 @@ static int32_t backend_delete_asset(uint32_t id)
 		return -1;
 #ifdef __EMSCRIPTEN__
 	krudd_idb_del(id);
+	backend_note_project_changed();
 	return 0;
 #else
 	return -1;

@@ -17,9 +17,9 @@ struct memory_api;
  * and the "asset"/"asset_mut" apis) looked up on `mgr` — no direct linkage to
  * other side modules.
  *
- * v1 backs the store with the in-memory backing (cas_mem) on every target; the
- * IndexedDB backing (cas_idb) swaps in under __EMSCRIPTEN__ once it lands, at
- * which point branches and snapshots become durable across reloads.
+ * The store's backing is target-specific: the IndexedDB backing (cas_idb) under
+ * __EMSCRIPTEN__, so branches and snapshots are durable across reloads, and the
+ * in-memory backing (cas_mem) natively / in unit tests.
  */
 
 /*

@@ -6,25 +6,9 @@
 #include "entity_api.h"
 #include "asset_api.h"
 #include "memory_api.h"
+#include "subsystem_manager.h"
 
 #include <stddef.h>
-
-/*
- * subsystem_manager_get_api's real declaration lives in
- * modules/core/include/subsystem_manager.h, which is not on this file's
- * include path in every target it is compiled into; the native branch test
- * (backend_branch_test) links this source directly without either that
- * header or the subsystem_manager library, since that build only drives the
- * host over the debounce clock with mgr == NULL and the serialize stub.
- * Redeclare the one accessor this file needs, weakly: the real backend
- * plugin build links the subsystem_manager library and this resolves to it
- * normally, while the native branch test leaves it an unresolved weak symbol
- * (address NULL, no link error) that is never actually invoked because mgr
- * is always checked first.
- */
-const void *subsystem_manager_get_api(const struct subsystem_manager *mgr,
-				      const char *name)
-	__attribute__((weak));
 
 /*
  * One already-gathered authored asset: raw bytes plus the identity needed to
@@ -129,8 +113,6 @@ int32_t branch_serialize_capture(struct cas *store,
 
 	if (!store || !store->mem || !mgr || !out)
 		return -1;
-	if (!subsystem_manager_get_api)
-		return -1;   /* weak symbol unresolved: no subsystem manager linked */
 
 	scene = subsystem_manager_get_api(mgr, "scene");
 	asset = subsystem_manager_get_api(mgr, "asset");
@@ -159,8 +141,13 @@ int32_t branch_serialize_capture(struct cas *store,
 
 		if (asset->info(i, &info) != 0)
 			goto out;
-		if (info.read_only)
-			continue;   /* seeded built-ins are never captured */
+		/*
+		 * Only AUTHORED assets are project state (mirrors what the
+		 * persistence layer saves and what ingest destroys on switch).
+		 * Fetched/built-in content is re-acquired by path, not branched.
+		 */
+		if (info.origin != ASSET_ORIGIN_AUTHORED)
+			continue;
 
 		data = asset->get_data(info.id, &size);
 		if (!data) {

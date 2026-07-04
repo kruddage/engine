@@ -33,11 +33,11 @@ static const struct memory_api *g_mem = &native_mem;
 /* Process-wide node-type registry entry (deep-copies only scalars/ports). */
 struct type_entry {
 	const char          *name;
-	struct vscript_port  inputs[VSCRIPT_MAX_PORTS];
-	uint32_t             input_count;
-	struct vscript_port  outputs[VSCRIPT_MAX_PORTS];
-	uint32_t             output_count;
 	const void          *user;
+	struct vscript_port  inputs[VSCRIPT_MAX_PORTS];
+	struct vscript_port  outputs[VSCRIPT_MAX_PORTS];
+	uint32_t             input_count;
+	uint32_t             output_count;
 };
 
 static struct type_entry g_types[VSCRIPT_MAX_TYPES];

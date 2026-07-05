@@ -77,6 +77,24 @@ When you finish implementing a GitHub issue, create a pull request using the
 GitHub MCP tools (`mcp__github__create_pull_request`). Reference the issue
 number in the PR body (e.g. `Closes #N`).
 
+## Changelog & versioning
+
+Every user-facing PR must add a bullet to `CHANGELOG.md` under the
+`[Unreleased]` heading (Added / Changed / Fixed / Removed, per [Keep a
+Changelog](https://keepachangelog.com/en/1.1.0/)). Internal-only changes —
+tests, CI config, docs, pure refactors — are exempt; mark an exempt PR with
+`[no changelog]` in its title or description so the changelog-gate CI check
+passes.
+
+A version bump renames `[Unreleased]` to a dated version heading
+(`## [x.y.z] - YYYY-MM-DD`) and opens a fresh, empty `[Unreleased]` above it,
+in the same commit that bumps the `VERSION` file.
+
+Every PR also carries exactly one `release:feature` / `release:fix` /
+`release:breaking` / `release:chore` label, enforced by the release-label-gate
+CI check. Labels are defined in `.github/labels.yml` and synced to the repo by
+a workflow — don't create or edit them by hand in the GitHub UI.
+
 ## Key constraints
 
 - C owns the loop. `engine_tick` is the frame callback passed to

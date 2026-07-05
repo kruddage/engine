@@ -1,0 +1,19 @@
+# Release labels, synced to the repo by .github/workflows/sync-labels.yml.
+# Every PR must carry exactly one of these (enforced by release-label-gate.yml)
+# — edit this file to change labels, don't click them together in the UI.
+
+- name: release:feature
+  color: "0E8A16"
+  description: User-facing feature addition — bumps the minor version
+
+- name: release:fix
+  color: "D93F0B"
+  description: User-facing bug fix — bumps the patch version
+
+- name: release:breaking
+  color: "B60205"
+  description: Breaking change (ABI, file format, API) — bumps the major version
+
+- name: release:chore
+  color: "BFD4F2"
+  description: Internal-only change (tests, CI, docs, refactor) — no version bump

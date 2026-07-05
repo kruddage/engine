@@ -1,0 +1,24 @@
+name: Changelog Gate
+
+# Fails a PR that changes non-exempt files (source, not tests/CI/docs) without
+# also touching CHANGELOG.md. See scripts/check-changelog.sh for the exemption
+# rules and the "[no changelog]" escape hatch.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+jobs:
+  changelog-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check CHANGELOG.md is updated
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: sh scripts/check-changelog.sh

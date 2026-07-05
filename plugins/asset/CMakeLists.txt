@@ -1,4 +1,4 @@
-add_library(asset_plugin asset_plugin.c primitives.c)
+add_library(asset_plugin asset_plugin.c primitives.c asset_edit.c)
 target_include_directories(asset_plugin PUBLIC .
 	${CMAKE_SOURCE_DIR}/plugins/include)
 
@@ -21,6 +21,16 @@ if(NOT EMSCRIPTEN)
 	target_link_libraries(asset_mut_test PRIVATE asset_plugin log memory)
 	add_test(NAME asset_mut COMMAND asset_mut_test)
 
+	# Undo/redo recording for authored assets: drive the same record path
+	# the plugin uses (asset_edit lives in asset_plugin) against the real
+	# catalog, with the edit history linked directly.
+	add_executable(asset_edit_test asset_edit_test.c
+		${CMAKE_SOURCE_DIR}/plugins/edit_plugin/edit.c)
+	target_include_directories(asset_edit_test PRIVATE
+		${CMAKE_SOURCE_DIR}/plugins/edit_plugin)
+	target_link_libraries(asset_edit_test PRIVATE asset_plugin log memory)
+	add_test(NAME asset_edit COMMAND asset_edit_test)
+
 	add_executable(asset_shader_test asset_shader_test.c)
 	target_link_libraries(asset_shader_test PRIVATE asset_plugin log memory)
 	add_test(NAME asset_shader COMMAND asset_shader_test)
@@ -42,10 +52,13 @@ if(EMSCRIPTEN)
 			-o ${CMAKE_BINARY_DIR}/asset_plugin.wasm
 			${CMAKE_CURRENT_SOURCE_DIR}/asset_plugin.c
 			${CMAKE_CURRENT_SOURCE_DIR}/primitives.c
+			${CMAKE_CURRENT_SOURCE_DIR}/asset_edit.c
 		DEPENDS
 			${CMAKE_CURRENT_SOURCE_DIR}/asset_plugin.c
 			${CMAKE_CURRENT_SOURCE_DIR}/primitives.c
 			${CMAKE_CURRENT_SOURCE_DIR}/primitives.h
+			${CMAKE_CURRENT_SOURCE_DIR}/asset_edit.c
+			${CMAKE_CURRENT_SOURCE_DIR}/asset_edit.h
 			${CMAKE_SOURCE_DIR}/plugins/include/mesh.h
 		COMMENT "Building asset_plugin SIDE_MODULE"
 	)

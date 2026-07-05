@@ -22,6 +22,13 @@ engine, before it lands anywhere else.
 
 ### Added
 
+- **Undo/redo for asset editing** — creating, editing (Save), and deleting an
+  authored asset now land on the same global Ctrl+Z / Ctrl+Y timeline as scene
+  edits. Editing a markdown or shader source and saving is undoable, a run of
+  saves to one asset collapses into a single history entry, and undoing a delete
+  brings the asset back under its original identity. Undo works on the in-editor
+  model, so re-saving after an undo persists the reverted content. This completes
+  the holistic editor history across both the scene and asset domains.
 - **Mesh binding in the World inspector** — the kruddboard World tab now shows
   which mesh an entity is bound to and lets you rebind it. The Inspector gained
   a read-only details block (entity id, parent, component list) and a **Mesh**

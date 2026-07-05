@@ -20,6 +20,8 @@ engine, before it lands anywhere else.
 
 ## [Unreleased]
 
+## [5.0.0] - 2026-07-05
+
 ### Added
 
 - **"What's New" tab in kruddboard** — a new leftmost tab renders `CHANGELOG.md`

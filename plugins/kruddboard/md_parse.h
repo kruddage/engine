@@ -64,8 +64,9 @@ struct md_span {
 
 /*
  * One parsed block.  text is always NUL-terminated.
- * spans[0..span_count) cover styled sub-ranges of text; any byte
- * not covered by a span is implicitly MD_SPAN_NORMAL.
+ * Inline **bold** / `code` delimiters are stripped from text; each span in
+ * spans[0..span_count) covers the styled run's delimiter-free bytes.  Any
+ * byte not covered by a span is implicitly MD_SPAN_NORMAL.
  */
 struct md_block {
 	int32_t        type;       /* MD_BLOCK_* */

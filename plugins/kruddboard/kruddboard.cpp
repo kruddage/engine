@@ -10,11 +10,11 @@
  * Toggle visibility with backtick (`).
  *
  * Tabs:
+ *   What's New — renders the embedded CHANGELOG.md (#254)
  *   KRUDD      — frame stats, subsystems, log (collapsible sections)
  *   World      — entity list, create/delete, inspector
  *   Assets     — asset browser and markdown editor
  *   Branches   — branch/snapshot browser (#213/#217)
- *   What's New — renders the embedded CHANGELOG.md (#254)
  */
 
 extern "C" {
@@ -2235,6 +2235,10 @@ static void draw_board(void * /*userdata*/)
 	if (!g_collapsed) {
 		if (ImGui::BeginTabBar("##tabs",
 				       ImGuiTabBarFlags_FittingPolicyScroll)) {
+			if (ImGui::BeginTabItem("What's New")) {
+				draw_tab_whats_new();
+				ImGui::EndTabItem();
+			}
 			if (ImGui::BeginTabItem("KRUDD")) {
 				draw_tab_krudd();
 				ImGui::EndTabItem();
@@ -2253,10 +2257,6 @@ static void draw_board(void * /*userdata*/)
 			}
 			if (ImGui::BeginTabItem("Branches")) {
 				draw_tab_branches();
-				ImGui::EndTabItem();
-			}
-			if (ImGui::BeginTabItem("What's New")) {
-				draw_tab_whats_new();
 				ImGui::EndTabItem();
 			}
 			ImGui::EndTabBar();

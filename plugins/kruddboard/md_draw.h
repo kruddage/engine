@@ -66,6 +66,15 @@ static inline void md_draw_blocks(const struct md_block *blocks,
 	int32_t        i;
 	int32_t        fi;
 
+	/*
+	 * With only the default font loaded there is no bold/mono glyph set,
+	 * so emphasis is carried by colour instead: a warm amber for **bold**
+	 * and a cool blue for `code`.  These are ignored harmlessly when a
+	 * real bold/mono font is present.
+	 */
+	const ImVec4 col_bold = ImVec4(1.00f, 0.83f, 0.40f, 1.00f);
+	const ImVec4 col_code = ImVec4(0.60f, 0.85f, 1.00f, 1.00f);
+
 	atlas = ImGui::GetIO().Fonts;
 	if (atlas->Fonts.Size > 0)
 		font_body = atlas->Fonts[0];
@@ -149,11 +158,17 @@ static inline void md_draw_blocks(const struct md_block *blocks,
 							: font_body;
 						if (mf)
 							ImGui::PushFont(mf);
+						ImGui::PushStyleColor(
+							ImGuiCol_Text, col_code);
 						ImGui::TextUnformatted(buf);
+						ImGui::PopStyleColor();
 						if (mf)
 							ImGui::PopFont();
 					} else if (sp->style & MD_SPAN_BOLD) {
+						ImGui::PushStyleColor(
+							ImGuiCol_Text, col_bold);
 						ImGui::TextUnformatted(buf);
+						ImGui::PopStyleColor();
 					} else {
 						ImGui::TextUnformatted(buf);
 					}
@@ -232,9 +247,17 @@ static inline void md_draw_blocks(const struct md_block *blocks,
 							: font_body;
 						if (mf)
 							ImGui::PushFont(mf);
+						ImGui::PushStyleColor(
+							ImGuiCol_Text, col_code);
 						ImGui::TextUnformatted(buf);
+						ImGui::PopStyleColor();
 						if (mf)
 							ImGui::PopFont();
+					} else if (sp->style & MD_SPAN_BOLD) {
+						ImGui::PushStyleColor(
+							ImGuiCol_Text, col_bold);
+						ImGui::TextUnformatted(buf);
+						ImGui::PopStyleColor();
 					} else {
 						ImGui::TextUnformatted(buf);
 					}

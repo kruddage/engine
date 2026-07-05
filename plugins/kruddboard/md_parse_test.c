@@ -229,6 +229,9 @@ static void test_inline_bold(void)
 	CHECK(n == 1);
 	CHECK(out[0].type == MD_BLOCK_PARAGRAPH);
 
+	/* Delimiters are stripped from the block text. */
+	CHECK(strcmp(out[0].text, "This is bold text.") == 0);
+
 	si = find_span(&out[0], MD_SPAN_BOLD);
 	CHECK(si >= 0);
 	if (si >= 0) {
@@ -258,6 +261,9 @@ static void test_inline_code(void)
 
 	n = md_parse(src, out, 4);
 	CHECK(n == 1);
+
+	/* Backticks are stripped from the block text. */
+	CHECK(strcmp(out[0].text, "Call engine_tick() each frame.") == 0);
 
 	si = find_span(&out[0], MD_SPAN_CODE);
 	CHECK(si >= 0);
@@ -291,6 +297,8 @@ static void test_inline_mixed(void)
 	CHECK(out[0].span_count == 2);
 	CHECK(find_span(&out[0], MD_SPAN_BOLD) >= 0);
 	CHECK(find_span(&out[0], MD_SPAN_CODE) >= 0);
+	/* Both delimiter pairs are stripped. */
+	CHECK(strcmp(out[0].text, "Use bold and code together.") == 0);
 }
 
 /* ------------------------------------------------------------------ */
@@ -360,10 +368,13 @@ static void test_unterminated_inline(void)
 	n = md_parse(src_bold, out, 4);
 	CHECK(n == 1);
 	CHECK(find_span(&out[0], MD_SPAN_BOLD) == -1);
+	/* Unterminated delimiter stays as literal text. */
+	CHECK(strcmp(out[0].text, "No **close here.") == 0);
 
 	n = md_parse(src_code, out, 4);
 	CHECK(n == 1);
 	CHECK(find_span(&out[0], MD_SPAN_CODE) == -1);
+	CHECK(strcmp(out[0].text, "No `close here.") == 0);
 }
 
 /* ------------------------------------------------------------------ */

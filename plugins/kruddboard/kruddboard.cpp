@@ -1177,6 +1177,132 @@ static void draw_tab_krudd(void)
 /* Tab: World — entity list, create/delete, inspector                 */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Read-only identity / hierarchy / component summary for the selected entity.
+ * The world exposes more per-entity state than the editable name+transform —
+ * the dense id, the parent link, and the component mask — so surface it here.
+ */
+static void draw_inspector_details(const struct world *w, uint32_t e)
+{
+	char comps[64];
+	char parent_buf[64];
+
+	snprintf(comps, sizeof(comps), "Transform%s%s",
+		 (w->mask[e] & COMPONENT_NAME)   ? ", Name"   : "",
+		 (w->mask[e] & COMPONENT_RENDER) ? ", Render" : "");
+
+	if (w->parent[e] < 0) {
+		snprintf(parent_buf, sizeof(parent_buf), "(root)");
+	} else {
+		uint32_t    p  = (uint32_t)w->parent[e];
+		const char *pn = NULL;
+
+		if ((w->mask[p] & COMPONENT_NAME) &&
+		    w->name_off[p] != SCENE_NO_NAME)
+			pn = w->names + w->name_off[p];
+		if (pn)
+			snprintf(parent_buf, sizeof(parent_buf), "%s (#%u)",
+				 pn, p);
+		else
+			snprintf(parent_buf, sizeof(parent_buf), "entity %u", p);
+	}
+
+	if (!ImGui::BeginTable("##edetails", 2,
+			       ImGuiTableFlags_SizingStretchProp))
+		return;
+	ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+	ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthStretch);
+
+	ImGui::TableNextRow();
+	ImGui::TableSetColumnIndex(0);
+	ImGui::TextUnformatted("Entity ID");
+	ImGui::TableSetColumnIndex(1);
+	ImGui::Text("%u", e);
+
+	ImGui::TableNextRow();
+	ImGui::TableSetColumnIndex(0);
+	ImGui::TextUnformatted("Parent");
+	ImGui::TableSetColumnIndex(1);
+	ImGui::TextUnformatted(parent_buf);
+
+	ImGui::TableNextRow();
+	ImGui::TableSetColumnIndex(0);
+	ImGui::TextUnformatted("Components");
+	ImGui::TableSetColumnIndex(1);
+	ImGui::TextUnformatted(comps);
+
+	ImGui::EndTable();
+}
+
+/*
+ * Mesh binding row: shows the asset the entity's render_ref resolves to and a
+ * dropdown to rebind it to any mesh asset (or "(none)" to unbind). Reads the
+ * binding straight off render_ref[e] (valid iff COMPONENT_RENDER) and writes it
+ * back through the scene api's set_render_ref, which records an undo step.
+ */
+static void draw_inspector_mesh(const struct world *w, uint32_t e)
+{
+	bool     has_render = (w->mask[e] & COMPONENT_RENDER) != 0;
+	uint32_t cur_ref    = has_render ? w->render_ref[e] : 0u;
+	char     cur_label[160];
+	bool     can_edit;
+
+	if (!has_render) {
+		snprintf(cur_label, sizeof(cur_label), "(none)");
+	} else {
+		struct asset_info bi;
+
+		if (g_asset_api && g_asset_api->find &&
+		    g_asset_api->find(cur_ref, &bi) == 0)
+			snprintf(cur_label, sizeof(cur_label), "%s", bi.path);
+		else
+			snprintf(cur_label, sizeof(cur_label),
+				 "(missing #%u)", cur_ref);
+	}
+
+	can_edit = g_entity_api && g_entity_api->set_render_ref && g_asset_api;
+
+	if (!ImGui::BeginTable("##emesh", 2, ImGuiTableFlags_SizingStretchProp))
+		return;
+	ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+	ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthStretch);
+
+	ImGui::TableNextRow();
+	ImGui::TableSetColumnIndex(0);
+	ImGui::TextUnformatted("Mesh");
+	ImGui::TableSetColumnIndex(1);
+	ImGui::SetNextItemWidth(-1.0f);
+	ImGui::BeginDisabled(!can_edit);
+	if (ImGui::BeginCombo("##meshsel", cur_label)) {
+		uint32_t k, n;
+
+		/* "(none)" unbinds — render_ref 0 clears COMPONENT_RENDER. */
+		if (ImGui::Selectable("(none)", !has_render) && can_edit)
+			g_entity_api->set_render_ref((int32_t)e, 0u);
+
+		n = g_asset_api ? g_asset_api->count() : 0u;
+		for (k = 0; k < n; k++) {
+			struct asset_info mi;
+			char              row[176];
+			bool              is_cur;
+
+			if (g_asset_api->info(k, &mi) != 0 ||
+			    mi.type != ASSET_TYPE_MESH || mi.id == 0)
+				continue;
+			snprintf(row, sizeof(row), "%s##m%u", mi.path, mi.id);
+			is_cur = has_render && mi.id == cur_ref;
+			if (ImGui::Selectable(row, is_cur) && can_edit)
+				g_entity_api->set_render_ref((int32_t)e, mi.id);
+			if (is_cur)
+				ImGui::SetItemDefaultFocus();
+		}
+		ImGui::EndCombo();
+	}
+	ImGui::EndDisabled();
+
+	ImGui::EndTable();
+}
+
 static void draw_tab_world(void)
 {
 	const struct world     *w = NULL;
@@ -1378,6 +1504,11 @@ static void draw_tab_world(void)
 				nt.scale[2]    = scl[2];
 				g_entity_api->set_transform((int32_t)e, &nt);
 			}
+
+			ImGui::Separator();
+
+			draw_inspector_details(w, e);
+			draw_inspector_mesh(w, e);
 		}
 	}
 }

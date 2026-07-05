@@ -255,7 +255,7 @@ static void test_set_name(void)
 	assert(world_set_name(&w, e, "Ghost") == -1);
 }
 
-/* set_render_ref stores the ref and sets COMPONENT_RENDER. */
+/* set_render_ref binds a mesh (sets COMPONENT_RENDER); a zero ref unbinds. */
 static void test_set_render_ref(void)
 {
 	struct transform t;
@@ -268,6 +268,16 @@ static void test_set_render_ref(void)
 	world_set_render_ref(&w, e, 11u);
 	assert(w.render_ref[e] == 11u);
 	assert((w.mask[e] & COMPONENT_RENDER) != 0);
+
+	/* Rebinding to a different ref keeps the component and swaps the mesh. */
+	world_set_render_ref(&w, e, 22u);
+	assert(w.render_ref[e] == 22u);
+	assert((w.mask[e] & COMPONENT_RENDER) != 0);
+
+	/* A zero ref unbinds: component cleared, ref reset. */
+	world_set_render_ref(&w, e, 0u);
+	assert(w.render_ref[e] == 0u);
+	assert((w.mask[e] & COMPONENT_RENDER) == 0);
 }
 
 /* Selection takes -1 and live ids, rejects stale ones, clears on death. */

@@ -20,6 +20,15 @@ engine, before it lands anywhere else.
 
 ## [Unreleased]
 
+### Added
+
+- **Mesh binding in the World inspector** — the kruddboard World tab now shows
+  which mesh an entity is bound to and lets you rebind it. The Inspector gained
+  a read-only details block (entity id, parent, component list) and a **Mesh**
+  dropdown listing every mesh asset, with "(none)" to unbind. Rebinding is
+  undoable like any other scene edit. Previously the mesh binding could only be
+  set by drag-to-spawn from the Assets tab and was never surfaced afterward.
+
 ## [5.0.0] - 2026-07-05
 
 ### Added

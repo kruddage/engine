@@ -26,6 +26,7 @@ enum scene_edit_field {
 	SCENE_EDIT_NONE      = 0,	/* never coalesce — create / destroy */
 	SCENE_EDIT_TRANSFORM = 1,
 	SCENE_EDIT_NAME      = 2,
+	SCENE_EDIT_RENDER    = 3,	/* mesh (render_ref) rebind */
 };
 
 /* Compose an entity id and field tag into a non-zero coalesce key (0 when the

@@ -22,9 +22,17 @@ engine, before it lands anywhere else.
 
 ### Added
 
-- **"What's New" tab in kruddboard** — a new tab renders `CHANGELOG.md` inside
-  the running engine through the existing markdown stack, so shipped changes are
-  visible in-app. The changelog is baked into the WASM module at build time.
+- **"What's New" tab in kruddboard** — a new leftmost tab renders `CHANGELOG.md`
+  inside the running engine through the existing markdown stack, so shipped
+  changes are visible in-app. The changelog is baked into the WASM module at
+  build time.
+
+### Fixed
+
+- **Markdown rendering** — inline `**bold**` and `` `code` `` delimiters are now
+  stripped from rendered output instead of showing through as literal markers,
+  and bold/code runs are tinted so emphasis reads clearly with the default font.
+  Improves both the "What's New" tab and the Assets markdown preview.
 
 ## [4.0.0] - 2026-07-05
 

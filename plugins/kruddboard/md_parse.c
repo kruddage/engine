@@ -24,6 +24,8 @@
  * ------------
  * Bold  : **text** — must open and close on the same line.
  * Code  : `text`  — must open and close on the same line.
+ * The delimiters are stripped from the block text; each span covers the
+ * inner run so md_draw renders it styled without the literal ** / ` markers.
  * Spans that would overflow MD_SPANS_PER_BLOCK are silently dropped;
  * the plain text is still emitted correctly.
  */
@@ -70,53 +72,69 @@ static void add_span(struct md_block *blk, uint32_t start,
 }
 
 /*
- * parse_inline — walk text in blk->text and emit bold/code spans.
- * Plain (unstyled) regions are not emitted; the caller treats any
- * byte not covered by a span as MD_SPAN_NORMAL.
+ * parse_inline — rewrite blk->text with the **bold** / `code` delimiters
+ * removed, emitting a span over each styled run's now-delimiter-free text.
+ * Plain (unstyled) regions are not emitted; the caller treats any byte not
+ * covered by a span as MD_SPAN_NORMAL.  Stripping the delimiters here keeps
+ * them out of what md_draw renders — otherwise the literal ** / ` markers
+ * would show up in the output.  An unterminated delimiter is left in place
+ * as literal text with no span.
  */
 static void parse_inline(struct md_block *blk)
 {
 	const char *t   = blk->text;
 	uint32_t    len = (uint32_t)strlen(t);
+	char        out[MD_TEXT_MAX];
+	uint32_t    o   = 0; /* write cursor into out[] */
 	uint32_t    i   = 0;
 
-	while (i < len) {
+	while (i < len && o < MD_TEXT_MAX - 1) {
 		if (t[i] == '*' && i + 1 < len && t[i + 1] == '*') {
-			/* Bold: **...** */
+			/* Bold: **...** — copy the inner run, drop the **. */
 			uint32_t open = i + 2;
 			uint32_t j;
 
 			for (j = open; j + 1 < len; j++) {
-				if (t[j] == '*' && t[j + 1] == '*') {
-					add_span(blk, open, j,
-						 MD_SPAN_BOLD);
-					i = j + 2;
-					goto next;
-				}
+				if (t[j] == '*' && t[j + 1] == '*')
+					break;
 			}
-			/* No closing ** found; treat as literal. */
-			i++;
+			if (j + 1 < len) {
+				uint32_t start = o;
+
+				while (open < j && o < MD_TEXT_MAX - 1)
+					out[o++] = t[open++];
+				add_span(blk, start, o, MD_SPAN_BOLD);
+				i = j + 2;
+				continue;
+			}
+			/* No closing ** found; keep the char as literal. */
+			out[o++] = t[i++];
 		} else if (t[i] == '`') {
-			/* Inline code: `...` */
+			/* Inline code: `...` — copy the inner run, drop the `. */
 			uint32_t open = i + 1;
 			uint32_t j;
 
 			for (j = open; j < len; j++) {
-				if (t[j] == '`') {
-					add_span(blk, open, j,
-						 MD_SPAN_CODE);
-					i = j + 1;
-					goto next;
-				}
+				if (t[j] == '`')
+					break;
 			}
-			/* No closing ` found; treat as literal. */
-			i++;
+			if (j < len) {
+				uint32_t start = o;
+
+				while (open < j && o < MD_TEXT_MAX - 1)
+					out[o++] = t[open++];
+				add_span(blk, start, o, MD_SPAN_CODE);
+				i = j + 1;
+				continue;
+			}
+			/* No closing ` found; keep the char as literal. */
+			out[o++] = t[i++];
 		} else {
-			i++;
+			out[o++] = t[i++];
 		}
-next:
-		;
 	}
+	out[o] = '\0';
+	memcpy(blk->text, out, (size_t)o + 1);
 }
 
 /*

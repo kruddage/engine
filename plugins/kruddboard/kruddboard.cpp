@@ -10,10 +10,11 @@
  * Toggle visibility with backtick (`).
  *
  * Tabs:
- *   KRUDD    — frame stats, subsystems, log (collapsible sections)
- *   World    — entity list, create/delete, inspector
- *   Assets   — asset browser and markdown editor
- *   Branches — branch/snapshot browser (#213/#217)
+ *   KRUDD      — frame stats, subsystems, log (collapsible sections)
+ *   World      — entity list, create/delete, inspector
+ *   Assets     — asset browser and markdown editor
+ *   Branches   — branch/snapshot browser (#213/#217)
+ *   What's New — renders the embedded CHANGELOG.md (#254)
  */
 
 extern "C" {
@@ -43,6 +44,7 @@ extern "C" {
 #include <string.h>
 #include "md_parse.h"
 #include "md_draw.h"
+#include "changelog_data.h" /* generated: CHANGELOG_MD[] */
 #endif
 
 #include <cstdio>
@@ -1106,6 +1108,50 @@ static void draw_tab_branches(void)
 #else
 	ImGui::TextDisabled("(branching unavailable)");
 #endif /* __EMSCRIPTEN__ */
+}
+
+/* ------------------------------------------------------------------ */
+/* Tab: What's New — renders the embedded CHANGELOG.md (#254)          */
+/* ------------------------------------------------------------------ */
+
+#ifdef __EMSCRIPTEN__
+/*
+ * CHANGELOG.md is baked into the module at build time (embed_changelog.cmake)
+ * rather than fetched at runtime: the asset vtable kruddboard consumes is
+ * enumerate-only, so a fetch would need new ABI surface plus async load/error
+ * state, whereas the embed reuses the existing md_parse/md_draw stack and can't
+ * fail at runtime. Parse once, lazily, on first draw — the source never changes
+ * after build.  The blob is newest-first, so if it ever outgrows the block cap
+ * the parser drops the oldest (bottom) entries, which is exactly what a
+ * "What's New" view wants to keep.
+ */
+#define WHATSNEW_BLOCKS_MAX 256
+static struct md_block g_whatsnew_blocks[WHATSNEW_BLOCKS_MAX];
+static int32_t         g_whatsnew_nblocks = -1; /* -1 = not parsed yet */
+#endif
+
+static void draw_tab_whats_new(void)
+{
+#ifdef __EMSCRIPTEN__
+	float vp_h;
+	float scroll_h;
+
+	if (g_whatsnew_nblocks < 0)
+		g_whatsnew_nblocks = md_parse(CHANGELOG_MD, g_whatsnew_blocks,
+					      WHATSNEW_BLOCKS_MAX);
+
+	vp_h     = ImGui::GetMainViewport()->WorkSize.y;
+	scroll_h = vp_h * 0.88f - 120.0f;
+	if (scroll_h < 120.0f)
+		scroll_h = 120.0f;
+
+	ImGui::BeginChild("##whatsnew", ImVec2(0.0f, scroll_h), false,
+			  ImGuiWindowFlags_HorizontalScrollbar);
+	md_draw_blocks(g_whatsnew_blocks, g_whatsnew_nblocks);
+	ImGui::EndChild();
+#else
+	ImGui::TextDisabled("(changelog unavailable)");
+#endif
 }
 
 /* ------------------------------------------------------------------ */
@@ -2207,6 +2253,10 @@ static void draw_board(void * /*userdata*/)
 			}
 			if (ImGui::BeginTabItem("Branches")) {
 				draw_tab_branches();
+				ImGui::EndTabItem();
+			}
+			if (ImGui::BeginTabItem("What's New")) {
+				draw_tab_whats_new();
 				ImGui::EndTabItem();
 			}
 			ImGui::EndTabBar();

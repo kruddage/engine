@@ -2,6 +2,8 @@
 #include "asset.h"
 #include "asset_api.h"
 #include "asset_codec_api.h"
+#include "asset_edit.h"
+#include "edit_api.h"
 #include "primitives.h"
 #include "subsystem.h"
 #include "subsystem_manager.h"
@@ -77,6 +79,23 @@ static const struct memory_api *g_mem;
 static const struct log_api    *g_log = &native_log;
 static const struct memory_api *g_mem = &native_mem;
 #endif
+
+/*
+ * The "edit" undo/redo service, resolved lazily. The asset plugin loads before
+ * edit_plugin, so "edit" is not registered yet at our plugin_entry — we stash
+ * the manager and look it up on the first authored mutation instead. g_edit
+ * stays NULL when the service is absent (e.g. native unit tests), in which case
+ * the mutation still happens and simply isn't recorded (no hard dependency).
+ */
+static struct subsystem_manager *g_mgr;
+static const struct edit_api    *g_edit;
+
+static const struct edit_api *resolve_edit(void)
+{
+	if (!g_edit && g_mgr)
+		g_edit = subsystem_manager_get_api(g_mgr, "edit");
+	return g_edit;
+}
 
 static struct asset_entry *find_entry(const char *path)
 {
@@ -863,6 +882,67 @@ int32_t asset_mut_set_decl(uint32_t id, const struct asset_decl_field *fields,
 	return 0;
 }
 
+/* ------------------------------------------------------------------ */
+/* Undo/redo recording — thin wrappers over the raw mutation ops        */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The "asset_mut" vtable points at these wrappers, not the raw ops, so every
+ * caller of the mutable API is recorded. Each captures the asset's pre-edit
+ * state, performs the raw mutation, then hands the before-state to
+ * asset_edit_record(), which captures the after-state and pushes one reversible
+ * command. Only a mutation that actually took effect is recorded. The raw ops
+ * stay recording-free so the command's own apply/revert (which call them) never
+ * re-enter the history — the same separation the scene adapter keeps between its
+ * wrappers and the world ops.
+ */
+static uint32_t rec_create(const char *path, int32_t type,
+			   const void *bytes, uint32_t size)
+{
+	const struct edit_api *edit   = resolve_edit();
+	struct asset_snapshot *before = edit ? asset_snapshot_absent(g_mem)
+					     : NULL;
+	uint32_t               id;
+
+	id = asset_mut_create(path, type, bytes, size);
+	if (id != 0)
+		asset_edit_record(edit, g_mem, id, before, "Create Asset", 0);
+	else
+		asset_snapshot_free(before, g_mem);
+	return id;
+}
+
+static int32_t rec_set_data(uint32_t id, const void *bytes, uint32_t size)
+{
+	const struct edit_api *edit   = resolve_edit();
+	struct asset_snapshot *before = edit ? asset_snapshot_capture(id, g_mem)
+					     : NULL;
+	int32_t                rc;
+
+	rc = asset_mut_set_data(id, bytes, size);
+	if (rc == 0)
+		asset_edit_record(edit, g_mem, id, before, "Edit Asset",
+				  asset_edit_key(id));
+	else
+		asset_snapshot_free(before, g_mem);
+	return rc;
+}
+
+static int32_t rec_destroy(uint32_t id)
+{
+	const struct edit_api *edit   = resolve_edit();
+	struct asset_snapshot *before = edit ? asset_snapshot_capture(id, g_mem)
+					     : NULL;
+	int32_t                rc;
+
+	rc = asset_mut_destroy(id);
+	if (rc == 0)
+		asset_edit_record(edit, g_mem, id, before, "Delete Asset", 0);
+	else
+		asset_snapshot_free(before, g_mem);
+	return rc;
+}
+
 static const struct asset_api catalog_api = {
 	.count    = asset_catalog_count,
 	.info     = asset_catalog_info,
@@ -879,10 +959,17 @@ static const struct asset_codec_api codec_api = {
 	.encode           = asset_codec_encode,
 };
 
+/*
+ * create / set_data / destroy route through the recording wrappers so authored
+ * edits land on the undo timeline. set_decl (metadata) and inject (id-preserving
+ * rehydration from persistence, before the user authors anything) are not user
+ * gestures and stay on the raw ops — inject in particular is what undo itself
+ * calls to bring a destroyed asset back, so recording it would be circular.
+ */
 static const struct asset_mut_api mut_api = {
-	.create   = asset_mut_create,
-	.set_data = asset_mut_set_data,
-	.destroy  = asset_mut_destroy,
+	.create   = rec_create,
+	.set_data = rec_set_data,
+	.destroy  = rec_destroy,
 	.set_decl = asset_mut_set_decl,
 	.inject   = asset_mut_inject,
 };
@@ -938,6 +1025,8 @@ void asset_plugin_entry(struct subsystem_manager *mgr)
 	g_log = subsystem_manager_get_api(mgr, "log");
 	g_mem = subsystem_manager_get_api(mgr, "memory");
 #endif
+	/* Stash for the lazy "edit" lookup: it registers after us. */
+	g_mgr = mgr;
 	subsystem_manager_register(mgr, &desc);
 	subsystem_manager_register(mgr, &codec_desc);
 	subsystem_manager_register(mgr, &mut_desc);

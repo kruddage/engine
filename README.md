@@ -73,6 +73,8 @@ ctest --test-dir build_native --output-on-failure
 | **Coverage** | Line coverage enforced at ≥ 80% |
 | **clang-tidy** | Static analysis on all non-test source files |
 | **PR preview** | Deploys each PR to a GitHub Pages preview URL and posts the link |
+| **Changelog gate** | Fails a PR that changes source without a `CHANGELOG.md` entry (unless `[no changelog]`) |
+| **Release label gate** | Fails a PR unless it carries exactly one `release:*` label |
 
 ## License
 

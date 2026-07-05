@@ -8,6 +8,13 @@ Entries are grouped by theme — features and fixes that matter to users of the
 engine — rather than by individual commit. Pre-`0.3.0` releases predate this file
 and are summarized at a high level.
 
+This file has no in-app or build-time consumer yet — there's no kruddboard
+"What's New" tab reading it, and `release.yml` still auto-generates GitHub
+Release notes from merged PR titles rather than from `[Unreleased]`. Until one
+of those exists, this file is the release-notes source of truth: every
+user-facing change is recorded here, in prose meant for someone using the
+engine, before it lands anywhere else.
+
 ## [Unreleased]
 
 ### Added

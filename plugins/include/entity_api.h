@@ -19,8 +19,8 @@
  *
  * Beyond reading the world, editor tools drive it through the runtime mutators
  * and the shared selection model below: drag-to-spawn is create_entity, the
- * property panel and gizmo are set_transform / set_name, and all three agree on
- * the active entity via get_selected / set_selected.
+ * property panel and gizmo are set_transform / set_name / set_render_ref, and
+ * all agree on the active entity via get_selected / set_selected.
  */
 struct entity_api {
 	const struct world *(*get_world)(void);
@@ -41,6 +41,12 @@ struct entity_api {
 	void    (*set_transform)(int32_t id, const struct transform *local);
 	/* Rename id; NULL/empty clears its name. */
 	void    (*set_name)(int32_t id, const char *name);
+	/*
+	 * Bind id to a mesh by asset id (sets COMPONENT_RENDER); a zero
+	 * render_ref unbinds, clearing COMPONENT_RENDER. This is the editable
+	 * counterpart to the render_ref that create_entity / drag-to-spawn set.
+	 */
+	void    (*set_render_ref)(int32_t id, uint32_t render_ref);
 
 	/* Shared selection: -1 = none. set ignores stale/out-of-range ids. */
 	int32_t (*get_selected)(void);

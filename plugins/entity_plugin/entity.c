@@ -152,6 +152,14 @@ void world_set_render_ref(struct world *w, int32_t e, uint32_t render_ref)
 {
 	if (e < 0 || (uint32_t)e >= w->count || !w->alive[e])
 		return;
+
+	/* A zero ref unbinds: clear the component rather than leave a dangling
+	 * render_ref that resolves to no mesh (mirrors world_set_name). */
+	if (render_ref == 0) {
+		w->render_ref[e]  = 0;
+		w->mask[e]       &= ~(uint32_t)COMPONENT_RENDER;
+		return;
+	}
 	w->render_ref[e]  = render_ref;
 	w->mask[e]       |= COMPONENT_RENDER;
 }

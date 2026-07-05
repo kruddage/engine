@@ -85,8 +85,10 @@ void world_set_transform(struct world *w, int32_t e,
 int32_t world_set_name(struct world *w, int32_t e, const char *name);
 
 /*
- * Set a live entity's render_ref and COMPONENT_RENDER bit; out-of-range or
- * tombstoned ids are ignored.
+ * Bind a live entity to a mesh: store render_ref and set COMPONENT_RENDER. A
+ * zero render_ref unbinds instead, clearing COMPONENT_RENDER (so "no mesh" is a
+ * cleared component, not a dangling ref). Out-of-range or tombstoned ids are
+ * ignored.
  */
 void world_set_render_ref(struct world *w, int32_t e, uint32_t render_ref);
 

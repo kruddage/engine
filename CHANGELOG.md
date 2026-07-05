@@ -17,6 +17,8 @@ engine, before it lands anywhere else.
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-07-05
+
 ### Added
 
 - **Shader authoring in kruddboard** — the Assets tab "New Asset" form now offers
@@ -28,6 +30,12 @@ engine, before it lands anywhere else.
   key/value declaration metadata (e.g. shader stage/dialect) to authored assets;
   `describe()` surfaces it, and synthesizes a shader's stage from its file
   extension when no explicit declaration is set (e.g. after a reload).
+
+### Changed
+
+- **Version string format** — the build-number suffix shown in the browser
+  tab title and in-app header, and logged at engine init, now reads
+  `4.0.0.7` (dot-separated) instead of `v0.3.0+7`.
 
 ## [0.3.0] - 2026-06-29
 

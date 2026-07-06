@@ -3,6 +3,7 @@
 #include "renderer.h"
 #include "entity_api.h"
 #include "camera.h"
+#include "camera_api.h"
 #include "math_types.h"
 #include "mesh.h"
 #include "asset_api.h"
@@ -61,6 +62,41 @@ static struct mesh_gpu g_meshes[SCENE_MAX_MESHES];
 static uint32_t        g_mesh_count;
 
 static struct camera g_cam;
+
+/*
+ * Camera service (#178) — lets editor overlays project world points with the
+ * exact view·projection the forward pass draws with.  get_view_proj recomputes
+ * on demand so a freshly set aspect is reflected immediately, without waiting
+ * for the next tick.
+ */
+static void camera_get_view_proj(struct mat4 *out)
+{
+	if (!out)
+		return;
+	camera_update(&g_cam);
+	*out = g_cam.view_proj;
+}
+
+static void camera_get_eye(float out[3])
+{
+	if (!out)
+		return;
+	out[0] = g_cam.eye[0];
+	out[1] = g_cam.eye[1];
+	out[2] = g_cam.eye[2];
+}
+
+static void camera_set_viewport(float width, float height)
+{
+	if (width > 0.0f && height > 0.0f)
+		g_cam.aspect = width / height;
+}
+
+static const struct camera_api g_camera_api = {
+	camera_get_view_proj,
+	camera_get_eye,
+	camera_set_viewport,
+};
 
 /* The built-in primitives that have uploadable geometry today. */
 static const char *const PRIMITIVE_PATHS[] = {
@@ -383,6 +419,16 @@ static const struct subsystem desc = {
 	.shutdown = scene_renderer_shutdown,
 };
 
+/*
+ * The camera is published as its own read-only "camera" subsystem rather than
+ * hung off scene_renderer's entry, so consumers resolve it by intent. It has no
+ * lifecycle of its own — the renderer owns and updates the camera state.
+ */
+static const struct subsystem camera_desc = {
+	.name = "camera",
+	.api  = &g_camera_api,
+};
+
 #ifdef __EMSCRIPTEN__
 void plugin_entry(struct subsystem_manager *mgr)
 #else
@@ -396,5 +442,6 @@ void scene_renderer_plugin_entry(struct subsystem_manager *mgr)
 	g_fg_api = subsystem_manager_get_api(mgr, "frame_graph");
 	g_scene  = subsystem_manager_get_api(mgr, "scene");
 	g_asset  = subsystem_manager_get_api(mgr, "asset");
+	subsystem_manager_register(mgr, &camera_desc);
 	subsystem_manager_register(mgr, &desc);
 }

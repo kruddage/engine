@@ -28,6 +28,7 @@ extern "C" {
 #include "asset_codec_api.h"
 #include "entity_api.h"
 #include "edit_api.h"
+#include "camera_api.h"
 #include "vscript_api.h"
 #include "shader_graph_api.h"
 #include "memory_api.h"
@@ -42,6 +43,7 @@ extern "C" {
 #ifdef __EMSCRIPTEN__
 #include <emscripten/html5.h>
 #include <string.h>
+#include <math.h>
 #include "md_parse.h"
 #include "md_draw.h"
 #include "changelog_data.h" /* generated: CHANGELOG_MD[] */
@@ -60,6 +62,15 @@ static uint32_t                        g_asset_sel; /* 0 = none */
 static const struct entity_api        *g_entity_api;
 static int32_t                         g_entity_sel = -1; /* -1 = none */
 static const struct edit_api          *g_edit_api;  /* NULL = no history */
+static const struct camera_api        *g_camera_api; /* NULL = no viewport gizmo */
+
+/* Transform gizmo mode, shared between the viewport handles and the World tab. */
+enum gizmo_mode {
+	GIZMO_MOVE,
+	GIZMO_ROTATE,
+	GIZMO_SCALE,
+};
+static enum gizmo_mode g_gizmo_mode = GIZMO_MOVE;
 
 #ifdef __EMSCRIPTEN__
 static const struct asset_mut_api     *g_asset_mut;
@@ -1303,6 +1314,290 @@ static void draw_inspector_mesh(const struct world *w, uint32_t e)
 	ImGui::EndTable();
 }
 
+/* ------------------------------------------------------------------ */
+/* Transform gizmo (#178)                                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Hand-rolled against our own camera matrices rather than pulling in ImGuizmo:
+ * the engine already exposes view·projection (#171) and a mutable transform API
+ * (#173), and the shader-graph canvas set the precedent of driving handles off
+ * the ImGui draw list.  A dependency would only wrap the same three primitives
+ * (project, hit-test, write-back) we already have the pieces for.
+ *
+ * Handles are drawn on the background draw list so they sit over the rendered
+ * 3D scene but under the editor overlay.  All geometry works in world space and
+ * projects through the live camera, so the axes track it for free.
+ */
+
+#define GIZMO_AXIS_NONE (-1)
+
+static int32_t          g_gizmo_axis = GIZMO_AXIS_NONE; /* dragging axis, or -1 */
+static struct transform g_gizmo_start;                  /* local xform at grab */
+static ImVec2           g_gizmo_grab;                   /* mouse pos at grab */
+static bool             g_gizmo_gesture;                /* edit begin/commit open */
+
+static const ImU32 GIZMO_AXIS_COL[3] = {
+	IM_COL32(230,  70,  70, 255),  /* X — red   */
+	IM_COL32( 90, 210,  90, 255),  /* Y — green */
+	IM_COL32( 90, 140, 240, 255),  /* Z — blue  */
+};
+
+/*
+ * Project a world point through view_proj into ImGui display-space pixels.
+ * view_proj is column-major (m[col*4+row]); disp is io.DisplaySize.  Returns
+ * false when the point is at or behind the camera plane (w <= 0).
+ */
+static bool gizmo_project(const float vp[16], const float p[3],
+			  ImVec2 disp, ImVec2 *out)
+{
+	float cx = vp[0]*p[0] + vp[4]*p[1] + vp[8]*p[2]  + vp[12];
+	float cy = vp[1]*p[0] + vp[5]*p[1] + vp[9]*p[2]  + vp[13];
+	float cw = vp[3]*p[0] + vp[7]*p[1] + vp[11]*p[2] + vp[15];
+
+	if (cw <= 1e-4f)
+		return false;
+	out->x = (cx / cw * 0.5f + 0.5f) * disp.x;
+	out->y = (1.0f - (cy / cw * 0.5f + 0.5f)) * disp.y;
+	return true;
+}
+
+/* Shortest distance from point p to segment ab, in pixels. */
+static float gizmo_seg_dist(ImVec2 p, ImVec2 a, ImVec2 b)
+{
+	float vx = b.x - a.x, vy = b.y - a.y;
+	float wx = p.x - a.x, wy = p.y - a.y;
+	float len2 = vx*vx + vy*vy;
+	float t    = len2 > 1e-6f ? (wx*vx + wy*vy) / len2 : 0.0f;
+	float dx, dy;
+
+	if (t < 0.0f) t = 0.0f;
+	if (t > 1.0f) t = 1.0f;
+	dx = a.x + t*vx - p.x;
+	dy = a.y + t*vy - p.y;
+	return sqrtf(dx*dx + dy*dy);
+}
+
+/* Hamilton product o = a*b (xyzw), then re-normalize into out. */
+static void gizmo_quat_mul(float o[4], const float a[4], const float b[4])
+{
+	float x = a[3]*b[0] + a[0]*b[3] + a[1]*b[2] - a[2]*b[1];
+	float y = a[3]*b[1] - a[0]*b[2] + a[1]*b[3] + a[2]*b[0];
+	float z = a[3]*b[2] + a[0]*b[1] - a[1]*b[0] + a[2]*b[3];
+	float w = a[3]*b[3] - a[0]*b[0] - a[1]*b[1] - a[2]*b[2];
+	float inv = 1.0f / sqrtf(x*x + y*y + z*z + w*w);
+
+	o[0] = x*inv; o[1] = y*inv; o[2] = z*inv; o[3] = w*inv;
+}
+
+/* Push the in-progress local transform back through the mutable API. */
+static void gizmo_apply(int32_t e, const struct transform *t)
+{
+	if (g_entity_api && g_entity_api->set_transform)
+		g_entity_api->set_transform(e, t);
+}
+
+/*
+ * World-space unit length that reads as a constant on-screen handle size:
+ * scale the axis by its distance from the eye so far entities don't shrink to
+ * nothing and near ones don't fill the view.
+ */
+static float gizmo_handle_len(const float eye[3], const float origin[3])
+{
+	float dx = origin[0] - eye[0];
+	float dy = origin[1] - eye[1];
+	float dz = origin[2] - eye[2];
+	float d  = sqrtf(dx*dx + dy*dy + dz*dz);
+
+	return d * 0.18f + 0.05f;
+}
+
+/*
+ * Draw the selected entity's move/rotate/scale handles over the viewport and
+ * process a drag on one of them.  Runs every frame the board is visible; draws
+ * nothing (and grabs nothing) when the selection is empty — satisfying "no
+ * gizmo when nothing is selected".
+ */
+static void gizmo_update_and_draw(void)
+{
+	const struct world *w;
+	ImGuiIO            &io = ImGui::GetIO();
+	ImDrawList         *dl;
+	struct mat4         vp;
+	float               eye[3];
+	float               origin[3];
+	float               len;
+	int32_t             sel;
+	uint32_t            e;
+	ImVec2              o2d;
+	ImVec2              tip2d[3];
+	int32_t             hot = GIZMO_AXIS_NONE;
+
+	if (!g_camera_api || !g_entity_api)
+		return;
+
+	sel = g_entity_api->get_selected();
+	w   = g_entity_api->get_world();
+	if (!w || sel < 0 || (uint32_t)sel >= w->count || !w->alive[(uint32_t)sel])
+		return;
+	e = (uint32_t)sel;
+
+	/* Anchor at the entity's world origin; write edits to its local xform. */
+	origin[0] = w->world_xform[e].position[0];
+	origin[1] = w->world_xform[e].position[1];
+	origin[2] = w->world_xform[e].position[2];
+
+	g_camera_api->get_view_proj(&vp);
+	g_camera_api->get_eye(eye);
+	len = gizmo_handle_len(eye, origin);
+
+	if (!gizmo_project(vp.m, origin, io.DisplaySize, &o2d))
+		return; /* entity behind the camera */
+
+	/* Project each axis tip; bail an axis that clips behind the camera. */
+	bool tip_ok[3];
+	for (int a = 0; a < 3; a++) {
+		float tip[3] = { origin[0], origin[1], origin[2] };
+
+		tip[a] += len;
+		tip_ok[a] = gizmo_project(vp.m, tip, io.DisplaySize, &tip2d[a]);
+	}
+
+	/*
+	 * Hit-test against the nearest axis line — but only when the pointer is
+	 * free (not over an ImGui window) or a drag is already in flight, so
+	 * clicking the editor panel never grabs a handle.
+	 */
+	if ((!io.WantCaptureMouse || g_gizmo_axis != GIZMO_AXIS_NONE)) {
+		float best = 10.0f; /* px pick radius */
+
+		for (int a = 0; a < 3; a++) {
+			if (!tip_ok[a])
+				continue;
+			float d = gizmo_seg_dist(io.MousePos, o2d, tip2d[a]);
+			if (d < best) {
+				best = d;
+				hot  = a;
+			}
+		}
+	}
+
+	/* Grab: begin a single-entry undo gesture and snapshot the start xform. */
+	if (g_gizmo_axis == GIZMO_AXIS_NONE && hot != GIZMO_AXIS_NONE &&
+	    ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+		static const char *const LABEL[3] = {
+			"Move Entity", "Rotate Entity", "Scale Entity"
+		};
+
+		g_gizmo_axis   = hot;
+		g_gizmo_start  = w->local[e];
+		g_gizmo_grab   = io.MousePos;
+		if (g_edit_api && g_edit_api->begin) {
+			g_edit_api->begin(LABEL[g_gizmo_mode]);
+			g_gizmo_gesture = true;
+		}
+	}
+
+	/* Drag: map the pointer motion onto the grabbed axis and write it back. */
+	if (g_gizmo_axis != GIZMO_AXIS_NONE &&
+	    ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+		int             a  = g_gizmo_axis;
+		struct transform t = g_gizmo_start;
+		float           ax = tip2d[a].x - o2d.x;
+		float           ay = tip2d[a].y - o2d.y;
+		float           axis_px = sqrtf(ax*ax + ay*ay);
+		/* Signed pointer travel along the axis's screen direction. */
+		float           mx = io.MousePos.x - g_gizmo_grab.x;
+		float           my = io.MousePos.y - g_gizmo_grab.y;
+		float           along = axis_px > 1e-3f
+					? (mx*ax + my*ay) / axis_px : 0.0f;
+
+		if (g_gizmo_mode == GIZMO_MOVE) {
+			/* along px * (world units per px along this axis). */
+			float world = axis_px > 1e-3f
+				      ? along * (len / axis_px) : 0.0f;
+
+			t.position[a] = g_gizmo_start.position[a] + world;
+		} else if (g_gizmo_mode == GIZMO_SCALE) {
+			float s = g_gizmo_start.scale[a] + along * 0.01f;
+
+			t.scale[a] = s < 0.01f ? 0.01f : s;
+		} else { /* GIZMO_ROTATE */
+			float axis[3] = { 0.0f, 0.0f, 0.0f };
+			float ang     = along * 0.01f;
+			float dq[4];
+
+			axis[a] = 1.0f;
+			dq[0] = axis[0] * sinf(ang * 0.5f);
+			dq[1] = axis[1] * sinf(ang * 0.5f);
+			dq[2] = axis[2] * sinf(ang * 0.5f);
+			dq[3] = cosf(ang * 0.5f);
+			gizmo_quat_mul(t.rotation, dq, g_gizmo_start.rotation);
+		}
+		gizmo_apply((int32_t)e, &t);
+		hot = a; /* keep the grabbed axis highlighted while dragging */
+	}
+
+	/* Release: close the undo gesture so the whole drag is one entry. */
+	if (g_gizmo_axis != GIZMO_AXIS_NONE &&
+	    ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+		if (g_gizmo_gesture && g_edit_api && g_edit_api->commit)
+			g_edit_api->commit();
+		g_gizmo_gesture = false;
+		g_gizmo_axis    = GIZMO_AXIS_NONE;
+	}
+
+	/* ---- Render the handles ---- */
+	dl = ImGui::GetBackgroundDrawList();
+	dl->AddCircleFilled(o2d, 4.0f, IM_COL32(230, 230, 235, 255));
+
+	for (int a = 0; a < 3; a++) {
+		ImU32 col = GIZMO_AXIS_COL[a];
+		float th  = (a == hot) ? 4.0f : 2.5f;
+
+		if (!tip_ok[a])
+			continue;
+		dl->AddLine(o2d, tip2d[a], col, th);
+
+		if (g_gizmo_mode == GIZMO_MOVE) {
+			dl->AddCircleFilled(tip2d[a], (a == hot) ? 7.0f : 5.0f,
+					    col);
+		} else if (g_gizmo_mode == GIZMO_SCALE) {
+			float r = (a == hot) ? 6.0f : 4.5f;
+
+			dl->AddRectFilled(ImVec2(tip2d[a].x - r, tip2d[a].y - r),
+					  ImVec2(tip2d[a].x + r, tip2d[a].y + r),
+					  col);
+		} else { /* rotate: a ring at the tip */
+			dl->AddCircle(tip2d[a], (a == hot) ? 8.0f : 6.0f, col,
+				      0, (a == hot) ? 3.0f : 2.0f);
+		}
+	}
+}
+
+/* Move / Rotate / Scale selector — shared state with the viewport handles. */
+static void draw_gizmo_mode_chips(void)
+{
+	static const char *const NAME[3] = { "Move", "Rotate", "Scale" };
+	int m;
+
+	ImGui::TextUnformatted("Tool");
+	ImGui::SameLine();
+	for (m = 0; m < 3; m++) {
+		bool active = (int)g_gizmo_mode == m;
+
+		if (m > 0)
+			ImGui::SameLine();
+		if (active)
+			ImGui::PushStyleColor(ImGuiCol_Button,
+					      IM_COL32(70, 110, 170, 255));
+		if (ImGui::SmallButton(NAME[m]))
+			g_gizmo_mode = (enum gizmo_mode)m;
+		if (active)
+			ImGui::PopStyleColor();
+	}
+}
+
 static void draw_tab_world(void)
 {
 	const struct world     *w = NULL;
@@ -1405,6 +1700,10 @@ static void draw_tab_world(void)
 			ImGui::EndTable();
 		}
 	}
+
+	ImGui::Separator();
+
+	draw_gizmo_mode_chips();
 
 	ImGui::Separator();
 
@@ -2327,6 +2626,16 @@ static void draw_board(void * /*userdata*/)
 	if (!g_visible)
 		return;
 
+	/*
+	 * Keep the camera's projection aspect matched to the live canvas, then
+	 * draw the selection's transform handles over the viewport.  Both run
+	 * before the overlay so the gizmo sits under the editor window.
+	 */
+	if (g_camera_api && g_camera_api->set_viewport)
+		g_camera_api->set_viewport(ImGui::GetIO().DisplaySize.x,
+					   ImGui::GetIO().DisplaySize.y);
+	gizmo_update_and_draw();
+
 	/* Behind the overlay: catches asset drops onto the viewport. */
 	draw_spawn_drop_target();
 
@@ -2468,6 +2777,8 @@ extern "C" void kruddboard_entry(struct subsystem_manager *mgr)
 		subsystem_manager_get_api(mgr, "scene");
 	g_edit_api   = (const struct edit_api *)
 		subsystem_manager_get_api(mgr, "edit");
+	g_camera_api = (const struct camera_api *)
+		subsystem_manager_get_api(mgr, "camera");
 	g_vscript    = (const struct vscript_api *)
 		subsystem_manager_get_api(mgr, "vscript");
 	g_shader_graph = (const struct shader_graph_api *)

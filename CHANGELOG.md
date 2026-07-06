@@ -22,6 +22,15 @@ engine, before it lands anywhere else.
 
 ### Added
 
+- **Transform gizmo in the viewport** — the selected entity now shows draggable
+  move / rotate / scale handles drawn over the 3D scene, so you can manipulate a
+  transform directly in the viewport instead of only through the Inspector's
+  number fields. A **Tool** selector in the World tab switches between Move,
+  Rotate, and Scale; the handles track the camera, and dragging one writes back
+  through the same mutable API as the Inspector — the whole drag lands as a
+  single undoable edit. No gizmo is shown when nothing is selected. The scene
+  camera's view·projection is now exposed as a "camera" subsystem, and its
+  projection aspect follows the live canvas so handles sit on the rendered meshes.
 - **Undo/redo for asset editing** — creating, editing (Save), and deleting an
   authored asset now land on the same global Ctrl+Z / Ctrl+Y timeline as scene
   edits. Editing a markdown or shader source and saving is undoable, a run of

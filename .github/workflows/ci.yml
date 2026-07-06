@@ -8,20 +8,33 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Toolchain is baked into the pinned image, so no per-job SDK install. Pin
+    # matches the emsdk version the other jobs and local builds use (#261).
+    container: emscripten/emsdk:6.0.2
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Install Emscripten
-        uses: mymindstorm/setup-emsdk@v14
+      # The container runs as root, so git refuses to touch the checkout
+      # ("detected dubious ownership") and silently falls back — stage-site.sh
+      # would stamp "unknown" instead of the commit hash. Mark it safe first.
+      - name: Trust the workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install ccache
+        run: apt-get update && apt-get install -y ccache
+
+      - name: Cache ccache
+        uses: actions/cache@v4
         with:
-          version: 6.0.2
-          cache: true
+          path: ~/.ccache
+          key: ccache-wasm-${{ github.sha }}
+          restore-keys: ccache-wasm-
 
       - name: Build
         run: |
-          emcmake cmake -B build
+          emcmake cmake -B build -DCMAKE_C_COMPILER_LAUNCHER=ccache
           cmake --build build
 
       # A side module's function imports are resolved at dlopen time; any that
@@ -137,19 +150,17 @@ jobs:
     if: github.event_name == 'pull_request'
     needs: [plugin-lint, malloc-lint, build, sanitizers, coverage, clang-tidy]
     runs-on: ubuntu-latest
+    container: emscripten/emsdk:6.0.2
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Install Emscripten
-        uses: mymindstorm/setup-emsdk@v14
-        with:
-          version: 6.0.2
-          cache: true
+      - name: Trust the workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Install ccache
-        run: sudo apt-get install -y ccache
+        run: apt-get update && apt-get install -y ccache
 
       - name: Cache ccache
         uses: actions/cache@v4

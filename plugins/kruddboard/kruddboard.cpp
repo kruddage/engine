@@ -1465,8 +1465,8 @@ static void gizmo_update_and_draw(void)
 
 	/*
 	 * Hit-test against the nearest axis line — but only when the pointer is
-	 * free (not over an ImGui window) or a drag is already in flight, so
-	 * clicking the editor panel never grabs a handle.
+	 * unobstructed, i.e. not over an ImGui window, or a drag is already in
+	 * flight, so clicking the editor panel never grabs a handle.
 	 */
 	if ((!io.WantCaptureMouse || g_gizmo_axis != GIZMO_AXIS_NONE)) {
 		float best = 10.0f; /* px pick radius */

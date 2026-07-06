@@ -32,7 +32,7 @@ jobs:
         run: sh scripts/stage-site.sh build public
 
       - name: Upload staged site
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: site
           path: public

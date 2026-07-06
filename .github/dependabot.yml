@@ -1,0 +1,15 @@
+# Dependabot keeps our pinned dependencies current so pins don't rot.
+#
+# Today the GitHub Actions we use float on major tags (actions/checkout@v4 etc.);
+# once those are SHA-pinned (part of #309), Dependabot opens PRs that bump the
+# pin and update the trailing version comment, keeping "pinned but current".
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    labels:
+      - "release:chore"
+    commit-message:
+      prefix: "ci"

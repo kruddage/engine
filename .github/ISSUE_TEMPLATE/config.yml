@@ -1,0 +1,2 @@
+# Keep the "blank issue" escape hatch, but steer most issues into a template.
+blank_issues_enabled: true

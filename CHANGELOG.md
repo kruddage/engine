@@ -44,6 +44,10 @@ engine, before it lands anywhere else.
   keyboard visibility is now reconciled against the active widget every frame,
   so it appears only while a text field is focused and hides as soon as you
   leave it.
+- **Mobile keyboard flashing on canvas taps** — tapping the 3D scene no longer
+  briefly flashes the on-screen keyboard open and shut. The keyboard is now only
+  raised when a tap lands inside the debug UI, where a text field might claim it;
+  taps on the bare canvas leave it down.
 - **Live typing with mobile predictive keyboards** — text now appears as you
   type on keyboards that compose whole words (e.g. Firefox on Android), instead
   of staying invisible until you pressed Enter or space to commit the word.

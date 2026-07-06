@@ -1,0 +1,19 @@
+# Code owners — GitHub requests a review from the owner when a matching path
+# changes. Order matters: the LAST matching pattern wins for a given file.
+# See https://docs.github.com/articles/about-code-owners.
+
+# Default owner for everything not matched more specifically below.
+*                       @joshcoyne
+
+# The plugin vtable headers ARE the engine ABI (see CLAUDE.md). A change to an
+# exported signature is a breaking change, so guard them explicitly.
+/plugins/include/       @joshcoyne
+
+# Build and CI/release machinery.
+/CMakeLists.txt         @joshcoyne
+/.github/               @joshcoyne
+
+# Version and release-notes sources — must stay consistent (see
+# docs/ci-and-release.md).
+/VERSION                @joshcoyne
+/CHANGELOG.md           @joshcoyne

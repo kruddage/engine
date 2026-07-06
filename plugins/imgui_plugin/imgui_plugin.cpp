@@ -79,6 +79,25 @@ static const imgui_api g_imgui_api = { imgui_register_panel };
 
 #ifdef __EMSCRIPTEN__
 
+/*
+ * Soft-keyboard reconciliation state (see on_touch and imgui_tick).
+ *
+ * s_kbd_shown — the hidden <input> is focused to serve an active ImGui text
+ *   widget (WantTextInput).  s_kbd_grace — countdown for a *speculative* show
+ *   raised from a touch gesture that has not yet been claimed by a text widget;
+ *   when it reaches zero unclaimed, the keyboard is dismissed.
+ */
+static bool s_kbd_shown;
+static int  s_kbd_grace;
+
+/*
+ * Frames a gesture-driven speculative show() may go unclaimed by
+ * WantTextInput before imgui_tick dismisses it.  ImGui activates InputText
+ * the tick after the tap is processed, so one frame suffices; two gives a
+ * margin against event/frame timing without a user-visible keyboard flash.
+ */
+#define KBD_GESTURE_GRACE_FRAMES 2
+
 static EM_BOOL on_mouse_move(int /*type*/, const EmscriptenMouseEvent *e,
 			     void * /*ud*/)
 {
@@ -114,17 +133,23 @@ static EM_BOOL on_touch(int type, const EmscriptenTouchEvent *e,
 		io.AddMouseButtonEvent(0, false);
 
 	/*
-	 * iOS soft-keyboard workaround: iOS only raises the keyboard when
-	 * focus() is called inside a user-gesture handler.  ImGui activates
-	 * InputText the frame AFTER the tap, so the edge-based show() in
-	 * imgui_tick runs outside the gesture window and the keyboard never
-	 * appears.  Calling show() here — inside the TOUCHEND gesture — lets
-	 * iOS raise the keyboard; if WantTextInput turns out to be false this
-	 * frame, the edge logic in imgui_tick will call hide() immediately.
-	 * This is best-effort and may need per-device tuning.
+	 * Speculative soft-keyboard raise.  Mobile browsers (iOS Safari,
+	 * Firefox Android, …) only honour focus() from inside a user-gesture
+	 * handler, but ImGui doesn't activate InputText until the tick after
+	 * the tap — too late, outside the gesture window.  So focus here on
+	 * every touch-end and let imgui_tick reconcile: if this tap didn't
+	 * land on a text widget, WantTextInput stays false and the keyboard is
+	 * dismissed within KBD_GESTURE_GRACE_FRAMES.
+	 *
+	 * The grace countdown is what makes the dismissal work.  The previous
+	 * edge-based logic only hid on a WantTextInput true->false transition,
+	 * which a spurious show() never produces — so any tap on empty canvas
+	 * raised the keyboard and left it up for good.
 	 */
-	if (type == EMSCRIPTEN_EVENT_TOUCHEND)
+	if (type == EMSCRIPTEN_EVENT_TOUCHEND) {
 		krudd_text_input_show();
+		s_kbd_grace = KBD_GESTURE_GRACE_FRAMES;
+	}
 
 	return EM_TRUE;
 }
@@ -166,8 +191,6 @@ static void imgui_tick(void)
 	double dpr;
 	int    phys_w, phys_h;
 	int    i;
-	/* Text-input state persisted across ticks for edge detection. */
-	static bool s_prev_want_text;
 
 	emscripten_get_element_css_size("#canvas", &css_w, &css_h);
 	dpr    = get_device_pixel_ratio();
@@ -197,9 +220,12 @@ static void imgui_tick(void)
 	 * Text-input bridge — runs after Render() so io.WantTextInput
 	 * reflects this frame's active widgets.
 	 *
-	 * Focus management: on the rising edge of WantTextInput, focus the
-	 * hidden <input> element (desktop: begin capturing keys; mobile:
-	 * raise soft keyboard).  On the falling edge, blur it.
+	 * Focus management: reconcile the hidden <input> focus with ImGui's
+	 * text-input demand (WantTextInput).  Desktop: focus begins capturing
+	 * keys; mobile: focus raises the soft keyboard.  This is level-based,
+	 * not edge-based, so a speculative show() raised from a touch gesture
+	 * (on_touch) is undone here when the tap turns out not to have hit a
+	 * text widget — see the s_kbd_grace handling below.
 	 *
 	 * Char drain: pull any UTF-8 text typed this frame and feed it to
 	 * ImGui via AddInputCharactersUTF8.
@@ -214,11 +240,23 @@ static void imgui_tick(void)
 	{
 		bool want = io.WantTextInput;
 
-		if (want && !s_prev_want_text)
-			krudd_text_input_show();
-		else if (!want && s_prev_want_text)
+		if (want) {
+			/* A text widget wants input: ensure focus, cancel any
+			 * pending speculative-show grace. */
+			if (!s_kbd_shown) {
+				krudd_text_input_show();
+				s_kbd_shown = true;
+			}
+			s_kbd_grace = 0;
+		} else if (s_kbd_shown) {
+			/* The active text widget went away: dismiss now. */
 			krudd_text_input_hide();
-		s_prev_want_text = want;
+			s_kbd_shown = false;
+		} else if (s_kbd_grace > 0 && --s_kbd_grace == 0) {
+			/* A gesture speculatively raised the keyboard but no
+			 * text widget claimed it: dismiss it. */
+			krudd_text_input_hide();
+		}
 
 		/* Drain printable / IME characters. */
 		{

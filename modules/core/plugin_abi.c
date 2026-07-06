@@ -323,7 +323,10 @@ EM_JS(void, krudd_idb_blob_del, (const char *hash_ptr), {
 EM_JS(void, krudd_text_input_init, (void), {
 	if (Module.__kruddText)
 		return;
-	Module.__kruddText = { chars: "", keys: [] };
+	/* chars: pending UTF-8 to feed ImGui.  keys: pending key codes.
+	 * emitted: code units of the active composition already pushed to
+	 * chars, so we never double-type (see emitSuffix). */
+	Module.__kruddText = { chars: "", keys: [], emitted: 0 };
 
 	var el = document.createElement("input");
 	el.type           = "text";
@@ -342,21 +345,60 @@ EM_JS(void, krudd_text_input_init, (void), {
 	Module.__kruddTextEl = el;
 
 	/*
-	 * Printable / IME text.  A composing keyboard (predictive text,
-	 * many mobile IMEs) fires "input" both mid-composition and again on
-	 * commit; capturing both double-types every character.  Skip events
-	 * while ev.isComposing and take the committed text on
-	 * compositionend instead, so each character is captured exactly once.
+	 * Printable / IME text.
+	 *
+	 * A composing keyboard (predictive text, gesture typing, many mobile
+	 * IMEs — notably Firefox Android) holds the current word in an open
+	 * composition, firing "input" with ev.isComposing === true for each
+	 * keystroke and only committing on space/enter.  The old code skipped
+	 * every composing event and waited for compositionend, so nothing
+	 * appeared until the word was committed ("typing doesn't show up until
+	 * I press Enter").
+	 *
+	 * Instead, emit the *suffix* of el.value not yet pushed to ImGui, on
+	 * every input event including composing ones, tracking how much we've
+	 * emitted so a character is never sent twice.  This shows text live as
+	 * it is typed while still de-duping the mid-composition + commit double
+	 * fire.  During composition we must NOT clear el.value (that would
+	 * break the IME), so we only clear once the text is committed.
+	 *
+	 * Limitation: predictive *replacement* of the composed word (e.g.
+	 * autocorrect rewriting "teh"->"the") can't be un-emitted and would
+	 * leave the earlier spelling.  The element disables autocapitalize,
+	 * autocorrect and spellcheck above precisely to keep input append-only.
 	 */
+	function emitSuffix() {
+		var v = el.value;
+		var kt = Module.__kruddText;
+		if (kt.emitted > v.length)	/* shrank: backspace / rewrite */
+			kt.emitted = v.length;
+		if (v.length > kt.emitted) {
+			kt.chars += v.slice(kt.emitted);
+			kt.emitted = v.length;
+		}
+	}
+
+	el.addEventListener("compositionstart", function() {
+		Module.__kruddText.emitted = 0;
+	});
 	el.addEventListener("input", function(ev) {
+		emitSuffix();
 		if (ev.isComposing)
-			return;
-		Module.__kruddText.chars += el.value;
+			return;		/* keep composing; clearing breaks IME */
 		el.value = "";
+		Module.__kruddText.emitted = 0;
 	});
 	el.addEventListener("compositionend", function() {
-		Module.__kruddText.chars += el.value;
+		emitSuffix();		/* any tail not yet live-emitted */
 		el.value = "";
+		Module.__kruddText.emitted = 0;
+	});
+	/* Flush any uncommitted composition if focus is torn away (e.g. our
+	 * own hide()), so in-progress text is not lost. */
+	el.addEventListener("blur", function() {
+		emitSuffix();
+		el.value = "";
+		Module.__kruddText.emitted = 0;
 	});
 
 	/* Navigation / editing keys: push a small integer code */

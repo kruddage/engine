@@ -36,6 +36,18 @@ engine, before it lands anywhere else.
   undoable like any other scene edit. Previously the mesh binding could only be
   set by drag-to-spawn from the Assets tab and was never surfaced afterward.
 
+### Fixed
+
+- **Mobile soft-keyboard behaviour on the debug UI** — tapping the canvas no
+  longer leaves the on-screen keyboard stuck open. Previously any tap that
+  didn't land on a text field raised the keyboard and never dismissed it;
+  keyboard visibility is now reconciled against the active widget every frame,
+  so it appears only while a text field is focused and hides as soon as you
+  leave it.
+- **Live typing with mobile predictive keyboards** — text now appears as you
+  type on keyboards that compose whole words (e.g. Firefox on Android), instead
+  of staying invisible until you pressed Enter or space to commit the word.
+
 ## [5.0.0] - 2026-07-05
 
 ### Added

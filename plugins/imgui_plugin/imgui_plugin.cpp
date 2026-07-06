@@ -137,16 +137,24 @@ static EM_BOOL on_touch(int type, const EmscriptenTouchEvent *e,
 	 * Firefox Android, …) only honour focus() from inside a user-gesture
 	 * handler, but ImGui doesn't activate InputText until the tick after
 	 * the tap — too late, outside the gesture window.  So focus here on
-	 * every touch-end and let imgui_tick reconcile: if this tap didn't
-	 * land on a text widget, WantTextInput stays false and the keyboard is
-	 * dismissed within KBD_GESTURE_GRACE_FRAMES.
+	 * touch-end and let imgui_tick reconcile: if this tap didn't land on a
+	 * text widget, WantTextInput stays false and the keyboard is dismissed
+	 * within KBD_GESTURE_GRACE_FRAMES.
 	 *
 	 * The grace countdown is what makes the dismissal work.  The previous
 	 * edge-based logic only hid on a WantTextInput true->false transition,
 	 * which a spurious show() never produces — so any tap on empty canvas
 	 * raised the keyboard and left it up for good.
+	 *
+	 * We only raise when the touch lands on an ImGui window at all
+	 * (io.WantCaptureMouse, set the frame after touch-start positioned the
+	 * cursor).  A tap on the bare 3D canvas can never activate a text
+	 * widget, so raising there only produces a visible focus()->blur()
+	 * flash a couple frames later.  Gating on WantCaptureMouse skips that:
+	 * the keyboard stays down unless the tap is inside the debug UI, where
+	 * a text field might claim it.
 	 */
-	if (type == EMSCRIPTEN_EVENT_TOUCHEND) {
+	if (type == EMSCRIPTEN_EVENT_TOUCHEND && io.WantCaptureMouse) {
 		krudd_text_input_show();
 		s_kbd_grace = KBD_GESTURE_GRACE_FRAMES;
 	}

@@ -49,28 +49,18 @@
 		      ((char=? (string-ref s i) #\$) #t)
 		      (else (loop (+ i 1))))))
 
-;; Double every $ so a literal (raw ...) path with a ${VAR} in it survives
-;; ninja's own variable syntax unexpanded.
-(define (ninja-escape s)
-	(let loop ((i 0) (out ""))
-		(if (>= i (string-length s))
-		    out
-		    (let ((c (string-ref s i)))
-			(loop (+ i 1)
-			      (string-append out
-					     (if (char=? c #\$) "$$"
-						 (string c))))))))
-
 ;; ---------------------------------------------------------------------------
 ;; Path references. A spec path resolved by resolve.scm is either tree-relative
-;; (compiled/included under $srcroot) or a raw literal carrying its own
-;; variables. Tree-relative paths get the $srcroot prefix; raw literals pass
-;; through with their $ escaped.
+;; (compiled/included under $srcroot) or a raw literal carrying one of krudd's
+;; own path tokens (${imgui}, ${generated}). Tree-relative paths get the
+;; $srcroot prefix; the tokens resolve to real Ninja paths the same way for
+;; native and WASM, so a native target (the md_parse Scheme shim) can include
+;; the generated headers too.
 ;; ---------------------------------------------------------------------------
 
 (define (ninja-ref path)
 	(if (ninja-has-dollar? path)
-	    (ninja-escape path)
+	    (ninja-resolve-var path)
 	    (string-append "$srcroot/" path)))
 
 (define (ninja-include-flags dirs)
@@ -436,7 +426,10 @@
 		  (string-append gen "/changelog_data.h") "CHANGELOG_MD")
 		(krudd-embed-file
 		  (string-append srcroot "/modules/core/runtime.scm")
-		  (string-append gen "/runtime_scm.h") "RUNTIME_SCM")))
+		  (string-append gen "/runtime_scm.h") "RUNTIME_SCM")
+		(krudd-embed-file
+		  (string-append srcroot "/plugins/kruddboard/md_parse.scm")
+		  (string-append gen "/md_parse_scm.h") "MD_PARSE_SCM")))
 
 ;; Render the whole manifest to build.ninja text. MANIFEST is a list of
 ;; (DIR . SPEC) pairs; SRCROOT is the absolute path of the tree root

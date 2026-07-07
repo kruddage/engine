@@ -41,9 +41,10 @@ if printf '%s\n' "$changed" | grep -qx 'CHANGELOG.md'; then
 fi
 
 # Exempt: CI config, docs, and test sources. Everything else is treated as
-# user-facing enough to require a changelog entry.
+# user-facing enough to require a changelog entry. The exempt set is pinned by
+# scripts/check-changelog.test.sh — update both together.
 non_exempt=$(printf '%s\n' "$changed" | grep -vE \
-	'^\.github/|^docs/|^README\.md$|^CODING_STANDARD\.md$|^CLAUDE\.md$|(_test\.(c|mjs)|\.test\.mjs)$' \
+	'^\.github/|^docs/|^README\.md$|^CODING_STANDARD\.md$|^CLAUDE\.md$|(_test\.(c|mjs|sh)|\.test\.(mjs|sh))$' \
 	|| true)
 
 if [ -z "$non_exempt" ]; then

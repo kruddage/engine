@@ -53,8 +53,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Test the lint checks
+        run: |
+          sh scripts/check-plugin-no-em-asm.test.sh
+          sh scripts/check-plugin-imports.test.sh
+
       - name: Ban EM_ASM_* in plugin sources
-        run: sh scripts/check-plugin-no-em-asm.sh plugins
+        run: sh scripts/lint em-asm
 
   # modules/memory/ is the sole allocator seam (wraps mimalloc). A raw
   # malloc/free/realloc/calloc anywhere else bypasses it invisibly — no
@@ -65,16 +70,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Test the lint checks
+        run: sh scripts/check-no-raw-malloc.test.sh
+
       - name: Ban raw malloc/free/realloc/calloc outside modules/memory/
-        run: sh scripts/check-no-raw-malloc.sh modules plugins
+        run: sh scripts/lint raw-malloc
 
   sanitizers:
-    runs-on: ubuntu-latest
+    # Pin the runner image so the native toolchain — and thus sanitizer
+    # behaviour — is deterministic rather than floating with ubuntu-latest (#308).
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
       - name: Install ccache
-        run: sudo apt-get install -y ccache
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ccache
 
       - name: Cache ccache
         uses: actions/cache@v4
@@ -93,12 +105,16 @@ jobs:
         run: ctest --test-dir build_san --output-on-failure
 
   coverage:
-    runs-on: ubuntu-latest
+    # Pin the runner image so lcov's version — and therefore the coverage
+    # percentage the gate compares against 80 — doesn't drift with the image (#308).
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
       - name: Install lcov and ccache
-        run: sudo apt-get install -y lcov ccache
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lcov ccache
 
       - name: Cache ccache
         uses: actions/cache@v4
@@ -131,12 +147,16 @@ jobs:
           fi
 
   clang-tidy:
-    runs-on: ubuntu-latest
+    # Pin the runner image so clang-tidy's version — and thus which findings
+    # fire — is stable rather than floating with ubuntu-latest (#308).
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
       - name: Install clang-tidy
-        run: sudo apt-get install -y clang-tidy
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-tidy
 
       - name: Configure
         run: cmake -B build

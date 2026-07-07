@@ -51,12 +51,43 @@ a PR; whether each one actually *blocks* merge is a separate question — see
 those jobs were ever skipped or restructured, the test suite would stop running
 with no obvious signal.
 
+**Native jobs pin the runner image.** `sanitizers`, `coverage`, and `clang-tidy`
+run on `ubuntu-24.04` rather than `ubuntu-latest`, and each `apt-get install` is
+preceded by `apt-get update`. Pinning the image (rather than pinning individual
+apt package versions, which rot as the archive drops old versions) keeps the
+native toolchain — and therefore sanitizer behaviour, the coverage percentage,
+and which clang-tidy findings fire — deterministic instead of drifting when the
+`ubuntu-latest` alias advances.
+
+### Running the source lints locally — `scripts/lint`
+
+The source greps have one entry point, `scripts/lint`, used by both CI and local
+runs:
+
+```sh
+scripts/lint              # em-asm + raw-malloc (+ symbol check if ./build exists)
+scripts/lint em-asm       # ban EM_ASM_* in plugin sources
+scripts/lint raw-malloc   # ban raw malloc/free/realloc/calloc outside memory
+scripts/lint symbols DIR  # plugin symbol resolution over a build tree
+scripts/lint imports DIR  # plugin banned-import check (needs wasm-objdump)
+```
+
+CI's `plugin-lint` and `malloc-lint` jobs call `scripts/lint em-asm` /
+`scripts/lint raw-malloc` (job names unchanged, so the required-check set is
+unaffected). The `imports` check is exposed but **not** part of the default run —
+whether it is enforced in CI is still open (#304). Each shell check ships a
+`*.test.sh` next to it (`check-plugin-no-em-asm`, `check-no-raw-malloc`,
+`check-changelog`, `check-plugin-imports`); those tests run in the matching CI
+jobs, so a grep that stops catching a real violation fails a test rather than
+shipping.
+
 ### The changelog gate
 
 `check-changelog.sh` diffs `BASE_SHA..HEAD_SHA` and fails if any **non-exempt**
-file changed without `CHANGELOG.md` also changing. Exempt paths (a hand-kept
-regex at `check-changelog.sh:45-47`): `.github/`, `docs/`, `README.md`,
-`CODING_STANDARD.md`, `CLAUDE.md`, and test sources (`*_test.c`, `*.test.mjs`).
+file changed without `CHANGELOG.md` also changing. Exempt paths (a regex in
+`check-changelog.sh`, pinned by `check-changelog.test.sh` so drift is caught by
+a test): `.github/`, `docs/`, `README.md`, `CODING_STANDARD.md`, `CLAUDE.md`,
+and test sources (`*_test.c`, `*.test.mjs`, `*.test.sh`).
 A PR can also opt out entirely with `[no changelog]` in its title or body
 (`check-changelog.sh:24-29`) — an escape hatch that leaves no auditable trace
 after merge.
@@ -196,10 +227,12 @@ Flagged here for reference; each is owned by a sub-issue of #302.
   ([#306](https://github.com/kruddage/engine/issues/306)).
 - **No release automation / two note sources**
   ([#307](https://github.com/kruddage/engine/issues/307)).
-- **Scattered lint surface** — four `.sh` checks, one `.mjs`, inline
-  `github-script`, and an awk coverage gate with no single entry point; the shell
-  checks have no tests; apt tools are unpinned and some install without
-  `apt-get update` ([#308](https://github.com/kruddage/engine/issues/308)).
+- **Scattered lint surface** — the source greps now share the `scripts/lint`
+  entry point, each shell check has a `*.test.sh`, the native jobs pin
+  `ubuntu-24.04` and `apt-get update` before installing
+  ([#308](https://github.com/kruddage/engine/issues/308)). Still open there: the
+  inline `github-script` label check and the awk coverage gate remain outside the
+  entry point.
 - **Missing hygiene** — no `CODEOWNERS`, no `dependabot`, no issue/PR templates;
   third-party actions float on major tags rather than SHAs
   ([#309](https://github.com/kruddage/engine/issues/309)).

@@ -20,6 +20,17 @@ engine, before it lands anywhere else.
 
 ## [Unreleased]
 
+### Added
+
+- **The engine now embeds an s7 Scheme runtime, and the frame is driven from
+  Scheme.** The same interpreter krudd already used at build time is now linked
+  into the WASM module. At startup the engine boots a Scheme image
+  (`runtime.scm`), and each frame's body runs through the image's `(tick)`,
+  which calls back into the engine — today through a single `krudd-log`
+  primitive backed by the log subsystem. This is the first step toward writing
+  game and engine logic in Scheme, with C/Rust reserved for the paths that need
+  them.
+
 ## [6.4.0] - 2026-07-07
 
 ### Changed

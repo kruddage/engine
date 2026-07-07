@@ -6,6 +6,7 @@
 #include "memory.h"
 #include "memory_api.h"
 #include "plugin_loader.h"
+#include "script.h"
 #include "stats_api.h"
 #include "version.h"
 
@@ -13,6 +14,8 @@
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
+/* The Scheme image, baked into the module at build time (krudd-embed-file). */
+#include "runtime_scm.h"
 #endif
 
 /*
@@ -120,6 +123,11 @@ void engine_init(void)
 	subsystem_manager_init(&manager, subsystems);
 	frame_count = 0;
 	LOG_INFO("engine: init " ENGINE_VERSION_FULL);
+#ifdef __EMSCRIPTEN__
+	/* Boot the Scheme image: it owns the body of the frame from here. */
+	script_init();
+	script_eval(RUNTIME_SCM);
+#endif
 }
 
 void engine_tick(void)
@@ -127,6 +135,7 @@ void engine_tick(void)
 	frame_count++;
 #ifdef __EMSCRIPTEN__
 	stats_update();
+	script_tick();
 #endif
 	if (frame_count % 60 == 0)
 		LOG_DEBUG("engine: frame %d", frame_count);
@@ -136,6 +145,9 @@ void engine_tick(void)
 void engine_shutdown(void)
 {
 	LOG_INFO("engine: shutdown");
+#ifdef __EMSCRIPTEN__
+	script_shutdown();
+#endif
 	subsystem_manager_shutdown(&manager);
 }
 

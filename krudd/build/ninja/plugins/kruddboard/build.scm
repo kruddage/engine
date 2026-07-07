@@ -19,10 +19,28 @@
 		(raw "${generated}/changelog_data.h")))
 
  (native-only
+	;; The C parser, still compiled into the WASM side module above and kept
+	;; under its own test until the Scheme port takes over the browser too.
 	(library "md_parse"
 		(sources "md_parse.c")
 		(public (current)))
 	(executable "md_parse_test"
 		(sources "md_parse_test.c")
 		(link "md_parse"))
-	(test "md_parse" "md_parse_test")))
+	(test "md_parse" "md_parse_test")
+
+	;; The Scheme port: md_parse.scm runs inside the s7 runtime, reached
+	;; through the md_parse_scm.c shim (which exports the same md_parse ABI).
+	;; ${generated} carries the baked-in md_parse_scm.h; ../../third_party is
+	;; s7.h; linking script drags the interpreter in. Running the exact same
+	;; md_parse_test.c against it proves the two parsers byte-for-byte equal.
+	(library "md_parse_scheme"
+		(sources "md_parse_scm.c")
+		(public (current))
+		(private (raw "${generated}") (root "modules/core/include")
+			(raw "../../third_party"))
+		(link "script"))
+	(executable "md_parse_scheme_test"
+		(sources "md_parse_test.c")
+		(link "md_parse_scheme"))
+	(test "md_parse_scheme" "md_parse_scheme_test")))

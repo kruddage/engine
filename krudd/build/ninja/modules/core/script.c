@@ -50,6 +50,13 @@ void script_init(void)
 			   "(krudd-log level text) write text to the engine log");
 }
 
+s7_scheme *script_s7(void)
+{
+	if (!g_s7)
+		script_init();
+	return g_s7;
+}
+
 /*
  * Evaluate every top-level form in SRC. s7_eval_c_string reads only the first
  * form, so an image with more than one definition would silently drop the

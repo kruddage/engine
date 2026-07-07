@@ -16,6 +16,14 @@
 /* Start the interpreter and register the engine primitives. Idempotent. */
 void script_init(void);
 
+/*
+ * The interpreter handle, starting it on first use. A C shim that hands work
+ * to a Scheme image — evaluate its source with script_eval, then call a
+ * procedure it defines and walk the result — needs the raw s7 pointer for the
+ * s7_call. Returns NULL only if the interpreter failed to start.
+ */
+struct s7_scheme *script_s7(void);
+
 /* Evaluate a Scheme source string. Returns 0 on success, -1 if not started. */
 int script_eval(const char *src);
 

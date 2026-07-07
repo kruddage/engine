@@ -133,15 +133,28 @@
 (define (ninja-sources clauses)
 	(let ((c (rz-clause 'sources clauses))) (if c (cdr c) '())))
 
+;; The "script" library folds the third-party s7 amalgamation into its archive,
+;; compiled with the relaxed s7 rules. Emitted once per toolchain (native/WASM)
+;; so the object lands beside the archive that carries it.
+(define (ninja-emit-s7-obj rule obj)
+	(ninja-emit (string-append "build " obj ": " rule " $s7dir/s7.c"))
+	obj)
+
+(define (ninja-with-s7 name rule obj objs)
+	(if (string=? name "script")
+	    (append objs (list (ninja-emit-s7-obj rule obj)))
+	    objs))
+
 ;; library: compile sources, archive to lib<name>.a. An interface-library
 ;; carries no sources and produces nothing here.
 (define (ninja-emit-library table dir form)
 	(let* ((name (cadr form))
 	       (clauses (cddr form))
 	       (includes (ninja-include-flags (resolve-includes table name)))
-	       (objs (map (lambda (s)
-			    (ninja-emit-compile name dir includes s))
-			  (ninja-sources clauses)))
+	       (objs (ninja-with-s7 name "cc_s7" "obj/s7/s7.c.o"
+			(map (lambda (s)
+			       (ninja-emit-compile name dir includes s))
+			     (ninja-sources clauses))))
 	       (lib (string-append "lib" name ".a")))
 		(ninja-emit (string-append "build " lib ": ar "
 					   (ninja-join " " objs)))
@@ -253,6 +266,13 @@
 	  ;; explicitly here rather than inherited from an emcmake toolchain file.
 	  "emcflags = -std=gnu11 -Wall -Werror -Wpedantic"
 	  "smbase = -sSIDE_MODULE=1 -O2"
+	  ;; The embedded s7 interpreter (krudd/third_party/s7.c) is a third-party
+	  ;; amalgamation compiled the way krudd.sh compiles it for the build tool:
+	  ;; warnings off and the same feature switches. It cannot go through the
+	  ;; -Werror -Wpedantic project rules, so it gets its own dir and rules,
+	  ;; native and WASM, and is folded into the "script" archive.
+	  "s7dir = $srcroot/../../third_party"
+	  "s7flags = -O2 -w -DWITH_C_LOADER=0 -DWITH_MAIN=0 -I$s7dir"
 	  (string-append "imgui = " (krudd-fetch-dir "imgui"))
 	  ;; Main-module link flags — the emscripten bootstrap for the index
 	  ;; target, owned here rather than in the directory spec. Two flags carry
@@ -284,6 +304,14 @@
 	  "rule ar"
 	  "  command = rm -f $out && $ar rcs $out $in"
 	  "  description = AR $out"
+	  ""
+	  "rule cc_s7"
+	  "  command = $cc $s7flags -c $in -o $out"
+	  "  description = CC(s7) $out"
+	  ""
+	  "rule emcc_s7"
+	  "  command = $emcc $s7flags -c $in -o $out"
+	  "  description = EMCC(s7) $out"
 	  ""
 	  "rule link"
 	  "  command = $cc $in $ldlibs -o $out"
@@ -347,14 +375,15 @@
 	       (dir (cadr entry))
 	       (sources (cddr entry))
 	       (includes (ninja-wasm-include-flags (resolve-includes table name)))
-	       (objs (map (lambda (s)
-			    (let* ((tp (rz-path dir s))
-				   (obj (ninja-wasm-obj name tp)))
-			      (ninja-emit (string-append "build " obj ": emcc_c "
-						 (ninja-wasm-ref tp)))
-			      (ninja-emit (string-append "  includes = " includes))
-			      obj))
-			  sources))
+	       (objs (ninja-with-s7 name "emcc_s7" "wasm-obj/s7/s7.c.o"
+			(map (lambda (s)
+			       (let* ((tp (rz-path dir s))
+				      (obj (ninja-wasm-obj name tp)))
+				 (ninja-emit (string-append "build " obj ": emcc_c "
+						    (ninja-wasm-ref tp)))
+				 (ninja-emit (string-append "  includes = " includes))
+				 obj))
+			     sources)))
 	       (lib (string-append "wasm/lib" name ".a")))
 		(ninja-emit (string-append "build " lib ": emar "
 					   (ninja-join " " objs)))
@@ -404,7 +433,10 @@
 		  (string-append gen "/shell.html"))
 		(krudd-embed-file
 		  (string-append (krudd-repo-root) "/CHANGELOG.md")
-		  (string-append gen "/changelog_data.h") "CHANGELOG_MD")))
+		  (string-append gen "/changelog_data.h") "CHANGELOG_MD")
+		(krudd-embed-file
+		  (string-append srcroot "/modules/core/runtime.scm")
+		  (string-append gen "/runtime_scm.h") "RUNTIME_SCM")))
 
 ;; Render the whole manifest to build.ninja text. MANIFEST is a list of
 ;; (DIR . SPEC) pairs; SRCROOT is the absolute path of the tree root

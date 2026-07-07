@@ -24,7 +24,9 @@ krudd/                    The build tool and the whole build tree it owns —
       manifest.scm        The list of owned directories
       modules/            C source modules (compiled into the main WASM module)
         core/             Engine heartbeat — init/tick/shutdown, subsystem
-                          manager, plugin loader, ring buffer
+                          manager, plugin loader, ring buffer, and the embedded
+                          s7 Scheme runtime (script.c + runtime.scm) that owns
+                          the body of the frame
         log/              Structured logging with level filtering and
                           ring-buffer history
         memory/           Allocator and fixed-size pool allocator
@@ -53,6 +55,7 @@ docs/                     Design documentation
   frame-graph.md          Render graph architecture
   scene-renderer.md       Entity rendering through the frame graph
   scene-format.md         Binary .scene v1 file format
+  scheme-runtime.md       Embedded s7 Scheme runtime — Scheme owns the frame
 
 build/                    Build output (gitignored) — index.html, index.js, index.wasm
 ```
@@ -120,8 +123,10 @@ a workflow — don't create or edit them by hand in the GitHub UI.
 
 ## Key constraints
 
-- C owns the loop. `engine_tick` is the frame callback passed to
-  `emscripten_set_main_loop`. No JS/TS shell — Emscripten generates the glue.
+- C lends the loop; Scheme owns the frame body. `engine_tick` is still the
+  callback passed to `emscripten_set_main_loop`, but it delegates the frame to
+  the embedded s7 runtime's `(tick)` (see `docs/scheme-runtime.md`). No JS/TS
+  shell — Emscripten generates the glue.
 - The plugin vtable headers in `krudd/build/ninja/plugins/include/` are the ABI.
   Changes to exported function signatures are breaking.
 - Rendering is WebGL via `renderer_webgl`. No WebGPU yet.

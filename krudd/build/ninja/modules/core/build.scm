@@ -21,11 +21,22 @@
 	(public "include")
 	(private (root "modules/log/include") (root "plugins/include")))
 
+ ;; The embedded s7 Scheme runtime. s7.c itself is folded into this archive by
+ ;; the emitter (with its own relaxed compile flags — see ninja.scm), so a bare
+ ;; (link "script") drags the whole interpreter in for native tests and the
+ ;; WASM main module alike.
+ (library "script"
+	(sources "script.c")
+	(public "include")
+	(private (raw "../../third_party"))
+	(link "log" "m"))
+
  (executable "index"
 	(sources "engine.c")
 	(private "include" (raw "${generated}")
 		(root "plugins/include"))
-	(link "subsystem" "subsystem_manager" "log" "memory" "plugin_loader"))
+	(link "subsystem" "subsystem_manager" "log" "memory"
+		"plugin_loader" "script"))
 
  (native-only
 	(executable "subsystem_test"
@@ -41,4 +52,9 @@
 	(executable "plugin_loader_test"
 		(sources "plugin_loader_test.c")
 		(link "plugin_loader"))
-	(test "plugin_loader" "plugin_loader_test")))
+	(test "plugin_loader" "plugin_loader_test")
+
+	(executable "script_test"
+		(sources "script_test.c")
+		(link "script"))
+	(test "script" "script_test")))

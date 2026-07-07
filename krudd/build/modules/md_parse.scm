@@ -3,11 +3,16 @@
 ; md_parse.scm — the markdown block parser, in Scheme.
 ;
 ; This is the first module strangler-figged from C to Scheme: a faithful port
-; of md_parse.c's single-pass line scanner. It runs inside the same s7 runtime
-; the engine boots (see modules/core/script.c); a thin C shim (md_parse_scm.c)
-; marshals the block list this returns back into the caller's struct md_block[]
-; so the C ABI (md_parse.h) is unchanged. The existing md_parse_test.c is run
-; against both implementations to prove them byte-for-byte equivalent.
+; of md_parse.c's single-pass line scanner. It lives outside the ninja build
+; tree, under krudd/build/modules/, as a build-owned Scheme module with two
+; outputs krudd generates at synthesis time: the runtime image baked into
+; md_parse_scm.h (loaded by the md_parse_scm.c shim, which keeps the md_parse.h
+; C ABI intact and marshals the block list this returns into struct md_block[]),
+; and md_parse_abi.h, the C macros generated from the constants below so the ABI
+; can never drift from the port that defines it. It runs inside the same s7
+; runtime the engine boots (see modules/core/script.c). The existing
+; md_parse_test.c is run against both implementations to prove them byte-for-byte
+; equivalent.
 ;
 ; A block is (list type level text spans); a span is (list start end style),
 ; with [start, end) byte offsets into text. The constants and every edge of the
@@ -18,14 +23,16 @@
 
 (define md-text-max 256)          ; bytes incl. NUL; text is capped at 255 chars
 (define md-spans-per-block 16)
+(define md-blocks-max 128)        ; ABI-only: callers' suggested per-parse cap
 
 (define md-block-paragraph 0)
 (define md-block-heading   1)
 (define md-block-list-item 2)
 (define md-block-code      3)
 
-(define md-span-bold 1)
-(define md-span-code 2)
+(define md-span-normal 0)         ; ABI-only: the implicit style of unspanned text
+(define md-span-bold   1)
+(define md-span-code   2)
 
 ;; Char at index I of S, or #f past the end. The C helpers read one past a
 ;; line's content (into the '\n' or NUL); returning #f for those reads keeps a

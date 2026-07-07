@@ -1,6 +1,6 @@
-build/
-build-*/
-build_*/
+/build/
+/build-*/
+/build_*/
 *.o
 krudd/krudd
 public/

@@ -2,7 +2,7 @@
 ;
 ; In-browser tabbed authoring surface + markdown parser. The side module reuses
 ; the same shape every other plugin's WASM build uses. CHANGELOG.md is baked
-; into generated/changelog_data.h at synthesis time by krudd/introspect.scm's
+; into generated/changelog_data.h at synthesis time by krudd/build/introspect.scm's
 ; changelog codegen (the "What's New" tab renders it through the md_parse/md_draw
 ; stack — no runtime fetch, no new ABI); the side module just depends on the
 ; generated header. imgui is fetched into ${imgui}, a path this spec doesn't own,

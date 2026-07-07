@@ -1,7 +1,8 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
 ;
 ; ImGui debug UI shell — a side module only, no native test target. imgui
-; itself is fetched by krudd (krudd/introspect.scm's krudd-fetch) into ${imgui},
+; itself is fetched by krudd (krudd/build/introspect.scm's krudd-fetch) into
+; ${imgui},
 ; a path this spec doesn't own, so its paths pass through (raw ...).
 ((side-module "imgui_plugin"
 	(compiler cxx)

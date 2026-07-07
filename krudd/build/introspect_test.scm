@@ -1,14 +1,16 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
 ;
-; introspect_test.scm — native s7-only checks for krudd/introspect.scm: the
-; build-time introspection krudd owns now that CMake is gone (version + git
-; facts, the configure_file / changelog codegen, and the dependency fetch).
+; introspect_test.scm — native s7-only checks for krudd/build/introspect.scm:
+; the build-time introspection krudd owns now that CMake is gone (version +
+; git facts, the configure_file / changelog codegen, and the dependency
+; fetch).
 ;
-; Run via krudd/run-tests.sh. Prints "INTROSPECT-TESTS: OK" and exits 0 when
-; every check passes; prints failures and exits 1 otherwise. No network I/O.
+; Run via krudd/build/run-tests.sh. Prints "INTROSPECT-TESTS: OK" and exits 0
+; when every check passes; prints failures and exits 1 otherwise. No network
+; I/O.
 
 (define krudd-root (or (getenv "KRUDD_ROOT") "."))
-(load (string-append krudd-root "/krudd/introspect.scm"))
+(load (string-append krudd-root "/krudd/build/introspect.scm"))
 
 (define fail-count 0)
 (define (check name ok)
@@ -65,7 +67,7 @@
 (system (string-append "mkdir -p " tmp))
 
 (krudd-configure-file
-  (string-append krudd-root "/krudd/ninja/modules/core/version.h.in")
+  (string-append krudd-root "/krudd/build/ninja/modules/core/version.h.in")
   (string-append tmp "/version.h"))
 (let ((v (slurp (string-append tmp "/version.h"))))
 	(check "version.h carries the literal version"

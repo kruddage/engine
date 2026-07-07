@@ -4,15 +4,15 @@
 ; Ninja emitter. Runs without any WASM (or even C) toolchain: it exercises the
 ; Scheme passes over the real manifest and a few synthetic specs.
 ;
-; Run via krudd/ninja/run-tests.sh. Prints "RESOLVE-TESTS: OK" and exits 0 when
-; every check passes; prints failures and exits 1 otherwise.
+; Run via krudd/build/ninja/run-tests.sh. Prints "RESOLVE-TESTS: OK" and exits
+; 0 when every check passes; prints failures and exits 1 otherwise.
 ;
 ; If KRUDD_NINJA_OUT is set, also renders the real manifest to a build.ninja at
 ; that path (with an absolute srcroot) so the harness can hand it to ninja(1).
 
 (define krudd-root (or (getenv "KRUDD_ROOT") "."))
 
-(load (string-append krudd-root "/krudd/ninja/ninja.scm"))
+(load (string-append krudd-root "/krudd/build/ninja/ninja.scm"))
 
 ;; ---------------------------------------------------------------------------
 ;; Assertion plumbing.
@@ -50,10 +50,10 @@
 (define (load-datum path) (call-with-input-file path read))
 
 (define manifest-dirs
-	(load-datum (string-append krudd-root "/krudd/ninja/manifest.scm")))
+	(load-datum (string-append krudd-root "/krudd/build/ninja/manifest.scm")))
 
 (define (load-spec dir)
-	(load-datum (string-append krudd-root "/krudd/ninja/" dir
+	(load-datum (string-append krudd-root "/krudd/build/ninja/" dir
 				   "/build.scm")))
 
 (define manifest
@@ -63,7 +63,7 @@
 
 ;; ---------------------------------------------------------------------------
 ;; Include-set checks. Expected sets are the reference -I lists for these
-;; targets (paths normalised relative to krudd/ninja/). The resolver must
+;; targets (paths normalised relative to krudd/build/ninja/). The resolver must
 ;; produce the same *set*; order is not build-relevant.
 ;; ---------------------------------------------------------------------------
 
@@ -162,9 +162,11 @@
 (define ninja-out (getenv "KRUDD_NINJA_OUT"))
 (define ninja-text
 	(if (and ninja-out (> (string-length ninja-out) 0))
-	    (ninja-synthesize manifest (string-append krudd-root "/krudd/ninja")
+	    (ninja-synthesize manifest
+			      (string-append krudd-root "/krudd/build/ninja")
 			      (dirname ninja-out))
-	    (ninja-synthesize manifest (string-append krudd-root "/krudd/ninja"))))
+	    (ninja-synthesize manifest
+			      (string-append krudd-root "/krudd/build/ninja"))))
 
 (define (contains? hay needle)
 	(let ((hl (string-length hay)) (nl (string-length needle)))

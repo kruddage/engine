@@ -50,7 +50,7 @@ getting refined.
 ## Architecture
 
 ```
-krudd/ninja/
+krudd/build/ninja/
   ninja.scm    The Ninja emitter — renders build.ninja from the directory specs
   resolve.scm  Transitive include/link resolver
   manifest.scm The list of owned directories

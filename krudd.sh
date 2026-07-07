@@ -1,10 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
-# krudd bootstrap — krudd's "gradlew". You don't have the krudd binary yet, so
-# this compiles it with the system compiler and hands off. Thin on purpose:
-# once `krudd` is installed on your PATH this script goes away.
-#
+# krudd bootstrap
 #   ./krudd.sh              resolve projects here (setup / run / pick)
 #   ./krudd.sh build        configure + build, no prompts (what CI runs)
 #   ./krudd.sh new-project  scaffold a new project
@@ -27,9 +24,6 @@ if [ -z "$cc" ]; then
 	exit 1
 fi
 
-# krudd links the vendored s7 Scheme (third_party/s7.c) as its build
-# interpreter. s7 is a big single file, so only recompile when a source is
-# newer than the binary — the first build costs ~40s, later runs are instant.
 bin="$root/krudd/krudd"
 src="$root/krudd/krudd.c"
 s7="$root/krudd/third_party/s7.c"

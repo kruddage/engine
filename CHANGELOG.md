@@ -22,6 +22,13 @@ engine, before it lands anywhere else.
 
 ### Added
 
+- **Embedded Scheme runtime (s7)** — the engine now vendors the
+  [s7 Scheme](https://ccrma.stanford.edu/software/snd/snd/s7.html) interpreter
+  (v10.8, 0BSD) and loads it as a `scheme` subsystem, built both natively and as
+  a WASM side module. This first phase evaluates plain arithmetic and string
+  expressions — `(+ 1 2)` returns `3` — and is bound to nothing engine-aware
+  yet; it lays the toolchain foundation for scripting the engine in Scheme.
+
 - **Transform gizmo in the viewport** — the selected entity now shows draggable
   move / rotate / scale handles drawn over the 3D scene, so you can manipulate a
   transform directly in the viewport instead of only through the Inspector's

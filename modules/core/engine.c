@@ -50,6 +50,7 @@ static const struct subsystem subsystems[] = {
 
 static const char * const plugins[] = {
 	"hello_plugin.wasm",
+	"scheme.wasm",
 	"asset_plugin.wasm",
 	"backend_plugin.wasm",
 	"scene_plugin.wasm",

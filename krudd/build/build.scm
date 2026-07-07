@@ -6,9 +6,9 @@
 ;   (run cmd)     -> run a shell command, return its integer exit status
 ;
 ; The strangler fig, complete: krudd owns the whole build. It reads the
-; backend-agnostic directory specs (krudd/ninja/**/build.scm), renders a
-; build.ninja from them (krudd/ninja/ninja.scm), and drives ninja(1) directly.
-; Ninja stays as the executor; krudd owns the generation.
+; backend-agnostic directory specs (krudd/build/ninja/**/build.scm), renders a
+; build.ninja from them (krudd/build/ninja/ninja.scm), and drives ninja(1)
+; directly. Ninja stays as the executor; krudd owns the generation.
 ;
 ; Two targets, selected by KRUDD_TARGET (unset defaults to native):
 ;   native  cc/ar — every static library and test; the test stamps run the
@@ -21,7 +21,7 @@
 
 (define krudd-root (or (getenv "KRUDD_ROOT") "."))
 
-(load (string-append krudd-root "/krudd/ninja/ninja.scm"))
+(load (string-append krudd-root "/krudd/build/ninja/ninja.scm"))
 
 (define (sh cmd)
   (let ((status (run cmd)))
@@ -33,26 +33,26 @@
     (lambda (port) (write-string text port))))
 
 ;; ---------------------------------------------------------------------------
-;; The manifest: every directory krudd owns, relative to krudd/ninja/ (a bare
-;; datum in krudd/ninja/manifest.scm — the one list of owned directories). Each
-;; carries a build.scm spec beside its sources.
+;; The manifest: every directory krudd owns, relative to krudd/build/ninja/ (a
+;; bare datum in krudd/build/ninja/manifest.scm — the one list of owned
+;; directories). Each carries a build.scm spec beside its sources.
 ;; ---------------------------------------------------------------------------
 
 (define owned-directories
   (call-with-input-file
-    (string-append krudd-root "/krudd/ninja/manifest.scm")
+    (string-append krudd-root "/krudd/build/ninja/manifest.scm")
     read))
 
 (define (load-spec dir)
   (call-with-input-file
-    (string-append krudd-root "/krudd/ninja/" dir "/build.scm")
+    (string-append krudd-root "/krudd/build/ninja/" dir "/build.scm")
     read))
 
 (define manifest
   (map (lambda (dir) (cons dir (load-spec dir))) owned-directories))
 
 ;; The tree root the spec paths resolve against, and the build directory.
-(define src-root (string-append krudd-root "/krudd/ninja"))
+(define src-root (string-append krudd-root "/krudd/build/ninja"))
 (define build-dir (string-append krudd-root "/build"))
 
 ;; Target selection: KRUDD_TARGET=wasm selects the WASM output; anything else

@@ -1,12 +1,12 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
 ;
-; The manifest: every directory krudd owns, as a path relative to krudd/ninja/.
-; The spec for each lives at krudd/ninja/<dir>/build.scm. Keep this list in sync
-; with .gitignore.
+; The manifest: every directory krudd owns, as a path relative to
+; krudd/build/ninja/. The spec for each lives at krudd/build/ninja/<dir>/build.scm.
+; Keep this list in sync with .gitignore.
 ;
-; This is a bare datum (a list of strings) read by krudd/build.scm (the driver)
-; and krudd/ninja/resolve.scm (the resolver), the one source of truth for what
-; krudd owns.
+; This is a bare datum (a list of strings) read by krudd/build/build.scm (the
+; driver) and krudd/build/ninja/resolve.scm (the resolver), the one source of
+; truth for what krudd owns.
 
 ("modules/core"
  "modules/log"

@@ -4,10 +4,10 @@
 # krudd Scheme test harness: build a native s7 interpreter and run the checks
 # that need only s7 (no WASM toolchain) — today the de-verbatimed root bootstrap
 # (introspect_test.scm). The Ninja backend has its own harness at
-# krudd/ninja/run-tests.sh.
+# krudd/build/ninja/run-tests.sh.
 set -e
 
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 export KRUDD_ROOT="$root"
 
 cc=${CC:-}
@@ -32,4 +32,4 @@ if [ ! -x "$s7bin" ] || [ "$s7src" -nt "$s7bin" ]; then
 		-o "$s7bin" "$s7src" -lm
 fi
 
-"$s7bin" "$root/krudd/introspect_test.scm"
+"$s7bin" "$root/krudd/build/introspect_test.scm"

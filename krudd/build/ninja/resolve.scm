@@ -2,7 +2,7 @@
 ;
 ; resolve.scm — the static include/link resolver.
 ;
-; The directory specs (krudd/ninja/**/build.scm) name each target's own
+; The directory specs (krudd/build/ninja/**/build.scm) name each target's own
 ; include directories and the libraries it links, but not the include
 ; directories those libraries drag in. A (link ... "B") means A wants every
 ; PUBLIC include B declares, and that flattens transitively — if A links B and
@@ -10,13 +10,13 @@
 ; explicitly (the job CMake's target_link_libraries once did for us).
 ;
 ; The input is the whole manifest as a list of (DIR . SPEC) pairs, where DIR is
-; a directory path relative to krudd/ninja/ (e.g. "modules/log") and SPEC is the
-; datum read from that directory's build.scm. The output, per target, is
+; a directory path relative to krudd/build/ninja/ (e.g. "modules/log") and SPEC
+; is the datum read from that directory's build.scm. The output, per target, is
 ; the ordered de-duplicated list of include directories a compile line needs —
 ; the target's own PUBLIC then PRIVATE dirs, then every linked library's PUBLIC
 ; dirs, transitively.
 ;
-; Paths come out relative to the tree root (krudd/ninja/): a bare "include" in
+; Paths come out relative to the tree root (krudd/build/ninja/): a bare "include" in
 ; modules/log becomes "modules/log/include", (root "p") becomes "p". The one
 ; escape hatch, (raw "text"), passes through unchanged (for the generated and
 ; fetched paths the WASM side-module builds reference, like ${imgui}); native
@@ -61,7 +61,7 @@
 
 ;; ---------------------------------------------------------------------------
 ;; Path expansion. A source/include path spec resolves relative to the tree
-;; root (krudd/ninja/) — the source tree krudd owns. DIR is the owning
+;; root (krudd/build/ninja/) — the source tree krudd owns. DIR is the owning
 ;; directory, relative to that root.
 ;; ---------------------------------------------------------------------------
 

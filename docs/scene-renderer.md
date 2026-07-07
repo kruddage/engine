@@ -6,7 +6,7 @@ built-in primitive placed as a `COMPONENT_RENDER` entity shows up on screen, and
 multiple entities at different transforms draw at their correct, depth-sorted
 world positions.
 
-It lives in `krudd/ninja/plugins/scene_renderer/` and registers as the `scene_renderer`
+It lives in `krudd/build/ninja/plugins/scene_renderer/` and registers as the `scene_renderer`
 subsystem. It replaced the throwaway hardcoded triangle that `renderer_webgl`
 used to draw each frame.
 
@@ -54,7 +54,7 @@ target.
 
 ## Mesh blob format
 
-`krudd/ninja/plugins/include/mesh.h` defines the delivery format primitives ride over the
+`krudd/build/ninja/plugins/include/mesh.h` defines the delivery format primitives ride over the
 byte-oriented asset seam:
 
 ```
@@ -63,7 +63,7 @@ struct mesh_blob { u32 magic; u32 vertex_count; u32 index_count; u32 index_forma
     followed by index_count  * uint16_t
 ```
 
-`krudd/ninja/plugins/asset/primitives.c` generates cube/sphere/plane/pyramid blobs, which
+`krudd/build/ninja/plugins/asset/primitives.c` generates cube/sphere/plane/pyramid blobs, which
 `asset_plugin` seeds as the `data` of the `builtin://…` primitive assets.
 
 ## Demo seed

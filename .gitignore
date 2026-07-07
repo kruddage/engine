@@ -9,3 +9,20 @@ krudd/krudd
 # These are build artifacts, not source — keep this list in sync with the
 # owned-directories spec. ./krudd.sh build regenerates them before configure.
 cmake/modules/log/CMakeLists.txt
+cmake/modules/memory/CMakeLists.txt
+cmake/plugins/math/CMakeLists.txt
+cmake/plugins/renderer/CMakeLists.txt
+cmake/plugins/cas/CMakeLists.txt
+cmake/plugins/branch/CMakeLists.txt
+cmake/plugins/snapshot/CMakeLists.txt
+cmake/plugins/hello_plugin/CMakeLists.txt
+cmake/plugins/scene_plugin/CMakeLists.txt
+cmake/plugins/vscript/CMakeLists.txt
+cmake/plugins/shader_graph/CMakeLists.txt
+cmake/plugins/edit_plugin/CMakeLists.txt
+cmake/plugins/entity_plugin/CMakeLists.txt
+cmake/plugins/renderer_null/CMakeLists.txt
+cmake/plugins/renderer_webgl/CMakeLists.txt
+cmake/plugins/frame_graph/CMakeLists.txt
+cmake/plugins/scene_renderer/CMakeLists.txt
+cmake/plugins/asset/CMakeLists.txt

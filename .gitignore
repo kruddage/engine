@@ -4,3 +4,8 @@ build_*/
 *.o
 cmake/modules/core/version.h
 krudd/krudd
+
+# CMakeLists.txt files krudd synthesizes from krudd/build.scm at build time.
+# These are build artifacts, not source — keep this list in sync with the
+# owned-directories spec. ./krudd.sh build regenerates them before configure.
+cmake/modules/log/CMakeLists.txt

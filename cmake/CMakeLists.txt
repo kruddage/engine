@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
 
-file(READ "${CMAKE_SOURCE_DIR}/VERSION" _krudd_version_raw)
+# The top-level CMakeLists.txt lives in cmake/ while VERSION, CHANGELOG.md and
+# the rest of the repo metadata stay at the repo root, one level up.
+get_filename_component(KRUDD_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+
+file(READ "${KRUDD_REPO_ROOT}/VERSION" _krudd_version_raw)
 string(STRIP "${_krudd_version_raw}" _krudd_version)
 
 project(krudd VERSION ${_krudd_version} LANGUAGES C CXX)
@@ -12,7 +16,7 @@ if(GIT_FOUND)
 	execute_process(
 		COMMAND ${GIT_EXECUTABLE} log -1 --format=%H
 			-S "${PROJECT_VERSION}" -- VERSION
-		WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+		WORKING_DIRECTORY ${KRUDD_REPO_ROOT}
 		OUTPUT_VARIABLE _version_anchor
 		OUTPUT_STRIP_TRAILING_WHITESPACE
 		ERROR_QUIET
@@ -20,7 +24,7 @@ if(GIT_FOUND)
 	if(_version_anchor)
 		execute_process(
 			COMMAND ${GIT_EXECUTABLE} rev-list --count HEAD ^${_version_anchor}
-			WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+			WORKING_DIRECTORY ${KRUDD_REPO_ROOT}
 			OUTPUT_VARIABLE ENGINE_BUILD_NUMBER
 			OUTPUT_STRIP_TRAILING_WHITESPACE
 			ERROR_QUIET
@@ -31,7 +35,7 @@ if(GIT_FOUND)
 	endif()
 	execute_process(
 		COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
-		WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+		WORKING_DIRECTORY ${KRUDD_REPO_ROOT}
 		OUTPUT_VARIABLE GIT_COMMIT_HASH
 		OUTPUT_STRIP_TRAILING_WHITESPACE
 		ERROR_QUIET

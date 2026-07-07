@@ -36,7 +36,7 @@ jobs:
 
       - name: Build
         env:
-          KRUDD_CONFIGURE: emcmake cmake -B build -DCMAKE_BUILD_TYPE=Release
+          KRUDD_CONFIGURE: emcmake cmake -S cmake -B build -DCMAKE_BUILD_TYPE=Release
         run: ./krudd.sh build
 
       # Stage only the web outputs. Publishing the raw build/ tree would commit

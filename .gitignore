@@ -2,5 +2,5 @@ build/
 build-*/
 build_*/
 *.o
-modules/core/version.h
+cmake/modules/core/version.h
 krudd/krudd

@@ -50,10 +50,12 @@ getting refined.
 ## Architecture
 
 ```
-modules/
-  core/      Engine heartbeat — init/tick/shutdown, subsystem manager, plugin loader
-  log/       Structured logging with level filtering and ring-buffer history
-  memory/    Allocator and fixed-size pool allocator
+cmake/
+  modules/
+    core/      Engine heartbeat — init/tick/shutdown, subsystem manager, plugin loader
+    log/       Structured logging with level filtering and ring-buffer history
+    memory/    Allocator and fixed-size pool allocator
+  plugins/     Dynamically-loaded WASM side modules
 ```
 
 Plugins are dynamically loaded WASM modules. Each plugin discovers engine services through
@@ -70,7 +72,7 @@ module required.
 ### WASM build
 
 ```sh
-emcmake cmake -B build
+emcmake cmake -S cmake -B build
 cmake --build build
 ```
 
@@ -86,7 +88,7 @@ The native build compiles the modules for unit testing and static analysis. It d
 engine loop.
 
 ```sh
-cmake -B build_native
+cmake -S cmake -B build_native
 cmake --build build_native
 ctest --test-dir build_native --output-on-failure
 ```

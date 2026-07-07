@@ -5,12 +5,12 @@ if(EMSCRIPTEN)
 	add_custom_command(
 		OUTPUT ${_changelog_hdr}
 		COMMAND ${CMAKE_COMMAND}
-			-DINPUT=${CMAKE_SOURCE_DIR}/CHANGELOG.md
+			-DINPUT=${KRUDD_REPO_ROOT}/CHANGELOG.md
 			-DOUTPUT=${_changelog_hdr}
 			-DSYMBOL=CHANGELOG_MD
 			-P ${CMAKE_CURRENT_SOURCE_DIR}/embed_changelog.cmake
 		DEPENDS
-			${CMAKE_SOURCE_DIR}/CHANGELOG.md
+			${KRUDD_REPO_ROOT}/CHANGELOG.md
 			${CMAKE_CURRENT_SOURCE_DIR}/embed_changelog.cmake
 		COMMENT "Embedding CHANGELOG.md -> changelog_data.h"
 		VERBATIM

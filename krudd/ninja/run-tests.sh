@@ -51,3 +51,18 @@ if command -v ninja >/dev/null 2>&1; then
 else
 	echo "krudd/ninja: ninja(1) not found — skipping native build stage"
 fi
+
+# Stage 3: build the WASM output (main module + side modules) through the same
+# build.ninja, when the Emscripten toolchain is available. No emcmake — the
+# whole WASM path goes through explicit emcc/em++ calls.
+if command -v ninja >/dev/null 2>&1 && command -v emcc >/dev/null 2>&1; then
+	echo "krudd/ninja: building WASM output via ninja + emcc"
+	# imgui is fetched by the generator; make sure a checkout is present.
+	imgui="$root/build/_deps/imgui"
+	[ -f "$imgui/.git/HEAD" ] || git clone --depth 1 --branch v1.90.9 \
+		https://github.com/ocornut/imgui.git "$imgui"
+	ninja -C "$work" -f build.ninja wasm
+	echo "krudd/ninja: ninja WASM build OK"
+else
+	echo "krudd/ninja: emcc not found — skipping WASM build stage"
+fi

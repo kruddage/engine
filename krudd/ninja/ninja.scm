@@ -34,6 +34,8 @@
 
 (load (string-append (or (getenv "KRUDD_ROOT") ".")
 		     "/krudd/ninja/resolve.scm"))
+(load (string-append (or (getenv "KRUDD_ROOT") ".")
+		     "/krudd/introspect.scm"))
 
 ;; ---------------------------------------------------------------------------
 ;; String helpers (s7 has no string-join / string-suffix? we can lean on).
@@ -82,6 +84,26 @@
 	(ninja-join " " (map (lambda (d) (string-append "-I" (ninja-ref d)))
 			     dirs)))
 
+;; The WASM build resolves the CMake variables the side-module specs reference
+;; (${imgui_SOURCE_DIR} from the fetch, ${CMAKE_BINARY_DIR}/generated and
+;; ${CMAKE_CURRENT_BINARY_DIR} for generated headers) to real Ninja paths, rather
+;; than escaping them for native output.
+(define (ninja-resolve-cmake-var p)
+	(krudd-replace
+	  (krudd-replace
+	    (krudd-replace p "${imgui_SOURCE_DIR}" "$imgui")
+	    "${CMAKE_BINARY_DIR}/generated" "generated")
+	  "${CMAKE_CURRENT_BINARY_DIR}" "generated"))
+
+(define (ninja-wasm-ref path)
+	(if (ninja-has-dollar? path)
+	    (ninja-resolve-cmake-var path)
+	    (string-append "$srcroot/" path)))
+
+(define (ninja-wasm-include-flags dirs)
+	(ninja-join " " (map (lambda (d) (string-append "-I" (ninja-wasm-ref d)))
+			     dirs)))
+
 ;; The compile rule for a source, by extension: C++ sources use cxx, all else
 ;; cc. Native targets are C-only; this keeps the side-module path honest.
 (define (ninja-compile-rule src)
@@ -98,10 +120,12 @@
 
 (define ninja-lines '())
 (define ninja-native '())
+(define ninja-wasm '())
 
 (define (ninja-emit line) (set! ninja-lines (cons line ninja-lines)))
 (define (ninja-emit* lines) (for-each ninja-emit lines))
 (define (ninja-native! out) (set! ninja-native (cons out ninja-native)))
+(define (ninja-wasm! out) (set! ninja-wasm (cons out ninja-wasm)))
 
 ;; Compile one source of TARGET (in DIR) with INCLUDES; emit the build stanza
 ;; and return the object path.
@@ -167,9 +191,9 @@
 		(ninja-native! stamp)))
 
 ;; side-module: one emcc/em++ call to ${name}.wasm. Uses the form's own include
-;; and source lists verbatim (the WASM builds spell out every -I explicitly);
-;; resolve.scm is a native-link concept and does not apply. Not added to the
-;; native default target — it needs the Emscripten toolchain.
+;; and source lists verbatim (the WASM builds spell out every -I explicitly),
+;; resolving the CMake variables they reference to real paths. A side module is
+;; part of the `wasm` target, not the native default.
 (define (ninja-side-field clauses head deflt)
 	(let ((c (rz-clause head clauses))) (if c (cadr c) deflt)))
 
@@ -187,17 +211,16 @@
 	       (wasm (string-append name ".wasm")))
 		(ninja-emit (string-append "build " wasm ": side_module "
 			      (ninja-join " "
-				(map (lambda (s) (ninja-ref (rz-path dir s)))
+				(map (lambda (s) (ninja-wasm-ref (rz-path dir s)))
 				     sources))))
 		(ninja-emit (string-append "  smcc = " compiler))
 		(ninja-emit (string-append "  smflags = " (ninja-join " " flags)))
 		(ninja-emit (string-append "  includes = "
-			      (ninja-join " "
-				(map (lambda (i)
-				       (string-append "-I"
-					 (ninja-ref (rz-path dir i))))
-				     includes))))
-		(ninja-emit "")))
+			      (ninja-wasm-include-flags (map (lambda (i)
+							       (rz-path dir i))
+							     includes))))
+		(ninja-emit "")
+		(ninja-wasm! wasm)))
 
 ;; Dispatch one form. Non-target scaffolding forms (verbatim/set/subdirs/…) are
 ;; the root spec's project bootstrap, not this emitter's job, and are skipped.
@@ -231,9 +254,21 @@
 	  "ar = ar"
 	  "emcc = emcc"
 	  "empp = em++"
+	  "emar = emar"
 	  "cflags = -std=gnu11 -Wall -Werror -Wpedantic"
 	  "cxxflags = -std=gnu11 -Wall -Werror -Wpedantic"
+	  ;; The WASM compile flags match the native ones; the Emscripten-specific
+	  ;; flags live on the side_module and main_module rules, captured
+	  ;; explicitly here rather than inherited from an emcmake toolchain file.
+	  "emcflags = -std=gnu11 -Wall -Werror -Wpedantic"
 	  "smbase = -sSIDE_MODULE=1 -O2"
+	  (string-append "imgui = " (krudd-fetch-dir "imgui"))
+	  ;; Main-module link flags — the emscripten bootstrap that used to live in
+	  ;; modules/core's target_link_options, owned here for the Ninja backend.
+	  (string-append "mainflags = -sENVIRONMENT=web -sALLOW_MEMORY_GROWTH=1 "
+			 "-sGROWABLE_ARRAYBUFFERS=0 -sMALLOC=mimalloc "
+			 "-sMAIN_MODULE=1 -sFETCH=1 -sMAX_WEBGL_VERSION=2 "
+			 "-sEXPORTED_FUNCTIONS=_main")
 	  ""
 	  "rule cc"
 	  "  command = $cc $cflags $includes -c $in -o $out"
@@ -251,32 +286,151 @@
 	  "  command = $cc $in $ldlibs -o $out"
 	  "  description = LINK $out"
 	  ""
+	  "rule run_test"
+	  "  command = $in && touch $out"
+	  "  description = TEST $out"
+	  ""
+	  ;; WASM rules — the whole WASM path goes through explicit emcc/em++ calls,
+	  ;; no emcmake.
+	  "rule emcc_c"
+	  "  command = $emcc $emcflags $includes -c $in -o $out"
+	  "  description = EMCC $out"
+	  ""
+	  "rule emar"
+	  "  command = rm -f $out && $emar rcs $out $in"
+	  "  description = EMAR $out"
+	  ""
 	  "rule side_module"
 	  "  command = $smcc $smbase $smflags $includes -o $out $in"
 	  "  description = SIDE_MODULE $out"
 	  ""
-	  "rule run_test"
-	  "  command = $in && touch $out"
-	  "  description = TEST $out"
+	  "rule main_module"
+	  "  command = $empp $mainflags $extraflags $in -o $out"
+	  "  description = MAIN_MODULE $out"
 	  ""))
+
+;; ---------------------------------------------------------------------------
+;; WASM main module. The Ninja backend owns the whole WASM path: the main module
+;; (index.html/.js/.wasm) links WASM-compiled copies of the same libraries the
+;; native tests use, so those are archived a second time with emcc. The
+;; emscripten-only source (plugin_abi.c) and the shell/pre-js live here.
+;; ---------------------------------------------------------------------------
+
+;; name -> (dir . source-specs) for every library, so the WASM path can recompile
+;; a library's sources with emcc.
+(define (ninja-build-libmap manifest)
+	(let ((out '()))
+		(define (walk dir forms)
+			(for-each
+			  (lambda (f)
+			    (cond ((eq? (car f) 'library)
+				   (set! out (cons (cons (cadr f)
+							 (cons dir
+							       (ninja-sources
+								 (cddr f))))
+						   out)))
+				  ((eq? (car f) 'native-only) (walk dir (cdr f)))
+				  (else #t)))
+			  forms))
+		(for-each (lambda (p) (walk (car p) (cdr p))) manifest)
+		out))
+
+(define (ninja-wasm-obj name treepath)
+	(string-append "wasm-obj/" name "/" treepath ".o"))
+
+;; Compile a library's sources with emcc and archive to wasm/lib<name>.a.
+(define (ninja-emit-wasm-lib table libmap name)
+	(let* ((entry (assoc name libmap))
+	       (dir (cadr entry))
+	       (sources (cddr entry))
+	       (includes (ninja-wasm-include-flags (resolve-includes table name)))
+	       (objs (map (lambda (s)
+			    (let* ((tp (rz-path dir s))
+				   (obj (ninja-wasm-obj name tp)))
+			      (ninja-emit (string-append "build " obj ": emcc_c "
+						 (ninja-wasm-ref tp)))
+			      (ninja-emit (string-append "  includes = " includes))
+			      obj))
+			  sources))
+	       (lib (string-append "wasm/lib" name ".a")))
+		(ninja-emit (string-append "build " lib ": emar "
+					   (ninja-join " " objs)))
+		(ninja-emit "")
+		lib))
+
+;; The main module: engine.c + the emscripten-only plugin_abi.c, compiled with
+;; emcc and linked with em++ against the WASM library closure, to
+;; index.html/.js/.wasm.
+(define (ninja-emit-main-module table libmap)
+	(let* ((dir "modules/core")
+	       (srcs (list "engine.c" "plugin_abi.c"))
+	       (includes (ninja-wasm-include-flags
+			   (resolve-includes table "index")))
+	       (objs (map (lambda (s)
+			    (let* ((tp (rz-path dir s))
+				   (obj (ninja-wasm-obj "index" tp)))
+			      (ninja-emit (string-append "build " obj ": emcc_c "
+						 (ninja-wasm-ref tp)))
+			      (ninja-emit (string-append "  includes = " includes))
+			      obj))
+			  srcs))
+	       (libs (map (lambda (l) (ninja-emit-wasm-lib table libmap l))
+			  (resolve-link-libs table "index"))))
+		;; emcc -o index.html also emits index.js and index.wasm; declare
+		;; them as implicit outputs so $out stays just index.html.
+		(ninja-emit (string-append
+			      "build index.html | index.js index.wasm: main_module "
+			      (ninja-join " " (append objs libs))))
+		(ninja-emit (string-append "  extraflags = --extern-pre-js "
+			      "$srcroot/modules/core/error_overlay.js "
+			      "--shell-file generated/shell.html"))
+		(ninja-emit "")
+		(ninja-wasm! "index.html")))
+
+;; The configure_file / changelog outputs the WASM build compiles against,
+;; generated into <builddir>/generated at synthesis time (as CMake ran
+;; configure_file / the embed script at configure time).
+(define (ninja-generate-codegen srcroot builddir)
+	(let ((gen (string-append builddir "/generated")))
+		(system (string-append "mkdir -p \"" gen "\""))
+		(krudd-configure-file
+		  (string-append srcroot "/modules/core/version.h.in")
+		  (string-append gen "/version.h"))
+		(krudd-configure-file
+		  (string-append srcroot "/modules/core/shell.html.in")
+		  (string-append gen "/shell.html"))
+		(krudd-embed-file
+		  (string-append (krudd-repo-root) "/CHANGELOG.md")
+		  (string-append gen "/changelog_data.h") "CHANGELOG_MD")))
 
 ;; Render the whole manifest to build.ninja text. MANIFEST is a list of
 ;; (DIR . SPEC) pairs; SRCROOT is the absolute path of the tree root
-;; (krudd/cmake/) the paths resolve against.
-(define (ninja-synthesize manifest srcroot)
-	(set! ninja-lines '())
-	(set! ninja-native '())
-	(let ((table (rz-target-table manifest)))
-		(resolve-check-all table)   ; fail loud on cycle / unknown target
-		(ninja-emit* (ninja-preamble srcroot))
-		(for-each
-		  (lambda (pair)
-		    (for-each (lambda (form)
-				(ninja-emit-form table (car pair) form))
-			      (cdr pair)))
-		  manifest)
-		(ninja-emit (string-append "build native: phony "
+;; (krudd/cmake/) the paths resolve against. When BUILDDIR is given, the
+;; configure_file / changelog outputs are generated into it so `ninja wasm` can
+;; compile against them.
+(define (ninja-synthesize manifest srcroot . rest)
+	(let ((builddir (if (pair? rest) (car rest) #f)))
+		(set! ninja-lines '())
+		(set! ninja-native '())
+		(set! ninja-wasm '())
+		(let ((table (rz-target-table manifest))
+		      (libmap (ninja-build-libmap manifest)))
+			(resolve-check-all table)   ; fail loud on cycle / unknown
+			(ninja-emit* (ninja-preamble srcroot))
+			(for-each
+			  (lambda (pair)
+			    (for-each (lambda (form)
+					(ninja-emit-form table (car pair) form))
+				      (cdr pair)))
+			  manifest)
+			(ninja-emit "# --- WASM (Emscripten) main module ---")
+			(ninja-emit "")
+			(if builddir (ninja-generate-codegen srcroot builddir))
+			(ninja-emit-main-module table libmap)
+			(ninja-emit (string-append "build native: phony "
 					   (ninja-join " " (reverse ninja-native))))
-		(ninja-emit "default native")
-		(ninja-emit "")
-		(ninja-join "\n" (reverse ninja-lines))))
+			(ninja-emit (string-append "build wasm: phony "
+					   (ninja-join " " (reverse ninja-wasm))))
+			(ninja-emit "default native")
+			(ninja-emit "")
+			(ninja-join "\n" (reverse ninja-lines)))))

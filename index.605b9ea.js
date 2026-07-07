@@ -16492,6 +16492,7 @@ var FS_stdin_getChar_buffer = [];
 
 
 
+
   var writeI53ToI64Clamped = (ptr, num) => {
       if (num > 0x7FFFFFFFFFFFFFFF) {
         HEAPU32[((ptr)>>2)] = 4294967295;
@@ -28898,20 +28899,20 @@ function checkIncomingModuleAPI() {
   ignoredModuleProp('wasmBinary');
 }
 var ASM_CONSTS = {
-  505991: ($0) => { if (!$0) { AL.alcErr = 0xA004 ; return 1; } },  
- 506039: ($0) => { if (!AL.currentCtx) { err("alGetProcAddress() called without a valid context"); return 1; } if (!$0) { AL.currentCtx.err = 0xA003 ; return 1; } },  
- 506187: () => { out('All memory regions:') },  
- 506214: ($0, $1, $2) => { out('Region block '+ptrToString($0)+' - '+ptrToString($1)+ ' ('+Number($2)+' bytes):') },  
- 506301: ($0, $1, $2) => { out('Region '+ptrToString($0)+', size: '+Number($1)+' ('+($2?"used":"--FREE--")+')') },  
- 506386: ($0) => { out('Corrupt region! Size marker at the end of the region does not match: '+Number($0)) },  
- 506474: () => { out("") },  
- 506482: () => { out('Free regions:') },  
- 506503: ($0, $1, $2, $3, $4, $5) => { out('In bucket '+$0+', free region '+ptrToString($1)+', size: ' + Number($2) + ' (size at ceiling: '+Number($3)+'), prev: ' + ptrToString($4) + ', next: ' + ptrToString($5)) },  
- 506677: ($0, $1) => { out('Free bucket index map: ' + Number($0).toString(2) + ' ' + Number($1).toString(2)) },  
- 506764: () => { out("") },  
- 506772: ($0, $1, $2) => { err('Used region '+ptrToString($0)+', size: '+Number($1)+' ('+($2?"used":"--FREE--")+') is corrupt (size markers in the beginning and at the end of the region do not match!)') },  
- 506948: ($0, $1, $2) => { err('Used region '+ptrToString($0)+', size: '+Number($1)+' ('+($2?"used":"--FREE--")+') is corrupt (size markers in the beginning and at the end of the region do not match!)') },  
- 507124: ($0, $1, $2, $3, $4, $5) => { out('In bucket '+$0+', free region '+ptrToString($1)+', size: ' + Number($2) + ' (size at ceiling: '+Number($3)+'), prev: ' + ptrToString($4) + ', next: 0x' + ptrToString($5) + ' is corrupt!') }
+  609735: ($0) => { if (!$0) { AL.alcErr = 0xA004 ; return 1; } },  
+ 609783: ($0) => { if (!AL.currentCtx) { err("alGetProcAddress() called without a valid context"); return 1; } if (!$0) { AL.currentCtx.err = 0xA003 ; return 1; } },  
+ 609931: () => { out('All memory regions:') },  
+ 609958: ($0, $1, $2) => { out('Region block '+ptrToString($0)+' - '+ptrToString($1)+ ' ('+Number($2)+' bytes):') },  
+ 610045: ($0, $1, $2) => { out('Region '+ptrToString($0)+', size: '+Number($1)+' ('+($2?"used":"--FREE--")+')') },  
+ 610130: ($0) => { out('Corrupt region! Size marker at the end of the region does not match: '+Number($0)) },  
+ 610218: () => { out("") },  
+ 610226: () => { out('Free regions:') },  
+ 610247: ($0, $1, $2, $3, $4, $5) => { out('In bucket '+$0+', free region '+ptrToString($1)+', size: ' + Number($2) + ' (size at ceiling: '+Number($3)+'), prev: ' + ptrToString($4) + ', next: ' + ptrToString($5)) },  
+ 610421: ($0, $1) => { out('Free bucket index map: ' + Number($0).toString(2) + ' ' + Number($1).toString(2)) },  
+ 610508: () => { out("") },  
+ 610516: ($0, $1, $2) => { err('Used region '+ptrToString($0)+', size: '+Number($1)+' ('+($2?"used":"--FREE--")+') is corrupt (size markers in the beginning and at the end of the region do not match!)') },  
+ 610692: ($0, $1, $2) => { err('Used region '+ptrToString($0)+', size: '+Number($1)+' ('+($2?"used":"--FREE--")+') is corrupt (size markers in the beginning and at the end of the region do not match!)') },  
+ 610868: ($0, $1, $2, $3, $4, $5) => { out('In bucket '+$0+', free region '+ptrToString($1)+', size: ' + Number($2) + ' (size at ceiling: '+Number($3)+'), prev: ' + ptrToString($4) + ', next: 0x' + ptrToString($5) + ' is corrupt!') }
 };
 function krudd_signal_running() { if (typeof window.kruddSetRunning === 'function') window.kruddSetRunning(); }
 krudd_signal_running.sig = 'v';
@@ -28956,10 +28957,13 @@ plugin_loader_wasm_size.sig = 'ii';
 
 // Imports from the Wasm binary.
 var _main = Module['_main'] = makeInvalidEarlyAccess('_main');
+var _realloc = makeInvalidEarlyAccess('_realloc');
 var _malloc = makeInvalidEarlyAccess('_malloc');
-var _calloc = makeInvalidEarlyAccess('_calloc');
 var _free = makeInvalidEarlyAccess('_free');
+var _calloc = makeInvalidEarlyAccess('_calloc');
 var _fflush = makeInvalidEarlyAccess('_fflush');
+var _strerror = makeInvalidEarlyAccess('_strerror');
+var _fileno = makeInvalidEarlyAccess('_fileno');
 var _subsystem_manager_register = Module['_subsystem_manager_register'] = makeInvalidEarlyAccess('_subsystem_manager_register');
 var _subsystem_manager_register_async = Module['_subsystem_manager_register_async'] = makeInvalidEarlyAccess('_subsystem_manager_register_async');
 var _subsystem_manager_on_ready = Module['_subsystem_manager_on_ready'] = makeInvalidEarlyAccess('_subsystem_manager_on_ready');
@@ -28969,16 +28973,14 @@ var __emscripten_find_dylib = makeInvalidEarlyAccess('__emscripten_find_dylib');
 var ___libc_free = Module['___libc_free'] = makeInvalidEarlyAccess('___libc_free');
 var ___libc_malloc = Module['___libc_malloc'] = makeInvalidEarlyAccess('___libc_malloc');
 var _memcpy = makeInvalidEarlyAccess('_memcpy');
-var _fileno = makeInvalidEarlyAccess('_fileno');
 var _emscripten_builtin_malloc = Module['_emscripten_builtin_malloc'] = makeInvalidEarlyAccess('_emscripten_builtin_malloc');
+var _emscripten_stack_get_end = makeInvalidEarlyAccess('_emscripten_stack_get_end');
+var _emscripten_stack_get_base = makeInvalidEarlyAccess('_emscripten_stack_get_base');
 var _htonl = makeInvalidEarlyAccess('_htonl');
 var _htons = makeInvalidEarlyAccess('_htons');
 var _memcmp = makeInvalidEarlyAccess('_memcmp');
 var _ntohs = makeInvalidEarlyAccess('_ntohs');
-var _emscripten_stack_get_end = makeInvalidEarlyAccess('_emscripten_stack_get_end');
-var _emscripten_stack_get_base = makeInvalidEarlyAccess('_emscripten_stack_get_base');
 var __emscripten_timeout = makeInvalidEarlyAccess('__emscripten_timeout');
-var _strerror = makeInvalidEarlyAccess('_strerror');
 var _strndup = Module['_strndup'] = makeInvalidEarlyAccess('_strndup');
 var _emscripten_builtin_memalign = makeInvalidEarlyAccess('_emscripten_builtin_memalign');
 var __ZdaPv = Module['__ZdaPv'] = makeInvalidEarlyAccess('__ZdaPv');
@@ -28996,7 +28998,6 @@ var _emscripten_builtin_free = Module['_emscripten_builtin_free'] = makeInvalidE
 var _emscripten_builtin_realloc = Module['_emscripten_builtin_realloc'] = makeInvalidEarlyAccess('_emscripten_builtin_realloc');
 var _malloc_size = Module['_malloc_size'] = makeInvalidEarlyAccess('_malloc_size');
 var _malloc_usable_size = Module['_malloc_usable_size'] = makeInvalidEarlyAccess('_malloc_usable_size');
-var _realloc = makeInvalidEarlyAccess('_realloc');
 var _reallocf = Module['_reallocf'] = makeInvalidEarlyAccess('_reallocf');
 var _emscripten_get_sbrk_ptr = makeInvalidEarlyAccess('_emscripten_get_sbrk_ptr');
 var _setThrew = makeInvalidEarlyAccess('_setThrew');
@@ -29023,10 +29024,13 @@ var wasmMemory = makeInvalidEarlyAccess('wasmMemory');
 
 function assignWasmExports(wasmExports) {
   assert(typeof wasmExports['main'] != 'undefined', 'missing Wasm export: main');
+  assert(typeof wasmExports['realloc'] != 'undefined', 'missing Wasm export: realloc');
   assert(typeof wasmExports['malloc'] != 'undefined', 'missing Wasm export: malloc');
-  assert(typeof wasmExports['calloc'] != 'undefined', 'missing Wasm export: calloc');
   assert(typeof wasmExports['free'] != 'undefined', 'missing Wasm export: free');
+  assert(typeof wasmExports['calloc'] != 'undefined', 'missing Wasm export: calloc');
   assert(typeof wasmExports['fflush'] != 'undefined', 'missing Wasm export: fflush');
+  assert(typeof wasmExports['strerror'] != 'undefined', 'missing Wasm export: strerror');
+  assert(typeof wasmExports['fileno'] != 'undefined', 'missing Wasm export: fileno');
   assert(typeof wasmExports['subsystem_manager_register'] != 'undefined', 'missing Wasm export: subsystem_manager_register');
   assert(typeof wasmExports['subsystem_manager_register_async'] != 'undefined', 'missing Wasm export: subsystem_manager_register_async');
   assert(typeof wasmExports['subsystem_manager_on_ready'] != 'undefined', 'missing Wasm export: subsystem_manager_on_ready');
@@ -29036,16 +29040,14 @@ function assignWasmExports(wasmExports) {
   assert(typeof wasmExports['__libc_free'] != 'undefined', 'missing Wasm export: __libc_free');
   assert(typeof wasmExports['__libc_malloc'] != 'undefined', 'missing Wasm export: __libc_malloc');
   assert(typeof wasmExports['memcpy'] != 'undefined', 'missing Wasm export: memcpy');
-  assert(typeof wasmExports['fileno'] != 'undefined', 'missing Wasm export: fileno');
   assert(typeof wasmExports['emscripten_builtin_malloc'] != 'undefined', 'missing Wasm export: emscripten_builtin_malloc');
+  assert(typeof wasmExports['emscripten_stack_get_end'] != 'undefined', 'missing Wasm export: emscripten_stack_get_end');
+  assert(typeof wasmExports['emscripten_stack_get_base'] != 'undefined', 'missing Wasm export: emscripten_stack_get_base');
   assert(typeof wasmExports['htonl'] != 'undefined', 'missing Wasm export: htonl');
   assert(typeof wasmExports['htons'] != 'undefined', 'missing Wasm export: htons');
   assert(typeof wasmExports['memcmp'] != 'undefined', 'missing Wasm export: memcmp');
   assert(typeof wasmExports['ntohs'] != 'undefined', 'missing Wasm export: ntohs');
-  assert(typeof wasmExports['emscripten_stack_get_end'] != 'undefined', 'missing Wasm export: emscripten_stack_get_end');
-  assert(typeof wasmExports['emscripten_stack_get_base'] != 'undefined', 'missing Wasm export: emscripten_stack_get_base');
   assert(typeof wasmExports['_emscripten_timeout'] != 'undefined', 'missing Wasm export: _emscripten_timeout');
-  assert(typeof wasmExports['strerror'] != 'undefined', 'missing Wasm export: strerror');
   assert(typeof wasmExports['strndup'] != 'undefined', 'missing Wasm export: strndup');
   assert(typeof wasmExports['emscripten_builtin_memalign'] != 'undefined', 'missing Wasm export: emscripten_builtin_memalign');
   assert(typeof wasmExports['_ZdaPv'] != 'undefined', 'missing Wasm export: _ZdaPv');
@@ -29063,7 +29065,6 @@ function assignWasmExports(wasmExports) {
   assert(typeof wasmExports['emscripten_builtin_realloc'] != 'undefined', 'missing Wasm export: emscripten_builtin_realloc');
   assert(typeof wasmExports['malloc_size'] != 'undefined', 'missing Wasm export: malloc_size');
   assert(typeof wasmExports['malloc_usable_size'] != 'undefined', 'missing Wasm export: malloc_usable_size');
-  assert(typeof wasmExports['realloc'] != 'undefined', 'missing Wasm export: realloc');
   assert(typeof wasmExports['reallocf'] != 'undefined', 'missing Wasm export: reallocf');
   assert(typeof wasmExports['emscripten_get_sbrk_ptr'] != 'undefined', 'missing Wasm export: emscripten_get_sbrk_ptr');
   assert(typeof wasmExports['setThrew'] != 'undefined', 'missing Wasm export: setThrew');
@@ -29086,10 +29087,13 @@ function assignWasmExports(wasmExports) {
   assert(typeof wasmExports['gl_abi_refs'] != 'undefined', 'missing Wasm export: gl_abi_refs');
   assert(typeof wasmExports['__heap_base'] != 'undefined', 'missing Wasm export: __heap_base');
   _main = Module['_main'] = createExportWrapper('main', wasmExports['main'], 2);
+  _realloc = createExportWrapper('realloc', wasmExports['realloc'], 2);
   _malloc = createExportWrapper('malloc', wasmExports['malloc'], 1);
-  _calloc = createExportWrapper('calloc', wasmExports['calloc'], 2);
   _free = createExportWrapper('free', wasmExports['free'], 1);
+  _calloc = createExportWrapper('calloc', wasmExports['calloc'], 2);
   _fflush = createExportWrapper('fflush', wasmExports['fflush'], 1);
+  _strerror = createExportWrapper('strerror', wasmExports['strerror'], 1);
+  _fileno = createExportWrapper('fileno', wasmExports['fileno'], 1);
   _subsystem_manager_register = Module['_subsystem_manager_register'] = createExportWrapper('subsystem_manager_register', wasmExports['subsystem_manager_register'], 2);
   _subsystem_manager_register_async = Module['_subsystem_manager_register_async'] = createExportWrapper('subsystem_manager_register_async', wasmExports['subsystem_manager_register_async'], 2);
   _subsystem_manager_on_ready = Module['_subsystem_manager_on_ready'] = createExportWrapper('subsystem_manager_on_ready', wasmExports['subsystem_manager_on_ready'], 4);
@@ -29099,16 +29103,14 @@ function assignWasmExports(wasmExports) {
   ___libc_free = Module['___libc_free'] = createExportWrapper('__libc_free', wasmExports['__libc_free'], 1);
   ___libc_malloc = Module['___libc_malloc'] = createExportWrapper('__libc_malloc', wasmExports['__libc_malloc'], 1);
   _memcpy = createExportWrapper('memcpy', wasmExports['memcpy'], 3);
-  _fileno = createExportWrapper('fileno', wasmExports['fileno'], 1);
   _emscripten_builtin_malloc = Module['_emscripten_builtin_malloc'] = createExportWrapper('emscripten_builtin_malloc', wasmExports['emscripten_builtin_malloc'], 1);
+  _emscripten_stack_get_end = wasmExports['emscripten_stack_get_end'];
+  _emscripten_stack_get_base = wasmExports['emscripten_stack_get_base'];
   _htonl = createExportWrapper('htonl', wasmExports['htonl'], 1);
   _htons = createExportWrapper('htons', wasmExports['htons'], 1);
   _memcmp = createExportWrapper('memcmp', wasmExports['memcmp'], 3);
   _ntohs = createExportWrapper('ntohs', wasmExports['ntohs'], 1);
-  _emscripten_stack_get_end = wasmExports['emscripten_stack_get_end'];
-  _emscripten_stack_get_base = wasmExports['emscripten_stack_get_base'];
   __emscripten_timeout = createExportWrapper('_emscripten_timeout', wasmExports['_emscripten_timeout'], 2);
-  _strerror = createExportWrapper('strerror', wasmExports['strerror'], 1);
   _strndup = Module['_strndup'] = createExportWrapper('strndup', wasmExports['strndup'], 2);
   _emscripten_builtin_memalign = createExportWrapper('emscripten_builtin_memalign', wasmExports['emscripten_builtin_memalign'], 2);
   __ZdaPv = Module['__ZdaPv'] = createExportWrapper('_ZdaPv', wasmExports['_ZdaPv'], 1);
@@ -29126,7 +29128,6 @@ function assignWasmExports(wasmExports) {
   _emscripten_builtin_realloc = Module['_emscripten_builtin_realloc'] = createExportWrapper('emscripten_builtin_realloc', wasmExports['emscripten_builtin_realloc'], 2);
   _malloc_size = Module['_malloc_size'] = createExportWrapper('malloc_size', wasmExports['malloc_size'], 1);
   _malloc_usable_size = Module['_malloc_usable_size'] = createExportWrapper('malloc_usable_size', wasmExports['malloc_usable_size'], 1);
-  _realloc = createExportWrapper('realloc', wasmExports['realloc'], 2);
   _reallocf = Module['_reallocf'] = createExportWrapper('reallocf', wasmExports['reallocf'], 2);
   _emscripten_get_sbrk_ptr = wasmExports['emscripten_get_sbrk_ptr'];
   _setThrew = createExportWrapper('setThrew', wasmExports['setThrew'], 2);
@@ -31838,6 +31839,16 @@ var wasmImports = {
   /** @export */
   glutTimerFunc: _glutTimerFunc,
   /** @export */
+  invoke_iii,
+  /** @export */
+  invoke_vii,
+  /** @export */
+  invoke_viii,
+  /** @export */
+  invoke_viiii,
+  /** @export */
+  invoke_vijii,
+  /** @export */
   krudd_idb_blob_del,
   /** @export */
   krudd_idb_blob_open,
@@ -31932,6 +31943,61 @@ var wasmImports = {
   /** @export */
   zoomSurface: _zoomSurface
 };
+
+function invoke_iii(index,a1,a2) {
+  var sp = stackSave();
+  try {
+    return getWasmTableEntry(index)(a1,a2);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_viii(index,a1,a2,a3) {
+  var sp = stackSave();
+  try {
+    getWasmTableEntry(index)(a1,a2,a3);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_viiii(index,a1,a2,a3,a4) {
+  var sp = stackSave();
+  try {
+    getWasmTableEntry(index)(a1,a2,a3,a4);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_vii(index,a1,a2) {
+  var sp = stackSave();
+  try {
+    getWasmTableEntry(index)(a1,a2);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
+
+function invoke_vijii(index,a1,a2,a3,a4) {
+  var sp = stackSave();
+  try {
+    getWasmTableEntry(index)(a1,a2,a3,a4);
+  } catch(e) {
+    stackRestore(sp);
+    if (!(e instanceof EmscriptenEH)) throw e;
+    _setThrew(1, 0);
+  }
+}
 
 
 // include: postamble.js

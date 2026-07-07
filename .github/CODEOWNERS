@@ -13,7 +13,6 @@
 /CMakeLists.txt         @joshcoyne
 /.github/               @joshcoyne
 
-# Version and release-notes sources — must stay consistent (see
-# docs/ci-and-release.md).
+# Version and release-notes sources — must stay consistent.
 /VERSION                @joshcoyne
 /CHANGELOG.md           @joshcoyne

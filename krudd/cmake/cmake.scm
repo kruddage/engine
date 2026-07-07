@@ -27,6 +27,19 @@
 ; interface-library takes (interface INC...); side-module clauses are documented
 ; at cmake-emit-side-module below.
 ;
+; The root directory is not targets but project scaffolding, so it adds a few
+; whole-file forms:
+;
+;   (set VAR VALUE)              -> set(VAR VALUE)
+;   (compile-options FLAG...)    -> add_compile_options(FLAG ...)
+;   (link-options FLAG...)       -> add_link_options(FLAG ...)
+;   (enable-testing)             -> enable_testing()
+;   (option NAME "DOC" DEF b...) -> option(...) + if(NAME) b... endif()
+;   (subdirs PATH...)            -> one add_subdirectory(PATH) per line
+;   (verbatim "text")            -> text emitted unchanged (the escape hatch for
+;                                   the project()/git/FetchContent bootstrap we
+;                                   do not model yet)
+;
 ; A SRC/INC is a bare string (relative to this directory), (root "path") which
 ; expands to ${CMAKE_SOURCE_DIR}/path for references reaching across the tree,
 ; (current)/(current "path") which name this directory as
@@ -191,6 +204,57 @@
 	(string-append "\tadd_dependencies(index " target ")")
 	"endif()"))))
 
+;; ---------------------------------------------------------------------------
+;; Whole-file forms. The root CMakeLists.txt describes the project, not a set of
+;; targets: global flags, build options, the subdirectory layout, and a
+;; bootstrap (project()/git introspection/FetchContent) we do not model — that
+;; last part rides through (verbatim ...) verbatim.
+;; ---------------------------------------------------------------------------
+
+;; (verbatim "text") — the one escape hatch: emit the text unchanged, newlines
+;; and all. Used for the CMake bootstrap krudd hasn't strangled yet.
+(define (cmake-emit-verbatim form)
+  (list (cadr form)))
+
+;; (set VAR VALUE) -> set(VAR VALUE)
+(define (cmake-emit-set form)
+  (list (string-append "set(" (cadr form) " " (caddr form) ")")))
+
+;; (compile-options FLAG...) -> add_compile_options(FLAG ...)
+(define (cmake-emit-compile-options form)
+  (list (string-append "add_compile_options("
+		       (cmake-join " " (cdr form)) ")")))
+
+;; (link-options FLAG...) -> add_link_options(FLAG ...)
+(define (cmake-emit-link-options form)
+  (list (string-append "add_link_options("
+		       (cmake-join " " (cdr form)) ")")))
+
+;; (enable-testing) -> enable_testing()
+(define (cmake-emit-enable-testing form)
+  (list "enable_testing()"))
+
+;; (option NAME "DOC" DEFAULT body...) -> the option declaration followed by an
+;; if(NAME) ... endif() carrying the body forms (compile-options/link-options in
+;; practice), each indented one tab inside the guard.
+(define (cmake-emit-option form)
+  (let ((name  (list-ref form 1))
+	(doc   (list-ref form 2))
+	(deflt (list-ref form 3))
+	(body  (list-tail form 4)))
+    (append
+      (list (string-append "option(" name " \"" doc "\" " deflt ")")
+	    (string-append "if(" name ")"))
+      (map (lambda (l) (string-append "\t" l))
+	   (apply append (map cmake-emit-form body)))
+      (list "endif()"))))
+
+;; (subdirs PATH...) -> one add_subdirectory(PATH) per line. The order is the
+;; traversal order CMake needs: a target must be defined before a later
+;; subdirectory links against it.
+(define (cmake-emit-subdirs form)
+  (map (lambda (d) (string-append "add_subdirectory(" d ")")) (cdr form)))
+
 ;; Render one top-level form to a list of lines.
 (define (cmake-emit-form form)
   (case (car form)
@@ -200,6 +264,13 @@
     ((test)              (cmake-emit-test form))
     ((side-module)       (cmake-emit-side-module form))
     ((native-only)       (cmake-emit-native-only form))
+    ((verbatim)          (cmake-emit-verbatim form))
+    ((set)               (cmake-emit-set form))
+    ((compile-options)   (cmake-emit-compile-options form))
+    ((link-options)      (cmake-emit-link-options form))
+    ((enable-testing)    (cmake-emit-enable-testing form))
+    ((option)            (cmake-emit-option form))
+    ((subdirs)           (cmake-emit-subdirs form))
     (else (error 'cmake-unknown-form form))))
 
 (define (cmake-emit-native-only form)

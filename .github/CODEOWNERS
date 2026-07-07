@@ -9,8 +9,10 @@
 # exported signature is a breaking change, so guard them explicitly.
 /cmake/plugins/include/ @joshcoyne
 
-# Build and CI/release machinery.
-/cmake/CMakeLists.txt   @joshcoyne
+# Build and CI/release machinery. The root CMakeLists.txt is generated from
+# cmake/CMakeLists.scm now, so guard the spec (the .txt is gitignored).
+/cmake/CMakeLists.scm   @joshcoyne
+/krudd/                 @joshcoyne
 /.github/               @joshcoyne
 
 # Version and release-notes sources — must stay consistent.

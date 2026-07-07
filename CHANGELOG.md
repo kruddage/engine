@@ -20,6 +20,8 @@ engine, before it lands anywhere else.
 
 ## [Unreleased]
 
+## [6.0.0] - 2026-07-07
+
 ### Added
 
 - **Embedded Scheme runtime (s7)** — the engine now vendors the

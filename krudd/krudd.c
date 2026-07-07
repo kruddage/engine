@@ -18,6 +18,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "s7.h"
+
 #define PROJECT_SUFFIX ".krudd-project"
 #define MAX_PROJECTS   64
 #define NAME_MAX_LEN   256
@@ -33,25 +35,93 @@ static int run(const char *cmd)
 	return (rc == 0) ? 0 : -1;
 }
 
+static const char *getenv_or(const char *key, const char *dflt)
+{
+	const char *v = getenv(key);
+
+	return (v && *v) ? v : dflt;
+}
+
 /*
- * Proof of life: drive the same build CI runs today. KRUDD_CONFIGURE and
- * KRUDD_BUILD let CI inject the WASM toolchain (`emcmake cmake ...`) while a
- * plain checkout falls back to native cmake — so the seam is verifiable both
- * ways without baking a toolchain choice into this file.
+ * KRUDD_CONFIGURE / KRUDD_BUILD let CI inject the WASM toolchain (`emcmake
+ * cmake ...`) while a plain checkout falls back to native cmake, so the seam is
+ * verifiable both ways without baking a toolchain choice into this file.
+ */
+static const char *configure_cmd(void)
+{
+	return getenv_or("KRUDD_CONFIGURE", "cmake -B build");
+}
+
+static const char *build_cmd(void)
+{
+	return getenv_or("KRUDD_BUILD", "cmake --build build");
+}
+
+/* Direct fallback when the Scheme build description is unreachable. */
+static int direct_cmake(void)
+{
+	if (run(configure_cmd()) != 0)
+		return -1;
+	return run(build_cmd());
+}
+
+/* (run "cmd") from Scheme -> run the shell command, return its exit status. */
+static s7_pointer krudd_run(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer cmd = s7_car(args);
+
+	if (!s7_is_string(cmd))
+		return s7_make_integer(sc, -1);
+	return s7_make_integer(sc, run(s7_string(cmd)));
+}
+
+/*
+ * The payoff: `krudd build` loads build.scm and lets s7 drive. C provides the
+ * primitives (`run`, the command strings); Scheme orchestrates. If s7 or the
+ * script is unreachable we fall back to driving cmake directly, so a bare krudd
+ * binary still builds.
  */
 static int cmd_build(void)
 {
-	const char *configure = getenv("KRUDD_CONFIGURE");
-	const char *build     = getenv("KRUDD_BUILD");
+	char        path[1024];
+	s7_scheme  *s7;
+	s7_pointer  port, saved;
+	const char *errtext;
+	FILE       *probe;
+	int         failed;
 
-	if (!configure || !*configure)
-		configure = "cmake -B build";
-	if (!build || !*build)
-		build = "cmake --build build";
+	snprintf(path, sizeof path, "%s/krudd/build.scm",
+		 getenv_or("KRUDD_ROOT", "."));
+	probe = fopen(path, "r");
+	if (!probe) {
+		fprintf(stderr, "krudd: %s not found — driving cmake directly\n",
+			path);
+		return direct_cmake();
+	}
+	fclose(probe);
 
-	if (run(configure) != 0)
-		return -1;
-	return run(build);
+	s7 = s7_init();
+	if (!s7)
+		return direct_cmake();
+
+	s7_define_function(s7, "run", krudd_run, 1, 0, false,
+			   "(run cmd) run a shell command, return its exit status");
+	s7_define_variable(s7, "*configure*",
+			   s7_make_string(s7, configure_cmd()));
+	s7_define_variable(s7, "*build*", s7_make_string(s7, build_cmd()));
+
+	/* Capture Scheme errors instead of letting them scribble on stderr. */
+	port  = s7_open_output_string(s7);
+	saved = s7_set_current_error_port(s7, port);
+	s7_load(s7, path);
+	errtext = s7_get_output_string(s7, port);
+	failed  = (errtext && errtext[0] != '\0');
+	if (failed)
+		fprintf(stderr, "krudd: build.scm failed:\n%s\n", errtext);
+	s7_set_current_error_port(s7, saved);
+	s7_close_output_port(s7, port);
+	s7_free(s7);
+	return failed ? -1 : 0;
 }
 
 /* Serve the built site. Blocks until Ctrl-C — the interactive "run" tail. */

@@ -27,5 +27,17 @@ if [ -z "$cc" ]; then
 	exit 1
 fi
 
-"$cc" -O2 -o "$root/krudd/krudd" "$root/krudd/krudd.c"
-exec "$root/krudd/krudd" "$@"
+# krudd links the vendored s7 Scheme (third_party/s7.c) as its build
+# interpreter. s7 is a big single file, so only recompile when a source is
+# newer than the binary — the first build costs ~40s, later runs are instant.
+bin="$root/krudd/krudd"
+src="$root/krudd/krudd.c"
+s7="$root/krudd/third_party/s7.c"
+if [ ! -x "$bin" ] || [ "$src" -nt "$bin" ] || [ "$s7" -nt "$bin" ]; then
+	"$cc" -O2 -w -DWITH_C_LOADER=0 -DWITH_MAIN=0 \
+		-I"$root/krudd/third_party" \
+		-o "$bin" "$src" "$s7" -lm
+fi
+
+export KRUDD_ROOT="$root"
+exec "$bin" "$@"

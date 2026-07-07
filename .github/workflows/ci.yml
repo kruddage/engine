@@ -27,10 +27,17 @@ jobs:
       - name: Trust the workspace
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
+      # Build through krudd — the seam that will become the s7-driven build
+      # authority. For now `krudd build` just shells out to cmake; CI injects
+      # the WASM toolchain via KRUDD_CONFIGURE. gcc builds the tiny krudd tool
+      # itself (the emsdk image ships emcc, not necessarily a host cc).
+      - name: Install a host compiler for krudd
+        run: apt-get update && apt-get install -y gcc
+
       - name: Build
-        run: |
-          emcmake cmake -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build
+        env:
+          KRUDD_CONFIGURE: emcmake cmake -B build -DCMAKE_BUILD_TYPE=Release
+        run: ./krudd.sh build
 
       # Stage only the web outputs. Publishing the raw build/ tree would commit
       # _deps/ (a gitlink) to gh-pages and break the Pages branch build.

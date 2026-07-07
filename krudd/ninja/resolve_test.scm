@@ -50,11 +50,11 @@
 (define (load-datum path) (call-with-input-file path read))
 
 (define manifest-dirs
-	(load-datum (string-append krudd-root "/krudd/cmake/manifest.scm")))
+	(load-datum (string-append krudd-root "/krudd/ninja/manifest.scm")))
 
 (define (load-spec dir)
-	(load-datum (string-append krudd-root "/krudd/cmake/" dir
-				   "/CMakeLists.scm")))
+	(load-datum (string-append krudd-root "/krudd/ninja/" dir
+				   "/build.scm")))
 
 (define manifest
 	(map (lambda (d) (cons d (load-spec d))) manifest-dirs))
@@ -62,8 +62,8 @@
 (define table (rz-target-table manifest))
 
 ;; ---------------------------------------------------------------------------
-;; Include-set checks. Expected sets are CMake's resolved -I lists for these
-;; targets (paths normalised relative to krudd/cmake/). The resolver must
+;; Include-set checks. Expected sets are the reference -I lists for these
+;; targets (paths normalised relative to krudd/ninja/). The resolver must
 ;; produce the same *set*; order is not build-relevant.
 ;; ---------------------------------------------------------------------------
 
@@ -162,9 +162,9 @@
 (define ninja-out (getenv "KRUDD_NINJA_OUT"))
 (define ninja-text
 	(if (and ninja-out (> (string-length ninja-out) 0))
-	    (ninja-synthesize manifest (string-append krudd-root "/krudd/cmake")
+	    (ninja-synthesize manifest (string-append krudd-root "/krudd/ninja")
 			      (dirname ninja-out))
-	    (ninja-synthesize manifest (string-append krudd-root "/krudd/cmake"))))
+	    (ninja-synthesize manifest (string-append krudd-root "/krudd/ninja"))))
 
 (define (contains? hay needle)
 	(let ((hl (string-length hay)) (nl (string-length needle)))

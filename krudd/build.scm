@@ -4,18 +4,13 @@
 ;
 ; krudd (see ../krudd.c) provides:
 ;   (run cmd)     -> run a shell command, return its integer exit status
-;   *configure*   -> the configure command string (legacy; only its emcmake
-;                    marker is still read, as a fallback target hint)
-;   *build*       -> the build command string (unused now)
 ;
-; The strangler fig, complete: krudd owns the whole build. It reads the same
-; backend-agnostic directory specs (krudd/cmake/**/CMakeLists.scm) it always
-; has, renders a build.ninja from them (krudd/ninja/ninja.scm), and drives
-; ninja(1) directly — no CMake, no emcmake. Ninja stays as the executor; krudd
-; owns the generation.
+; The strangler fig, complete: krudd owns the whole build. It reads the
+; backend-agnostic directory specs (krudd/ninja/**/build.scm), renders a
+; build.ninja from them (krudd/ninja/ninja.scm), and drives ninja(1) directly.
+; Ninja stays as the executor; krudd owns the generation.
 ;
-; Two targets, selected by KRUDD_TARGET (falling back to the emcmake marker in
-; *configure* for the legacy CI env):
+; Two targets, selected by KRUDD_TARGET (unset defaults to native):
 ;   native  cc/ar — every static library and test; the test stamps run the
 ;           suite, so a green build is a green test run.
 ;   wasm    emcc/em++ — the main module (index.html/.js/.wasm) and the plugin
@@ -38,36 +33,33 @@
     (lambda (port) (write-string text port))))
 
 ;; ---------------------------------------------------------------------------
-;; The manifest: every directory krudd owns, relative to krudd/cmake/ (a bare
-;; datum in krudd/cmake/manifest.scm, shared with nothing else now that CMake is
-;; gone but kept as the one list of owned directories). Each carries a
-;; CMakeLists.scm spec beside its sources.
+;; The manifest: every directory krudd owns, relative to krudd/ninja/ (a bare
+;; datum in krudd/ninja/manifest.scm — the one list of owned directories). Each
+;; carries a build.scm spec beside its sources.
 ;; ---------------------------------------------------------------------------
 
 (define owned-directories
   (call-with-input-file
-    (string-append krudd-root "/krudd/cmake/manifest.scm")
+    (string-append krudd-root "/krudd/ninja/manifest.scm")
     read))
 
 (define (load-spec dir)
   (call-with-input-file
-    (string-append krudd-root "/krudd/cmake/" dir "/CMakeLists.scm")
+    (string-append krudd-root "/krudd/ninja/" dir "/build.scm")
     read))
 
 (define manifest
   (map (lambda (dir) (cons dir (load-spec dir))) owned-directories))
 
 ;; The tree root the spec paths resolve against, and the build directory.
-(define src-root (string-append krudd-root "/krudd/cmake"))
+(define src-root (string-append krudd-root "/krudd/ninja"))
 (define build-dir (string-append krudd-root "/build"))
 
-;; Target selection: KRUDD_TARGET=wasm|native wins; otherwise fall back to the
-;; emcmake marker the legacy CI env still carries in *configure*.
+;; Target selection: KRUDD_TARGET=wasm selects the WASM output; anything else
+;; (including unset) builds native.
 (define wasm-build?
   (let ((target (getenv "KRUDD_TARGET")))
-    (if (and target (> (string-length target) 0))
-	(string=? target "wasm")
-	(krudd-emscripten-build?))))
+    (and target (string=? target "wasm"))))
 
 ;; The WASM side modules need imgui; fetch it (idempotent) before generating.
 (if wasm-build?

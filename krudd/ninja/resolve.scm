@@ -2,26 +2,25 @@
 ;
 ; resolve.scm — the static include/link resolver.
 ;
-; The directory specs (krudd/cmake/**/CMakeLists.scm) name each target's own
+; The directory specs (krudd/ninja/**/build.scm) name each target's own
 ; include directories and the libraries it links, but not the include
-; directories those libraries drag in. CMake computes that for us: a
-; target_link_libraries(A PRIVATE B) hands A every PUBLIC include B declares,
-; and it flattens transitively — if A links B and B links C, A can see C's
-; public headers. The Ninja emitter has no such machinery, so this pass owns
-; that flattening explicitly.
+; directories those libraries drag in. A (link ... "B") means A wants every
+; PUBLIC include B declares, and that flattens transitively — if A links B and
+; B links C, A can see C's public headers. This pass owns that flattening
+; explicitly (the job CMake's target_link_libraries once did for us).
 ;
 ; The input is the whole manifest as a list of (DIR . SPEC) pairs, where DIR is
-; a directory path relative to krudd/cmake/ (e.g. "modules/log") and SPEC is the
-; datum read from that directory's CMakeLists.scm. The output, per target, is
+; a directory path relative to krudd/ninja/ (e.g. "modules/log") and SPEC is the
+; datum read from that directory's build.scm. The output, per target, is
 ; the ordered de-duplicated list of include directories a compile line needs —
 ; the target's own PUBLIC then PRIVATE dirs, then every linked library's PUBLIC
 ; dirs, transitively.
 ;
-; Paths come out relative to the tree root (krudd/cmake/): a bare "include" in
+; Paths come out relative to the tree root (krudd/ninja/): a bare "include" in
 ; modules/log becomes "modules/log/include", (root "p") becomes "p". The one
-; escape hatch, (raw "text"), passes through unchanged (for CMake variables the
-; WASM side-module builds reference, like ${imgui_SOURCE_DIR}); native leaf
-; targets never carry those.
+; escape hatch, (raw "text"), passes through unchanged (for the generated and
+; fetched paths the WASM side-module builds reference, like ${imgui}); native
+; leaf targets never carry those.
 ;
 ; Two failure modes fail loudly at resolution time rather than mis-linking
 ; later: a cycle in the link graph, and a link entry that names neither a
@@ -29,7 +28,7 @@
 
 ;; ---------------------------------------------------------------------------
 ;; Small list helpers (s7 gives us map/for-each/assoc/member; the rest we spell
-;; out, as cmake.scm does for string-join).
+;; out).
 ;; ---------------------------------------------------------------------------
 
 (define (rz-filter pred lst)
@@ -62,8 +61,8 @@
 
 ;; ---------------------------------------------------------------------------
 ;; Path expansion. A source/include path spec resolves relative to the tree
-;; root (krudd/cmake/), matching what ${CMAKE_SOURCE_DIR} meant to the CMake
-;; backend. DIR is the owning directory, relative to that root.
+;; root (krudd/ninja/) — the source tree krudd owns. DIR is the owning
+;; directory, relative to that root.
 ;; ---------------------------------------------------------------------------
 
 ;; Join a directory and a relative component, collapsing "." to just the dir so

@@ -29,8 +29,10 @@
 ;
 ; A SRC/INC is a bare string (relative to this directory), (root "path") which
 ; expands to ${CMAKE_SOURCE_DIR}/path for references reaching across the tree,
-; or (current)/(current "path") which name this directory as
-; ${CMAKE_CURRENT_SOURCE_DIR} explicitly.
+; (current)/(current "path") which name this directory as
+; ${CMAKE_CURRENT_SOURCE_DIR} explicitly, or (raw "text") which passes text
+; through verbatim — for CMake variables the spec doesn't own, such as
+; ${imgui_SOURCE_DIR} from FetchContent.
 
 ;; string list join — s7 has no string-join we can rely on.
 (define (cmake-join sep lst)
@@ -51,6 +53,7 @@
 	 (if (null? (cdr p))
 	     "${CMAKE_CURRENT_SOURCE_DIR}"
 	     (string-append "${CMAKE_CURRENT_SOURCE_DIR}/" (cadr p))))
+	((and (pair? p) (eq? (car p) 'raw)) (cadr p))
 	(else (error 'cmake-bad-path p))))
 
 ;; Find the clause whose head is HEAD, or #f.
@@ -135,6 +138,7 @@
 ;;     (compiler c|cxx)   compiler var (default c)
 ;;     (target STR)       custom-target name (default NAME_wasm)
 ;;     (comment STR)      COMMENT text (default "Building NAME SIDE_MODULE")
+;;     (flags STR...)     extra bare compiler flags, after -O2
 ;;     (includes P...)    -I paths, in order
 ;;     (sources P...)     compiled inputs, after -o
 ;;     (depends P...)     DEPENDS entries
@@ -152,6 +156,8 @@
 						    " SIDE_MODULE")))
 	 (compiler (if (eq? (cmake-side-field clauses 'compiler 'c) 'cxx)
 		       "${CMAKE_CXX_COMPILER}" "${CMAKE_C_COMPILER}"))
+	 (flags    (let ((c (cmake-clause 'flags clauses)))
+		     (if c (cdr c) '())))
 	 (includes (let ((c (cmake-clause 'includes clauses)))
 		     (if c (cdr c) '())))
 	 (sources  (let ((c (cmake-clause 'sources clauses)))
@@ -167,6 +173,7 @@
 	(string-append "\t\tCOMMAND " compiler)
 	"\t\t\t-sSIDE_MODULE=1"
 	"\t\t\t-O2")
+      (map (lambda (f) (string-append "\t\t\t" f)) flags)
       (map (lambda (i) (string-append "\t\t\t-I" (cmake-path i))) includes)
       (list (string-append "\t\t\t-o " wasm))
       (map (lambda (s) (string-append "\t\t\t" (cmake-path s))) sources)

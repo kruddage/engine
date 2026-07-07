@@ -413,7 +413,9 @@
 ;; generated into <builddir>/generated at synthesis time (as CMake ran
 ;; configure_file / the embed script at configure time).
 (define (ninja-generate-codegen srcroot builddir)
-	(let ((gen (string-append builddir "/generated")))
+	(let ((gen   (string-append builddir "/generated"))
+	      (mdscm (string-append (krudd-repo-root)
+				    "/krudd/build/modules/md_parse.scm")))
 		(system (string-append "mkdir -p \"" gen "\""))
 		(krudd-configure-file
 		  (string-append srcroot "/modules/core/version.h.in")
@@ -427,9 +429,15 @@
 		(krudd-embed-file
 		  (string-append srcroot "/modules/core/runtime.scm")
 		  (string-append gen "/runtime_scm.h") "RUNTIME_SCM")
+		;; md_parse.scm now lives under krudd/build/modules/ (outside the
+		;; ninja tree) and yields two headers: its baked-in runtime image
+		;; and the C ABI constants generated from its (define ...) forms.
 		(krudd-embed-file
-		  (string-append srcroot "/plugins/kruddboard/md_parse.scm")
-		  (string-append gen "/md_parse_scm.h") "MD_PARSE_SCM")))
+		  mdscm
+		  (string-append gen "/md_parse_scm.h") "MD_PARSE_SCM")
+		(krudd-embed-abi-header
+		  mdscm
+		  (string-append gen "/md_parse_abi.h"))))
 
 ;; Render the whole manifest to build.ninja text. MANIFEST is a list of
 ;; (DIR . SPEC) pairs; SRCROOT is the absolute path of the tree root

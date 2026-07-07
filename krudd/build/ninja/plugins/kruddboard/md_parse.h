@@ -37,20 +37,14 @@ extern "C" {
  *   MD_BLOCKS_MAX         suggested maximum for a single parse call
  */
 
-#define MD_TEXT_MAX        256
-#define MD_SPANS_PER_BLOCK 16
-#define MD_BLOCKS_MAX      128
-
-/* Block type discriminator. */
-#define MD_BLOCK_PARAGRAPH 0
-#define MD_BLOCK_HEADING   1
-#define MD_BLOCK_LIST_ITEM 2
-#define MD_BLOCK_CODE      3
-
-/* Inline style flags (combinable). */
-#define MD_SPAN_NORMAL 0
-#define MD_SPAN_BOLD   1
-#define MD_SPAN_CODE   2
+/*
+ * The parser's numeric ABI — the text/span/block caps and the MD_BLOCK_* /
+ * MD_SPAN_* discriminators — is generated from krudd/build/modules/md_parse.scm
+ * (the Scheme port that owns those values) into md_parse_abi.h. Including it
+ * here keeps the C ABI and the Scheme parser from drifting: change a constant
+ * in the .scm and both sides follow.
+ */
+#include "md_parse_abi.h"
 
 /*
  * One inline-styled run within a block's body text.

@@ -17,9 +17,11 @@
 ; output). Every directory under cmake/ is owned now; grow this manifest and
 ; drop a CMakeLists.scm beside a future directory's sources to strangle it too.
 ;
-; The root CMakeLists.txt is owned too now (cmake/CMakeLists.scm): its layout,
-; options and flags are data, and the imperative project()/git/FetchContent
-; bootstrap rides through a (verbatim ...) block until it too becomes forms.
+; The root CMakeLists.txt is owned too now (krudd/cmake/CMakeLists.scm, beside
+; the emitter rather than under cmake/ since it describes the tree instead of
+; living in it): its layout, options and flags are data, and the imperative
+; project()/git/FetchContent bootstrap rides through a (verbatim ...) block
+; until it too becomes forms.
 
 (define krudd-root (or (getenv "KRUDD_ROOT") "."))
 
@@ -74,16 +76,18 @@
 
 ;; Synthesize the root cmake/CMakeLists.txt from its spec. Unlike the leaf
 ;; directories the root is not in owned-directories — it is the tree it points
-;; at — so it is rendered on its own.
+;; at — so it is rendered on its own. The spec itself lives at
+;; krudd/cmake/CMakeLists.scm, beside cmake.scm, since it describes the tree
+;; rather than living in it.
 (define (synthesize-root)
-  (let ((source "cmake/CMakeLists.scm")
+  (let ((source "krudd/cmake/CMakeLists.scm")
 	(out    (string-append krudd-root "/cmake/CMakeLists.txt")))
     (display (string-append "krudd: synthesize " out "\n"))
     (write-file out
 		(cmake-synthesize
 		  source
 		  (call-with-input-file
-		    (string-append krudd-root "/cmake/CMakeLists.scm")
+		    (string-append krudd-root "/" source)
 		    read)))))
 
 ;; Synthesize every owned directory's CMakeLists.txt, then let CMake build.

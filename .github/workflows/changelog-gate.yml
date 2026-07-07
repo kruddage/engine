@@ -15,6 +15,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Test the changelog check
+        run: sh scripts/check-changelog.test.sh
+
       - name: Check CHANGELOG.md is updated
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}

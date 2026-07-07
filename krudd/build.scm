@@ -14,9 +14,8 @@
 ; the sources it describes — which cmake.scm renders to CMake text. krudd/
 ; stays the tool (this orchestrator, the s7 runtime, the CMake-backend
 ; emitter); cmake/ stays the project (sources, specs, and the generated
-; output). Grow the owned-directories manifest and drop a CMakeLists.scm into
-; the directory to strangle another one; the rest still ships its
-; hand-written CMakeLists.txt until its turn comes.
+; output). Every directory under cmake/ is owned now; grow this manifest and
+; drop a CMakeLists.scm beside a future directory's sources to strangle it too.
 ;
 ; The root CMakeLists.txt is owned too now (cmake/CMakeLists.scm): its layout,
 ; options and flags are data, and the imperative project()/git/FetchContent
@@ -44,6 +43,7 @@
 
 (define owned-directories
   (list
+    "modules/core"
     "modules/log"
     "modules/memory"
     "plugins/math"
@@ -63,7 +63,8 @@
     "plugins/scene_renderer"
     "plugins/asset"
     "plugins/backend"
-    "plugins/imgui_plugin"))
+    "plugins/imgui_plugin"
+    "plugins/kruddboard"))
 
 ;; Read a directory's spec (a bare datum — no evaluation) from its spec file.
 (define (load-spec dir)

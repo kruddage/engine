@@ -10,6 +10,7 @@ krudd/krudd
 # owned-directories spec. ./krudd.sh build regenerates them before configure.
 # The root is synthesized too, from cmake/CMakeLists.scm.
 cmake/CMakeLists.txt
+cmake/modules/core/CMakeLists.txt
 cmake/modules/log/CMakeLists.txt
 cmake/modules/memory/CMakeLists.txt
 cmake/plugins/math/CMakeLists.txt
@@ -30,3 +31,4 @@ cmake/plugins/scene_renderer/CMakeLists.txt
 cmake/plugins/asset/CMakeLists.txt
 cmake/plugins/backend/CMakeLists.txt
 cmake/plugins/imgui_plugin/CMakeLists.txt
+cmake/plugins/kruddboard/CMakeLists.txt

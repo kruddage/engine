@@ -7,12 +7,16 @@ A game engine: C compiled to WASM via Emscripten, served as a static site.
 ```
 krudd/                    The build tool and the whole build tree it owns
   krudd.c                 The orchestrator, built by krudd.sh
-  build.scm, cmake/cmake.scm  Embedded s7 Scheme: synthesizes CMakeLists.txt
-                          files from the CMakeLists.scm specs below, then
-                          shells out to CMake
-  cmake/
-    CMakeLists.scm        Root build spec — emcmake cmake -S krudd/cmake
-                          -B build drives everything
+  build.scm               Embedded s7 Scheme: reads the CMakeLists.scm specs
+                          below, renders a build.ninja (krudd/ninja/ninja.scm),
+                          and drives ninja with cc / emcc directly — no CMake
+  introspect.scm          Build-time introspection krudd owns: VERSION + git
+                          facts, configure_file / changelog codegen, dep fetch
+  ninja/                  The Ninja backend — ninja.scm (emitter), resolve.scm
+                          (transitive include/link resolver), and its tests
+  cmake/                  The directory specs + C sources (the "cmake/" name is
+                          historical; nothing here uses CMake anymore)
+    manifest.scm          The list of owned directories
     modules/              C source modules (compiled into the main WASM module)
       core/               Engine heartbeat — init/tick/shutdown, subsystem
                           manager, plugin loader, ring buffer
@@ -72,12 +76,18 @@ ABI boundaries.
 
 ## Building
 
+krudd renders a `build.ninja` from the directory specs and drives `ninja`
+directly — no CMake. Requires `ninja` plus a C compiler (native) or the
+Emscripten toolchain on `PATH` (WASM).
+
 ```sh
-emcmake cmake -S krudd/cmake -B build # configure (requires Emscripten)
-cmake --build build                   # compile — outputs build/index.{html,js,wasm}
+./krudd.sh build                 # native: builds the static libs and runs the
+                                 # test suite (test stamps run the tests)
+KRUDD_TARGET=wasm ./krudd.sh build   # WASM: outputs build/index.{html,js,wasm}
+                                 # plus the plugin side modules (needs emcc/em++)
 ```
 
-Serve `build/` with any static file server to run locally.
+Serve `build/` with any static file server to run the WASM build locally.
 
 ## Workflow
 

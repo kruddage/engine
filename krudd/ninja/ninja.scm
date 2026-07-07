@@ -1,26 +1,19 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
 ;
-; ninja.scm — the Ninja synthesizer.
+; ninja.scm — the Ninja synthesizer, krudd's build backend.
 ;
-; The sibling of krudd/cmake/cmake.scm: it reads the same directory-spec forms
-; (library, interface-library, executable, test, side-module) and renders a
-; build.ninja instead of a CMakeLists.txt tree. cmake.scm emits one file per
-; directory and lets CMake stitch them together; Ninja has no notion of
+; It reads the directory-spec forms (library, interface-library, executable,
+; test, side-module) that describe each owned directory and renders a single
+; build.ninja from them, driven by krudd/build.scm. Ninja has no notion of
 ; directories or transitive usage requirements, so this emitter renders the
-; whole manifest into a single build.ninja and leans on resolve.scm to flatten
-; the include graph that CMake's target_link_libraries did implicitly.
-;
-; This lands side-by-side with cmake.scm and is not wired into krudd/build.scm:
-; the CMake path still drives real builds. The emitter is exercised on its own
-; (see resolve_test.scm) — generate a build.ninja and let ninja(1) build it.
+; whole manifest into one build.ninja and leans on resolve.scm to flatten the
+; include graph that CMake's target_link_libraries once did implicitly.
 ;
 ; Coverage of the spec forms:
 ;   library / executable   compile each source to an object, then archive/link
 ;   interface-library      no build output — only include dirs, via resolve.scm
 ;   test                   a stamp rule that runs the test executable
-;   side-module            one emcc/em++ invocation to a .wasm (the WASM path;
-;                          emitted for completeness, not part of the native
-;                          default target since it needs the Emscripten toolchain)
+;   side-module            one emcc/em++ invocation to a .wasm (part of `wasm`)
 ;
 ; Object files live at obj/<target>/<source>.o — namespaced per target because a
 ; source compiled into two targets sees different include flags (exactly as

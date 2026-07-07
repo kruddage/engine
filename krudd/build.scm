@@ -4,28 +4,29 @@
 ;
 ; krudd (see ../krudd.c) provides:
 ;   (run cmd)     -> run a shell command, return its integer exit status
-;   *configure*   -> the configure command string (cmake / emcmake cmake ...)
-;   *build*       -> the build command string
+;   *configure*   -> the configure command string (legacy; only its emcmake
+;                    marker is still read, as a fallback target hint)
+;   *build*       -> the build command string (unused now)
 ;
-; The strangler fig, phase 2: before we hand off to CMake we *synthesize* the
-; CMakeLists.txt for the directories krudd has taken ownership of. CMake is now
-; a backend we emit for, not the source of truth. Each owned directory carries
-; its own CMakeLists.scm — pure data (a list of target forms), living beside
-; the sources it describes — which cmake.scm renders to CMake text. krudd/cmake/
-; holds the whole tree now: cmake.scm (the emitter), CMakeLists.scm (the root
-; spec) and modules/ + plugins/ (the sources, specs, and generated output for
-; every directory it owns). Every directory under krudd/cmake/ is owned now;
-; grow this manifest and drop a CMakeLists.scm beside a future directory's
-; sources to strangle it too.
+; The strangler fig, complete: krudd owns the whole build. It reads the same
+; backend-agnostic directory specs (krudd/cmake/**/CMakeLists.scm) it always
+; has, renders a build.ninja from them (krudd/ninja/ninja.scm), and drives
+; ninja(1) directly — no CMake, no emcmake. Ninja stays as the executor; krudd
+; owns the generation.
 ;
-; The root CMakeLists.txt spec (krudd/cmake/CMakeLists.scm) is owned too: its
-; layout, options and flags are data, and the imperative project()/git/
-; FetchContent bootstrap rides through a (verbatim ...) block until it too
-; becomes forms.
+; Two targets, selected by KRUDD_TARGET (falling back to the emcmake marker in
+; *configure* for the legacy CI env):
+;   native  cc/ar — every static library and test; the test stamps run the
+;           suite, so a green build is a green test run.
+;   wasm    emcc/em++ — the main module (index.html/.js/.wasm) and the plugin
+;           side modules, plus the imgui fetch and the configure_file/changelog
+;           codegen krudd owns.
+;
+; Everything is generated into and built under build/.
 
 (define krudd-root (or (getenv "KRUDD_ROOT") "."))
 
-(load (string-append krudd-root "/krudd/cmake/cmake.scm"))
+(load (string-append krudd-root "/krudd/ninja/ninja.scm"))
 
 (define (sh cmd)
   (let ((status (run cmd)))
@@ -37,12 +38,10 @@
     (lambda (port) (write-string text port))))
 
 ;; ---------------------------------------------------------------------------
-;; The manifest: every directory krudd owns, as a path relative to
-;; krudd/cmake/ (which matches the add_subdirectory() layout in the root
-;; CMakeLists.txt). The spec for each lives at krudd/cmake/<dir>/
-;; CMakeLists.scm; the output at krudd/cmake/<dir>/CMakeLists.txt. The list is a
-;; bare datum in krudd/cmake/manifest.scm, shared with the Ninja backend so both
-;; emitters own the same view of the tree. Keep it in sync with .gitignore.
+;; The manifest: every directory krudd owns, relative to krudd/cmake/ (a bare
+;; datum in krudd/cmake/manifest.scm, shared with nothing else now that CMake is
+;; gone but kept as the one list of owned directories). Each carries a
+;; CMakeLists.scm spec beside its sources.
 ;; ---------------------------------------------------------------------------
 
 (define owned-directories
@@ -50,38 +49,35 @@
     (string-append krudd-root "/krudd/cmake/manifest.scm")
     read))
 
-;; Read a directory's spec (a bare datum — no evaluation) from its spec file.
 (define (load-spec dir)
   (call-with-input-file
     (string-append krudd-root "/krudd/cmake/" dir "/CMakeLists.scm")
     read))
 
-;; Synthesize the root krudd/cmake/CMakeLists.txt from its spec. Unlike the
-;; leaf directories the root is not in owned-directories — it is the tree it
-;; points at — so it is rendered on its own.
-(define (synthesize-root)
-  (let ((source "krudd/cmake/CMakeLists.scm")
-	(out    (string-append krudd-root "/krudd/cmake/CMakeLists.txt")))
-    (display (string-append "krudd: synthesize " out "\n"))
-    (write-file out
-		(cmake-synthesize
-		  source
-		  (call-with-input-file
-		    (string-append krudd-root "/" source)
-		    read)))))
+(define manifest
+  (map (lambda (dir) (cons dir (load-spec dir))) owned-directories))
 
-;; Synthesize every owned directory's CMakeLists.txt, then let CMake build.
-(define (synthesize-owned)
-  (for-each
-    (lambda (dir)
-      (let ((source (string-append "krudd/cmake/" dir "/CMakeLists.scm"))
-	    (out    (string-append krudd-root "/krudd/cmake/" dir
-				   "/CMakeLists.txt")))
-	(display (string-append "krudd: synthesize " out "\n"))
-	(write-file out (cmake-synthesize source (load-spec dir)))))
-    owned-directories))
+;; The tree root the spec paths resolve against, and the build directory.
+(define src-root (string-append krudd-root "/krudd/cmake"))
+(define build-dir (string-append krudd-root "/build"))
 
-(synthesize-root)
-(synthesize-owned)
-(sh *configure*)
-(sh *build*)
+;; Target selection: KRUDD_TARGET=wasm|native wins; otherwise fall back to the
+;; emcmake marker the legacy CI env still carries in *configure*.
+(define wasm-build?
+  (let ((target (getenv "KRUDD_TARGET")))
+    (if (and target (> (string-length target) 0))
+	(string=? target "wasm")
+	(krudd-emscripten-build?))))
+
+;; The WASM side modules need imgui; fetch it (idempotent) before generating.
+(if wasm-build?
+    (krudd-fetch "imgui" "https://github.com/ocornut/imgui.git" "v1.90.9"))
+
+(sh (string-append "mkdir -p " build-dir))
+
+(display (string-append "krudd: generate " build-dir "/build.ninja\n"))
+(write-file (string-append build-dir "/build.ninja")
+	    (ninja-synthesize manifest src-root build-dir))
+
+(sh (string-append "ninja -C " build-dir " -f build.ninja "
+		   (if wasm-build? "wasm" "native")))

@@ -1,20 +1,14 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
 ;
-; introspect_test.scm — native s7-only checks for the de-verbatimed root
-; bootstrap (#341): the introspect helpers and the new cmake.scm root forms.
+; introspect_test.scm — native s7-only checks for krudd/introspect.scm: the
+; build-time introspection krudd owns now that CMake is gone (version + git
+; facts, the configure_file / changelog codegen, and the dependency fetch).
 ;
 ; Run via krudd/run-tests.sh. Prints "INTROSPECT-TESTS: OK" and exits 0 when
-; every check passes; prints failures and exits 1 otherwise.
-;
-; It renders the root spec for both a native and an Emscripten configure without
-; any network I/O: the imgui fetch dir is pre-created so krudd-fetch treats it as
-; already present and skips the clone.
+; every check passes; prints failures and exits 1 otherwise. No network I/O.
 
 (define krudd-root (or (getenv "KRUDD_ROOT") "."))
-
-;; cmake.scm loads introspect.scm; loading it here gives us both.
-(define *configure* "cmake -S krudd/cmake -B build")
-(load (string-append krudd-root "/krudd/cmake/cmake.scm"))
+(load (string-append krudd-root "/krudd/introspect.scm"))
 
 (define fail-count 0)
 (define (check name ok)
@@ -37,8 +31,15 @@
 		     ((char-numeric? (string-ref s i)) (loop (+ i 1)))
 		     (else #f)))))
 
+(define (slurp path)
+	(call-with-input-file path
+	  (lambda (p)
+	    (let loop ((cs '()) (c (read-char p)))
+	      (if (eof-object? c) (list->string (reverse cs))
+		  (loop (cons c cs) (read-char p)))))))
+
 ;; ---------------------------------------------------------------------------
-;; Introspect helpers.
+;; String / version helpers.
 ;; ---------------------------------------------------------------------------
 
 (display "introspect: helpers\n")
@@ -46,64 +47,64 @@
        (string=? (krudd-strip "  6.3.2\n\t") "6.3.2"))
 (check "contains? finds emcmake" (krudd-contains? "emcmake cmake" "emcmake"))
 (check "contains? rejects absent" (not (krudd-contains? "cmake -S" "emcmake")))
+(check "split on dot" (equal? (krudd-split "6.3.2" #\.) '("6" "3" "2")))
+(check "replace all occurrences"
+       (string=? (krudd-replace "a@X@b@X@c" "@X@" "1") "a1b1c"))
 
 (define version (krudd-version))
 (check "version matches VERSION file"
-       (string=? version
-		 (krudd-strip (krudd-slurp (string-append krudd-root
-							  "/VERSION")))))
+       (string=? version (krudd-strip (slurp (string-append krudd-root
+							     "/VERSION")))))
 (check "build number is numeric" (all-digits? (krudd-build-number version)))
 (check "commit hash non-empty" (> (string-length (krudd-commit-hash)) 0))
 
-;; *configure* seam distinguishes the two backends.
+;; *configure* seam still distinguishes targets for the legacy CI fallback.
+(define *configure* "cmake -S krudd/cmake -B build")
 (check "native configure is not an emscripten build"
        (not (krudd-emscripten-build?)))
 (set! *configure* "emcmake cmake -S krudd/cmake -B build")
 (check "emcmake configure is an emscripten build"
        (krudd-emscripten-build?))
-(set! *configure* "cmake -S krudd/cmake -B build")
 
 ;; ---------------------------------------------------------------------------
-;; Root spec renders to no verbatim, correct bootstrap, guarded fetch.
+;; Codegen: configure_file and the changelog embed.
 ;; ---------------------------------------------------------------------------
 
-(display "root spec: de-verbatimed bootstrap\n")
-(define root-spec
-	(call-with-input-file
-	  (string-append krudd-root "/krudd/cmake/CMakeLists.scm") read))
+(display "introspect: codegen\n")
+(define tmp (string-append krudd-root "/build/_introspect_test"))
+(system (string-append "mkdir -p " tmp))
 
-;; No (verbatim ...) form survives in the root spec data.
-(check "root spec has no verbatim form"
-       (not (memq 'verbatim (map (lambda (f) (car f)) root-spec))))
+(krudd-configure-file
+  (string-append krudd-root "/krudd/cmake/modules/core/version.h.in")
+  (string-append tmp "/version.h"))
+(let ((v (slurp (string-append tmp "/version.h"))))
+	(check "version.h carries the literal version"
+	       (has? v (string-append "ENGINE_VERSION_STRING \"" version "\"")))
+	(check "version.h has no unexpanded @VAR@ tokens" (not (has? v "@"))))
 
-;; Stub the fetch so rendering the WASM variant does no network or filesystem
-;; I/O — the test cares about the emitted guard, not a real checkout.
-(set! krudd-fetch (lambda (name repo tag) (krudd-fetch-dir name)))
+(krudd-embed-file (string-append krudd-root "/CHANGELOG.md")
+		  (string-append tmp "/changelog_data.h") "CHANGELOG_MD")
+(let ((h (slurp (string-append tmp "/changelog_data.h"))))
+	(check "changelog header declares the symbol"
+	       (has? h "static const char CHANGELOG_MD[] ="))
+	(check "changelog body is hex-escaped" (has? h "\\x")))
 
-(define (render cfg)
-	(set! *configure* cfg)
-	(cmake-synthesize "root" root-spec))
+;; ---------------------------------------------------------------------------
+;; Fetch hardening: an existing directory without a .git checkout must not count
+;; as present (it would leave the build on a broken dependency).
+;; ---------------------------------------------------------------------------
 
-(define native (render "cmake -S krudd/cmake -B build"))
-(define wasm   (render "emcmake cmake -S krudd/cmake -B build"))
+(display "introspect: fetch hardening\n")
+(let ((broken (string-append tmp "/broken-dep")))
+	(system (string-append "mkdir -p " broken))   ; empty dir, no .git
+	(check "empty dir is not a valid checkout"
+	       (not (krudd-path-exists? (string-append broken "/.git"))))
+	;; A real checkout (has .git) is recognised.
+	(system (string-append "mkdir -p " broken "/.git"))
+	(check "dir with .git is a valid checkout"
+	       (krudd-path-exists? (string-append broken "/.git"))))
 
-(check "renders cmake_minimum_required"
-       (has? native "cmake_minimum_required(VERSION 3.20)"))
-(check "renders project with literal version"
-       (has? native (string-append "project(krudd VERSION " version
-				   " LANGUAGES C CXX)")))
-(check "renders ENGINE_BUILD_NUMBER set"
-       (has? native "set(ENGINE_BUILD_NUMBER "))
-(check "renders GIT_COMMIT_HASH set"
-       (has? native "set(GIT_COMMIT_HASH \""))
-(check "keeps KRUDD_REPO_ROOT for leaf bootstrap"
-       (has? native "get_filename_component(KRUDD_REPO_ROOT"))
-(check "no literal (verbatim escape hatch in output"
-       (not (has? native "execute_process")))
-
-(check "native: fetches no imgui" (not (has? native "imgui_SOURCE_DIR")))
-(check "wasm: guards imgui on EMSCRIPTEN" (has? wasm "if(EMSCRIPTEN)"))
-(check "wasm: sets imgui_SOURCE_DIR" (has? wasm "set(imgui_SOURCE_DIR"))
+(system (string-append "rm -rf " tmp))
 
 (if (= fail-count 0)
     (begin (display "INTROSPECT-TESTS: OK\n") (exit 0))

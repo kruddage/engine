@@ -79,7 +79,47 @@
 (let ((h (slurp (string-append tmp "/changelog_data.h"))))
 	(check "changelog header declares the symbol"
 	       (has? h "static const char CHANGELOG_MD[] ="))
-	(check "changelog body is hex-escaped" (has? h "\\x")))
+	(check "changelog body is a NUL-terminated byte array"
+	       (and (has? h "(char)0x") (has? h "(char)0x00"))))
+
+;; ---------------------------------------------------------------------------
+;; Binding generator: md_parse.scm's embedded ABI declaration -> the C header
+;; and marshaling shim. Driven by the declaration, not hardcoded to md_parse;
+;; here we just check the whole seam comes out of the real module.
+;; ---------------------------------------------------------------------------
+
+(display "introspect: binding generator\n")
+(krudd-embed-scheme-module
+  (string-append krudd-root "/krudd/build/modules/md_parse.scm")
+  (string-append tmp "/md_parse.h")
+  (string-append tmp "/md_parse.scm.c"))
+
+(let ((h (slurp (string-append tmp "/md_parse.h"))))
+	(check "header has the include guard" (has? h "#ifndef MD_PARSE_H"))
+	(check "header folds in the constants" (has? h "#define MD_TEXT_MAX 256"))
+	(check "header is extern C safe" (has? h "extern \"C\""))
+	(check "header emits struct md_span" (has? h "struct md_span {"))
+	(check "header emits the char field bound"
+	       (has? h "char text[MD_TEXT_MAX];"))
+	(check "header emits the vector field"
+	       (has? h "struct md_span spans[MD_SPANS_PER_BLOCK];"))
+	(check "header emits the prototype"
+	       (has? h "int32_t md_parse(const char *src, struct md_block *out, int32_t max);"))
+	(check "declaration forms do not leak into C"
+	       (not (has? h "define-c-struct"))))
+
+(let ((c (slurp (string-append tmp "/md_parse.scm.c"))))
+	(check "shim includes the generated header" (has? c "#include \"md_parse.h\""))
+	(check "shim bakes the image in" (has? c "static const char md_parse_scm_image[]"))
+	(check "shim generates each struct marshaler"
+	       (and (has? c "md_parse_marshal_md_span")
+		    (has? c "md_parse_marshal_md_block")))
+	(check "shim asserts marshal arity" (has? c "s7_list_length(s7, v) == 4"))
+	(check "shim clamps the char field" (has? c "n > MD_TEXT_MAX - 1"))
+	(check "shim drives the scheme proc"
+	       (has? c "s7_name_to_value(s7, \"md-parse\")"))
+	(check "shim emits the driver"
+	       (has? c "int32_t md_parse(const char *src, struct md_block *out, int32_t max)")))
 
 ;; ---------------------------------------------------------------------------
 ;; Fetch hardening: an existing directory without a .git checkout must not count

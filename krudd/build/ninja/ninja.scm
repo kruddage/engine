@@ -110,11 +110,16 @@
 
 ;; Compile one source of TARGET (in DIR) with INCLUDES; emit the build stanza
 ;; and return the object path.
+;; A source spec may carry a krudd path token (${generated}/md_parse.scm.c —
+;; the generated Scheme shim compiled into a native library). Resolve it for the
+;; object path too, so obj/<target>/generated/... stays a real filesystem path
+;; rather than an unexpanded ${generated} segment.
 (define (ninja-emit-compile name dir includes-flags src-spec)
 	(let* ((treepath (rz-path dir src-spec))
-	       (obj (ninja-obj name treepath)))
+	       (clean (ninja-resolve-var treepath))
+	       (obj (ninja-obj name clean)))
 		(ninja-emit (string-append "build " obj ": "
-					   (ninja-compile-rule treepath)
+					   (ninja-compile-rule clean)
 					   " " (ninja-ref treepath)))
 		(ninja-emit (string-append "  includes = " includes-flags))
 		obj))
@@ -429,15 +434,15 @@
 		(krudd-embed-file
 		  (string-append srcroot "/modules/core/runtime.scm")
 		  (string-append gen "/runtime_scm.h") "RUNTIME_SCM")
-		;; md_parse.scm now lives under krudd/build/modules/ (outside the
-		;; ninja tree) and yields two headers: its baked-in runtime image
-		;; and the C ABI constants generated from its (define ...) forms.
-		(krudd-embed-file
+		;; md_parse.scm (under krudd/build/modules/, outside the ninja
+		;; tree) carries its own C ABI declaration; krudd's binding
+		;; generator emits the whole C seam from it — the md_parse.h
+		;; header and the md_parse.scm.c marshaling shim (image + generated
+		;; marshalers + driver). The .scm is the only ABI artifact in git.
+		(krudd-embed-scheme-module
 		  mdscm
-		  (string-append gen "/md_parse_scm.h") "MD_PARSE_SCM")
-		(krudd-embed-abi-header
-		  mdscm
-		  (string-append gen "/md_parse_abi.h"))))
+		  (string-append gen "/md_parse.h")
+		  (string-append gen "/md_parse.scm.c"))))
 
 ;; Render the whole manifest to build.ninja text. MANIFEST is a list of
 ;; (DIR . SPEC) pairs; SRCROOT is the absolute path of the tree root

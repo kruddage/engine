@@ -20,6 +20,16 @@ engine, before it lands anywhere else.
 
 ## [Unreleased]
 
+## [6.4.0] - 2026-07-07
+
+### Changed
+
+- **The engine now builds with krudd's own build system instead of CMake.**
+  `./krudd.sh build` renders a `build.ninja` from krudd's directory specs and
+  drives `ninja` with `cc` / `emcc` directly — CMake and `emcmake` are no longer
+  required to build the engine. The build outputs (the WASM app and its plugin
+  side modules) are byte-for-byte the same.
+
 ## [6.0.0] - 2026-07-07
 
 ### Added

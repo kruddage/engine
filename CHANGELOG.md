@@ -20,6 +20,8 @@ engine, before it lands anywhere else.
 
 ## [Unreleased]
 
+## [6.0.0] - 2026-07-07
+
 ### Added
 
 - **Transform gizmo in the viewport** — the selected entity now shows draggable

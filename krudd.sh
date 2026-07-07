@@ -12,7 +12,7 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 # System default compiler — CC if set, else the first of cc/gcc/clang found.
 cc=${CC:-}
 if [ -z "$cc" ]; then
-	for c in cc gcc clang; do
+	for c in clang gcc cc; do
 		if command -v "$c" >/dev/null 2>&1; then
 			cc=$c
 			break
@@ -23,6 +23,8 @@ if [ -z "$cc" ]; then
 	echo "krudd.sh: no C compiler found (set CC, or install cc/gcc/clang)" >&2
 	exit 1
 fi
+
+echo "krudd.sh: found C compiler $cc"
 
 bin="$root/krudd/krudd"
 src="$root/krudd/krudd.c"

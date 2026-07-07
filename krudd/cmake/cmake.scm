@@ -36,9 +36,22 @@
 ;   (enable-testing)             -> enable_testing()
 ;   (option NAME "DOC" DEF b...) -> option(...) + if(NAME) b... endif()
 ;   (subdirs PATH...)            -> one add_subdirectory(PATH) per line
-;   (verbatim "text")            -> text emitted unchanged (the escape hatch for
-;                                   the project()/git/FetchContent bootstrap we
-;                                   do not model yet)
+;   (cmake-minimum VER)          -> cmake_minimum_required(VERSION VER)
+;   (repo-root VAR)              -> get_filename_component(VAR ".../../.." ABSOLUTE)
+;   (project NAME VFILE LANG...) -> project(NAME VERSION <VFILE contents> LANGUAGES ...)
+;   (git-build-info)             -> set(ENGINE_BUILD_NUMBER n) + set(GIT_COMMIT_HASH h)
+;   (fetch-content NAME REPO TAG GUARD)
+;                                -> if(GUARD) set(NAME_SOURCE_DIR <clone>) endif()
+;   (verbatim "text")            -> text emitted unchanged (the escape hatch, now
+;                                   only for the leaf bootstrap krudd hasn't
+;                                   strangled yet — modules/core's configure_file
+;                                   and kruddboard's changelog embed)
+;
+; The project/git/fetch forms are the de-verbatimed root bootstrap (#341): they
+; do their work at synthesis time through krudd/introspect.scm — reading VERSION,
+; running git, cloning the pinned dependency — and bake the results in, rather
+; than emitting CMake's file(READ)/execute_process/FetchContent for the backend
+; to run later.
 ;
 ; A SRC/INC is a bare string (relative to this directory), (root "path") which
 ; expands to ${CMAKE_SOURCE_DIR}/path for references reaching across the tree,
@@ -46,6 +59,8 @@
 ; ${CMAKE_CURRENT_SOURCE_DIR} explicitly, or (raw "text") which passes text
 ; through verbatim — for CMake variables the spec doesn't own, such as
 ; ${imgui_SOURCE_DIR} from FetchContent.
+
+(load (string-append (or (getenv "KRUDD_ROOT") ".") "/krudd/introspect.scm"))
 
 ;; string list join — s7 has no string-join we can rely on.
 (define (cmake-join sep lst)
@@ -255,6 +270,58 @@
 (define (cmake-emit-subdirs form)
   (map (lambda (d) (string-append "add_subdirectory(" d ")")) (cdr form)))
 
+;; ---------------------------------------------------------------------------
+;; De-verbatimed root bootstrap (#341). These forms compute their values at
+;; synthesis time via krudd/introspect.scm and emit the results, so the backend
+;; never re-derives them — the Ninja backend, which has no execute_process or
+;; FetchContent, can lean on the same introspection.
+;; ---------------------------------------------------------------------------
+
+;; (cmake-minimum VER) -> cmake_minimum_required(VERSION VER)
+(define (cmake-emit-cmake-minimum form)
+  (list (string-append "cmake_minimum_required(VERSION " (cadr form) ")")))
+
+;; (repo-root VAR) -> the repo root, two levels up from krudd/cmake/. Kept as a
+;; CMake variable because leaf bootstrap still verbatim-references it (kruddboard
+;; embeds ${KRUDD_REPO_ROOT}/CHANGELOG.md).
+(define (cmake-emit-repo-root form)
+  (list (string-append "get_filename_component(" (cadr form)
+		       " \"${CMAKE_CURRENT_SOURCE_DIR}/../..\" ABSOLUTE)")))
+
+;; (project NAME VFILE LANG...) -> project(NAME VERSION <VFILE> LANGUAGES ...).
+;; VFILE names the version file at the repo root; its contents are read and
+;; stripped now, so the emitted project() carries a literal version.
+(define (cmake-emit-project form)
+  (let ((name  (list-ref form 1))
+	(langs (list-tail form 3)))
+    (list (string-append "project(" name " VERSION " (krudd-version)
+			 " LANGUAGES " (cmake-join " " langs) ")"))))
+
+;; (git-build-info) -> the ENGINE_BUILD_NUMBER / GIT_COMMIT_HASH the version
+;; templates consume, derived from git now (defaults baked when git is absent).
+(define (cmake-emit-git-build-info form)
+  (let* ((version (krudd-version))
+	 (number  (krudd-build-number version))
+	 (hash    (krudd-commit-hash)))
+    (list (string-append "set(ENGINE_BUILD_NUMBER " number ")")
+	  (string-append "set(GIT_COMMIT_HASH \"" hash "\")"))))
+
+;; (fetch-content NAME REPO TAG GUARD) -> krudd's FetchContent. Only when this
+;; synthesis is driving a build that needs it (GUARD, e.g. EMSCRIPTEN) does it
+;; clone REPO@TAG and emit the guarded set(NAME_SOURCE_DIR ...) the specs
+;; reference; otherwise nothing is emitted and nothing is fetched.
+(define (cmake-emit-fetch-content form)
+  (let ((name  (list-ref form 1))
+	(repo  (list-ref form 2))
+	(tag   (list-ref form 3))
+	(guard (list-ref form 4)))
+    (if (krudd-emscripten-build?)
+	(let ((dir (krudd-fetch name repo tag)))
+	  (list (string-append "if(" guard ")")
+		(string-append "\tset(" name "_SOURCE_DIR \"" dir "\")")
+		"endif()"))
+	'())))
+
 ;; Render one top-level form to a list of lines.
 (define (cmake-emit-form form)
   (case (car form)
@@ -271,6 +338,11 @@
     ((enable-testing)    (cmake-emit-enable-testing form))
     ((option)            (cmake-emit-option form))
     ((subdirs)           (cmake-emit-subdirs form))
+    ((cmake-minimum)     (cmake-emit-cmake-minimum form))
+    ((repo-root)         (cmake-emit-repo-root form))
+    ((project)           (cmake-emit-project form))
+    ((git-build-info)    (cmake-emit-git-build-info form))
+    ((fetch-content)     (cmake-emit-fetch-content form))
     (else (error 'cmake-unknown-form form))))
 
 (define (cmake-emit-native-only form)
@@ -289,12 +361,21 @@
     "# Regenerate: ./krudd.sh build\n"
     "\n"))
 
+;; Keep only non-empty strings — a form that renders to nothing (e.g. a
+;; fetch-content that fetches nothing for a native build) must not leave a blank
+;; block behind.
+(define (cmake-nonempty lst)
+  (cond ((null? lst) '())
+	((string=? (car lst) "") (cmake-nonempty (cdr lst)))
+	(else (cons (car lst) (cmake-nonempty (cdr lst))))))
+
 ;; Synthesize a directory spec to CMakeLists.txt text. Top-level forms are
 ;; separated by a blank line; the trailing newline keeps the file POSIX-clean.
 (define (cmake-synthesize source spec)
   (string-append
     (cmake-header source)
     (cmake-join "\n\n"
-		(map (lambda (form) (cmake-join "\n" (cmake-emit-form form)))
-		     spec))
+		(cmake-nonempty
+		  (map (lambda (form) (cmake-join "\n" (cmake-emit-form form)))
+		       spec)))
     "\n"))

@@ -100,9 +100,22 @@ green `ninja native` means the full native test suite passed through the
 generated build — the same 29 tests, identically named, that CMake's `ctest`
 runs.
 
+## Root bootstrap (#341)
+
+The root spec's imperative CMake bootstrap — reading VERSION, running git for the
+build number and commit hash, and FetchContent-cloning imgui — used to ride
+through `(verbatim ...)`. CMake did that work at configure time; the Ninja
+backend has no `execute_process` or `FetchContent`, so krudd now owns it.
+`krudd/introspect.scm` reads VERSION, derives the build number / commit hash from
+git, and clones a pinned dependency, and `cmake.scm` gained the forms
+(`cmake-minimum`, `repo-root`, `project`, `git-build-info`, `fetch-content`) that
+bake those results in at synthesis time. The root spec is now free of imperative
+CMake, so a future Ninja root renderer can lean on the same introspection.
+`krudd/run-tests.sh` covers it (native s7 only).
+
 ## Not yet
 
-The remaining #338 sub-issues build on this: de-verbatim the root spec (#341),
-direct `emcc`/`em++` invocation replacing `emcmake` (#342), and switching
-`krudd/build.scm` to drive Ninja and retiring the CMake backend (#343). Those
-need the WASM toolchain to prove artifact equivalence and are out of scope here.
+The remaining #338 sub-issues build on this: direct `emcc`/`em++` invocation
+replacing `emcmake` (#342), and switching `krudd/build.scm` to drive Ninja and
+retiring the CMake backend (#343). Those need the WASM toolchain to prove
+artifact equivalence and are out of scope here.

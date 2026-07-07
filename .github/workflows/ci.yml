@@ -20,8 +20,11 @@ jobs:
       - name: Trust the workspace
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
+      # krudd.sh picks clang first if it's on PATH, falling back to gcc then
+      # cc, so installing clang here makes CI build with it by default while
+      # keeping gcc as the fallback compiler.
       - name: Install a host compiler and ninja for krudd
-        run: apt-get update && apt-get install -y gcc ninja-build
+        run: apt-get update && apt-get install -y clang gcc ninja-build
 
       # krudd generates a build.ninja from the directory specs and drives ninja
       # with emcc/em++ directly — no cmake, no emcmake. KRUDD_TARGET=wasm selects

@@ -4,15 +4,16 @@
 ;
 ; This is the first module strangler-figged from C to Scheme: a faithful port
 ; of md_parse.c's single-pass line scanner. It lives outside the ninja build
-; tree, under krudd/build/modules/, as a build-owned Scheme module with two
-; outputs krudd generates at synthesis time: the runtime image baked into
-; md_parse_scm.h (loaded by the md_parse_scm.c shim, which keeps the md_parse.h
-; C ABI intact and marshals the block list this returns into struct md_block[]),
-; and md_parse_abi.h, the C macros generated from the constants below so the ABI
-; can never drift from the port that defines it. It runs inside the same s7
+; tree, under krudd/build/modules/, as a build-owned Scheme module. It is the
+; single ABI artifact in git: the C ABI declaration below drives krudd's binding
+; generator, which emits the whole C seam at synthesis time — the md_parse.h
+; header (constants + struct md_span/md_block + the md_parse() prototype) and
+; the md_parse.scm.c shim (this module baked into a byte array, the generated
+; marshalers, and the md_parse() driver that calls (md-parse) and marshals the
+; block list this returns into struct md_block[]). It runs inside the same s7
 ; runtime the engine boots (see modules/core/script.c). The existing
-; md_parse_test.c is run against both implementations to prove them byte-for-byte
-; equivalent.
+; md_parse_test.c is run against both this port and the C parser to prove them
+; byte-for-byte equivalent.
 ;
 ; A block is (list type level text spans); a span is (list start end style),
 ; with [start, end) byte offsets into text. The constants and every edge of the
@@ -33,6 +34,42 @@
 (define md-span-normal 0)         ; ABI-only: the implicit style of unspanned text
 (define md-span-bold   1)
 (define md-span-code   2)
+
+;; ---------------------------------------------------------------------------
+;; C ABI declaration.
+;;
+;; krudd reads these forms at synthesis time — structurally, without evaluating
+;; them — and generates the whole C ABI from them: the md_parse.h header
+;; (constants + structs + prototype) and the md_parse.scm.c marshaling shim.
+;; The .scm is the only ABI artifact in git; both C files are build outputs.
+;;
+;; The forms are no-ops when this module is loaded into s7: the two macros below
+;; expand them to #f, so the exact same text is both the runtime image the shim
+;; bakes in and the declaration the generator reads. The binding vocabulary the
+;; generator understands lives in krudd/build/introspect.scm.
+;; ---------------------------------------------------------------------------
+
+(define-macro (define-c-struct . _) #f)
+(define-macro (define-c-export . _) #f)
+
+;; A block is (type level text spans); the shim marshals the returned list
+;; positionally, so the field order here is the order md-parse returns its
+;; values. span-count is a count field — derived from the spans list, not part
+;; of the returned block — so it is skipped when marshaling positionally.
+(define-c-struct md-span
+  (start u32)
+  (end   u32)
+  (style u32))
+
+(define-c-struct md-block
+  (type       i32)
+  (level      i32)
+  (text       (char md-text-max))
+  (spans      (vector md-span md-spans-per-block) span-count)
+  (span-count u32))
+
+(define-c-export (md-parse (src string) -> (vector md-block max))
+  (calls md-parse))
 
 ;; Char at index I of S, or #f past the end. The C helpers read one past a
 ;; line's content (into the '\n' or NUL); returning #f for those reads keeps a

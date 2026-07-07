@@ -15,8 +15,8 @@
 		(raw "${imgui}") (raw "${imgui}/backends"))
 	(sources (current "kruddboard.cpp") (current "md_parse.c"))
 	(depends (current "kruddboard.cpp") (current "md_parse.c")
-		(current "md_parse.h") (current "md_draw.h")
-		(raw "${generated}/md_parse_abi.h")
+		(current "md_draw.h")
+		(raw "${generated}/md_parse.h")
 		(raw "${generated}/changelog_data.h")))
 
  (native-only
@@ -31,16 +31,16 @@
 	(test "md_parse" "md_parse_test")
 
 	;; The Scheme port: krudd/build/modules/md_parse.scm runs inside the s7
-	;; runtime, reached through the md_parse_scm.c shim (which exports the same
-	;; md_parse ABI). ${generated} carries both the baked-in md_parse_scm.h and
-	;; the generated md_parse_abi.h md_parse.h now pulls in, so it is a public
-	;; include of this library — the test below links it and includes that ABI.
-	;; ../../third_party is s7.h; linking script drags the interpreter in.
-	;; Running the exact same md_parse_test.c against it proves the two parsers
-	;; byte-for-byte equal.
+	;; runtime, reached through the generated ${generated}/md_parse.scm.c shim
+	;; (krudd's binding generator emits it from the module's ABI declaration; it
+	;; exports the same md_parse ABI). ${generated} carries both that shim and
+	;; the generated md_parse.h it and the test include, so it is a public
+	;; include of this library. ../../third_party is s7.h; linking script drags
+	;; the interpreter in. Running the exact same md_parse_test.c against it
+	;; proves the two parsers byte-for-byte equal.
 	(library "md_parse_scheme"
-		(sources "md_parse_scm.c")
-		(public (current) (raw "${generated}"))
+		(sources (raw "${generated}/md_parse.scm.c"))
+		(public (raw "${generated}"))
 		(private (root "modules/core/include")
 			(raw "../../third_party"))
 		(link "script"))

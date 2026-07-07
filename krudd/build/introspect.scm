@@ -180,9 +180,12 @@
 ;; so a byte over 127 (a UTF-8 em-dash, say) would trip -Werror=overflow
 ;; without the explicit narrowing cast — clang for WASM has unsigned char and
 ;; never hit it, but md_parse.scm is compiled natively for the Scheme port.
-(define (krudd-embed-file in out symbol)
-	(let* ((bytes (krudd-slurp in))
-	       (n     (string-length bytes))
+;; Format the bytes of S as a C array-initializer body: each byte as (char)0xNN
+;; (see the rationale above), twelve per line, terminated with an explicit
+;; (char)0x00 so the embedded string stays NUL-terminated. Shared by the
+;; changelog/runtime header embed and the md_parse shim's baked-in image.
+(define (krudd-bytes->c-init s)
+	(let* ((n    (string-length s))
 	       (body (let loop ((i 0) (acc ""))
 		       (if (>= i n)
 			   acc
@@ -190,9 +193,13 @@
 				 (string-append acc
 				   "(char)0x" (krudd-hex-byte
 						(char->integer
-						  (string-ref bytes i)))
+						  (string-ref s i)))
 				   ","
 				   (if (= 0 (modulo (+ i 1) 12)) "\n\t" "")))))))
+		(string-append body "(char)0x00")))
+
+(define (krudd-embed-file in out symbol)
+	(let ((init (krudd-bytes->c-init (krudd-slurp in))))
 		(call-with-output-file out
 		  (lambda (port)
 		    (write-string
@@ -202,75 +209,533 @@
 			"#ifndef " symbol "_H\n"
 			"#define " symbol "_H\n\n"
 			"static const char " symbol "[] = {\n\t"
-			body "(char)0x00\n};\n\n"
+			init "\n};\n\n"
 			"#endif /* " symbol "_H */\n")
 		      port)))))
 
-;; md_parse ABI header: krudd/build/modules/md_parse.scm owns the markdown
-;; parser and, with it, the numeric ABI the C side binds to. Rather than repeat
-;; those constants in md_parse.h by hand — where they could drift from the
-;; Scheme port that now defines them — krudd reads them out of the module and
-;; emits them as C macros. This is the first C-binds-generated-Scheme seam;
-;; every future port that keeps a C ABI can reuse it.
+;; ===========================================================================
+;; Scheme -> C binding generator.
 ;;
-;; MAP pairs each C macro with the Scheme symbol that supplies its value. The
-;; Scheme file stays the single source of truth for the numbers.
-(define md-parse-abi-map
-	'(("MD_TEXT_MAX"        . md-text-max)
-	  ("MD_SPANS_PER_BLOCK" . md-spans-per-block)
-	  ("MD_BLOCKS_MAX"      . md-blocks-max)
-	  ("MD_BLOCK_PARAGRAPH" . md-block-paragraph)
-	  ("MD_BLOCK_HEADING"   . md-block-heading)
-	  ("MD_BLOCK_LIST_ITEM" . md-block-list-item)
-	  ("MD_BLOCK_CODE"      . md-block-code)
-	  ("MD_SPAN_NORMAL"     . md-span-normal)
-	  ("MD_SPAN_BOLD"       . md-span-bold)
-	  ("MD_SPAN_CODE"       . md-span-code)))
+;; The next turn of the C-binds-generated-Scheme screw. Rather than hand-write
+;; the C ABI header and the marshaling shim beside a ported module, krudd reads
+;; an ABI *declaration* embedded in the Scheme file — (define-c-struct ...),
+;; (define-c-export ...), plus the plain (define <name> <int>) constants — and
+;; emits both C files from it. The .scm is then the only ABI artifact in git;
+;; the header and the shim are build outputs.
+;;
+;; The generator is driven entirely by the declaration it reads; nothing here
+;; knows md_parse's fields. Only the wiring (which .scm to run it on, over in
+;; ninja.scm's codegen) is module-specific for now. A later PR promotes this to
+;; a general `scheme-module` build-spec form; this is the machinery it will use.
+;;
+;; The declaration forms are no-ops when the module is loaded into s7 (the file
+;; defines them as do-nothing macros first), so the same text is both the
+;; runtime image the shim bakes in and the ABI source of truth.
+;;
+;; The locked binding vocabulary — the whole surface; anything else is a loud
+;; build error, never silently extended:
+;;   scalars      i8 i16 i32 i64 / u8 u16 u32 u64 (s7_integer, narrowing cast);
+;;                f32 f64 (float/double, s7_real)
+;;   (char N)     char name[N], NUL-terminated; N a constant symbol or literal
+;;   (vector T N) T name[N] with a sibling u32/i32 count field; T a scalar or a
+;;                declared struct; one level deep only
+;;   struct       (define-c-struct name (field kind) ...); fields marshal
+;;                positionally from the returned list, count fields skipped
+;;   export       (define-c-export (proc (arg kind) ... -> return) (calls sp));
+;;                arg kinds string/scalar; return (vector T max) ->
+;;                describe(out,max)->count, or a bare scalar; on error returns 0
+;;   constants    (define <kebab> <int>) -> #define <SCREAMING_SNAKE> <int>
+;; Out of scope (fail loud): pointers/opaque handles, callbacks, structs passed
+;; INTO Scheme (reverse marshal), unions, bitfields, heap/varlen, nested vectors.
+;; ===========================================================================
+
+;; --- small helpers -----------------------------------------------------------
+
+(define (krudd-filter pred lst)
+	(cond ((null? lst) '())
+	      ((pred (car lst)) (cons (car lst) (krudd-filter pred (cdr lst))))
+	      (else (krudd-filter pred (cdr lst)))))
+
+(define (krudd-join sep lst)
+	(cond ((null? lst) "")
+	      ((null? (cdr lst)) (car lst))
+	      (else (string-append (car lst) sep (krudd-join sep (cdr lst))))))
+
+(define (krudd-upcase s)
+	(list->string (map char-upcase (string->list s))))
+
+;; kebab-case symbol/string -> snake_case string (struct/field/proc names).
+(define (krudd-snake s)
+	(krudd-replace (if (symbol? s) (symbol->string s) s) "-" "_"))
+
+;; kebab -> SCREAMING_SNAKE (constants and include guards).
+(define (krudd-screaming s) (krudd-upcase (krudd-snake s)))
+
+;; The last path component of PATH.
+(define (krudd-basename path)
+	(let loop ((i (- (string-length path) 1)))
+	  (cond ((< i 0) path)
+		((char=? (string-ref path i) #\/) (substring path (+ i 1)))
+		(else (loop (- i 1))))))
+
+;; PATH with its final .extension removed.
+(define (krudd-strip-ext s)
+	(let loop ((i (- (string-length s) 1)))
+	  (cond ((< i 0) s)
+		((char=? (string-ref s i) #\.) (substring s 0 i))
+		(else (loop (- i 1))))))
+
+;; A repo-relative label for a generated-from banner ("krudd/build/modules/...").
+(define (krudd-rel-label path)
+	(let ((pfx (string-append (krudd-repo-root) "/")))
+	  (if (and (>= (string-length path) (string-length pfx))
+		   (string=? (substring path 0 (string-length pfx)) pfx))
+	      (substring path (string-length pfx))
+	      (krudd-basename path))))
+
+;; Every top-level form of the module at PATH, read (not evaluated) in order.
+(define (krudd-scm-forms path)
+	(call-with-input-file path
+	  (lambda (port)
+	    (let loop ((acc '()))
+	      (let ((form (read port)))
+		(if (eof-object? form) (reverse acc)
+		    (loop (cons form acc))))))))
 
 ;; Every top-level (define <symbol> <integer>) in the file at PATH, as an alist
 ;; of (symbol . value). The forms are read, not evaluated: the constants are
 ;; plain integer literals, so no parser code runs at build time.
 (define (krudd-scm-int-defs path)
-	(call-with-input-file path
-	  (lambda (port)
-	    (let loop ((acc '()))
-	      (let ((form (read port)))
-		(if (eof-object? form)
-		    (reverse acc)
-		    (loop (if (and (pair? form)
-				   (eq? (car form) 'define)
-				   (pair? (cdr form))
-				   (symbol? (cadr form))
-				   (pair? (cddr form))
-				   (integer? (caddr form)))
-			      (cons (cons (cadr form) (caddr form)) acc)
-			      acc))))))))
+	(krudd-filter
+	  (lambda (x) x)
+	  (map (lambda (form)
+		 (and (pair? form) (eq? (car form) 'define)
+		      (pair? (cdr form)) (symbol? (cadr form))
+		      (pair? (cddr form)) (integer? (caddr form))
+		      (cons (cadr form) (caddr form))))
+	       (krudd-scm-forms path))))
 
-;; Generate the md_parse ABI header at OUT from the Scheme module at IN: one
-;; #define per md-parse-abi-map entry, its value taken from IN. A macro whose
-;; Scheme symbol is missing from IN is a build error — the C ABI and the Scheme
-;; port are required to agree.
-(define (krudd-embed-abi-header in out)
-	(let ((defs (krudd-scm-int-defs in)))
+;; --- binding vocabulary ------------------------------------------------------
+
+(define krudd-scalar-ctypes
+	'((i8 . "int8_t")  (i16 . "int16_t")  (i32 . "int32_t")  (i64 . "int64_t")
+	  (u8 . "uint8_t") (u16 . "uint16_t") (u32 . "uint32_t") (u64 . "uint64_t")
+	  (f32 . "float")  (f64 . "double")))
+
+(define (krudd-scalar? k) (and (symbol? k) (assq k krudd-scalar-ctypes) #t))
+(define (krudd-float-kind? k) (or (eq? k 'f32) (eq? k 'f64)))
+(define (krudd-scalar-ctype k)
+	(let ((p (assq k krudd-scalar-ctypes)))
+	  (if p (cdr p) (error 'krudd-abi-bad-scalar k))))
+
+(define (krudd-char-kind? k)   (and (pair? k) (eq? (car k) 'char)))
+(define (krudd-vector-kind? k) (and (pair? k) (eq? (car k) 'vector)))
+
+;; A C array bound: a constant symbol renders as its #define name, an integer as
+;; the literal — either way a valid C constant expression.
+(define (krudd-c-size n)
+	(cond ((symbol? n) (krudd-screaming n))
+	      ((and (integer? n) (>= n 0)) (number->string n))
+	      (else (error 'krudd-abi-bad-size n))))
+
+;; The C element type for a scalar or declared-struct kind T ("struct <snake>").
+(define (krudd-elem-ctype names t)
+	(cond ((krudd-scalar? t) (krudd-scalar-ctype t))
+	      ((and (symbol? t) (memq t names))
+	       (string-append "struct " (krudd-snake t)))
+	      (else (error 'krudd-abi-bad-type t))))
+
+;; --- declaration accessors ---------------------------------------------------
+
+(define (krudd-abi-structs forms)
+	(krudd-filter (lambda (f) (and (pair? f) (eq? (car f) 'define-c-struct)))
+		      forms))
+(define (krudd-abi-exports forms)
+	(krudd-filter (lambda (f) (and (pair? f) (eq? (car f) 'define-c-export)))
+		      forms))
+
+(define (krudd-struct-name s)   (cadr s))
+(define (krudd-struct-fields s) (cddr s))
+
+;; A vector field carries a third element — the count field it derives — which
+;; ordinary (name kind) fields lack.
+(define (krudd-field-count-field f) (and (pair? (cddr f)) (caddr f)))
+
+(define (krudd-export-sig e)  (cadr e))
+(define (krudd-export-proc e) (car (krudd-export-sig e)))
+
+;; Split an export signature on -> into (args . return-spec).
+(define (krudd-export-parts e)
+	(let loop ((l (cdr (krudd-export-sig e))) (args '()))
+	  (cond ((null? l) (error 'krudd-abi-export-no-arrow e))
+		((eq? (car l) '->) (cons (reverse args) (cadr l)))
+		(else (loop (cdr l) (cons (car l) args))))))
+
+;; The Scheme procedure an export calls, as a C string, from its (calls sp).
+(define (krudd-export-calls e)
+	(let ((c (caddr e)))
+	  (if (and (pair? c) (eq? (car c) 'calls))
+	      (symbol->string (cadr c))
+	      (error 'krudd-abi-export-no-calls e))))
+
+(define (krudd-export-return-vector? ret)
+	(and (pair? ret) (eq? (car ret) 'vector)))
+
+;; --- fail loud: reject anything outside the vocabulary before emitting -------
+
+(define (krudd-abi-check structs exports names)
+	(for-each (lambda (s)
+		    (for-each (lambda (f) (krudd-check-field names s f))
+			      (krudd-struct-fields s)))
+		  structs)
+	(for-each (lambda (e) (krudd-check-export names e)) exports))
+
+(define (krudd-check-field names s f)
+	(if (not (and (pair? f) (symbol? (car f))))
+	    (error 'krudd-abi-bad-field f))
+	(let ((kind (cadr f)))
+	  (cond
+	    ((krudd-scalar? kind) #t)
+	    ((krudd-char-kind? kind)
+	     (or (symbol? (cadr kind)) (integer? (cadr kind))
+		 (error 'krudd-abi-bad-char kind)))
+	    ((krudd-vector-kind? kind)
+	     (let ((t (cadr kind)) (cf (krudd-field-count-field f)))
+	       (if (not cf) (error 'krudd-abi-vector-needs-count f))
+	       (if (krudd-vector-kind? t) (error 'krudd-abi-nested-vector f))
+	       (if (not (or (krudd-scalar? t) (memq t names)))
+		   (error 'krudd-abi-bad-vector-type t))
+	       (krudd-c-size (caddr kind))
+	       (krudd-check-count-field s cf)))
+	    (else (error 'krudd-abi-unsupported-kind kind)))))
+
+;; A vector's count field must name a sibling declared u32/i32.
+(define (krudd-check-count-field s cf)
+	(let ((sib (krudd-filter (lambda (g) (eq? (car g) cf))
+				 (krudd-struct-fields s))))
+	  (if (not (and (pair? sib) (memq (cadr (car sib)) '(u32 i32))))
+	      (error 'krudd-abi-bad-count-field cf))))
+
+(define (krudd-check-export names e)
+	(let* ((parts (krudd-export-parts e))
+	       (args  (car parts))
+	       (ret   (cdr parts)))
+	  (for-each
+	    (lambda (a)
+	      (if (not (and (pair? a) (symbol? (car a))
+			    (or (eq? (cadr a) 'string) (krudd-scalar? (cadr a)))))
+		  (error 'krudd-abi-bad-export-arg a)))
+	    args)
+	  (cond ((krudd-export-return-vector? ret)
+		 (let ((t (cadr ret)))
+		   (if (not (or (krudd-scalar? t) (memq t names)))
+		       (error 'krudd-abi-bad-return t))))
+		((krudd-scalar? ret) #t)
+		(else (error 'krudd-abi-bad-return ret)))
+	  (krudd-export-calls e)))
+
+;; --- header emission ---------------------------------------------------------
+
+(define (krudd-header-field names f)
+	(let ((cname (krudd-snake (car f)))
+	      (kind  (cadr f)))
+	  (cond
+	    ((krudd-scalar? kind)
+	     (string-append "\t" (krudd-scalar-ctype kind) " " cname ";"))
+	    ((krudd-char-kind? kind)
+	     (string-append "\tchar " cname "[" (krudd-c-size (cadr kind)) "];"))
+	    ((krudd-vector-kind? kind)
+	     (string-append "\t" (krudd-elem-ctype names (cadr kind)) " "
+			    cname "[" (krudd-c-size (caddr kind)) "];"))
+	    (else (error 'krudd-abi-bad-kind kind)))))
+
+(define (krudd-header-struct names s)
+	(string-append
+	  "struct " (krudd-snake (krudd-struct-name s)) " {\n"
+	  (krudd-join "\n" (map (lambda (f) (krudd-header-field names f))
+				(krudd-struct-fields s)))
+	  "\n};"))
+
+(define (krudd-c-param arg)
+	(let ((nm (krudd-snake (car arg))) (kind (cadr arg)))
+	  (cond ((eq? kind 'string) (string-append "const char *" nm))
+		((krudd-scalar? kind)
+		 (string-append (krudd-scalar-ctype kind) " " nm))
+		(else (error 'krudd-abi-bad-arg kind)))))
+
+(define (krudd-export-prototype names e)
+	(let* ((parts  (krudd-export-parts e))
+	       (ret    (cdr parts))
+	       (proc   (krudd-snake (krudd-export-proc e)))
+	       (params (map krudd-c-param (car parts))))
+	  (if (krudd-export-return-vector? ret)
+	      (string-append
+		"int32_t " proc "("
+		(krudd-join ", "
+		  (append params
+			  (list (string-append (krudd-elem-ctype names (cadr ret))
+					       " *out")
+				(string-append "int32_t "
+					       (krudd-snake (caddr ret))))))
+		");")
+	      (string-append (krudd-scalar-ctype ret) " " proc "("
+			     (krudd-join ", " params) ");"))))
+
+(define (krudd-gen-header out header-name structs exports ints names label)
+	(let ((guard (krudd-upcase (krudd-replace header-name "." "_"))))
 	  (call-with-output-file out
 	    (lambda (port)
 	      (write-string
 		(string-append
 		  "/* SPDX-License-Identifier: GPL-2.0-or-later */\n"
-		  "/* Generated by krudd from krudd/build/modules/md_parse.scm."
-		  " Do not edit. */\n"
-		  "#ifndef MD_PARSE_ABI_H\n"
-		  "#define MD_PARSE_ABI_H\n\n")
-		port)
-	      (for-each
-		(lambda (entry)
-		  (let ((macro (car entry))
-			(cell  (assq (cdr entry) defs)))
-		    (if (not cell)
-			(error 'krudd-md-abi-missing (cdr entry))
-			(write-string
-			  (string-append "#define " macro " "
-					 (number->string (cdr cell)) "\n")
-			  port))))
-		md-parse-abi-map)
-	      (write-string "\n#endif /* MD_PARSE_ABI_H */\n" port)))))
+		  "/* Generated by krudd from " label ". Do not edit. */\n"
+		  "#ifndef " guard "\n"
+		  "#define " guard "\n\n"
+		  "#include <stdint.h>\n\n"
+		  "#ifdef __cplusplus\n"
+		  "extern \"C\" {\n"
+		  "#endif\n\n"
+		  (krudd-join "\n"
+		    (map (lambda (d)
+			   (string-append "#define " (krudd-screaming (car d)) " "
+					  (number->string (cdr d))))
+			 ints))
+		  "\n\n"
+		  (krudd-join "\n\n"
+		    (map (lambda (s) (krudd-header-struct names s)) structs))
+		  "\n\n"
+		  (krudd-join "\n"
+		    (map (lambda (e) (krudd-export-prototype names e)) exports))
+		  "\n\n"
+		  "#ifdef __cplusplus\n"
+		  "}\n"
+		  "#endif\n\n"
+		  "#endif /* " guard " */\n")
+		port)))))
+
+;; --- shim emission -----------------------------------------------------------
+
+;; Read the s7 value in EXPR as the scalar kind, narrowing to the C type.
+(define (krudd-scalar-read kind expr)
+	(string-append "(" (krudd-scalar-ctype kind) ")"
+		       (if (krudd-float-kind? kind) "s7_real(" "s7_integer(")
+		       expr ")"))
+
+;; Marshal one already-pulled list value (in `f`) into out->NAME.
+(define (krudd-marshal-field base names f)
+	(let ((cname (krudd-snake (car f)))
+	      (kind  (cadr f)))
+	  (cond
+	    ((krudd-scalar? kind)
+	     (string-append "\tout->" cname " = " (krudd-scalar-read kind "f")
+			    ";\n"))
+	    ((krudd-char-kind? kind)
+	     (let ((sz (krudd-c-size (cadr kind))))
+	       (string-append
+		 "\tif (s7_is_string(f)) {\n"
+		 "\t\tconst char *s = s7_string(f);\n"
+		 "\t\tsize_t n = strlen(s);\n\n"
+		 "\t\tif (n > " sz " - 1)\n"
+		 "\t\t\tn = " sz " - 1;\n"
+		 "\t\tmemcpy(out->" cname ", s, n);\n"
+		 "\t\tout->" cname "[n] = '\\0';\n"
+		 "\t}\n")))
+	    ((krudd-vector-kind? kind)
+	     (let ((t  (cadr kind))
+		   (sz (krudd-c-size (caddr kind)))
+		   (cf (krudd-snake (krudd-field-count-field f))))
+	       (string-append
+		 "\t{\n"
+		 "\t\tuint32_t n = 0;\n\n"
+		 "\t\twhile (s7_is_pair(f) && n < " sz ") {\n"
+		 (if (krudd-scalar? t)
+		     (string-append "\t\t\tout->" cname "[n] = "
+				    (krudd-scalar-read t "s7_car(f)") ";\n")
+		     (string-append "\t\t\t" base "_marshal_" (krudd-snake t)
+				    "(s7, s7_car(f), &out->" cname "[n]);\n"))
+		 "\t\t\tn++;\n"
+		 "\t\t\tf = s7_cdr(f);\n"
+		 "\t\t}\n"
+		 "\t\tout->" cf " = n;\n"
+		 "\t}\n")))
+	    (else (error 'krudd-abi-bad-kind kind)))))
+
+(define (krudd-gen-marshaler base names s)
+	(let* ((cname  (krudd-snake (krudd-struct-name s)))
+	       (fields (krudd-struct-fields s))
+	       (counts (krudd-filter (lambda (x) x)
+				     (map krudd-field-count-field fields)))
+	       (data   (krudd-filter (lambda (f) (not (memq (car f) counts)))
+				     fields))
+	       (arity  (length data)))
+	  (string-append
+	    "static void " base "_marshal_" cname
+	    "(s7_scheme *s7, s7_pointer v,\n\t\tstruct " cname " *out)\n"
+	    "{\n"
+	    (if (> arity 0) "\ts7_pointer f;\n\n" "")
+	    "\tmemset(out, 0, sizeof(*out));\n"
+	    "\tif (!s7_is_pair(v))\n\t\treturn;\n"
+	    "\tassert(s7_list_length(s7, v) == " (number->string arity) ");\n"
+	    (if (> arity 0) "\n" "")
+	    (krudd-join ""
+	      (map (lambda (f)
+		     (string-append "\tf = s7_car(v);\n\tv = s7_cdr(v);\n"
+				    (krudd-marshal-field base names f)))
+		   data))
+	    "}\n")))
+
+;; The s7 argument list for a call: s7_nil for none, else s7_list(s7, N, ...).
+(define (krudd-s7-arglist args)
+	(if (null? args)
+	    "s7_nil(s7)"
+	    (string-append
+	      "s7_list(s7, " (number->string (length args)) ",\n\t\t\t\t"
+	      (krudd-join ",\n\t\t\t\t"
+		(map (lambda (a)
+		       (let ((nm (krudd-snake (car a))) (kind (cadr a)))
+			 (cond ((eq? kind 'string)
+				(string-append "s7_make_string(s7, " nm ")"))
+			       ((krudd-float-kind? kind)
+				(string-append "s7_make_real(s7, " nm ")"))
+			       (else
+				(string-append "s7_make_integer(s7, " nm ")")))))
+		     args))
+	      ")")))
+
+;; The NULL/bounds guard: every string arg plus, for a vector return, the out
+;; buffer and a positive max.
+(define (krudd-guard args vector? maxname)
+	(krudd-join " || "
+	  (append
+	    (krudd-filter (lambda (x) x)
+	      (map (lambda (a)
+		     (and (eq? (cadr a) 'string)
+			  (string-append "!" (krudd-snake (car a)))))
+		   args))
+	    (if vector?
+		(list "!out" (string-append maxname " <= 0"))
+		'()))))
+
+(define (krudd-gen-driver base names e)
+	(let* ((parts (krudd-export-parts e))
+	       (args  (car parts))
+	       (ret   (cdr parts))
+	       (proc  (krudd-snake (krudd-export-proc e)))
+	       (calls (krudd-export-calls e)))
+	  (if (krudd-export-return-vector? ret)
+	      (krudd-gen-driver-vector base names proc args ret calls)
+	      (krudd-gen-driver-scalar base proc args ret calls))))
+
+(define (krudd-gen-driver-vector base names proc args ret calls)
+	(let* ((t       (cadr ret))
+	       (maxname (krudd-snake (caddr ret)))
+	       (params  (append (map krudd-c-param args)
+				(list (string-append (krudd-elem-ctype names t)
+						     " *out")
+				      (string-append "int32_t " maxname))))
+	       (elem    (if (krudd-scalar? t)
+			    (string-append "out[count] = "
+					   (krudd-scalar-read t "s7_car(res)") ";")
+			    (string-append base "_marshal_" (krudd-snake t)
+					   "(s7, s7_car(res), &out[count]);"))))
+	  (string-append
+	    "int32_t " proc "(" (krudd-join ", " params) ")\n"
+	    "{\n"
+	    "\ts7_scheme *s7;\n"
+	    "\ts7_pointer proc, res;\n"
+	    "\tint32_t    count = 0;\n\n"
+	    "\tif (" (krudd-guard args #t maxname) ")\n\t\treturn 0;\n\n"
+	    "\ts7 = " base "_ensure();\n"
+	    "\tif (!s7)\n\t\treturn 0;\n\n"
+	    "\tproc = s7_name_to_value(s7, \"" calls "\");\n"
+	    "\tif (!s7_is_procedure(proc))\n\t\treturn 0;\n\n"
+	    "\tres = s7_call(s7, proc, " (krudd-s7-arglist args) ");\n\n"
+	    "\twhile (count < " maxname " && s7_is_pair(res)) {\n"
+	    "\t\t" elem "\n"
+	    "\t\tcount++;\n"
+	    "\t\tres = s7_cdr(res);\n"
+	    "\t}\n"
+	    "\treturn count;\n"
+	    "}\n")))
+
+(define (krudd-gen-driver-scalar base proc args ret calls)
+	(let ((rtype (krudd-scalar-ctype ret))
+	      (guard (krudd-guard args #f "")))
+	  (string-append
+	    rtype " " proc "(" (krudd-join ", " (map krudd-c-param args)) ")\n"
+	    "{\n"
+	    "\ts7_scheme *s7;\n"
+	    "\ts7_pointer proc, res;\n\n"
+	    (if (string=? guard "")
+		""
+		(string-append "\tif (" guard ")\n\t\treturn 0;\n\n"))
+	    "\ts7 = " base "_ensure();\n"
+	    "\tif (!s7)\n\t\treturn 0;\n\n"
+	    "\tproc = s7_name_to_value(s7, \"" calls "\");\n"
+	    "\tif (!s7_is_procedure(proc))\n\t\treturn 0;\n\n"
+	    "\tres = s7_call(s7, proc, " (krudd-s7-arglist args) ");\n"
+	    "\treturn " (krudd-scalar-read ret "res") ";\n"
+	    "}\n")))
+
+(define (krudd-gen-shim out header-name base image structs exports names label)
+	(call-with-output-file out
+	  (lambda (port)
+	    (write-string
+	      (string-append
+		"/* SPDX-License-Identifier: GPL-2.0-or-later */\n"
+		"/* Generated by krudd from " label ". Do not edit. */\n"
+		"#include \"" header-name "\"\n\n"
+		"#include \"script.h\"\n\n"
+		"#include \"s7.h\"\n\n"
+		"#include <assert.h>\n"
+		"#include <string.h>\n\n"
+		"static const char " base "_scm_image[] = {\n\t"
+		image "\n};\n\n"
+		"/*\n"
+		" * Return the interpreter with the module loaded, or NULL if it\n"
+		" * could not be started. The image is evaluated once; s7 is\n"
+		" * process-global, so the definitions persist across calls.\n"
+		" */\n"
+		"static s7_scheme *" base "_ensure(void)\n"
+		"{\n"
+		"\tstatic int  loaded;\n"
+		"\ts7_scheme  *s7 = script_s7();\n\n"
+		"\tif (s7 && !loaded) {\n"
+		"\t\tscript_eval(" base "_scm_image);\n"
+		"\t\tloaded = 1;\n"
+		"\t}\n"
+		"\treturn s7;\n"
+		"}\n\n"
+		(krudd-join "\n"
+		  (map (lambda (s)
+			 (let ((nm (krudd-snake (krudd-struct-name s))))
+			   (string-append "static void " base "_marshal_" nm
+			     "(s7_scheme *s7, s7_pointer v,\n\t\tstruct "
+			     nm " *out);")))
+		       structs))
+		"\n\n"
+		(krudd-join "\n"
+		  (map (lambda (s) (krudd-gen-marshaler base names s)) structs))
+		"\n"
+		(krudd-join "\n"
+		  (map (lambda (e) (krudd-gen-driver base names e)) exports)))
+	      port))))
+
+;; Generate the C ABI from the Scheme module at IN: the header at HEADER-OUT
+;; (constants + structs + prototypes) and the marshaling shim at SHIM-OUT (the
+;; baked image + generated marshalers + drivers). The module name (the header's
+;; basename, e.g. "md_parse") namespaces the shim's static symbols.
+(define (krudd-embed-scheme-module in header-out shim-out)
+	(let* ((forms       (krudd-scm-forms in))
+	       (structs     (krudd-abi-structs forms))
+	       (exports     (krudd-abi-exports forms))
+	       (ints        (krudd-scm-int-defs in))
+	       (names       (map krudd-struct-name structs))
+	       (header-name (krudd-basename header-out))
+	       (base        (krudd-strip-ext header-name))
+	       (label       (krudd-rel-label in)))
+	  (krudd-abi-check structs exports names)
+	  (krudd-gen-header header-out header-name structs exports ints names label)
+	  (krudd-gen-shim shim-out header-name base
+			  (krudd-bytes->c-init (krudd-slurp in))
+			  structs exports names label)))

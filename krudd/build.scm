@@ -9,12 +9,14 @@
 ;
 ; The strangler fig, phase 2: before we hand off to CMake we *synthesize* the
 ; CMakeLists.txt for the directories krudd has taken ownership of. CMake is now
-; a backend we emit for, not the source of truth. Each owned directory has a
-; spec file under krudd/cmake/ — pure data (a list of target forms) named after
-; the directory it describes — which cmake.scm renders to CMake text. Grow the
-; owned-directories manifest and drop in a matching spec file to strangle
-; another directory; the rest still ships its hand-written CMakeLists.txt until
-; its turn comes.
+; a backend we emit for, not the source of truth. Each owned directory carries
+; its own CMakeLists.scm — pure data (a list of target forms), living beside
+; the sources it describes — which cmake.scm renders to CMake text. krudd/
+; stays the tool (this orchestrator, the s7 runtime, the CMake-backend
+; emitter); cmake/ stays the project (sources, specs, and the generated
+; output). Grow the owned-directories manifest and drop a CMakeLists.scm into
+; the directory to strangle another one; the rest still ships its
+; hand-written CMakeLists.txt until its turn comes.
 
 (define krudd-root (or (getenv "KRUDD_ROOT") "."))
 
@@ -32,7 +34,7 @@
 ;; ---------------------------------------------------------------------------
 ;; The manifest: every directory krudd owns, as a path relative to cmake/ (which
 ;; matches the add_subdirectory() layout in the root CMakeLists.txt). The spec
-;; for each lives at krudd/cmake/<dir>.scm; the output at cmake/<dir>/
+;; for each lives at cmake/<dir>/CMakeLists.scm; the output at cmake/<dir>/
 ;; CMakeLists.txt. Keep this list in sync with .gitignore.
 ;; ---------------------------------------------------------------------------
 
@@ -62,14 +64,14 @@
 ;; Read a directory's spec (a bare datum — no evaluation) from its spec file.
 (define (load-spec dir)
   (call-with-input-file
-    (string-append krudd-root "/krudd/cmake/" dir ".scm")
+    (string-append krudd-root "/cmake/" dir "/CMakeLists.scm")
     read))
 
 ;; Synthesize every owned directory's CMakeLists.txt, then let CMake build.
 (define (synthesize-owned)
   (for-each
     (lambda (dir)
-      (let ((source (string-append "krudd/cmake/" dir ".scm"))
+      (let ((source (string-append "cmake/" dir "/CMakeLists.scm"))
 	    (out    (string-append krudd-root "/cmake/" dir
 				   "/CMakeLists.txt")))
 	(display (string-append "krudd: synthesize " out "\n"))

@@ -7,7 +7,7 @@
 
 # The plugin vtable headers ARE the engine ABI (see CLAUDE.md). A change to an
 # exported signature is a breaking change, so guard them explicitly.
-/cmake/plugins/include/ @joshcoyne
+/plugins/include/       @joshcoyne
 
 # Build and CI/release machinery. The root CMakeLists.txt is generated from
 # krudd/cmake/CMakeLists.scm now (the .txt itself is gitignored); /krudd/

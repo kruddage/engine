@@ -55,7 +55,9 @@
     "plugins/renderer_webgl"
     "plugins/frame_graph"
     "plugins/scene_renderer"
-    "plugins/asset"))
+    "plugins/asset"
+    "plugins/backend"
+    "plugins/imgui_plugin"))
 
 ;; Read a directory's spec (a bare datum — no evaluation) from its spec file.
 (define (load-spec dir)

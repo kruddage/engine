@@ -26,3 +26,5 @@ cmake/plugins/renderer_webgl/CMakeLists.txt
 cmake/plugins/frame_graph/CMakeLists.txt
 cmake/plugins/scene_renderer/CMakeLists.txt
 cmake/plugins/asset/CMakeLists.txt
+cmake/plugins/backend/CMakeLists.txt
+cmake/plugins/imgui_plugin/CMakeLists.txt

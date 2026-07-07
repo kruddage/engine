@@ -10,8 +10,8 @@
 /cmake/plugins/include/ @joshcoyne
 
 # Build and CI/release machinery. The root CMakeLists.txt is generated from
-# cmake/CMakeLists.scm now, so guard the spec (the .txt is gitignored).
-/cmake/CMakeLists.scm   @joshcoyne
+# krudd/cmake/CMakeLists.scm now (the .txt itself is gitignored); /krudd/
+# below covers that spec along with the rest of the build tooling.
 /krudd/                 @joshcoyne
 /.github/               @joshcoyne
 

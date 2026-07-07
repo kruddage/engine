@@ -150,8 +150,21 @@
 ;; ---------------------------------------------------------------------------
 
 (display "emitter: rendered build.ninja\n")
+
+;; The directory of KRUDD_NINJA_OUT is the build dir the WASM codegen (version.h,
+;; shell.html, changelog_data.h) is generated into; without it, render only.
+(define (dirname path)
+	(let loop ((i (- (string-length path) 1)))
+		(cond ((< i 0) ".")
+		      ((char=? (string-ref path i) #\/) (substring path 0 i))
+		      (else (loop (- i 1))))))
+
+(define ninja-out (getenv "KRUDD_NINJA_OUT"))
 (define ninja-text
-	(ninja-synthesize manifest (string-append krudd-root "/krudd/cmake")))
+	(if (and ninja-out (> (string-length ninja-out) 0))
+	    (ninja-synthesize manifest (string-append krudd-root "/krudd/cmake")
+			      (dirname ninja-out))
+	    (ninja-synthesize manifest (string-append krudd-root "/krudd/cmake"))))
 
 (define (contains? hay needle)
 	(let ((hl (string-length hay)) (nl (string-length needle)))
@@ -174,17 +187,20 @@
        (contains? ninja-text "build hello_plugin.wasm: side_module "))
 (check "default target is native"
        (contains? ninja-text "default native"))
+(check "wasm main module stanza present"
+       (contains? ninja-text "build index.html | index.js index.wasm: main_module"))
+(check "wasm target present"
+       (contains? ninja-text "build wasm: phony "))
 
 ;; ---------------------------------------------------------------------------
 ;; Optional: write build.ninja for the harness to build with ninja(1).
 ;; ---------------------------------------------------------------------------
 
-(let ((out (getenv "KRUDD_NINJA_OUT")))
-	(if (and out (> (string-length out) 0))
-	    (begin
-	      (call-with-output-file out
-		(lambda (port) (write-string ninja-text port)))
-	      (display (string-append "wrote " out "\n")))))
+(if (and ninja-out (> (string-length ninja-out) 0))
+    (begin
+      (call-with-output-file ninja-out
+	(lambda (port) (write-string ninja-text port)))
+      (display (string-append "wrote " ninja-out "\n"))))
 
 ;; ---------------------------------------------------------------------------
 ;; Verdict.

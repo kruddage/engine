@@ -76,8 +76,9 @@
 (check "root spec has no verbatim form"
        (not (memq 'verbatim (map (lambda (f) (car f)) root-spec))))
 
-;; Pre-create the fetch dir so rendering the WASM variant does no network I/O.
-(system (string-append "mkdir -p " (krudd-fetch-dir "imgui")))
+;; Stub the fetch so rendering the WASM variant does no network or filesystem
+;; I/O — the test cares about the emitted guard, not a real checkout.
+(set! krudd-fetch (lambda (name repo tag) (krudd-fetch-dir name)))
 
 (define (render cfg)
 	(set! *configure* cfg)

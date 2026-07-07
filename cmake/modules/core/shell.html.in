@@ -263,7 +263,7 @@ footer {
 
 <header>
 	<span class="wordmark">KRUDD</span>
-	<span class="version">@PROJECT_VERSION@.@ENGINE_BUILD_NUMBER@</span>
+	<span class="version">@PROJECT_VERSION@+@ENGINE_BUILD_NUMBER@</span>
 </header>
 
 <div class="canvas-wrap">

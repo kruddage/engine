@@ -36,13 +36,6 @@
 			  (loop (- i 1)) i))))
 		(if (>= start end) "" (substring s start end))))
 
-(define (krudd-contains? hay needle)
-	(let ((hl (string-length hay)) (nl (string-length needle)))
-		(let loop ((i 0))
-		  (cond ((> (+ i nl) hl) #f)
-			((string=? (substring hay i (+ i nl)) needle) #t)
-			(else (loop (+ i 1)))))))
-
 ;; Slurp a whole file to a string (VERSION is a single short line, but keep it
 ;; general).
 (define (krudd-slurp path)
@@ -95,14 +88,6 @@
 	(let ((h (krudd-git "rev-parse --short HEAD")))
 		(if (> (string-length h) 0) h "unknown")))
 
-;; Whether this synthesis is driving an Emscripten build. The configure command
-;; krudd was handed (`*configure*`) carries `emcmake` for WASM and plain cmake
-;; for native, so it is the seam that tells the two apart at generation time.
-(define (krudd-emscripten-build?)
-	(and (defined? '*configure*)
-	     (string? *configure*)
-	     (krudd-contains? *configure* "emcmake")))
-
 ;; ---------------------------------------------------------------------------
 ;; Dependency fetch: krudd's replacement for FetchContent. Clone REPO at the
 ;; pinned TAG into build/_deps/<name> if it is not already there, and return the
@@ -124,10 +109,10 @@
 		dir))
 
 ;; ---------------------------------------------------------------------------
-;; Codegen: krudd's replacements for CMake's configure_file and the
-;; embed_changelog.cmake script — the file transforms the build needs generated
-;; before compiling. Backends call these at synthesis time (as CMake ran them at
-;; configure time) and reference the outputs.
+;; Codegen: krudd's replacements for CMake's configure_file and its changelog
+;; embed script — the file transforms the build needs generated before
+;; compiling. The emitter calls these at synthesis time (as CMake ran them at
+;; configure time) and references the outputs.
 ;; ---------------------------------------------------------------------------
 
 ;; Split "6.3.2" into ("6" "3" "2").
@@ -182,7 +167,7 @@
 		(string (string-ref digits (quotient b 16))
 			(string-ref digits (remainder b 16)))))
 
-;; embed_changelog.cmake: bake the file at IN into a NUL-terminated C string
+;; Changelog embed: bake the file at IN into a NUL-terminated C string
 ;; literal under SYMBOL, each byte written as a \xNN escape (the same hex-escape
 ;; scheme, so non-ASCII bytes and quotes survive and md_parse() gets a valid
 ;; string), and write the header to OUT.

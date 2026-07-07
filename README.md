@@ -30,14 +30,14 @@ S7 docs and tooling keep applying.
 
 Planned rollout:
 
-1. **`kruddmake` drives CI.** A single Ubuntu + S7 job builds the engine by shelling out to
-   the same CMake/Emscripten pipeline documented above — no separate lint/sanitizer/coverage
+1. **krudd drives CI.** A single Ubuntu + S7 job builds the engine through krudd's own
+   build (Ninja + Emscripten) documented above — no separate lint/sanitizer/coverage
    jobs yet. Those were deliberately stripped from `ci.yml` (see below) and come back
-   written in `kruddmake` once it exists, rather than as a bolt-on to the old pipeline. This
-   is a temporary trade-off, not a claim that those checks were unnecessary.
-2. **`kruddmake` eats the build graph, piece by piece.** Asset codecs, plugin registration,
-   and scene compilation move from CMake/C into Scheme one at a time — CMake shrinks as
-   `kruddmake` grows, rather than a rewrite landing in one PR.
+   written in Scheme once the tooling exists, rather than as a bolt-on to the old pipeline.
+   This is a temporary trade-off, not a claim that those checks were unnecessary.
+2. **krudd eats the build graph, piece by piece.** Asset codecs, plugin registration,
+   and scene compilation move from C into Scheme one at a time — the C build tree shrinks
+   as the Scheme grows, rather than a rewrite landing in one PR.
 3. **The same S7 runtime ships in the engine** as the scripting layer for game logic, so a
    build script and a gameplay script share one language and one mental model.
 
@@ -50,7 +50,10 @@ getting refined.
 ## Architecture
 
 ```
-krudd/cmake/
+krudd/ninja/
+  ninja.scm    The Ninja emitter — renders build.ninja from the directory specs
+  resolve.scm  Transitive include/link resolver
+  manifest.scm The list of owned directories
   modules/
     core/    Engine heartbeat — init/tick/shutdown, subsystem manager, plugin loader
     log/     Structured logging with level filtering and ring-buffer history
@@ -66,14 +69,16 @@ module required.
 
 ### Prerequisites
 
-- [Emscripten](https://emscripten.org/docs/getting_started/downloads.html) (emsdk)
-- CMake ≥ 3.x
+- [Emscripten](https://emscripten.org/docs/getting_started/downloads.html) (emsdk) — WASM build
+- [Ninja](https://ninja-build.org/) plus a C compiler (`cc`/`gcc`/`clang`)
+
+krudd renders a `build.ninja` from the directory specs and drives `ninja`
+directly — there is no CMake in the build path.
 
 ### WASM build
 
 ```sh
-emcmake cmake -S krudd/cmake -B build
-cmake --build build
+KRUDD_TARGET=wasm ./krudd.sh build
 ```
 
 Then serve `build/` with any static file server:
@@ -84,13 +89,11 @@ python3 -m http.server -d build
 
 ### Native build (tests only)
 
-The native build compiles the modules for unit testing and static analysis. It does not run the
-engine loop.
+The native build compiles the modules for unit testing. It does not run the
+engine loop; the test stamps run the suite, so a green build is a green test run.
 
 ```sh
-cmake -S krudd/cmake -B build_native
-cmake --build build_native
-ctest --test-dir build_native --output-on-failure
+./krudd.sh build
 ```
 
 ## CI

@@ -7,15 +7,17 @@ A game engine: C compiled to WASM via Emscripten, served as a static site.
 ```
 krudd/                    The build tool and the whole build tree it owns
   krudd.c                 The orchestrator, built by krudd.sh
-  build.scm               Embedded s7 Scheme: reads the CMakeLists.scm specs
-                          below, renders a build.ninja (krudd/ninja/ninja.scm),
+  build.scm               Embedded s7 Scheme: reads the per-directory build.scm
+                          specs below, renders a build.ninja (krudd/ninja/ninja.scm),
                           and drives ninja with cc / emcc directly — no CMake
   introspect.scm          Build-time introspection krudd owns: VERSION + git
                           facts, configure_file / changelog codegen, dep fetch
-  ninja/                  The Ninja backend — ninja.scm (emitter), resolve.scm
-                          (transitive include/link resolver), and its tests
-  cmake/                  The directory specs + C sources (the "cmake/" name is
-                          historical; nothing here uses CMake anymore)
+  ninja/                  The build tree: the Ninja emitter plus the C sources it
+                          renders. Each owned directory carries a build.scm spec
+                          (a backend-agnostic list of target forms) beside its
+                          sources.
+    ninja.scm             The emitter — renders build.ninja from the specs
+    resolve.scm           Transitive include/link resolver (+ its tests)
     manifest.scm          The list of owned directories
     modules/              C source modules (compiled into the main WASM module)
       core/               Engine heartbeat — init/tick/shutdown, subsystem
@@ -117,7 +119,7 @@ a workflow — don't create or edit them by hand in the GitHub UI.
 
 - C owns the loop. `engine_tick` is the frame callback passed to
   `emscripten_set_main_loop`. No JS/TS shell — Emscripten generates the glue.
-- The plugin vtable headers in `krudd/cmake/plugins/include/` are the ABI.
+- The plugin vtable headers in `krudd/ninja/plugins/include/` are the ABI.
   Changes to exported function signatures are breaking.
 - Rendering is WebGL via `renderer_webgl`. No WebGPU yet.
 - Native target compiles the modules and plugins for unit testing only; the

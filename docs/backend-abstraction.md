@@ -12,7 +12,7 @@ what it defers?
 ## Background and motivation
 
 Every asset in the current catalog enters via `asset_request`, which always
-kicks off an `emscripten_fetch` (see `krudd/cmake/plugins/asset/asset_plugin.c`, the
+kicks off an `emscripten_fetch` (see `krudd/ninja/plugins/asset/asset_plugin.c`, the
 `start_fetch` / `on_fetch_success` / `on_fetch_error` pattern). There is no
 path for assets that the user authors: bytes that come from a text editor, an
 import drop, or a file upload. Issue #188 adds that path — a "born-loaded"
@@ -36,7 +36,7 @@ The seam is shaped to receive them without making them a prerequisite.
 ### Placement in the subsystem graph
 
 The backend is registered as an `async_subsystem` (see
-`krudd/cmake/modules/core/include/async_subsystem.h`) because its init — opening the
+`krudd/ninja/modules/core/include/async_subsystem.h`) because its init — opening the
 IndexedDB database and reading persisted records — is asynchronous. It signals
 readiness via the manager's `done` callback, after which the asset plugin
 (or any other consumer) can query it by name:
@@ -47,13 +47,13 @@ const struct backend_api *be =
         subsystem_manager_get_api(mgr, "backend");
 ```
 
-`subsystem_manager_get_api` (in `krudd/cmake/modules/core/subsystem_manager.c`) already
+`subsystem_manager_get_api` (in `krudd/ninja/modules/core/subsystem_manager.c`) already
 walks the `async_dynamic` table and returns the api pointer regardless of
 readiness — readiness gating is the caller's concern, not the lookup's. The
 Local provider is live after its IndexedDB open succeeds (or after it logs the
 fallback and accepts in-memory-only mode).
 
-### `backend_api` struct (as implemented in `krudd/cmake/plugins/include/backend_api.h`)
+### `backend_api` struct (as implemented in `krudd/ninja/plugins/include/backend_api.h`)
 
 The design was simplified during implementation. The `struct
 backend_project_record` wrapper and the separate `enumerate` / `login` pointers
@@ -108,7 +108,7 @@ Key differences from the original design sketch:
 
 ### Why a separate subsystem rather than embedding in the asset plugin
 
-The asset plugin (`krudd/cmake/plugins/asset/asset_plugin.c`) is deliberately narrow: it
+The asset plugin (`krudd/ninja/plugins/asset/asset_plugin.c`) is deliberately narrow: it
 owns the in-memory catalog, read/write semantics for entries, and the fetch
 plumbing. Backend persistence is a cross-cutting concern that will eventually
 encompass auth and messaging — topics the asset plugin should not know about.
@@ -139,7 +139,7 @@ plugin_entry(mgr)
 
 The `done` callback is the same `async_done` the manager sets up internally
 (see `subsystem_manager_register_async` in
-`krudd/cmake/modules/core/subsystem_manager.c`). Once called, the manager sets
+`krudd/ninja/modules/core/subsystem_manager.c`). Once called, the manager sets
 `async_subsystem_slot.ready = 1` and fires any `on_ready` callbacks registered
 for `"backend"`. Tick starts running from the next frame.
 
@@ -318,7 +318,7 @@ compile or run in the native test harness. The split:
   silently persisting built-ins would be a bug.
 
 The implementation should put the serialization helpers in a separate
-translation unit (e.g. `krudd/cmake/plugins/backend/backend_record.c`) with no `#ifdef
+translation unit (e.g. `krudd/ninja/plugins/backend/backend_record.c`) with no `#ifdef
 __EMSCRIPTEN__` body, so native tests can link it without dragging in the IDB
 wrappers.
 

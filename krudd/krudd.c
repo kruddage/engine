@@ -2,14 +2,13 @@
 /*
  * krudd — the one command you run everything off.
  *
- * Phase 1 is a proof-of-life seam, nothing clever: `krudd build` shells out to
- * cmake to build the engine (the exact thing CI does today), and the no-arg
- * dispatch resolves how many "<name>.krudd-project" files live in the current
- * directory and picks a mode from that. The cmake syscall is destined to become
- * s7-driven codegen (`s7 build.scm | cmake`) and the setup flow is destined to
- * grow a GitHub-backed project scaffolder — but the point of this file is the
- * seam, not the insides. Everything here is meant to be gutted from behind
- * while the front door (`krudd`) stays put.
+ * `krudd build` loads krudd/build.scm and lets s7 drive: C provides the `run`
+ * primitive, Scheme renders build.ninja from the directory specs and drives
+ * ninja(1) directly (no CMake). The no-arg dispatch resolves how many
+ * "<name>.krudd-project" files live in the current directory and picks a mode
+ * from that; the setup flow is destined to grow a GitHub-backed project
+ * scaffolder. The point of this file is the front door (`krudd`); the insides
+ * live in Scheme and are meant to be gutted from behind while it stays put.
  *
  * Built with the system compiler by krudd.sh; it owns no engine headers.
  */
@@ -42,29 +41,6 @@ static const char *getenv_or(const char *key, const char *dflt)
 	return (v && *v) ? v : dflt;
 }
 
-/*
- * KRUDD_CONFIGURE / KRUDD_BUILD let CI inject the WASM toolchain (`emcmake
- * cmake ...`) while a plain checkout falls back to native cmake, so the seam is
- * verifiable both ways without baking a toolchain choice into this file.
- */
-static const char *configure_cmd(void)
-{
-	return getenv_or("KRUDD_CONFIGURE", "cmake -S krudd/cmake -B build");
-}
-
-static const char *build_cmd(void)
-{
-	return getenv_or("KRUDD_BUILD", "cmake --build build");
-}
-
-/* Direct fallback when the Scheme build description is unreachable. */
-static int direct_cmake(void)
-{
-	if (run(configure_cmd()) != 0)
-		return -1;
-	return run(build_cmd());
-}
-
 /* (run "cmd") from Scheme -> run the shell command, return its exit status. */
 static s7_pointer krudd_run(s7_scheme *sc, s7_pointer args)
 {
@@ -76,10 +52,9 @@ static s7_pointer krudd_run(s7_scheme *sc, s7_pointer args)
 }
 
 /*
- * The payoff: `krudd build` loads build.scm and lets s7 drive. C provides the
- * primitives (`run`, the command strings); Scheme orchestrates. If s7 or the
- * script is unreachable we fall back to driving cmake directly, so a bare krudd
- * binary still builds.
+ * `krudd build` loads build.scm and lets s7 drive. C provides the `run`
+ * primitive; Scheme orchestrates. build.scm is part of the checkout, so a
+ * missing script or a dead interpreter is a hard error, not a fallback.
  */
 static int cmd_build(void)
 {
@@ -94,21 +69,19 @@ static int cmd_build(void)
 		 getenv_or("KRUDD_ROOT", "."));
 	probe = fopen(path, "r");
 	if (!probe) {
-		fprintf(stderr, "krudd: %s not found — driving cmake directly\n",
-			path);
-		return direct_cmake();
+		fprintf(stderr, "krudd: %s not found\n", path);
+		return -1;
 	}
 	fclose(probe);
 
 	s7 = s7_init();
-	if (!s7)
-		return direct_cmake();
+	if (!s7) {
+		fprintf(stderr, "krudd: could not start s7\n");
+		return -1;
+	}
 
 	s7_define_function(s7, "run", krudd_run, 1, 0, false,
 			   "(run cmd) run a shell command, return its exit status");
-	s7_define_variable(s7, "*configure*",
-			   s7_make_string(s7, configure_cmd()));
-	s7_define_variable(s7, "*build*", s7_make_string(s7, build_cmd()));
 
 	/* Capture Scheme errors instead of letting them scribble on stderr. */
 	port  = s7_open_output_string(s7);

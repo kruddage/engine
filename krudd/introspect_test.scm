@@ -45,8 +45,6 @@
 (display "introspect: helpers\n")
 (check "strip trims whitespace/newlines"
        (string=? (krudd-strip "  6.3.2\n\t") "6.3.2"))
-(check "contains? finds emcmake" (krudd-contains? "emcmake cmake" "emcmake"))
-(check "contains? rejects absent" (not (krudd-contains? "cmake -S" "emcmake")))
 (check "split on dot" (equal? (krudd-split "6.3.2" #\.) '("6" "3" "2")))
 (check "replace all occurrences"
        (string=? (krudd-replace "a@X@b@X@c" "@X@" "1") "a1b1c"))
@@ -58,14 +56,6 @@
 (check "build number is numeric" (all-digits? (krudd-build-number version)))
 (check "commit hash non-empty" (> (string-length (krudd-commit-hash)) 0))
 
-;; *configure* seam still distinguishes targets for the legacy CI fallback.
-(define *configure* "cmake -S krudd/cmake -B build")
-(check "native configure is not an emscripten build"
-       (not (krudd-emscripten-build?)))
-(set! *configure* "emcmake cmake -S krudd/cmake -B build")
-(check "emcmake configure is an emscripten build"
-       (krudd-emscripten-build?))
-
 ;; ---------------------------------------------------------------------------
 ;; Codegen: configure_file and the changelog embed.
 ;; ---------------------------------------------------------------------------
@@ -75,7 +65,7 @@
 (system (string-append "mkdir -p " tmp))
 
 (krudd-configure-file
-  (string-append krudd-root "/krudd/cmake/modules/core/version.h.in")
+  (string-append krudd-root "/krudd/ninja/modules/core/version.h.in")
   (string-append tmp "/version.h"))
 (let ((v (slurp (string-append tmp "/version.h"))))
 	(check "version.h carries the literal version"

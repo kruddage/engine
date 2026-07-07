@@ -9,10 +9,10 @@
 # modules/plugins sources it owns — but the plugin vtable headers ARE the
 # engine ABI (see CLAUDE.md), so guard them with their own explicit line: a
 # change to an exported signature is a breaking change.
-/krudd/cmake/plugins/include/ @joshcoyne
+/krudd/ninja/plugins/include/ @joshcoyne
 
-# Build and CI/release machinery. The root CMakeLists.txt is generated from
-# krudd/cmake/CMakeLists.scm now (the .txt itself is gitignored).
+# Build and CI/release machinery. krudd renders build.ninja from the directory
+# specs (krudd/ninja/**/build.scm) and drives ninja directly — no CMake.
 /krudd/                 @joshcoyne
 /.github/               @joshcoyne
 

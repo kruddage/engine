@@ -1,35 +1,36 @@
 # Ninja build backend
 
-Status: **incremental** — landed side-by-side with the CMake backend, not yet
-wired into `./krudd.sh build`. Tracks initiative #338 (replace CMake with
-krudd's own build system); this document covers sub-issues #339 (the emitter)
-and #340 (the resolver).
+Status: **the build backend** — `./krudd.sh build` drives it; CMake is gone
+(#343). Tracks initiative #338 (replace CMake with krudd's own build system):
+#339 (the emitter), #340 (the resolver), #341 (root bootstrap), #342 (WASM),
+#343 (drive Ninja, retire CMake).
 
 ## Why
 
 krudd already owns the build description as Scheme data: every owned directory
 carries a `CMakeLists.scm` — a backend-agnostic list of target forms
-(`library`, `interface-library`, `executable`, `test`, `side-module`). Today
-`krudd/cmake/cmake.scm` renders those forms to a `CMakeLists.txt` tree and lets
-CMake drive Ninja. The end state of #338 is to render a `build.ninja` directly
-and drive `ninja(1)` ourselves, keeping s7 as the one language that spans the
+(`library`, `interface-library`, `executable`, `test`, `side-module`). It used
+to render those forms to a `CMakeLists.txt` tree and let CMake drive Ninja;
+now it renders a `build.ninja` directly and drives `ninja(1)` itself, keeping
+s7 as the one language that spans the
 whole build.
 
-This backend is the first two organs of that migration. It renders a real,
-buildable `build.ninja` from the existing specs and is exercised on its own —
-the CMake path still drives production builds until the Ninja path is proven
-equivalent across native **and** WASM.
+`krudd/build.scm` renders a `build.ninja` from the specs and drives `ninja`
+directly (`native` with `cc`, `wasm` with `emcc`/`em++`); there is no CMake in
+the build path.
 
 ## Pieces
 
 ```
-krudd/cmake/manifest.scm     the owned-directory list (shared source of truth,
-                             read by both the CMake and Ninja backends)
+krudd/build.scm              the driver: render build.ninja into build/, run
+                             ninja native|wasm (KRUDD_TARGET selects)
+krudd/cmake/manifest.scm     the owned-directory list
+krudd/introspect.scm         version/git facts, configure_file + changelog
+                             codegen, dependency fetch (#341, #342)
 krudd/ninja/resolve.scm      the include/link resolver (#340)
-krudd/ninja/ninja.scm        the build.ninja emitter (#339)
+krudd/ninja/ninja.scm        the build.ninja emitter (#339, #342)
 krudd/ninja/resolve_test.scm native s7 checks + build.ninja generator
-krudd/ninja/run-tests.sh     harness: run the checks, then build the native
-                             suite through the generated build.ninja
+krudd/ninja/run-tests.sh     harness: checks, then build native + WASM
 ```
 
 ### resolve.scm — the include/link resolver (#340)
@@ -138,8 +139,17 @@ same size with **identical symbol tables** — the only byte differences are
 emscripten's export/function ordering, which is order-insensitive for `wasm-ld`.
 `krudd/ninja/run-tests.sh` builds and checks this when `emcc` is present.
 
-## Not yet
+## Retiring CMake (#343)
 
-The last #338 sub-issue: switch `krudd/build.scm` to drive Ninja and retire the
-CMake backend (#343) — wiring the generated `build.ninja` into `./krudd.sh build`
-for both native and WASM, and updating CI. Out of scope here.
+`krudd/build.scm` renders `build.ninja` into `build/` and runs
+`ninja -C build native` or `ninja -C build wasm` (selected by `KRUDD_TARGET`,
+falling back to the `emcmake` marker in the legacy `*configure*` for older CI
+env). CI installs `ninja-build` and sets `KRUDD_TARGET: wasm`; the staged site
+comes from the same `build/index.{html,js,wasm}` + side modules as before. The
+CMake emitter (`cmake.scm`) and the generated `CMakeLists.txt` tree are gone;
+the directory specs (`CMakeLists.scm`, name kept for now) remain as the target
+data the emitter reads.
+
+One CMake-only convenience did not carry over: the `COVERAGE` / `SANITIZE`
+build options from the old root spec. Porting those to Ninja rules is a small
+follow-up.

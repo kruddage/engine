@@ -20,12 +20,15 @@ jobs:
       - name: Trust the workspace
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      - name: Install a host compiler for krudd
-        run: apt-get update && apt-get install -y gcc
+      - name: Install a host compiler and ninja for krudd
+        run: apt-get update && apt-get install -y gcc ninja-build
 
+      # krudd generates a build.ninja from the directory specs and drives ninja
+      # with emcc/em++ directly — no cmake, no emcmake. KRUDD_TARGET=wasm selects
+      # the WASM output (index.html/.js/.wasm + the plugin side modules).
       - name: Build
         env:
-          KRUDD_CONFIGURE: emcmake cmake -S krudd/cmake -B build -DCMAKE_BUILD_TYPE=Release
+          KRUDD_TARGET: wasm
         run: ./krudd.sh build
 
       - name: Stage site

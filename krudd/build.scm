@@ -17,6 +17,10 @@
 ; output). Grow the owned-directories manifest and drop a CMakeLists.scm into
 ; the directory to strangle another one; the rest still ships its
 ; hand-written CMakeLists.txt until its turn comes.
+;
+; The root CMakeLists.txt is owned too now (cmake/CMakeLists.scm): its layout,
+; options and flags are data, and the imperative project()/git/FetchContent
+; bootstrap rides through a (verbatim ...) block until it too becomes forms.
 
 (define krudd-root (or (getenv "KRUDD_ROOT") "."))
 
@@ -67,6 +71,20 @@
     (string-append krudd-root "/cmake/" dir "/CMakeLists.scm")
     read))
 
+;; Synthesize the root cmake/CMakeLists.txt from its spec. Unlike the leaf
+;; directories the root is not in owned-directories — it is the tree it points
+;; at — so it is rendered on its own.
+(define (synthesize-root)
+  (let ((source "cmake/CMakeLists.scm")
+	(out    (string-append krudd-root "/cmake/CMakeLists.txt")))
+    (display (string-append "krudd: synthesize " out "\n"))
+    (write-file out
+		(cmake-synthesize
+		  source
+		  (call-with-input-file
+		    (string-append krudd-root "/cmake/CMakeLists.scm")
+		    read)))))
+
 ;; Synthesize every owned directory's CMakeLists.txt, then let CMake build.
 (define (synthesize-owned)
   (for-each
@@ -78,6 +96,7 @@
 	(write-file out (cmake-synthesize source (load-spec dir)))))
     owned-directories))
 
+(synthesize-root)
 (synthesize-owned)
 (sh *configure*)
 (sh *build*)

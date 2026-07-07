@@ -8,6 +8,8 @@ krudd/krudd
 # CMakeLists.txt files krudd synthesizes from krudd/build.scm at build time.
 # These are build artifacts, not source — keep this list in sync with the
 # owned-directories spec. ./krudd.sh build regenerates them before configure.
+# The root is synthesized too, from cmake/CMakeLists.scm.
+cmake/CMakeLists.txt
 cmake/modules/log/CMakeLists.txt
 cmake/modules/memory/CMakeLists.txt
 cmake/plugins/math/CMakeLists.txt

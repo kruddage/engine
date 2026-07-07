@@ -1,18 +1,11 @@
 name: CI
 
-# Bare-bones pipeline: compile the WASM on every PR, and on push to main also
-# publish the site to gh-pages. Nothing else — the previous lint/sanitizer/
-# coverage/clang-tidy gates, the changelog/label gates, PR previews and tag
-# releases were intentionally stripped to be reintroduced later.
 on:
   pull_request:
   push:
     branches: [main]
 
 jobs:
-  # Compile the engine + plugins to WASM. On a PR this is the whole check: it
-  # fails if the tree doesn't build. On main it also stages the site artifact
-  # for the deploy job.
   build:
     runs-on: ubuntu-latest
     container: emscripten/emsdk:6.0.2
@@ -27,10 +20,6 @@ jobs:
       - name: Trust the workspace
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      # Build through krudd — the seam that will become the s7-driven build
-      # authority. For now `krudd build` just shells out to cmake; CI injects
-      # the WASM toolchain via KRUDD_CONFIGURE. gcc builds the tiny krudd tool
-      # itself (the emsdk image ships emcc, not necessarily a host cc).
       - name: Install a host compiler for krudd
         run: apt-get update && apt-get install -y gcc
 
@@ -39,8 +28,6 @@ jobs:
           KRUDD_CONFIGURE: emcmake cmake -S cmake -B build -DCMAKE_BUILD_TYPE=Release
         run: ./krudd.sh build
 
-      # Stage only the web outputs. Publishing the raw build/ tree would commit
-      # _deps/ (a gitlink) to gh-pages and break the Pages branch build.
       - name: Stage site
         run: sh scripts/stage-site.sh build public
 
@@ -49,9 +36,6 @@ jobs:
         with:
           name: site
           path: public
-
-  # Publish the staged site to the gh-pages root. Only runs for pushes to main;
-  # PRs stop after the build job above.
   deploy:
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

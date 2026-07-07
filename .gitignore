@@ -2,33 +2,33 @@ build/
 build-*/
 build_*/
 *.o
-modules/core/version.h
+krudd/cmake/modules/core/version.h
 krudd/krudd
 
 # CMakeLists.txt files krudd synthesizes from krudd/build.scm at build time.
 # These are build artifacts, not source — keep this list in sync with the
 # owned-directories spec. ./krudd.sh build regenerates them before configure.
 # The root is synthesized too, from krudd/cmake/CMakeLists.scm.
-/CMakeLists.txt
-modules/core/CMakeLists.txt
-modules/log/CMakeLists.txt
-modules/memory/CMakeLists.txt
-plugins/math/CMakeLists.txt
-plugins/renderer/CMakeLists.txt
-plugins/cas/CMakeLists.txt
-plugins/branch/CMakeLists.txt
-plugins/snapshot/CMakeLists.txt
-plugins/hello_plugin/CMakeLists.txt
-plugins/scene_plugin/CMakeLists.txt
-plugins/vscript/CMakeLists.txt
-plugins/shader_graph/CMakeLists.txt
-plugins/edit_plugin/CMakeLists.txt
-plugins/entity_plugin/CMakeLists.txt
-plugins/renderer_null/CMakeLists.txt
-plugins/renderer_webgl/CMakeLists.txt
-plugins/frame_graph/CMakeLists.txt
-plugins/scene_renderer/CMakeLists.txt
-plugins/asset/CMakeLists.txt
-plugins/backend/CMakeLists.txt
-plugins/imgui_plugin/CMakeLists.txt
-plugins/kruddboard/CMakeLists.txt
+krudd/cmake/CMakeLists.txt
+krudd/cmake/modules/core/CMakeLists.txt
+krudd/cmake/modules/log/CMakeLists.txt
+krudd/cmake/modules/memory/CMakeLists.txt
+krudd/cmake/plugins/math/CMakeLists.txt
+krudd/cmake/plugins/renderer/CMakeLists.txt
+krudd/cmake/plugins/cas/CMakeLists.txt
+krudd/cmake/plugins/branch/CMakeLists.txt
+krudd/cmake/plugins/snapshot/CMakeLists.txt
+krudd/cmake/plugins/hello_plugin/CMakeLists.txt
+krudd/cmake/plugins/scene_plugin/CMakeLists.txt
+krudd/cmake/plugins/vscript/CMakeLists.txt
+krudd/cmake/plugins/shader_graph/CMakeLists.txt
+krudd/cmake/plugins/edit_plugin/CMakeLists.txt
+krudd/cmake/plugins/entity_plugin/CMakeLists.txt
+krudd/cmake/plugins/renderer_null/CMakeLists.txt
+krudd/cmake/plugins/renderer_webgl/CMakeLists.txt
+krudd/cmake/plugins/frame_graph/CMakeLists.txt
+krudd/cmake/plugins/scene_renderer/CMakeLists.txt
+krudd/cmake/plugins/asset/CMakeLists.txt
+krudd/cmake/plugins/backend/CMakeLists.txt
+krudd/cmake/plugins/imgui_plugin/CMakeLists.txt
+krudd/cmake/plugins/kruddboard/CMakeLists.txt

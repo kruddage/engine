@@ -5,29 +5,31 @@ A game engine: C compiled to WASM via Emscripten, served as a static site.
 ## Architecture
 
 ```
-modules/          C source modules (compiled into the main WASM module)
-  core/           Engine heartbeat — init/tick/shutdown, subsystem manager,
+cmake/            CMake build tree — top-level CMakeLists.txt plus every
+                  compiled source directory it drives
+  CMakeLists.txt  Root build — emcmake cmake -S cmake drives everything
+  modules/        C source modules (compiled into the main WASM module)
+    core/         Engine heartbeat — init/tick/shutdown, subsystem manager,
                   plugin loader, ring buffer
-  log/            Structured logging with level filtering and ring-buffer history
-  memory/         Allocator and fixed-size pool allocator
-
-plugins/          Dynamically-loaded WASM side modules
-  include/        Public vtable headers (asset_api.h, entity_api.h,
+    log/          Structured logging with level filtering and ring-buffer history
+    memory/       Allocator and fixed-size pool allocator
+  plugins/        Dynamically-loaded WASM side modules
+    include/      Public vtable headers (asset_api.h, entity_api.h,
                   backend_api.h, renderer.h, math_types.h, …)
-  asset/          Asset catalog — enumeration, mutation, codec registration;
+    asset/        Asset catalog — enumeration, mutation, codec registration;
                   built-in primitive geometry (primitives.c)
-  backend/        Persistence seam — Local provider with IndexedDB
-  entity_plugin/  Runtime entity/scene system ("scene" subsystem)
-  scene_plugin/   .scene v1 binary decoder (registered as asset codec)
-  math/           vec3_t / quat_t / mat4 + camera helpers
-  renderer/       GPU API vtable definition
-  renderer_null/  Headless null renderer (used in native tests)
-  renderer_webgl/ WebGL renderer (WASM only)
-  frame_graph/    Frostbite-style render graph (GPU lent at execute time)
-  scene_renderer/ Draws COMPONENT_RENDER entities via the frame graph (#172)
-  imgui_plugin/   ImGui debug UI shell
-  kruddboard/     In-browser tabbed authoring surface + markdown parser
-  hello_plugin/   Minimal example plugin
+    backend/      Persistence seam — Local provider with IndexedDB
+    entity_plugin/  Runtime entity/scene system ("scene" subsystem)
+    scene_plugin/   .scene v1 binary decoder (registered as asset codec)
+    math/         vec3_t / quat_t / mat4 + camera helpers
+    renderer/     GPU API vtable definition
+    renderer_null/  Headless null renderer (used in native tests)
+    renderer_webgl/ WebGL renderer (WASM only)
+    frame_graph/  Frostbite-style render graph (GPU lent at execute time)
+    scene_renderer/ Draws COMPONENT_RENDER entities via the frame graph (#172)
+    imgui_plugin/   ImGui debug UI shell
+    kruddboard/     In-browser tabbed authoring surface + markdown parser
+    hello_plugin/   Minimal example plugin
 
 docs/             Design documentation
   backend-abstraction.md  Local provider + IndexedDB persistence design
@@ -36,7 +38,6 @@ docs/             Design documentation
   scene-renderer.md       Entity rendering through the frame graph
   scene-format.md         Binary .scene v1 file format
 
-CMakeLists.txt    Root build — emcmake cmake drives everything
 build/            Build output (gitignored) — index.html, index.js, index.wasm
 ```
 
@@ -65,7 +66,7 @@ ABI boundaries.
 ## Building
 
 ```sh
-emcmake cmake -B build          # configure (requires Emscripten)
+emcmake cmake -S cmake -B build # configure (requires Emscripten)
 cmake --build build             # compile — outputs build/index.{html,js,wasm}
 ```
 
@@ -99,7 +100,7 @@ a workflow — don't create or edit them by hand in the GitHub UI.
 
 - C owns the loop. `engine_tick` is the frame callback passed to
   `emscripten_set_main_loop`. No JS/TS shell — Emscripten generates the glue.
-- The plugin vtable headers in `plugins/include/` are the ABI. Changes to
+- The plugin vtable headers in `cmake/plugins/include/` are the ABI. Changes to
   exported function signatures are breaking.
 - Rendering is WebGL via `renderer_webgl`. No WebGPU yet.
 - Native target compiles the modules and plugins for unit testing only; the

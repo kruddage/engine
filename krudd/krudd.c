@@ -49,7 +49,7 @@ static const char *getenv_or(const char *key, const char *dflt)
  */
 static const char *configure_cmd(void)
 {
-	return getenv_or("KRUDD_CONFIGURE", "cmake -B build");
+	return getenv_or("KRUDD_CONFIGURE", "cmake -S cmake -B build");
 }
 
 static const char *build_cmd(void)

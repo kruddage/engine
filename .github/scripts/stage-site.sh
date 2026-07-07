@@ -6,7 +6,7 @@
 # _deps/ (a FetchContent checkout whose imgui-src is a git gitlink), which makes
 # the GitHub Pages branch build fail with "No url found for submodule path".
 #
-# Usage: scripts/stage-site.sh [BUILD_DIR] [OUT_DIR]
+# Usage: .github/scripts/stage-site.sh [BUILD_DIR] [OUT_DIR]
 #        defaults: BUILD_DIR=build, OUT_DIR=public
 #
 # All JS and WASM outputs are renamed with the git short hash so browsers

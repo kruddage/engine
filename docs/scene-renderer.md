@@ -6,7 +6,7 @@ built-in primitive placed as a `COMPONENT_RENDER` entity shows up on screen, and
 multiple entities at different transforms draw at their correct, depth-sorted
 world positions.
 
-It lives in `plugins/scene_renderer/` and registers as the `scene_renderer`
+It lives in `krudd/cmake/plugins/scene_renderer/` and registers as the `scene_renderer`
 subsystem. It replaced the throwaway hardcoded triangle that `renderer_webgl`
 used to draw each frame.
 
@@ -54,7 +54,7 @@ target.
 
 ## Mesh blob format
 
-`plugins/include/mesh.h` defines the delivery format primitives ride over the
+`krudd/cmake/plugins/include/mesh.h` defines the delivery format primitives ride over the
 byte-oriented asset seam:
 
 ```
@@ -63,7 +63,7 @@ struct mesh_blob { u32 magic; u32 vertex_count; u32 index_count; u32 index_forma
     followed by index_count  * uint16_t
 ```
 
-`plugins/asset/primitives.c` generates cube/sphere/plane/pyramid blobs, which
+`krudd/cmake/plugins/asset/primitives.c` generates cube/sphere/plane/pyramid blobs, which
 `asset_plugin` seeds as the `data` of the `builtin://…` primitive assets.
 
 ## Demo seed

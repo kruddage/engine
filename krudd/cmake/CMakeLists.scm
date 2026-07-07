@@ -12,14 +12,15 @@
 ; (verbatim ...) unchanged. When their turn comes, they become forms too and the
 ; verbatim blocks shrink to nothing.
 ;
-; Rendered to CMakeLists.txt (repo root) by ./krudd.sh build. Do not edit the
+; Rendered to krudd/cmake/CMakeLists.txt by ./krudd.sh build. Do not edit the
 ; .txt.
 
 ((verbatim "cmake_minimum_required(VERSION 3.20)
 
-# The top-level CMakeLists.txt lives at the repo root, alongside VERSION,
-# CHANGELOG.md and the rest of the repo metadata it reads.
-get_filename_component(KRUDD_REPO_ROOT \"${CMAKE_CURRENT_SOURCE_DIR}\" ABSOLUTE)
+# The top-level CMakeLists.txt lives at krudd/cmake/ while VERSION,
+# CHANGELOG.md and the rest of the repo metadata stay at the repo root, two
+# levels up.
+get_filename_component(KRUDD_REPO_ROOT \"${CMAKE_CURRENT_SOURCE_DIR}/../..\" ABSOLUTE)
 
 file(READ \"${KRUDD_REPO_ROOT}/VERSION\" _krudd_version_raw)
 string(STRIP \"${_krudd_version_raw}\" _krudd_version)

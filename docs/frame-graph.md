@@ -1,4 +1,4 @@
-# Frame Graph — `plugins/frame_graph`
+# Frame Graph — `krudd/cmake/plugins/frame_graph`
 
 The frame graph is a Frostbite/Unreal-style render graph
 ([O'Donnell, GDC 2017](https://www.gdcvault.com/play/1024612/FrameGraph-Extensible-Rendering-Architecture-in);

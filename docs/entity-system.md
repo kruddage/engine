@@ -12,7 +12,7 @@ pointer-chasing, and it grows cleanly toward a sparse-set ECS later.
 
 ## Storage (`struct world`)
 
-Every column is indexed by entity id. Defined in `plugins/include/world.h`:
+Every column is indexed by entity id. Defined in `krudd/cmake/plugins/include/world.h`:
 
 | Column         | Type                | Meaning                                  |
 |----------------|---------------------|------------------------------------------|
@@ -87,7 +87,7 @@ Load order in `engine.c`'s `plugins[]` puts `entity_plugin` after
 ## Renderer access (`struct entity_api`)
 
 Other plugins reach the world through the `"scene"` subsystem api in
-`plugins/include/entity_api.h`:
+`krudd/cmake/plugins/include/entity_api.h`:
 
 ```c
 const struct entity_api *e = subsystem_manager_get_api(mgr, "scene");

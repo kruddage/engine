@@ -1,0 +1,32 @@
+name: Release label gate
+
+# Every PR needs exactly one release:{breaking,feature,fix,chore} label (see
+# .github/labels.yml) so compute-version.js can fold it into the next
+# version at build time. `labeled`/`unlabeled` are included so the check
+# re-runs when someone only changes the label, without pushing a commit.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require exactly one release:* label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const names = context.payload.pull_request.labels
+              .map((l) => l.name)
+              .filter((n) => n.startsWith("release:"));
+
+            if (names.length === 0) {
+              core.setFailed(
+                "This PR needs a release:{breaking,feature,fix,chore} label " +
+                "so CI can derive the next version from it. See .github/labels.yml."
+              );
+            } else if (names.length > 1) {
+              core.setFailed(
+                `This PR has ${names.length} release:* labels (${names.join(", ")}) — it needs exactly one.`
+              );
+            }

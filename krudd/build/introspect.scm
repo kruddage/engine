@@ -57,9 +57,16 @@
 
 (define (krudd-repo-root) (or (getenv "KRUDD_ROOT") "."))
 
-;; The version string, read and stripped from the repo-root VERSION file.
+;; The version string. There is no VERSION file and no git tag to read: CI
+;; computes the real semver by folding each merged PR's release:{breaking,
+;; feature,fix,chore} label (see .github/workflows/ci.yml and
+;; .github/scripts/compute-version.js) and hands it down via KRUDD_VERSION.
+;; A plain local `./krudd.sh build` has no GitHub token to do that fold with,
+;; so it falls back to a placeholder — real version numbers only ever come
+;; from CI.
 (define (krudd-version)
-	(krudd-strip (krudd-slurp (string-append (krudd-repo-root) "/VERSION"))))
+	(let ((v (getenv "KRUDD_VERSION")))
+		(if (and v (> (string-length v) 0)) v "0.0.0-dev")))
 
 ;; Run git in the repo root and return its captured, stripped stdout ("" on
 ;; failure — git absent, not a repo, empty result), mirroring how CMake fell
@@ -70,18 +77,22 @@
 				 " 2>/dev/null")
 		  #t)))
 
-;; The build number: commits since the current version was introduced, found by
-;; the same VERSION-anchor walk the CMake bootstrap did. Defaults to "0".
-(define (krudd-build-number version)
-	(let ((anchor (krudd-git
-			(string-append "log -1 --format=%H -S \"" version
-				       "\" -- VERSION"))))
-		(if (> (string-length anchor) 0)
-		    (let ((count (krudd-git
-				   (string-append "rev-list --count HEAD ^"
-						  anchor))))
-		      (if (> (string-length count) 0) count "0"))
-		    "0")))
+;; The build number: how many merged PRs CI folded to reach KRUDD_VERSION,
+;; supplied alongside it as KRUDD_BUILD_NUMBER. "0" outside CI.
+(define (krudd-build-number)
+	(let ((n (getenv "KRUDD_BUILD_NUMBER")))
+		(if (and n (> (string-length n) 0)) n "0")))
+
+;; MAJOR.MINOR.PATCH out of a version string that may carry a CI prerelease
+;; suffix (e.g. "10.1.0-pr482+a1b2c3d" for an unmerged PR build) — take only
+;; what precedes the first "-" or "+".
+(define (krudd-version-core version)
+	(let loop ((i 0))
+		(cond ((>= i (string-length version)) version)
+		      ((or (char=? (string-ref version i) #\-)
+			   (char=? (string-ref version i) #\+))
+		       (substring version 0 i))
+		      (else (loop (+ i 1))))))
 
 ;; The short commit hash, or "unknown" when git can't answer.
 (define (krudd-commit-hash)
@@ -128,13 +139,13 @@
 ;; variables project() and git-build-info supply.
 (define (krudd-template-values)
 	(let* ((version (krudd-version))
-	       (parts   (krudd-split version #\.)))
+	       (parts   (krudd-split (krudd-version-core version) #\.)))
 		(list (cons "PROJECT_NAME" "krudd")
 		      (cons "PROJECT_VERSION" version)
 		      (cons "PROJECT_VERSION_MAJOR" (list-ref parts 0))
 		      (cons "PROJECT_VERSION_MINOR" (list-ref parts 1))
 		      (cons "PROJECT_VERSION_PATCH" (list-ref parts 2))
-		      (cons "ENGINE_BUILD_NUMBER" (krudd-build-number version))
+		      (cons "ENGINE_BUILD_NUMBER" (krudd-build-number))
 		      (cons "GIT_COMMIT_HASH" (krudd-commit-hash)))))
 
 ;; Replace every occurrence of OLD in S with NEW.

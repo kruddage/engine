@@ -22,7 +22,10 @@ krudd/                    The build tool and the whole build tree it owns —
       ninja.scm           The emitter — renders build.ninja from the specs
       resolve.scm         Transitive include/link resolver (+ its tests)
       manifest.scm        The list of owned directories
-      modules/            C source modules (compiled into the main WASM module)
+      modules/            C source modules, all compiled into the single main
+                          WASM module (no dynamic loading). Each subsystem
+                          registers through a vtable; engine.c calls each one's
+                          <name>_plugin_entry at boot in dependency order.
         core/             Engine heartbeat — init/tick/shutdown, subsystem
                           manager, ring buffer, and the embedded s7 Scheme
                           runtime (script.c + runtime.scm) that owns the body
@@ -30,16 +33,11 @@ krudd/                    The build tool and the whole build tree it owns —
         log/              Structured logging with level filtering and
                           ring-buffer history
         memory/           Allocator and fixed-size pool allocator
-      plugins/            Engine plugins — each registers a subsystem through a
-                          vtable. All compiled into the single WASM module (no
-                          dynamic loading); engine.c calls each plugin's
-                          <name>_plugin_entry at boot in dependency order
         include/          Public vtable headers (asset_api.h, entity_api.h,
-                          backend_api.h, renderer.h, math_types.h, …)
+                          backend_api.h, renderer.h, math_types.h, …) — the ABI
         asset/            Asset catalog — enumeration, mutation, codec
                           registration; built-in primitive geometry
                           (primitives.c)
-        backend/          Persistence seam — Local provider with IndexedDB
         entity_plugin/    Runtime entity/scene system ("scene" subsystem)
         scene_plugin/     .scene v1 binary decoder (registered as asset codec)
         math/             vec3_t / quat_t / mat4 + camera helpers
@@ -123,7 +121,7 @@ a workflow — don't create or edit them by hand in the GitHub UI.
   callback passed to `emscripten_set_main_loop`, but it delegates the frame to
   the embedded s7 runtime's `(tick)` (see `docs/scheme-runtime.md`). No JS/TS
   shell — Emscripten generates the glue.
-- The plugin vtable headers in `krudd/build/ninja/plugins/include/` are the ABI.
+- The plugin vtable headers in `krudd/build/ninja/modules/include/` are the ABI.
   Changes to exported function signatures are breaking.
 - Rendering is WebGL via `renderer_webgl`. No WebGPU yet.
 - Native target compiles the modules and plugins for unit testing only; the

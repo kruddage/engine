@@ -7,8 +7,8 @@ files; s7 keeps its own notice (see `LICENSE.s7`).
 
 s7 is linked into the `krudd` **host tool** (see `../krudd.c`), where it runs the
 Scheme build description `../build.scm`. This is s7 as *build authority* — the
-same interpreter will later run in the browser as a side module, but that is a
-separate deployment.
+same interpreter also runs in the browser, compiled straight into the single
+WASM module through the `script` library, but that is a separate deployment.
 
 ## Pin
 

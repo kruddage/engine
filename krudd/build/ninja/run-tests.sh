@@ -45,7 +45,7 @@ export KRUDD_NINJA_OUT="$work/build.ninja"
 
 # Stage 1b: the monolang reference oracle — evaluate math.scm's (define-c-fn)
 # bodies in s7 and check the numbers, the same math the generated C is checked
-# for by plugins/math/math_test.c in the native stage below.
+# for by modules/math/math_test.c in the native stage below.
 "$s7bin" "$root/krudd/build/modules/math_test.scm"
 
 # Stage 2: build + run the native suite through the generated build.ninja.
@@ -57,9 +57,10 @@ else
 	echo "krudd/build/ninja: ninja(1) not found — skipping native build stage"
 fi
 
-# Stage 3: build the WASM output (main module + side modules) through the same
-# build.ninja, when the Emscripten toolchain is available. No emcmake — the
-# whole WASM path goes through explicit emcc/em++ calls.
+# Stage 3: build the WASM output (the single main module, every plugin compiled
+# into it) through the same build.ninja, when the Emscripten toolchain is
+# available. No emcmake — the whole WASM path goes through explicit emcc/em++
+# calls.
 if command -v ninja >/dev/null 2>&1 && command -v emcc >/dev/null 2>&1; then
 	echo "krudd/build/ninja: building WASM output via ninja + emcc"
 	# imgui is fetched by the generator; make sure a checkout is present.

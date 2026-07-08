@@ -58,12 +58,15 @@ krudd/build/ninja/
     core/    Engine heartbeat — init/tick/shutdown, subsystem manager
     log/     Structured logging with level filtering and ring-buffer history
     memory/  Allocator and fixed-size pool allocator
-  plugins/   Engine plugins, all compiled into the single WASM module
+    include/ Public vtable headers (the plugin ABI)
+    asset/ entity_plugin/ renderer_webgl/ frame_graph/ …
+             Engine subsystems, all compiled into the single WASM module
 ```
 
-Every plugin is compiled straight into the one WASM module; at boot `engine.c` calls each
-plugin's `<name>_plugin_entry` in dependency order. A plugin discovers engine services through
-`subsystem_manager_get_api()` and interacts via vtables — no direct named imports required.
+Every module is compiled straight into the one WASM module; at boot `engine.c` calls each
+subsystem's `<name>_plugin_entry` in dependency order. A subsystem discovers engine services
+through `subsystem_manager_get_api()` and interacts via vtables — no direct named imports
+required.
 
 ## Building
 

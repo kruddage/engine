@@ -11,6 +11,6 @@
 	(executable "math_test"
 		(sources "math_test.c" "math.c" "camera.c"
 			 (raw "${generated}/math_gen.c"))
-		(private (root "plugins/include"))
+		(private (root "modules/include"))
 		(link "m"))
 	(test "math" "math_test")))

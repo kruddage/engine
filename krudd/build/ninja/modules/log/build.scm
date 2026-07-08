@@ -4,7 +4,7 @@
 ; buffer itself lives in modules/core and compiles straight in.
 ((library "log"
 	(sources "log.c" (root "modules/core/ring_buf.c"))
-	(public "include" (root "plugins/include"))
+	(public "include" (root "modules/include"))
 	(private (root "modules/core/include")))
  (native-only
 	(executable "log_test"

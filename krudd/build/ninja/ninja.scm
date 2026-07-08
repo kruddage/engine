@@ -3,20 +3,25 @@
 ; ninja.scm — the Ninja synthesizer, krudd's build backend.
 ;
 ; It reads the directory-spec forms (library, interface-library, executable,
-; test, side-module) that describe each owned directory and renders a single
-; build.ninja from them, driven by krudd/build/build.scm. Ninja has no notion of
-; directories or transitive usage requirements, so this emitter renders the
-; whole manifest into one build.ninja and leans on resolve.scm to flatten the
-; include graph that CMake's target_link_libraries once did implicitly.
+; test, and the native-only/wasm-only toolchain gates) that describe each owned
+; directory and renders a single build.ninja from them, driven by
+; krudd/build/build.scm. Ninja has no notion of directories or transitive usage
+; requirements, so this emitter renders the whole manifest into one build.ninja
+; and leans on resolve.scm to flatten the include graph that CMake's
+; target_link_libraries once did implicitly.
 ;
 ; Coverage of the spec forms:
 ;   library / executable   compile each source to an object, then archive/link
 ;   interface-library      no build output — only include dirs, via resolve.scm
 ;   test                   a stamp rule that runs the test executable
-;   side-module            a plugin's translation units, compiled (with the
-;                          plugin's own compiler/flags) into objects that fold
-;                          straight into the single WASM module — no standalone
-;                          plugin .wasm, no dynamic loading
+;   native-only / wasm-only
+;                          a toolchain gate: the forms inside build only under
+;                          that toolchain. A wasm-only library (imgui, the
+;                          markdown board, the scene renderer) has no native
+;                          archive; it is compiled with emcc/em++ and folded
+;                          into the single WASM module. There are no standalone
+;                          plugin .wasm outputs and no dynamic loading — every
+;                          module is one static archive in the main module.
 ;
 ; Object files live at obj/<target>/<source>.o — namespaced per target because a
 ; source compiled into two targets sees different include flags (exactly as
@@ -106,16 +111,11 @@
 (define ninja-lines '())
 (define ninja-native '())
 (define ninja-wasm '())
-(define ninja-plugin-objs '())
 
 (define (ninja-emit line) (set! ninja-lines (cons line ninja-lines)))
 (define (ninja-emit* lines) (for-each ninja-emit lines))
 (define (ninja-native! out) (set! ninja-native (cons out ninja-native)))
 (define (ninja-wasm! out) (set! ninja-wasm (cons out ninja-wasm)))
-;; Every plugin object compiled from a side-module spec, folded into the single
-;; main module's link (see ninja-emit-main-module).
-(define (ninja-plugin-obj! out)
-	(set! ninja-plugin-objs (cons out ninja-plugin-objs)))
 
 ;; Object-path form of a resolved source path: the krudd path tokens become
 ;; plain directory names (not the $imgui/generated Ninja vars ninja-wasm-ref
@@ -205,50 +205,19 @@
 		(ninja-emit "")
 		(ninja-native! stamp)))
 
-;; side-module: a plugin's translation units, compiled with its own compiler /
-;; flags / include list into per-source WASM objects that fold straight into the
-;; single main module (ninja-emit-main-module links ninja-plugin-objs). There are
-;; no standalone plugin .wasm outputs any more; the objects reach the `wasm`
-;; target transitively through index.html.
-(define (ninja-side-field clauses head deflt)
-	(let ((c (rz-clause head clauses))) (if c (cadr c) deflt)))
-
-(define (ninja-emit-side-module dir form)
-	(let* ((name (cadr form))
-	       (clauses (cddr form))
-	       (compiler (if (eq? (ninja-side-field clauses 'compiler 'c) 'cxx)
-			     "$empp" "$emcc"))
-	       (flags (let ((c (rz-clause 'flags clauses)))
-			(if c (cdr c) '())))
-	       (includes (let ((c (rz-clause 'includes clauses)))
-			   (if c (cdr c) '())))
-	       (sources (let ((c (rz-clause 'sources clauses)))
-			  (if c (cdr c) '())))
-	       (incflags (ninja-wasm-include-flags
-			   (map (lambda (i) (rz-path dir i)) includes))))
-		(for-each
-		  (lambda (s)
-		    (let* ((tp (rz-path dir s))
-			   (obj (ninja-wasm-obj name (ninja-obj-clean tp))))
-			(ninja-emit (string-append "build " obj ": sm_cc "
-						   (ninja-wasm-ref tp)))
-			(ninja-emit (string-append "  smcc = " compiler))
-			(ninja-emit (string-append "  smflags = "
-						   (ninja-join " " flags)))
-			(ninja-emit (string-append "  includes = " incflags))
-			(ninja-plugin-obj! obj)))
-		  sources)
-		(ninja-emit "")))
-
 ;; Dispatch one form. Non-target scaffolding forms (verbatim/set/subdirs/…) are
 ;; the root spec's project bootstrap, not this emitter's job, and are skipped.
+;; wasm-only forms emit nothing on this (native) walk: their libraries are
+;; recompiled with emcc/em++ and folded into the main module through the WASM
+;; library map (ninja-build-libmap descends into wasm-only for that), so a
+;; native `ninja` never tries to build them.
 (define (ninja-emit-form table dir form)
 	(case (car form)
 	  ((library) (ninja-emit-library table dir form))
 	  ((interface-library) #t)   ; include-only, handled by resolve.scm
 	  ((executable) (ninja-emit-executable table dir form))
 	  ((test) (ninja-emit-test form))
-	  ((side-module) (ninja-emit-side-module dir form))
+	  ((wasm-only) #t)           ; WASM toolchain only — see ninja-emit-main-module
 	  ((native-only)
 	   (for-each (lambda (f) (ninja-emit-form table dir f)) (cdr form)))
 	  (else #t)))
@@ -276,7 +245,7 @@
 	  "cflags = -std=gnu11 -Wall -Werror -Wpedantic"
 	  "cxxflags = -std=gnu11 -Wall -Werror -Wpedantic"
 	  ;; The WASM compile flags match the native ones; the Emscripten-specific
-	  ;; flags live on the sm_cc (plugin objects) and main_module rules, captured
+	  ;; flags live on the emcc_cxx (C++ modules) and main_module rules, captured
 	  ;; explicitly here rather than inherited from an emcmake toolchain file.
 	  "emcflags = -std=gnu11 -Wall -Werror -Wpedantic"
 	  ;; The embedded s7 interpreter (krudd/third_party/s7.c) is a third-party
@@ -337,26 +306,24 @@
 	  "  description = TEST $out"
 	  ""
 	  ;; WASM rules — the whole WASM path goes through explicit emcc/em++ calls,
-	  ;; no emcmake.
+	  ;; no emcmake. C sources take emcc_c with the project flags; C++ sources
+	  ;; (the imgui and markdown-board modules, plus third-party imgui) take
+	  ;; emcc_cxx, whose per-library $emcxxflags carries the C++ standard and the
+	  ;; -fno-exceptions/-fno-rtti + no-Werror the third-party sources need.
 	  "rule emcc_c"
 	  "  command = $emcc $emcflags $includes -c $in -o $out"
 	  "  description = EMCC $out"
+	  ""
+	  "rule emcc_cxx"
+	  "  command = $empp -O2 $emcxxflags $includes -c $in -o $out"
+	  "  description = EMCXX $out"
 	  ""
 	  "rule emar"
 	  "  command = rm -f $out && $emar rcs $out $in"
 	  "  description = EMAR $out"
 	  ""
-	  ;; Plugin translation units — compiled (not linked) into per-source
-	  ;; objects that fold straight into the single main module. $smcc is emcc
-	  ;; or em++ per the plugin's compiler; $smflags carries its own flags
-	  ;; (e.g. --std=c++17 for the C++ plugins and imgui). No -Werror/-Wpedantic
-	  ;; here: third-party imgui rides in through the same rule.
-	  "rule sm_cc"
-	  "  command = $smcc -O2 $smflags $includes -c $in -o $out"
-	  "  description = PLUGIN $out"
-	  ""
-	  ;; The single module: em++ links engine + every plugin object + the core
-	  ;; archives into index.{html,js,wasm}. No -sMAIN_MODULE — nothing is
+	  ;; The single module: em++ links engine + every module archive (core plus
+	  ;; each plugin) into index.{html,js,wasm}. No -sMAIN_MODULE — nothing is
 	  ;; loaded dynamically.
 	  "rule main_module"
 	  "  command = $empp $mainflags $extraflags $in -o $out"
@@ -370,8 +337,11 @@
 ;; emscripten-only source (plugin_abi.c) and the shell/pre-js live here.
 ;; ---------------------------------------------------------------------------
 
-;; name -> (dir . source-specs) for every library, so the WASM path can recompile
-;; a library's sources with emcc.
+;; name -> (dir . clauses) for every library, so the WASM path can recompile a
+;; library's sources with emcc/em++. Descends into both native-only and
+;; wasm-only: a native-only library (md_parse) never reaches the main module's
+;; link closure so it is simply never emitted, while a wasm-only library (imgui,
+;; the board, the scene renderer) is emitted here and nowhere else.
 (define (ninja-build-libmap manifest)
 	(let ((out '()))
 		(define (walk dir forms)
@@ -379,11 +349,10 @@
 			  (lambda (f)
 			    (cond ((eq? (car f) 'library)
 				   (set! out (cons (cons (cadr f)
-							 (cons dir
-							       (ninja-sources
-								 (cddr f))))
+							 (cons dir (cddr f)))
 						   out)))
-				  ((eq? (car f) 'native-only) (walk dir (cdr f)))
+				  ((memq (car f) '(native-only wasm-only))
+				   (walk dir (cdr f)))
 				  (else #t)))
 			  forms))
 		(for-each (lambda (p) (walk (car p) (cdr p))) manifest)
@@ -392,18 +361,36 @@
 (define (ninja-wasm-obj name treepath)
 	(string-append "wasm-obj/" name "/" treepath ".o"))
 
-;; Compile a library's sources with emcc and archive to wasm/lib<name>.a.
+;; The WASM compile rule for a source, by extension: C++ takes emcc_cxx (which
+;; carries the per-library $emcxxflags), everything else emcc_c.
+(define (ninja-wasm-compile-rule src)
+	(if (or (ninja-suffix? src ".cpp") (ninja-suffix? src ".cc"))
+	    "emcc_cxx" "emcc_c"))
+
+;; Compile a library's sources with emcc/em++ and archive to wasm/lib<name>.a.
+;; A library may carry (wasm-flags ...) — the C++ standard and warning switches
+;; its C++ (and third-party) translation units need; they ride on $emcxxflags,
+;; so they reach the emcc_cxx sources only, never the plain-C emcc_c ones.
 (define (ninja-emit-wasm-lib table libmap name)
 	(let* ((entry (assoc name libmap))
 	       (dir (cadr entry))
-	       (sources (cddr entry))
+	       (clauses (cddr entry))
+	       (sources (ninja-sources clauses))
+	       (cxxflags (let ((c (rz-clause 'wasm-flags clauses)))
+			   (if c (ninja-join " " (cdr c)) "")))
 	       (includes (ninja-wasm-include-flags (resolve-includes table name)))
 	       (objs (ninja-with-s7 name "emcc_s7" "wasm-obj/s7/s7.c.o"
 			(map (lambda (s)
 			       (let* ((tp (rz-path dir s))
-				      (obj (ninja-wasm-obj name tp)))
-				 (ninja-emit (string-append "build " obj ": emcc_c "
-						    (ninja-wasm-ref tp)))
+				      (clean (ninja-resolve-var tp))
+				      (obj (ninja-wasm-obj name
+					     (ninja-obj-clean tp)))
+				      (rule (ninja-wasm-compile-rule clean)))
+				 (ninja-emit (string-append "build " obj ": " rule
+						    " " (ninja-wasm-ref tp)))
+				 (if (string=? rule "emcc_cxx")
+				     (ninja-emit (string-append "  emcxxflags = "
+							cxxflags)))
 				 (ninja-emit (string-append "  includes = " includes))
 				 obj))
 			     sources)))
@@ -414,8 +401,9 @@
 		lib))
 
 ;; The main module: engine.c + the emscripten-only plugin_abi.c, compiled with
-;; emcc and linked with em++ against the WASM library closure, to
-;; index.html/.js/.wasm.
+;; emcc and linked with em++ against the whole WASM library closure — the core
+;; libraries the executable links plus every plugin module named by its
+;; (wasm-modules ...) clause — to index.html/.js/.wasm.
 (define (ninja-emit-main-module table libmap)
 	(let* ((dir "modules/core")
 	       (srcs (list "engine.c" "plugin_abi.c"))
@@ -430,18 +418,18 @@
 			      obj))
 			  srcs))
 	       (libs (map (lambda (l) (ninja-emit-wasm-lib table libmap l))
-			  (resolve-link-libs table "index"))))
+			  (resolve-wasm-module-libs table "index"))))
 		;; emcc -o index.html also emits index.js and index.wasm; declare
-		;; them as implicit outputs so $out stays just index.html. Every
-		;; plugin object (ninja-plugin-objs, gathered as the manifest's
-		;; side-module specs were walked) links in here — objects, not
-		;; archives, so all are included and inter-plugin symbol order does
-		;; not matter; wasm-ld's --gc-sections drops what main() can't reach.
+		;; them as implicit outputs so $out stays just index.html. Each
+		;; module is one archive, ordered dependents-first (the order
+		;; resolve-wasm-module-libs returns), so a plugin's undefined symbols
+		;; resolve from the core archives that follow it; each plugin's
+		;; <name>_plugin_entry is called from engine.c, so its archive member
+		;; is pulled in and wasm-ld's --gc-sections drops only what nothing
+		;; reaches.
 		(ninja-emit (string-append
 			      "build index.html | index.js index.wasm: main_module "
-			      (ninja-join " " (append objs
-						      (reverse ninja-plugin-objs)
-						      libs))))
+			      (ninja-join " " (append objs libs))))
 		(ninja-emit (string-append "  extraflags = --extern-pre-js "
 			      "$srcroot/modules/core/error_overlay.js "
 			      "--shell-file generated/shell.html"))
@@ -495,7 +483,6 @@
 		(set! ninja-lines '())
 		(set! ninja-native '())
 		(set! ninja-wasm '())
-		(set! ninja-plugin-objs '())
 		(let ((table (rz-target-table manifest))
 		      (libmap (ninja-build-libmap manifest)))
 			(resolve-check-all table)   ; fail loud on cycle / unknown

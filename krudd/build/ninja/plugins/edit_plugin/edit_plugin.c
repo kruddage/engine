@@ -107,11 +107,7 @@ static const struct subsystem edit_desc = {
 	.shutdown = edit_shutdown,
 };
 
-#ifdef __EMSCRIPTEN__
-void plugin_entry(struct subsystem_manager *mgr)
-#else
 void edit_plugin_entry(struct subsystem_manager *mgr)
-#endif
 {
 	subsystem_manager_register(mgr, &edit_desc);
 }

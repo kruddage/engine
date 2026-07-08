@@ -516,15 +516,12 @@ static const struct subsystem g_desc = {
 };
 
 /*
- * WASM: the engine's plugin_loader calls dlsym("plugin_entry").
- * Native: renamed to fg_plugin_entry to avoid symbol collision when
- * multiple plugin static libs are linked into a single test binary.
+ * Registration entry. The engine links every plugin into the single WASM
+ * module and calls each <name>_plugin_entry directly at boot; the unique name
+ * also avoids a symbol collision when several plugin static libs are linked
+ * into one native test binary.
  */
-#ifdef __EMSCRIPTEN__
-void plugin_entry(struct subsystem_manager *mgr)
-#else
 void fg_plugin_entry(struct subsystem_manager *mgr)
-#endif
 {
 #ifdef __EMSCRIPTEN__
 	g_log = subsystem_manager_get_api(mgr, "log");

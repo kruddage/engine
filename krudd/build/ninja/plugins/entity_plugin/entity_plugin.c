@@ -191,11 +191,7 @@ static const struct subsystem scene_desc = {
 	.shutdown = scene_shutdown,
 };
 
-#ifdef __EMSCRIPTEN__
-void plugin_entry(struct subsystem_manager *mgr)
-#else
 void entity_plugin_entry(struct subsystem_manager *mgr)
-#endif
 {
 	/* Resolve service vtables before register(), which calls init at once. */
 	g_codec = subsystem_manager_get_api(mgr, "asset_codec");

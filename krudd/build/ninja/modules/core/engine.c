@@ -5,7 +5,6 @@
 #include "log.h"
 #include "memory.h"
 #include "memory_api.h"
-#include "plugin_loader.h"
 #include "script.h"
 #include "stats_api.h"
 #include "version.h"
@@ -44,27 +43,47 @@ static const struct memory_api g_mem_api = {
 static struct stats_api g_stats_api;
 
 static const struct subsystem subsystems[] = {
-	{ .name = "log",           .api = &g_log_api, .init = log_init,           .shutdown = log_shutdown           },
-	{ .name = "memory",        .api = &g_mem_api, .init = mem_init,           .shutdown = mem_shutdown           },
-	{ .name = "plugin_loader",                    .init = plugin_loader_init, .shutdown = plugin_loader_shutdown },
-	{ .name = "stats",         .api = &g_stats_api                                                                },
+	{ .name = "log",    .api = &g_log_api, .init = log_init, .shutdown = log_shutdown },
+	{ .name = "memory", .api = &g_mem_api, .init = mem_init, .shutdown = mem_shutdown },
+	{ .name = "stats",  .api = &g_stats_api                                           },
 	{ NULL }
 };
 
-static const char * const plugins[] = {
-	"hello_plugin.wasm",
-	"asset_plugin.wasm",
-	"backend_plugin.wasm",
-	"scene_plugin.wasm",
-	"edit_plugin.wasm",
-	"entity_plugin.wasm",
-	"renderer_webgl.wasm",
-	"frame_graph.wasm",
-	"scene_renderer.wasm",
-	"imgui_plugin.wasm",
-	"kruddboard.wasm",
-	NULL,
-};
+#ifdef __EMSCRIPTEN__
+/*
+ * Every plugin is compiled into this single WASM module (there are no side
+ * modules and no dynamic loading); each exposes a unique <name>_plugin_entry
+ * that registers its subsystem. subsystem_manager_register() runs a subsystem's
+ * init at register time, so calling these in dependency order boots each plugin
+ * after the services it depends on — the order the old dlopen chain enforced.
+ */
+void hello_plugin_entry(struct subsystem_manager *mgr);
+void asset_plugin_entry(struct subsystem_manager *mgr);
+void backend_plugin_entry(struct subsystem_manager *mgr);
+void scene_plugin_entry(struct subsystem_manager *mgr);
+void edit_plugin_entry(struct subsystem_manager *mgr);
+void entity_plugin_entry(struct subsystem_manager *mgr);
+void renderer_webgl_plugin_entry(struct subsystem_manager *mgr);
+void fg_plugin_entry(struct subsystem_manager *mgr);
+void scene_renderer_plugin_entry(struct subsystem_manager *mgr);
+void imgui_plugin_entry(struct subsystem_manager *mgr);
+void kruddboard_plugin_entry(struct subsystem_manager *mgr);
+
+static void register_plugins(struct subsystem_manager *mgr)
+{
+	hello_plugin_entry(mgr);
+	asset_plugin_entry(mgr);
+	backend_plugin_entry(mgr);
+	scene_plugin_entry(mgr);
+	edit_plugin_entry(mgr);
+	entity_plugin_entry(mgr);
+	renderer_webgl_plugin_entry(mgr);
+	fg_plugin_entry(mgr);
+	scene_renderer_plugin_entry(mgr);
+	imgui_plugin_entry(mgr);
+	kruddboard_plugin_entry(mgr);
+}
+#endif
 
 static struct subsystem_manager manager;
 static int32_t frame_count;
@@ -116,12 +135,12 @@ EM_JS(void, krudd_signal_running, (void), {
 
 void engine_init(void)
 {
-	plugin_loader_set_manager(&manager);
-	plugin_loader_set_plugins(plugins);
 	subsystem_manager_init(&manager, subsystems);
 	frame_count = 0;
 	LOG_INFO("engine: init " ENGINE_VERSION_FULL);
 #ifdef __EMSCRIPTEN__
+	/* Register the statically-linked plugins now that core services exist. */
+	register_plugins(&manager);
 	/* Boot the Scheme image: it owns the body of the frame from here. */
 	script_init();
 	script_eval(RUNTIME_SCM);

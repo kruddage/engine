@@ -219,11 +219,7 @@ static const struct async_subsystem desc = {
 /* Plugin entry point                                                  */
 /* ------------------------------------------------------------------ */
 
-#ifdef __EMSCRIPTEN__
-void plugin_entry(struct subsystem_manager *mgr)
-#else
 void backend_plugin_entry(struct subsystem_manager *mgr)
-#endif
 {
 #ifdef __EMSCRIPTEN__
 	g_log = subsystem_manager_get_api(mgr, "log");

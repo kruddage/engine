@@ -35,8 +35,7 @@
 	(sources "engine.c")
 	(private "include" (raw "${generated}")
 		(root "plugins/include"))
-	(link "subsystem" "subsystem_manager" "log" "memory"
-		"plugin_loader" "script"))
+	(link "subsystem" "subsystem_manager" "log" "memory" "script"))
 
  (native-only
 	(executable "subsystem_test"

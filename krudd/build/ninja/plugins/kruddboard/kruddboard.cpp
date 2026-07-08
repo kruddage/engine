@@ -1823,11 +1823,7 @@ static const struct subsystem desc = {
 	kruddboard_shutdown,
 };
 
-#ifdef __EMSCRIPTEN__
-extern "C" void plugin_entry(struct subsystem_manager *mgr)
-#else
-extern "C" void kruddboard_entry(struct subsystem_manager *mgr)
-#endif
+extern "C" void kruddboard_plugin_entry(struct subsystem_manager *mgr)
 {
 #ifdef __EMSCRIPTEN__
 	g_log       = (const struct log_api *)

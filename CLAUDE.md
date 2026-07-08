@@ -30,7 +30,10 @@ krudd/                    The build tool and the whole build tree it owns —
         log/              Structured logging with level filtering and
                           ring-buffer history
         memory/           Allocator and fixed-size pool allocator
-      plugins/            Dynamically-loaded WASM side modules
+      plugins/            Engine plugins — each registers a subsystem through a
+                          vtable. All compiled into the single WASM module (no
+                          dynamic loading); engine.c calls each plugin's
+                          <name>_plugin_entry at boot in dependency order
         include/          Public vtable headers (asset_api.h, entity_api.h,
                           backend_api.h, renderer.h, math_types.h, …)
         asset/            Asset catalog — enumeration, mutation, codec
@@ -92,7 +95,8 @@ Emscripten toolchain on `PATH` (WASM).
 ./krudd.sh build                 # native: builds the static libs and runs the
                                  # test suite (test stamps run the tests)
 KRUDD_TARGET=wasm ./krudd.sh build   # WASM: outputs build/index.{html,js,wasm}
-                                 # plus the plugin side modules (needs emcc/em++)
+                                 # — one module, all plugins folded in (needs
+                                 # emcc/em++)
 ```
 
 Serve `build/` with any static file server to run the WASM build locally.

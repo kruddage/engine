@@ -13,7 +13,10 @@
 ;   library / executable   compile each source to an object, then archive/link
 ;   interface-library      no build output — only include dirs, via resolve.scm
 ;   test                   a stamp rule that runs the test executable
-;   side-module            one emcc/em++ invocation to a .wasm (part of `wasm`)
+;   side-module            a plugin's translation units, compiled (with the
+;                          plugin's own compiler/flags) into objects that fold
+;                          straight into the single WASM module — no standalone
+;                          plugin .wasm, no dynamic loading
 ;
 ; Object files live at obj/<target>/<source>.o — namespaced per target because a
 ; source compiled into two targets sees different include flags (exactly as
@@ -22,8 +25,9 @@
 ;
 ; The default target, `native`, groups everything the native (non-Emscripten)
 ; toolchain builds — every static library and every test stamp — so a bare
-; `ninja` builds and is buildable without Emscripten. Side modules build only
-; when named explicitly.
+; `ninja` builds and is buildable without Emscripten. The `wasm` target is the
+; single Emscripten module (index.{html,js,wasm}); the plugin objects reach it
+; transitively, so it is built only when named explicitly.
 
 (load (string-append (or (getenv "KRUDD_ROOT") ".")
 		     "/krudd/build/ninja/resolve.scm"))
@@ -102,11 +106,23 @@
 (define ninja-lines '())
 (define ninja-native '())
 (define ninja-wasm '())
+(define ninja-plugin-objs '())
 
 (define (ninja-emit line) (set! ninja-lines (cons line ninja-lines)))
 (define (ninja-emit* lines) (for-each ninja-emit lines))
 (define (ninja-native! out) (set! ninja-native (cons out ninja-native)))
 (define (ninja-wasm! out) (set! ninja-wasm (cons out ninja-wasm)))
+;; Every plugin object compiled from a side-module spec, folded into the single
+;; main module's link (see ninja-emit-main-module).
+(define (ninja-plugin-obj! out)
+	(set! ninja-plugin-objs (cons out ninja-plugin-objs)))
+
+;; Object-path form of a resolved source path: the krudd path tokens become
+;; plain directory names (not the $imgui/generated Ninja vars ninja-wasm-ref
+;; produces) so obj/<target>/... stays a real relative filesystem path.
+(define (ninja-obj-clean p)
+	(krudd-replace (krudd-replace p "${imgui}" "imgui")
+		       "${generated}" "generated"))
 
 ;; Compile one source of TARGET (in DIR) with INCLUDES; emit the build stanza
 ;; and return the object path.
@@ -189,10 +205,11 @@
 		(ninja-emit "")
 		(ninja-native! stamp)))
 
-;; side-module: one emcc/em++ call to ${name}.wasm. Uses the form's own include
-;; and source lists verbatim (the WASM builds spell out every -I explicitly),
-;; resolving the CMake variables they reference to real paths. A side module is
-;; part of the `wasm` target, not the native default.
+;; side-module: a plugin's translation units, compiled with its own compiler /
+;; flags / include list into per-source WASM objects that fold straight into the
+;; single main module (ninja-emit-main-module links ninja-plugin-objs). There are
+;; no standalone plugin .wasm outputs any more; the objects reach the `wasm`
+;; target transitively through index.html.
 (define (ninja-side-field clauses head deflt)
 	(let ((c (rz-clause head clauses))) (if c (cadr c) deflt)))
 
@@ -207,19 +224,21 @@
 			   (if c (cdr c) '())))
 	       (sources (let ((c (rz-clause 'sources clauses)))
 			  (if c (cdr c) '())))
-	       (wasm (string-append name ".wasm")))
-		(ninja-emit (string-append "build " wasm ": side_module "
-			      (ninja-join " "
-				(map (lambda (s) (ninja-wasm-ref (rz-path dir s)))
-				     sources))))
-		(ninja-emit (string-append "  smcc = " compiler))
-		(ninja-emit (string-append "  smflags = " (ninja-join " " flags)))
-		(ninja-emit (string-append "  includes = "
-			      (ninja-wasm-include-flags (map (lambda (i)
-							       (rz-path dir i))
-							     includes))))
-		(ninja-emit "")
-		(ninja-wasm! wasm)))
+	       (incflags (ninja-wasm-include-flags
+			   (map (lambda (i) (rz-path dir i)) includes))))
+		(for-each
+		  (lambda (s)
+		    (let* ((tp (rz-path dir s))
+			   (obj (ninja-wasm-obj name (ninja-obj-clean tp))))
+			(ninja-emit (string-append "build " obj ": sm_cc "
+						   (ninja-wasm-ref tp)))
+			(ninja-emit (string-append "  smcc = " compiler))
+			(ninja-emit (string-append "  smflags = "
+						   (ninja-join " " flags)))
+			(ninja-emit (string-append "  includes = " incflags))
+			(ninja-plugin-obj! obj)))
+		  sources)
+		(ninja-emit "")))
 
 ;; Dispatch one form. Non-target scaffolding forms (verbatim/set/subdirs/…) are
 ;; the root spec's project bootstrap, not this emitter's job, and are skipped.
@@ -257,10 +276,9 @@
 	  "cflags = -std=gnu11 -Wall -Werror -Wpedantic"
 	  "cxxflags = -std=gnu11 -Wall -Werror -Wpedantic"
 	  ;; The WASM compile flags match the native ones; the Emscripten-specific
-	  ;; flags live on the side_module and main_module rules, captured
+	  ;; flags live on the sm_cc (plugin objects) and main_module rules, captured
 	  ;; explicitly here rather than inherited from an emcmake toolchain file.
 	  "emcflags = -std=gnu11 -Wall -Werror -Wpedantic"
-	  "smbase = -sSIDE_MODULE=1 -O2"
 	  ;; The embedded s7 interpreter (krudd/third_party/s7.c) is a third-party
 	  ;; amalgamation compiled the way krudd.sh compiles it for the build tool:
 	  ;; warnings off and the same feature switches. It cannot go through the
@@ -279,13 +297,15 @@
 	  ;;     throws "Argument 1 can't be a resizable ArrayBuffer...". Opting out
 	  ;;     keeps memory growth (copy into a fresh plain ArrayBuffer on grow),
 	  ;;     which the Web Crypto API accepts.
-	  ;;   -sMALLOC=mimalloc  the one allocator: libc, FETCH, the dynamic
-	  ;;     linker, every side module, and modules/memory (which allocates
-	  ;;     through libc) all share this single heap. Two allocators over one
-	  ;;     growable heap corrupted on growth.
+	  ;;   -sMALLOC=mimalloc  the one allocator: libc, FETCH, and
+	  ;;     modules/memory (which allocates through libc) all share this
+	  ;;     single heap. Two allocators over one growable heap corrupted on
+	  ;;     growth.
+	  ;; The engine is a single WASM module: every plugin is compiled straight
+	  ;; into it (no -sMAIN_MODULE / side modules, no dynamic linking).
 	  (string-append "mainflags = -sENVIRONMENT=web -sALLOW_MEMORY_GROWTH=1 "
 			 "-sGROWABLE_ARRAYBUFFERS=0 -sMALLOC=mimalloc "
-			 "-sMAIN_MODULE=1 -sFETCH=1 -sMAX_WEBGL_VERSION=2 "
+			 "-sFETCH=1 -sMAX_WEBGL_VERSION=2 "
 			 "-sEXPORTED_FUNCTIONS=_main")
 	  ""
 	  "rule cc"
@@ -326,13 +346,21 @@
 	  "  command = rm -f $out && $emar rcs $out $in"
 	  "  description = EMAR $out"
 	  ""
-	  "rule side_module"
-	  "  command = $smcc $smbase $smflags $includes -o $out $in"
-	  "  description = SIDE_MODULE $out"
+	  ;; Plugin translation units — compiled (not linked) into per-source
+	  ;; objects that fold straight into the single main module. $smcc is emcc
+	  ;; or em++ per the plugin's compiler; $smflags carries its own flags
+	  ;; (e.g. --std=c++17 for the C++ plugins and imgui). No -Werror/-Wpedantic
+	  ;; here: third-party imgui rides in through the same rule.
+	  "rule sm_cc"
+	  "  command = $smcc -O2 $smflags $includes -c $in -o $out"
+	  "  description = PLUGIN $out"
 	  ""
+	  ;; The single module: em++ links engine + every plugin object + the core
+	  ;; archives into index.{html,js,wasm}. No -sMAIN_MODULE — nothing is
+	  ;; loaded dynamically.
 	  "rule main_module"
 	  "  command = $empp $mainflags $extraflags $in -o $out"
-	  "  description = MAIN_MODULE $out"
+	  "  description = LINK(wasm) $out"
 	  ""))
 
 ;; ---------------------------------------------------------------------------
@@ -404,10 +432,16 @@
 	       (libs (map (lambda (l) (ninja-emit-wasm-lib table libmap l))
 			  (resolve-link-libs table "index"))))
 		;; emcc -o index.html also emits index.js and index.wasm; declare
-		;; them as implicit outputs so $out stays just index.html.
+		;; them as implicit outputs so $out stays just index.html. Every
+		;; plugin object (ninja-plugin-objs, gathered as the manifest's
+		;; side-module specs were walked) links in here — objects, not
+		;; archives, so all are included and inter-plugin symbol order does
+		;; not matter; wasm-ld's --gc-sections drops what main() can't reach.
 		(ninja-emit (string-append
 			      "build index.html | index.js index.wasm: main_module "
-			      (ninja-join " " (append objs libs))))
+			      (ninja-join " " (append objs
+						      (reverse ninja-plugin-objs)
+						      libs))))
 		(ninja-emit (string-append "  extraflags = --extern-pre-js "
 			      "$srcroot/modules/core/error_overlay.js "
 			      "--shell-file generated/shell.html"))
@@ -451,6 +485,7 @@
 		(set! ninja-lines '())
 		(set! ninja-native '())
 		(set! ninja-wasm '())
+		(set! ninja-plugin-objs '())
 		(let ((table (rz-target-table manifest))
 		      (libmap (ninja-build-libmap manifest)))
 			(resolve-check-all table)   ; fail loud on cycle / unknown

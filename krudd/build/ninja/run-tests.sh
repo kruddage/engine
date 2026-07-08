@@ -43,6 +43,11 @@ fi
 export KRUDD_NINJA_OUT="$work/build.ninja"
 "$s7bin" "$root/krudd/build/ninja/resolve_test.scm"
 
+# Stage 1b: the monolang reference oracle — evaluate math.scm's (define-c-fn)
+# bodies in s7 and check the numbers, the same math the generated C is checked
+# for by plugins/math/math_test.c in the native stage below.
+"$s7bin" "$root/krudd/build/modules/math_test.scm"
+
 # Stage 2: build + run the native suite through the generated build.ninja.
 if command -v ninja >/dev/null 2>&1; then
 	echo "krudd/build/ninja: building native suite via ninja"

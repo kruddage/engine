@@ -739,3 +739,138 @@
 	  (krudd-gen-shim shim-out header-name base
 			  (krudd-bytes->c-init (krudd-slurp in))
 			  structs exports names label)))
+
+;; ===========================================================================
+;; The monolang: lower (define-c-fn ...) arithmetic bodies to native C.
+;;
+;; This is a different screw from the scheme-module ABI above. That one bakes an
+;; s7 image and marshals across a runtime s7_call; this one *transpiles* the
+;; arithmetic body to standalone C — no interpreter at runtime, so the same
+;; source can later drive WGSL/Metal/GLSL backends a shader could actually run.
+;; v1 is C-only and deliberately narrow: scalar float arithmetic, let* locals, a
+;; whitelist of intrinsics, and mat4-valued returns. Anything outside the
+;; vocabulary is a loud build error (see krudd/build/modules/math.scm), never
+;; silently emitted.
+;; ===========================================================================
+
+;; Backend spellings. binops render infix; intrinsics map the backend-neutral
+;; monolang name to the C float variant. A second column per backend is all a
+;; future GLSL/Metal emitter adds here.
+(define krudd-math-binops
+	'((+ . "+") (- . "-") (* . "*") (/ . "/")))
+
+(define krudd-math-intrinsics
+	'((tan . "tanf") (sin . "sinf") (cos . "cosf") (sqrt . "sqrtf")))
+
+;; A monolang number as a C float literal: force inexact so integers still carry
+;; a decimal point (2 -> "2.0"), then suffix f (-> "2.0f").
+(define (krudd-math-num->c n)
+	(string-append (number->string (exact->inexact n)) "f"))
+
+;; A scalar arithmetic expression -> a C expression string. Compound forms are
+;; fully parenthesised, so operator precedence never depends on the emitter.
+(define (krudd-math-expr e)
+	(cond
+	  ((number? e) (krudd-math-num->c e))
+	  ((symbol? e) (krudd-snake e))
+	  ((and (pair? e) (assq (car e) krudd-math-binops))
+	   (if (< (length (cdr e)) 2)
+	       (error 'krudd-math-binop-arity e)
+	       (string-append "("
+		 (krudd-join
+		   (string-append " " (cdr (assq (car e) krudd-math-binops)) " ")
+		   (map krudd-math-expr (cdr e)))
+		 ")")))
+	  ((and (pair? e) (assq (car e) krudd-math-intrinsics))
+	   (string-append (cdr (assq (car e) krudd-math-intrinsics))
+			  "(" (krudd-join ", " (map krudd-math-expr (cdr e))) ")"))
+	  (else (error 'krudd-math-bad-expr e))))
+
+;; Split a (define-c-fn ...) signature (name (arg kind) ... -> ret) into
+;; (name ((cname . ctype) ...) ret). Only f32/f64 params for now.
+(define (krudd-math-fn-parts sig)
+	(let loop ((l (cdr sig)) (args '()))
+	  (cond ((null? l) (error 'krudd-math-no-arrow sig))
+		((eq? (car l) '->) (list (car sig) (reverse args) (cadr l)))
+		(else
+		 (let ((a (car l)))
+		   (if (not (and (pair? a) (symbol? (car a))
+				 (krudd-float-kind? (cadr a))))
+		       (error 'krudd-math-bad-arg a))
+		   (loop (cdr l)
+			 (cons (cons (krudd-snake (car a))
+				     (krudd-scalar-ctype (cadr a)))
+			       args)))))))
+
+;; A (mat4-cols (vec4 ...) x4) return: flatten the 16 column-major elements to
+;; out->m[i] = <expr>; assignments.
+(define (krudd-math-emit-mat4 cols)
+	(if (not (= (length cols) 4)) (error 'krudd-math-mat4-cols cols))
+	(let ((elts (apply append
+			    (map (lambda (c)
+				   (if (not (and (pair? c) (eq? (car c) 'vec4)
+						 (= (length (cdr c)) 4)))
+				       (error 'krudd-math-bad-col c))
+				   (cdr c))
+				 cols))))
+	  (let loop ((i 0) (l elts) (acc ""))
+	    (if (null? l) acc
+		(loop (+ i 1) (cdr l)
+		      (string-append acc "\tout->m[" (number->string i) "] = "
+				     (krudd-math-expr (car l)) ";\n"))))))
+
+;; A function body form -> C statements. let* becomes sequential float locals;
+;; the tail must build the returned mat4.
+(define (krudd-math-emit-form f)
+	(cond
+	  ((and (pair? f) (eq? (car f) 'let*))
+	   (string-append
+	     (apply string-append
+		    (map (lambda (b)
+			   (string-append "\tfloat " (krudd-snake (car b)) " = "
+					  (krudd-math-expr (cadr b)) ";\n"))
+			 (cadr f)))
+	     "\n"
+	     (krudd-math-emit-form (caddr f))))
+	  ((and (pair? f) (eq? (car f) 'mat4-cols))
+	   (krudd-math-emit-mat4 (cdr f)))
+	  (else (error 'krudd-math-bad-body f))))
+
+;; One (define-c-fn ...) -> a C function. A -> mat4 return lowers to the
+;; engine's void f(struct mat4 *out, ...) convention.
+(define (krudd-math-emit-fn form)
+	(let* ((parts (krudd-math-fn-parts (cadr form)))
+	       (name  (krudd-snake (car parts)))
+	       (args  (cadr parts))
+	       (ret   (caddr parts))
+	       (body  (cddr form)))
+	  (if (not (eq? ret 'mat4)) (error 'krudd-math-unsupported-return ret))
+	  (if (not (= (length body) 1)) (error 'krudd-math-body-arity form))
+	  (string-append
+	    "void " name "(struct mat4 *out"
+	    (apply string-append
+		   (map (lambda (a) (string-append ", " (cdr a) " " (car a))) args))
+	    ")\n{\n"
+	    (krudd-math-emit-form (car body))
+	    "}\n")))
+
+;; Generate the native C for the monolang module at IN, writing it to C-OUT. The
+;; module's mat4-valued functions call through struct mat4 (declared in the
+;; hand-written math_types.h the generated file includes).
+(define (krudd-emit-math-module in c-out)
+	(let* ((forms (krudd-scm-forms in))
+	       (fns   (krudd-filter (lambda (f)
+				      (and (pair? f) (eq? (car f) 'define-c-fn)))
+				    forms))
+	       (label (krudd-rel-label in)))
+	  (if (null? fns) (error 'krudd-math-no-fns in))
+	  (call-with-output-file c-out
+	    (lambda (port)
+	      (write-string
+		(string-append
+		  "/* SPDX-License-Identifier: GPL-2.0-or-later */\n"
+		  "/* Generated by krudd from " label ". Do not edit. */\n"
+		  "#include \"math_types.h\"\n\n"
+		  "#include <math.h>\n\n"
+		  (krudd-join "\n" (map krudd-math-emit-fn fns)))
+		port)))))

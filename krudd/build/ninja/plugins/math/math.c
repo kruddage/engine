@@ -53,23 +53,10 @@ void mat4_mul(struct mat4 *out, const struct mat4 *a, const struct mat4 *b)
 }
 
 /*
- * Standard GL perspective: right-handed, depth in NDC [-1, 1].
- * Passing this directly to glUniformMatrix4fv with transpose=GL_FALSE
- * produces the same result as glm::perspective.
+ * mat4_perspective is generated from krudd/build/modules/math.scm by krudd's
+ * monolang emitter (into ${generated}/math_gen.c) — it is intentionally not
+ * hand-written here.
  */
-void mat4_perspective(struct mat4 *out, float fov_y, float aspect,
-		      float near, float far)
-{
-	float f         = 1.0f / tanf(fov_y * 0.5f);
-	float inv_range = 1.0f / (near - far);
-
-	memset(out->m, 0, sizeof(out->m));
-	out->m[0]  = f / aspect;
-	out->m[5]  = f;
-	out->m[10] = (far + near) * inv_range;
-	out->m[11] = -1.0f;
-	out->m[14] = 2.0f * far * near * inv_range;
-}
 
 void mat4_look_at(struct mat4 *out, const float eye[3],
 		  const float center[3], const float up[3])

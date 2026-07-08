@@ -2,11 +2,16 @@
 ;
 ; Draws COMPONENT_RENDER entities via the frame graph (#172). No library — the
 ; renderer sources compile into the native test and the WASM side module.
+;
+; camera.c calls mat4_perspective, now generated from the monolang into
+; ${generated}/math_gen.c, so both consumers of the math sources compile that
+; generated file too (math has no library to fold it into).
 ((native-only
 	(executable "scene_renderer_test"
 		(sources "scene_renderer_test.c" "scene_renderer.c"
 			(root "plugins/math/math.c")
 			(root "plugins/math/camera.c")
+			(raw "${generated}/math_gen.c")
 			(root "plugins/asset/primitives.c"))
 		(private "." (root "plugins/renderer")
 			(root "plugins/renderer_null")
@@ -21,8 +26,10 @@
 		(root "modules/core/include") (root "plugins/include"))
 	(sources (current "scene_renderer.c")
 		(root "plugins/math/math.c")
-		(root "plugins/math/camera.c"))
+		(root "plugins/math/camera.c")
+		(raw "${generated}/math_gen.c"))
 	(depends (current "scene_renderer.c")
 		(root "plugins/math/math.c")
 		(root "plugins/math/camera.c")
+		(raw "${generated}/math_gen.c")
 		(root "plugins/include/mesh.h"))))

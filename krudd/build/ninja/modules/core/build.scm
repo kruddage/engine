@@ -1,7 +1,7 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
 ;
-; Engine heartbeat — init/tick/shutdown, subsystem manager, plugin loader, and
-; the "index" executable that becomes index.html/.js/.wasm under Emscripten.
+; Engine heartbeat — init/tick/shutdown, subsystem manager, and the "index"
+; executable that becomes index.html/.js/.wasm under Emscripten.
 ;
 ; The WASM-specific shape of the "index" target — the extra plugin_abi.c source,
 ; the .html suffix, the shell/pre-js and the main-module link flags — is owned
@@ -15,11 +15,6 @@
  (library "subsystem_manager"
 	(sources "subsystem_manager.c")
 	(public "include"))
-
- (library "plugin_loader"
-	(sources "plugin_loader.c")
-	(public "include")
-	(private (root "modules/log/include") (root "plugins/include")))
 
  ;; The embedded s7 Scheme runtime. s7.c itself is folded into this archive by
  ;; the emitter (with its own relaxed compile flags — see ninja.scm), so a bare
@@ -47,11 +42,6 @@
 		(sources "subsystem_manager_test.c")
 		(link "subsystem_manager"))
 	(test "subsystem_manager" "subsystem_manager_test")
-
-	(executable "plugin_loader_test"
-		(sources "plugin_loader_test.c")
-		(link "plugin_loader"))
-	(test "plugin_loader" "plugin_loader_test")
 
 	(executable "script_test"
 		(sources "script_test.c")

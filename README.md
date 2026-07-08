@@ -55,15 +55,15 @@ krudd/build/ninja/
   resolve.scm  Transitive include/link resolver
   manifest.scm The list of owned directories
   modules/
-    core/    Engine heartbeat — init/tick/shutdown, subsystem manager, plugin loader
+    core/    Engine heartbeat — init/tick/shutdown, subsystem manager
     log/     Structured logging with level filtering and ring-buffer history
     memory/  Allocator and fixed-size pool allocator
-  plugins/   Dynamically-loaded WASM side modules
+  plugins/   Engine plugins, all compiled into the single WASM module
 ```
 
-Plugins are dynamically loaded WASM modules. Each plugin discovers engine services through
-`subsystem_manager_get_api()` and interacts via vtables — no direct named imports from the main
-module required.
+Every plugin is compiled straight into the one WASM module; at boot `engine.c` calls each
+plugin's `<name>_plugin_entry` in dependency order. A plugin discovers engine services through
+`subsystem_manager_get_api()` and interacts via vtables — no direct named imports required.
 
 ## Building
 

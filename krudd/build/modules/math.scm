@@ -1,4 +1,5 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
+;; scm-lint:off
 ;
 ; math.scm — spatial math primitives, in the monolang.
 ;
@@ -26,7 +27,9 @@
 ;   return         -> mat4  (aggregate, lowered to an out-pointer)
 ;
 ; The emitter that reads these forms lives in krudd/build/introspect.scm.
+;; scm-lint:on
 
+;; scm-lint:off
 ;; ---------------------------------------------------------------------------
 ;; Runtime prelude.
 ;;
@@ -38,27 +41,34 @@
 ;; A mat4 value is a flat 16-element list in column-major order: element (row r,
 ;; col c) is at index c*4 + r, matching struct mat4's m[] and GL's convention.
 ;; ---------------------------------------------------------------------------
+;; scm-lint:on
 
 (define (vec4 a b c d) (list a b c d))
 (define (mat4-cols c0 c1 c2 c3) (append c0 c1 c2 c3))
 
+;; scm-lint:off
 ;; define-c-fn: at runtime, expands to a real procedure (so the oracle can call
 ;; it); at synthesis time krudd reads the form as data and lowers the body to C.
 ;; The signature is (name (arg kind) ... -> ret); the runtime lambda keeps only
 ;; the argument names.
+;; scm-lint:on
 (define-macro (define-c-fn sig . body)
   (let loop ((l (cdr sig)) (args '()))
     (if (or (null? l) (eq? (car l) '->))
 	(cons 'define (cons (cons (car sig) (reverse args)) body))
 	(loop (cdr l) (cons (caar l) args)))))
 
+;; scm-lint:off
 ;; ---------------------------------------------------------------------------
 ;; The monolang.
 ;; ---------------------------------------------------------------------------
+;; scm-lint:on
 
+;; scm-lint:off
 ;; Perspective projection (right-handed, z maps to GL NDC [-1, 1]). fov-y is the
 ;; vertical field of view in radians. Passing the result to glUniformMatrix4fv
 ;; with transpose=GL_FALSE matches glm::perspective.
+;; scm-lint:on
 (define-c-fn (mat4-perspective (fov-y f32) (aspect f32) (near f32) (far f32)
 			       -> mat4)
   (let* ((f         (/ 1.0 (tan (* fov-y 0.5))))

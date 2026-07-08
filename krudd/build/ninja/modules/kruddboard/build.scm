@@ -1,4 +1,5 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
+;; scm-lint:off
 ;
 ; In-browser tabbed authoring surface + markdown parser — a wasm-only module.
 ; imgui is fetched into ${imgui}, a path this spec doesn't own, so it passes
@@ -13,6 +14,7 @@
 ; more. ../../third_party is on the include path for the shim's s7.h; script_s7
 ; / script_eval resolve straight from the single module's "script" archive, so
 ; kruddboard links "script"; it draws through imgui, so it links "imgui_plugin".
+;; scm-lint:on
 ((wasm-only
 	(library "kruddboard"
 		(wasm-flags "--std=c++17" "-fno-exceptions" "-fno-rtti")
@@ -23,9 +25,11 @@
 			"subsystem_manager")))
 
  (native-only
+	;; scm-lint:off
 	;; The original C parser: no longer in any WASM build, kept as the golden
 	;; reference the Scheme port is proven byte-for-byte equal to (both run the
 	;; same md_parse_test.c below).
+	;; scm-lint:on
 	(library "md_parse"
 		(sources "md_parse.c")
 		(public (current) (raw "${generated}")))
@@ -34,6 +38,7 @@
 		(link "md_parse"))
 	(test "md_parse" "md_parse_test")
 
+	;; scm-lint:off
 	;; The Scheme port: krudd/build/modules/md_parse.scm runs inside the s7
 	;; runtime, reached through the generated ${generated}/md_parse.scm.c shim
 	;; (krudd's binding generator emits it from the module's ABI declaration; it
@@ -42,6 +47,7 @@
 	;; include of this library. ../../third_party is s7.h; linking script drags
 	;; the interpreter in. Running the exact same md_parse_test.c against it
 	;; proves the two parsers byte-for-byte equal.
+	;; scm-lint:on
 	(library "md_parse_scheme"
 		(sources (raw "${generated}/md_parse.scm.c"))
 		(public (raw "${generated}"))

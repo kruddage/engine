@@ -1,4 +1,5 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
+;; scm-lint:off
 ;
 ; math_test.scm — the monolang reference oracle, run through s7.
 ;
@@ -10,14 +11,17 @@
 ;
 ; Run via krudd/build/ninja/run-tests.sh. Prints "MATH-TESTS: OK" and exits 0
 ; when every check passes; prints failures and exits 1 otherwise.
+;; scm-lint:on
 
 (define krudd-root (or (getenv "KRUDD_ROOT") "."))
 
 (load (string-append krudd-root "/krudd/build/modules/math.scm"))
 
+;; scm-lint:off
 ;; ---------------------------------------------------------------------------
 ;; Assertion plumbing.
 ;; ---------------------------------------------------------------------------
+;; scm-lint:on
 
 (define fail-count 0)
 
@@ -28,19 +32,25 @@
 	      (set! fail-count (+ fail-count 1))
 	      (display (string-append "  FAIL  " name "\n")))))
 
+;; scm-lint:off
 ;; Float compare with the same tolerance math_test.c uses.
+;; scm-lint:on
 (define (feq a b) (< (abs (- a b)) 1e-4))
 
+;; scm-lint:off
 ;; ---------------------------------------------------------------------------
 ;; mat4-perspective — mirrors test_perspective in modules/math/math_test.c.
 ;; fov_y = pi/2, aspect = 1 => f = 1/tan(pi/4) = 1.
 ;; ---------------------------------------------------------------------------
+;; scm-lint:on
 
 (define near 0.1)
 (define far  100.0)
 (define m (mat4-perspective (* pi 0.5) 1.0 near far))
 
+;; scm-lint:off
 ;; A mat4 value is a flat 16-list, column-major: (row r, col c) at index c*4 + r.
+;; scm-lint:on
 (define (mref i) (list-ref m i))
 
 (check "perspective is 16 elements" (= (length m) 16))
@@ -51,14 +61,18 @@
 (check "perspective m[11] = -1"       (feq (mref 11) -1.0))
 (check "perspective m[14] = 2fn/(n-f)"
        (feq (mref 14) (/ (* 2.0 (* far near)) (- near far))))
+;; scm-lint:off
 ;; row 3 of columns 0-2, and the last column's w, must be zero.
+;; scm-lint:on
 (check "perspective m[3]  = 0"        (feq (mref 3)  0.0))
 (check "perspective m[7]  = 0"        (feq (mref 7)  0.0))
 (check "perspective m[15] = 0"        (feq (mref 15) 0.0))
 
+;; scm-lint:off
 ;; ---------------------------------------------------------------------------
 ;; Verdict.
 ;; ---------------------------------------------------------------------------
+;; scm-lint:on
 
 (if (= fail-count 0)
     (begin (display "MATH-TESTS: OK\n") (exit 0))

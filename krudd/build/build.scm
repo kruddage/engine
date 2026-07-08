@@ -1,4 +1,5 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
+;; scm-lint:off
 ;
 ; krudd build description — the build authority, in Scheme.
 ;
@@ -18,6 +19,7 @@
 ;           configure_file/embed codegen krudd owns.
 ;
 ; Everything is generated into and built under build/.
+;; scm-lint:on
 
 (define krudd-root (or (getenv "KRUDD_ROOT") "."))
 
@@ -32,11 +34,13 @@
   (call-with-output-file path
     (lambda (port) (write-string text port))))
 
+;; scm-lint:off
 ;; ---------------------------------------------------------------------------
 ;; The manifest: every directory krudd owns, relative to krudd/build/ninja/ (a
 ;; bare datum in krudd/build/ninja/manifest.scm — the one list of owned
 ;; directories). Each carries a build.scm spec beside its sources.
 ;; ---------------------------------------------------------------------------
+;; scm-lint:on
 
 (define owned-directories
   (call-with-input-file
@@ -51,18 +55,24 @@
 (define manifest
   (map (lambda (dir) (cons dir (load-spec dir))) owned-directories))
 
+;; scm-lint:off
 ;; The tree root the spec paths resolve against, and the build directory.
+;; scm-lint:on
 (define src-root (string-append krudd-root "/krudd/build/ninja"))
 (define build-dir (string-append krudd-root "/build"))
 
+;; scm-lint:off
 ;; Target selection: KRUDD_TARGET=wasm selects the WASM output; anything else
 ;; (including unset) builds native.
+;; scm-lint:on
 (define wasm-build?
   (let ((target (getenv "KRUDD_TARGET")))
     (and target (string=? target "wasm"))))
 
+;; scm-lint:off
 ;; The imgui module needs the imgui checkout; fetch it (idempotent) before
 ;; generating.
+;; scm-lint:on
 (if wasm-build?
     (krudd-fetch "imgui" "https://github.com/ocornut/imgui.git" "v1.90.9"))
 

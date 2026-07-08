@@ -1,4 +1,5 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
+;; scm-lint:off
 ;
 ; introspect.scm — the build-time introspection krudd owns.
 ;
@@ -14,17 +15,22 @@
 ; It depends only on s7 built-ins plus, for the fetch path, the `run` primitive
 ; krudd.c installs — and `run` is touched only when a dependency actually needs
 ; cloning, so the version/git helpers work under a bare s7 too.
+;; scm-lint:on
 
+;; scm-lint:off
 ;; ---------------------------------------------------------------------------
 ;; String + file helpers (kept local, as the other krudd Scheme modules do).
 ;; ---------------------------------------------------------------------------
+;; scm-lint:on
 
 (define (krudd-whitespace? c)
 	(or (char=? c #\space) (char=? c #\tab)
 	    (char=? c #\newline) (char=? c #\return)))
 
+;; scm-lint:off
 ;; Trim leading and trailing whitespace — the moral equivalent of CMake's
 ;; string(STRIP), for the newline git and file reads leave behind.
+;; scm-lint:on
 (define (krudd-strip s)
 	(let* ((n (string-length s))
 	       (start (let loop ((i 0))
@@ -36,8 +42,10 @@
 			  (loop (- i 1)) i))))
 		(if (>= start end) "" (substring s start end))))
 
+;; scm-lint:off
 ;; Slurp a whole file to a string (VERSION is a single short line, but keep it
 ;; general).
+;; scm-lint:on
 (define (krudd-slurp path)
 	(call-with-input-file path
 	  (lambda (port)
@@ -51,12 +59,15 @@
 	    (file-exists? p)
 	    (= 0 (system (string-append "test -e \"" p "\"")))))
 
+;; scm-lint:off
 ;; ---------------------------------------------------------------------------
 ;; Repository facts.
 ;; ---------------------------------------------------------------------------
+;; scm-lint:on
 
 (define (krudd-repo-root) (or (getenv "KRUDD_ROOT") "."))
 
+;; scm-lint:off
 ;; The version string. There is no VERSION file and no git tag to read: CI
 ;; computes the real semver by folding each merged PR's release:{breaking,
 ;; feature,fix,chore} label (see .github/workflows/ci.yml and
@@ -64,28 +75,35 @@
 ;; A plain local `./krudd.sh build` has no GitHub token to do that fold with,
 ;; so it falls back to a placeholder — real version numbers only ever come
 ;; from CI.
+;; scm-lint:on
 (define (krudd-version)
 	(let ((v (getenv "KRUDD_VERSION")))
 		(if (and v (> (string-length v) 0)) v "0.0.0-dev")))
 
+;; scm-lint:off
 ;; Run git in the repo root and return its captured, stripped stdout ("" on
 ;; failure — git absent, not a repo, empty result), mirroring how CMake fell
 ;; back to defaults when GIT_FOUND was false or a command produced nothing.
+;; scm-lint:on
 (define (krudd-git args)
 	(krudd-strip
 	  (system (string-append "cd \"" (krudd-repo-root) "\" && git " args
 				 " 2>/dev/null")
 		  #t)))
 
+;; scm-lint:off
 ;; The build number: how many merged PRs CI folded to reach KRUDD_VERSION,
 ;; supplied alongside it as KRUDD_BUILD_NUMBER. "0" outside CI.
+;; scm-lint:on
 (define (krudd-build-number)
 	(let ((n (getenv "KRUDD_BUILD_NUMBER")))
 		(if (and n (> (string-length n) 0)) n "0")))
 
+;; scm-lint:off
 ;; MAJOR.MINOR.PATCH out of a version string that may carry a CI prerelease
 ;; suffix (e.g. "10.1.0-pr482+a1b2c3d" for an unmerged PR build) — take only
 ;; what precedes the first "-" or "+".
+;; scm-lint:on
 (define (krudd-version-core version)
 	(let loop ((i 0))
 		(cond ((>= i (string-length version)) version)
@@ -94,24 +112,30 @@
 		       (substring version 0 i))
 		      (else (loop (+ i 1))))))
 
+;; scm-lint:off
 ;; The short commit hash, or "unknown" when git can't answer.
+;; scm-lint:on
 (define (krudd-commit-hash)
 	(let ((h (krudd-git "rev-parse --short HEAD")))
 		(if (> (string-length h) 0) h "unknown")))
 
+;; scm-lint:off
 ;; ---------------------------------------------------------------------------
 ;; Dependency fetch: krudd's replacement for FetchContent. Clone REPO at the
 ;; pinned TAG into build/_deps/<name> if it is not already there, and return the
 ;; directory (the ${<name>_SOURCE_DIR} the specs reference). Idempotent: a
 ;; complete checkout is left untouched, so repeat builds do no network I/O.
 ;; ---------------------------------------------------------------------------
+;; scm-lint:on
 
 (define (krudd-fetch-dir name)
 	(string-append (krudd-repo-root) "/build/_deps/" name))
 
+;; scm-lint:off
 ;; A checkout counts as present only if its .git is there — an empty or
 ;; half-cloned directory (an interrupted clone, or a stray mkdir) must not pass
 ;; for a real one, or the build inherits a broken dependency.
+;; scm-lint:on
 (define (krudd-fetch name repo tag)
 	(let ((dir (krudd-fetch-dir name)))
 		(if (not (krudd-path-exists? (string-append dir "/.git")))
@@ -119,14 +143,15 @@
 					"--branch " tag " " repo " \"" dir "\"")))
 		dir))
 
+;; scm-lint:off
 ;; ---------------------------------------------------------------------------
 ;; Codegen: krudd's replacements for CMake's configure_file and its embed
 ;; embed script — the file transforms the build needs generated before
 ;; compiling. The emitter calls these at synthesis time (as CMake ran them at
 ;; configure time) and references the outputs.
 ;; ---------------------------------------------------------------------------
+;; scm-lint:on
 
-;; Split "6.3.2" into ("6" "3" "2").
 (define (krudd-split s ch)
 	(let loop ((i 0) (start 0) (out '()))
 		(cond ((>= i (string-length s))
@@ -135,8 +160,10 @@
 		       (loop (+ i 1) (+ i 1) (cons (substring s start i) out)))
 		      (else (loop (+ i 1) start out)))))
 
+;; scm-lint:off
 ;; The @VAR@ substitutions the version templates use, mirroring the CMake
 ;; variables project() and git-build-info supply.
+;; scm-lint:on
 (define (krudd-template-values)
 	(let* ((version (krudd-version))
 	       (parts   (krudd-split (krudd-version-core version) #\.)))
@@ -148,7 +175,6 @@
 		      (cons "ENGINE_BUILD_NUMBER" (krudd-build-number))
 		      (cons "GIT_COMMIT_HASH" (krudd-commit-hash)))))
 
-;; Replace every occurrence of OLD in S with NEW.
 (define (krudd-replace s old new)
 	(let ((ol (string-length old)))
 		(let loop ((i 0) (out ""))
@@ -160,9 +186,11 @@
 				    (string-append out
 						   (string (string-ref s i)))))))))
 
+;; scm-lint:off
 ;; configure_file: expand @VAR@ occurrences in the template at IN and write the
 ;; result to OUT. (@ONLY semantics — only @VAR@, never ${VAR} — which is all the
 ;; version.h.in / shell.html.in templates use.)
+;; scm-lint:on
 (define (krudd-configure-file in out)
 	(let loop ((text (krudd-slurp in)) (vals (krudd-template-values)))
 		(if (null? vals)
@@ -172,12 +200,12 @@
 					 (cdar vals))
 			  (cdr vals)))))
 
-;; Two hex nibbles for a byte value 0..255.
 (define (krudd-hex-byte b)
 	(let ((digits "0123456789abcdef"))
 		(string (string-ref digits (quotient b 16))
 			(string-ref digits (remainder b 16)))))
 
+;; scm-lint:off
 ;; File embed: bake the file at IN into a NUL-terminated char array under
 ;; SYMBOL, each byte written as a 0xNN element (so non-ASCII bytes and quotes
 ;; survive and md_parse()/script_eval() get a valid string), and write the
@@ -195,6 +223,7 @@
 ;; (see the rationale above), twelve per line, terminated with an explicit
 ;; (char)0x00 so the embedded string stays NUL-terminated. Shared by the
 ;; runtime header embed and the md_parse shim's baked-in image.
+;; scm-lint:on
 (define (krudd-bytes->c-init s)
 	(let* ((n    (string-length s))
 	       (body (let loop ((i 0) (acc ""))
@@ -224,6 +253,7 @@
 			"#endif /* " symbol "_H */\n")
 		      port)))))
 
+;; scm-lint:off
 ;; ===========================================================================
 ;; Scheme -> C binding generator.
 ;;
@@ -259,8 +289,11 @@
 ;; Out of scope (fail loud): pointers/opaque handles, callbacks, structs passed
 ;; INTO Scheme (reverse marshal), unions, bitfields, heap/varlen, nested vectors.
 ;; ===========================================================================
+;; scm-lint:on
 
+;; scm-lint:off
 ;; --- small helpers -----------------------------------------------------------
+;; scm-lint:on
 
 (define (krudd-filter pred lst)
 	(cond ((null? lst) '())
@@ -275,28 +308,32 @@
 (define (krudd-upcase s)
 	(list->string (map char-upcase (string->list s))))
 
+;; scm-lint:off
 ;; kebab-case symbol/string -> snake_case string (struct/field/proc names).
+;; scm-lint:on
 (define (krudd-snake s)
 	(krudd-replace (if (symbol? s) (symbol->string s) s) "-" "_"))
 
+;; scm-lint:off
 ;; kebab -> SCREAMING_SNAKE (constants and include guards).
+;; scm-lint:on
 (define (krudd-screaming s) (krudd-upcase (krudd-snake s)))
 
-;; The last path component of PATH.
 (define (krudd-basename path)
 	(let loop ((i (- (string-length path) 1)))
 	  (cond ((< i 0) path)
 		((char=? (string-ref path i) #\/) (substring path (+ i 1)))
 		(else (loop (- i 1))))))
 
-;; PATH with its final .extension removed.
 (define (krudd-strip-ext s)
 	(let loop ((i (- (string-length s) 1)))
 	  (cond ((< i 0) s)
 		((char=? (string-ref s i) #\.) (substring s 0 i))
 		(else (loop (- i 1))))))
 
+;; scm-lint:off
 ;; A repo-relative label for a generated-from banner ("krudd/build/modules/...").
+;; scm-lint:on
 (define (krudd-rel-label path)
 	(let ((pfx (string-append (krudd-repo-root) "/")))
 	  (if (and (>= (string-length path) (string-length pfx))
@@ -304,7 +341,9 @@
 	      (substring path (string-length pfx))
 	      (krudd-basename path))))
 
+;; scm-lint:off
 ;; Every top-level form of the module at PATH, read (not evaluated) in order.
+;; scm-lint:on
 (define (krudd-scm-forms path)
 	(call-with-input-file path
 	  (lambda (port)
@@ -313,9 +352,11 @@
 		(if (eof-object? form) (reverse acc)
 		    (loop (cons form acc))))))))
 
+;; scm-lint:off
 ;; Every top-level (define <symbol> <integer>) in the file at PATH, as an alist
 ;; of (symbol . value). The forms are read, not evaluated: the constants are
 ;; plain integer literals, so no parser code runs at build time.
+;; scm-lint:on
 (define (krudd-scm-int-defs path)
 	(krudd-filter
 	  (lambda (x) x)
@@ -326,7 +367,9 @@
 		      (cons (cadr form) (caddr form))))
 	       (krudd-scm-forms path))))
 
+;; scm-lint:off
 ;; --- binding vocabulary ------------------------------------------------------
+;; scm-lint:on
 
 (define krudd-scalar-ctypes
 	'((i8 . "int8_t")  (i16 . "int16_t")  (i32 . "int32_t")  (i64 . "int64_t")
@@ -342,21 +385,27 @@
 (define (krudd-char-kind? k)   (and (pair? k) (eq? (car k) 'char)))
 (define (krudd-vector-kind? k) (and (pair? k) (eq? (car k) 'vector)))
 
+;; scm-lint:off
 ;; A C array bound: a constant symbol renders as its #define name, an integer as
 ;; the literal — either way a valid C constant expression.
+;; scm-lint:on
 (define (krudd-c-size n)
 	(cond ((symbol? n) (krudd-screaming n))
 	      ((and (integer? n) (>= n 0)) (number->string n))
 	      (else (error 'krudd-abi-bad-size n))))
 
+;; scm-lint:off
 ;; The C element type for a scalar or declared-struct kind T ("struct <snake>").
+;; scm-lint:on
 (define (krudd-elem-ctype names t)
 	(cond ((krudd-scalar? t) (krudd-scalar-ctype t))
 	      ((and (symbol? t) (memq t names))
 	       (string-append "struct " (krudd-snake t)))
 	      (else (error 'krudd-abi-bad-type t))))
 
+;; scm-lint:off
 ;; --- declaration accessors ---------------------------------------------------
+;; scm-lint:on
 
 (define (krudd-abi-structs forms)
 	(krudd-filter (lambda (f) (and (pair? f) (eq? (car f) 'define-c-struct)))
@@ -368,21 +417,27 @@
 (define (krudd-struct-name s)   (cadr s))
 (define (krudd-struct-fields s) (cddr s))
 
+;; scm-lint:off
 ;; A vector field carries a third element — the count field it derives — which
 ;; ordinary (name kind) fields lack.
+;; scm-lint:on
 (define (krudd-field-count-field f) (and (pair? (cddr f)) (caddr f)))
 
 (define (krudd-export-sig e)  (cadr e))
 (define (krudd-export-proc e) (car (krudd-export-sig e)))
 
+;; scm-lint:off
 ;; Split an export signature on -> into (args . return-spec).
+;; scm-lint:on
 (define (krudd-export-parts e)
 	(let loop ((l (cdr (krudd-export-sig e))) (args '()))
 	  (cond ((null? l) (error 'krudd-abi-export-no-arrow e))
 		((eq? (car l) '->) (cons (reverse args) (cadr l)))
 		(else (loop (cdr l) (cons (car l) args))))))
 
+;; scm-lint:off
 ;; The Scheme procedure an export calls, as a C string, from its (calls sp).
+;; scm-lint:on
 (define (krudd-export-calls e)
 	(let ((c (caddr e)))
 	  (if (and (pair? c) (eq? (car c) 'calls))
@@ -392,7 +447,9 @@
 (define (krudd-export-return-vector? ret)
 	(and (pair? ret) (eq? (car ret) 'vector)))
 
+;; scm-lint:off
 ;; --- fail loud: reject anything outside the vocabulary before emitting -------
+;; scm-lint:on
 
 (define (krudd-abi-check structs exports names)
 	(for-each (lambda (s)
@@ -420,7 +477,9 @@
 	       (krudd-check-count-field s cf)))
 	    (else (error 'krudd-abi-unsupported-kind kind)))))
 
+;; scm-lint:off
 ;; A vector's count field must name a sibling declared u32/i32.
+;; scm-lint:on
 (define (krudd-check-count-field s cf)
 	(let ((sib (krudd-filter (lambda (g) (eq? (car g) cf))
 				 (krudd-struct-fields s))))
@@ -445,7 +504,9 @@
 		(else (error 'krudd-abi-bad-return ret)))
 	  (krudd-export-calls e)))
 
+;; scm-lint:off
 ;; --- header emission ---------------------------------------------------------
+;; scm-lint:on
 
 (define (krudd-header-field names f)
 	(let ((cname (krudd-snake (car f)))
@@ -524,15 +585,21 @@
 		  "#endif /* " guard " */\n")
 		port)))))
 
+;; scm-lint:off
 ;; --- shim emission -----------------------------------------------------------
+;; scm-lint:on
 
+;; scm-lint:off
 ;; Read the s7 value in EXPR as the scalar kind, narrowing to the C type.
+;; scm-lint:on
 (define (krudd-scalar-read kind expr)
 	(string-append "(" (krudd-scalar-ctype kind) ")"
 		       (if (krudd-float-kind? kind) "s7_real(" "s7_integer(")
 		       expr ")"))
 
+;; scm-lint:off
 ;; Marshal one already-pulled list value (in `f`) into out->NAME.
+;; scm-lint:on
 (define (krudd-marshal-field base names f)
 	(let ((cname (krudd-snake (car f)))
 	      (kind  (cadr f)))
@@ -595,7 +662,9 @@
 		   data))
 	    "}\n")))
 
+;; scm-lint:off
 ;; The s7 argument list for a call: s7_nil for none, else s7_list(s7, N, ...).
+;; scm-lint:on
 (define (krudd-s7-arglist args)
 	(if (null? args)
 	    "s7_nil(s7)"
@@ -613,8 +682,10 @@
 		     args))
 	      ")")))
 
+;; scm-lint:off
 ;; The NULL/bounds guard: every string arg plus, for a vector return, the out
 ;; buffer and a positive max.
+;; scm-lint:on
 (define (krudd-guard args vector? maxname)
 	(krudd-join " || "
 	  (append
@@ -732,10 +803,12 @@
 		  (map (lambda (e) (krudd-gen-driver base names e)) exports)))
 	      port))))
 
+;; scm-lint:off
 ;; Generate the C ABI from the Scheme module at IN: the header at HEADER-OUT
 ;; (constants + structs + prototypes) and the marshaling shim at SHIM-OUT (the
 ;; baked image + generated marshalers + drivers). The module name (the header's
 ;; basename, e.g. "md_parse") namespaces the shim's static symbols.
+;; scm-lint:on
 (define (krudd-embed-scheme-module in header-out shim-out)
 	(let* ((forms       (krudd-scm-forms in))
 	       (structs     (krudd-abi-structs forms))
@@ -751,6 +824,7 @@
 			  (krudd-bytes->c-init (krudd-slurp in))
 			  structs exports names label)))
 
+;; scm-lint:off
 ;; ===========================================================================
 ;; The monolang: lower (define-c-fn ...) arithmetic bodies to native C.
 ;;
@@ -763,23 +837,30 @@
 ;; vocabulary is a loud build error (see krudd/build/modules/math.scm), never
 ;; silently emitted.
 ;; ===========================================================================
+;; scm-lint:on
 
+;; scm-lint:off
 ;; Backend spellings. binops render infix; intrinsics map the backend-neutral
 ;; monolang name to the C float variant. A second column per backend is all a
 ;; future GLSL/Metal emitter adds here.
+;; scm-lint:on
 (define krudd-math-binops
 	'((+ . "+") (- . "-") (* . "*") (/ . "/")))
 
 (define krudd-math-intrinsics
 	'((tan . "tanf") (sin . "sinf") (cos . "cosf") (sqrt . "sqrtf")))
 
+;; scm-lint:off
 ;; A monolang number as a C float literal: force inexact so integers still carry
 ;; a decimal point (2 -> "2.0"), then suffix f (-> "2.0f").
+;; scm-lint:on
 (define (krudd-math-num->c n)
 	(string-append (number->string (exact->inexact n)) "f"))
 
+;; scm-lint:off
 ;; A scalar arithmetic expression -> a C expression string. Compound forms are
 ;; fully parenthesised, so operator precedence never depends on the emitter.
+;; scm-lint:on
 (define (krudd-math-expr e)
 	(cond
 	  ((number? e) (krudd-math-num->c e))
@@ -797,8 +878,10 @@
 			  "(" (krudd-join ", " (map krudd-math-expr (cdr e))) ")"))
 	  (else (error 'krudd-math-bad-expr e))))
 
+;; scm-lint:off
 ;; Split a (define-c-fn ...) signature (name (arg kind) ... -> ret) into
 ;; (name ((cname . ctype) ...) ret). Only f32/f64 params for now.
+;; scm-lint:on
 (define (krudd-math-fn-parts sig)
 	(let loop ((l (cdr sig)) (args '()))
 	  (cond ((null? l) (error 'krudd-math-no-arrow sig))
@@ -813,8 +896,10 @@
 				     (krudd-scalar-ctype (cadr a)))
 			       args)))))))
 
+;; scm-lint:off
 ;; A (mat4-cols (vec4 ...) x4) return: flatten the 16 column-major elements to
 ;; out->m[i] = <expr>; assignments.
+;; scm-lint:on
 (define (krudd-math-emit-mat4 cols)
 	(if (not (= (length cols) 4)) (error 'krudd-math-mat4-cols cols))
 	(let ((elts (apply append
@@ -830,8 +915,10 @@
 		      (string-append acc "\tout->m[" (number->string i) "] = "
 				     (krudd-math-expr (car l)) ";\n"))))))
 
+;; scm-lint:off
 ;; A function body form -> C statements. let* becomes sequential float locals;
 ;; the tail must build the returned mat4.
+;; scm-lint:on
 (define (krudd-math-emit-form f)
 	(cond
 	  ((and (pair? f) (eq? (car f) 'let*))
@@ -847,8 +934,10 @@
 	   (krudd-math-emit-mat4 (cdr f)))
 	  (else (error 'krudd-math-bad-body f))))
 
+;; scm-lint:off
 ;; One (define-c-fn ...) -> a C function. A -> mat4 return lowers to the
 ;; engine's void f(struct mat4 *out, ...) convention.
+;; scm-lint:on
 (define (krudd-math-emit-fn form)
 	(let* ((parts (krudd-math-fn-parts (cadr form)))
 	       (name  (krudd-snake (car parts)))
@@ -865,9 +954,11 @@
 	    (krudd-math-emit-form (car body))
 	    "}\n")))
 
+;; scm-lint:off
 ;; Generate the native C for the monolang module at IN, writing it to C-OUT. The
 ;; module's mat4-valued functions call through struct mat4 (declared in the
 ;; hand-written math_types.h the generated file includes).
+;; scm-lint:on
 (define (krudd-emit-math-module in c-out)
 	(let* ((forms (krudd-scm-forms in))
 	       (fns   (krudd-filter (lambda (f)

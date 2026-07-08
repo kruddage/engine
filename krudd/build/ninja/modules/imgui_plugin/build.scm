@@ -1,4 +1,5 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
+;; scm-lint:off
 ;
 ; ImGui debug UI shell — a wasm-only module, no native target. imgui itself is
 ; fetched by krudd (krudd/build/introspect.scm's krudd-fetch) into ${imgui}, a
@@ -6,6 +7,7 @@
 ; standard and the -fno-exceptions/-fno-rtti that it and third-party imgui build
 ; with ride on (wasm-flags ...); the emitter puts those on the emcc_cxx sources
 ; only, so third-party imgui rides in without the project's -Werror/-Wpedantic.
+;; scm-lint:on
 ((wasm-only
 	(library "imgui_plugin"
 		(wasm-flags "--std=c++17" "-fno-exceptions" "-fno-rtti")

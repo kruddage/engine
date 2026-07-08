@@ -10,6 +10,16 @@ on:
     branches: [main]
 
 jobs:
+  lint:
+    # Skip on PR-close events — nothing to lint then.
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint .scm comments
+        run: python3 .github/scripts/lint-scm-comments.py $(git ls-files '*.scm')
+
   version:
     # Skip on PR-close events — nothing downstream needs a version then.
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}

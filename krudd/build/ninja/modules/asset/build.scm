@@ -1,13 +1,17 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
+;; scm-lint:off
 ;
 ; Asset catalog — enumeration, mutation, codec registration; built-in primitive
 ; geometry (krudd/build/modules/primitives.scm, packed by primitives_blob.c).
+;; scm-lint:on
 ((library "asset_plugin"
+	;; scm-lint:off
 	;; Built-in geometry comes from krudd/build/modules/primitives.scm now:
 	;; primitives_blob.c packs the Scheme-marshaled vertex/index arrays into a
 	;; mesh_blob through the generated primitives.scm.c shim. Linking "script"
 	;; drags in the s7 interpreter; ${generated} carries the shim and
 	;; primitives_gen.h, and ../../third_party carries s7.h for the shim.
+	;; scm-lint:on
 	(sources "asset_plugin.c" "primitives_blob.c" "asset_edit.c"
 		(raw "${generated}/primitives.scm.c"))
 	(public "." (root "modules/include"))
@@ -26,9 +30,11 @@
 	(executable "asset_mut_test" (sources "asset_mut_test.c")
 		(link "asset_plugin" "log" "memory"))
 	(test "asset_mut" "asset_mut_test")
+	;; scm-lint:off
 	; Undo/redo recording for authored assets: drive the same record path
 	; the plugin uses (asset_edit lives in asset_plugin) against the real
 	; catalog, with the edit history linked directly.
+	;; scm-lint:on
 	(executable "asset_edit_test"
 		(sources "asset_edit_test.c" (root "modules/edit_plugin/edit.c"))
 		(private (root "modules/edit_plugin"))
@@ -41,12 +47,14 @@
 		(link "asset_plugin" "log" "memory"))
 	(test "asset_mesh" "asset_mesh_test")
 
+	;; scm-lint:off
 	;; One spec, two proofs (as md_parse does): the same primitive_test.c runs
 	;; against the golden C reference (primitives.c) and the Scheme port
 	;; (primitives.scm via primitives_blob.c + the generated shim), asserting
 	;; both satisfy the same geometric invariants. primitives.c is no longer in
 	;; any shipped build — asset_plugin uses the Scheme generator — but stays as
 	;; the reference the port is checked against.
+	;; scm-lint:on
 	(library "primitives_ref"
 		(sources "primitives.c")
 		(public "." (root "modules/include")))

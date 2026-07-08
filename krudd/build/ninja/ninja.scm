@@ -293,7 +293,9 @@
 	      (primscm  (string-append (krudd-repo-root)
 				      "/krudd/build/modules/primitives.scm"))
 	      (mathscm  (string-append (krudd-repo-root)
-				      "/krudd/build/modules/math.scm")))
+				      "/krudd/build/modules/math.scm"))
+	      (rendscm  (string-append (krudd-repo-root)
+				      "/krudd/build/modules/renderer.scm")))
 		(system (string-append "mkdir -p \"" gen "\""))
 		(krudd-configure-file
 		  (string-append srcroot "/modules/core/version.h.in")
@@ -314,7 +316,10 @@
 		  (string-append gen "/primitives.scm.c"))
 		(krudd-emit-math-module
 		  mathscm
-		  (string-append gen "/math_gen.c"))))
+		  (string-append gen "/math_gen.c"))
+		(krudd-emit-interface-header
+		  rendscm
+		  (string-append gen "/renderer.h"))))
 
 (define (ninja-synthesize manifest srcroot . rest)
 	(let ((builddir (if (pair? rest) (car rest) #f)))

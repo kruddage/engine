@@ -6,7 +6,7 @@
 			(root "modules/math/camera.c")
 			(raw "${generated}/math_gen.c")
 			(root "modules/asset/primitives.c"))
-		(private "." (root "modules/renderer")
+		(private "." (raw "${generated}")
 			(root "modules/renderer_null")
 			(root "modules/frame_graph") (root "modules/asset")
 			(root "modules/include"))
@@ -19,7 +19,7 @@
 			(root "modules/math/math.c")
 			(root "modules/math/camera.c")
 			(raw "${generated}/math_gen.c"))
-		(private "." (root "modules/renderer") (root "modules/frame_graph")
+		(private "." (raw "${generated}") (root "modules/frame_graph")
 			(root "modules/core/include") (root "modules/include"))
 		(link "frame_graph" "log" "memory" "subsystem"
 			"subsystem_manager" "m"))))

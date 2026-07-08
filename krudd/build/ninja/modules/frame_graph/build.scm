@@ -2,12 +2,12 @@
 ((library "frame_graph"
 	(sources "fg.c")
 	(public ".")
-	(private (root "modules/renderer"))
+	(private (raw "${generated}"))
 	(link "log" "memory" "subsystem" "subsystem_manager"))
  (native-only
 	(executable "fg_test"
 		(sources "fg_test.c")
-		(private "." (root "modules/renderer")
+		(private "." (raw "${generated}")
 			(root "modules/renderer_null"))
 		(link "frame_graph" "renderer_null" "log" "memory"
 			"subsystem_manager"))

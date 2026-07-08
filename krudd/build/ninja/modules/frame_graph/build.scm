@@ -4,18 +4,13 @@
 ((library "frame_graph"
 	(sources "fg.c")
 	(public ".")
-	(private (root "plugins/renderer"))
+	(private (root "modules/renderer"))
 	(link "log" "memory" "subsystem" "subsystem_manager"))
  (native-only
 	(executable "fg_test"
 		(sources "fg_test.c")
-		(private "." (root "plugins/renderer")
-			(root "plugins/renderer_null"))
+		(private "." (root "modules/renderer")
+			(root "modules/renderer_null"))
 		(link "frame_graph" "renderer_null" "log" "memory"
 			"subsystem_manager"))
-	(test "fg" "fg_test"))
- (side-module "frame_graph"
-	(includes (current) (root "plugins/renderer")
-		(root "modules/core/include") (root "plugins/include"))
-	(sources (current "fg.c"))
-	(depends (current "fg.c"))))
+	(test "fg" "fg_test")))

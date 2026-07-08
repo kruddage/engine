@@ -4,7 +4,7 @@
 ;
 ; Loads krudd/build/modules/math.scm (the monolang spec) and evaluates its
 ; (define-c-fn ...) bodies directly in the interpreter, checking the numbers the
-; same way the generated C is checked by plugins/math/math_test.c. Together they
+; same way the generated C is checked by modules/math/math_test.c. Together they
 ; pin both ends of the monolang: this proves the spec computes the right math,
 ; math_test.c proves the C krudd lowers it to matches. Same source, two proofs.
 ;
@@ -32,7 +32,7 @@
 (define (feq a b) (< (abs (- a b)) 1e-4))
 
 ;; ---------------------------------------------------------------------------
-;; mat4-perspective — mirrors test_perspective in plugins/math/math_test.c.
+;; mat4-perspective — mirrors test_perspective in modules/math/math_test.c.
 ;; fov_y = pi/2, aspect = 1 => f = 1/tan(pi/4) = 1.
 ;; ---------------------------------------------------------------------------
 

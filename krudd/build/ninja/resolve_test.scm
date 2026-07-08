@@ -72,23 +72,23 @@
 	       (set=? (resolve-includes table name) expected)))
 
 (display "resolver: include sets vs CMake ground truth\n")
-(inc-check "log" '("modules/log/include" "plugins/include"
+(inc-check "log" '("modules/log/include" "modules/include"
 		   "modules/core/include"))
-(inc-check "log_test" '("modules/log/include" "plugins/include"))
-(inc-check "renderer_null" '("plugins/renderer" "modules/log/include"
-			     "plugins/include" "modules/core/include"))
+(inc-check "log_test" '("modules/log/include" "modules/include"))
+(inc-check "renderer_null" '("modules/renderer" "modules/log/include"
+			     "modules/include" "modules/core/include"))
 (inc-check "renderer_null_test"
-	   '("plugins/renderer_null" "plugins/renderer" "modules/log/include"
-	     "plugins/include" "modules/core/include"))
-(inc-check "fg_test" '("plugins/frame_graph" "plugins/renderer"
-		       "plugins/renderer_null" "modules/log/include"
-		       "plugins/include" "modules/memory/include"
+	   '("modules/renderer_null" "modules/renderer" "modules/log/include"
+	     "modules/include" "modules/core/include"))
+(inc-check "fg_test" '("modules/frame_graph" "modules/renderer"
+		       "modules/renderer_null" "modules/log/include"
+		       "modules/include" "modules/memory/include"
 		       "modules/core/include"))
-(inc-check "asset_plugin" '("plugins/asset" "plugins/include"
+(inc-check "asset_plugin" '("modules/asset" "modules/include"
 			    "modules/log/include" "modules/memory/include"
 			    "modules/core/include"))
-(inc-check "scene_test" '("plugins/scene_plugin" "plugins/include"
-			  "modules/core/include" "plugins/asset"
+(inc-check "scene_test" '("modules/scene_plugin" "modules/include"
+			  "modules/core/include" "modules/asset"
 			  "modules/log/include" "modules/memory/include"))
 
 ;; ---------------------------------------------------------------------------
@@ -176,16 +176,29 @@
        (contains? ninja-text "build test/log.stamp: run_test bin/log_test"))
 (check "interface-library emits no build output"
        (not (contains? ninja-text "renderer_interface")))
-(check "plugin folds into an object, no standalone .wasm"
+;; A plugin is now an ordinary WASM library: its C sources compile with emcc_c
+;; and archive to wasm/lib<name>.a — no side-module rule survives.
+(check "C plugin compiles as a WASM library object (emcc_c), no side-module rule"
        (and (contains? ninja-text
-	      (string-append "build wasm-obj/scene_plugin/plugins/scene_plugin/"
-			     "scene_plugin.c.o: sm_cc "))
+	      (string-append "build wasm-obj/scene_plugin/modules/scene_plugin/"
+			     "scene_plugin.c.o: emcc_c "))
+	    (contains? ninja-text "build wasm/libscene_plugin.a: emar ")
+	    (not (contains? ninja-text "sm_cc"))
 	    (not (contains? ninja-text "side_module"))))
-(check "plugin object folds into the main module link"
-       (contains? ninja-text
-	 (string-append "main_module wasm-obj/index/modules/core/engine.c.o "
-			"wasm-obj/index/modules/core/plugin_abi.c.o "
-			"wasm-obj/scene_plugin/")))
+;; The C++ modules (imgui, the board) take emcc_cxx with their own $emcxxflags.
+(check "C++ module compiles with emcc_cxx and its wasm-flags"
+       (and (contains? ninja-text
+	      (string-append "build wasm-obj/imgui_plugin/modules/imgui_plugin/"
+			     "imgui_plugin.cpp.o: emcc_cxx "))
+	    (contains? ninja-text "emcxxflags = --std=c++17")))
+;; The main module links each module as an archive (engine + plugin_abi objects
+;; first), not a pile of loose plugin objects.
+(check "plugin archive folds into the main module link"
+       (and (contains? ninja-text
+	      (string-append "main_module wasm-obj/index/modules/core/engine.c.o "
+			     "wasm-obj/index/modules/core/plugin_abi.c.o "))
+	    (contains? ninja-text "wasm/libscene_plugin.a")
+	    (contains? ninja-text "wasm/libimgui_plugin.a")))
 (check "default target is native"
        (contains? ninja-text "default native"))
 (check "wasm main module stanza present"

@@ -35,7 +35,7 @@ jobs:
 
       # krudd generates a build.ninja from the directory specs and drives ninja
       # with emcc/em++ directly — no cmake, no emcmake. KRUDD_TARGET=wasm selects
-      # the WASM output (index.html/.js/.wasm + the plugin side modules).
+      # the WASM output (the single index.html/.js/.wasm module).
       - name: Build
         env:
           KRUDD_TARGET: wasm

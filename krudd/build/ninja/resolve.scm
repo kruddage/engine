@@ -19,8 +19,8 @@
 ; Paths come out relative to the tree root (krudd/build/ninja/): a bare "include" in
 ; modules/log becomes "modules/log/include", (root "p") becomes "p". The one
 ; escape hatch, (raw "text"), passes through unchanged (for the generated and
-; fetched paths the WASM side-module builds reference, like ${imgui}); native
-; leaf targets never carry those.
+; fetched paths the WASM-only modules reference, like ${imgui}); native leaf
+; targets never carry those.
 ;
 ; Two failure modes fail loudly at resolution time rather than mis-linking
 ; later: a cycle in the link graph, and a link entry that names neither a
@@ -66,7 +66,7 @@
 ;; ---------------------------------------------------------------------------
 
 ;; Join a directory and a relative component, collapsing "." to just the dir so
-;; "." in plugins/asset yields "plugins/asset", not "plugins/asset/.".
+;; "." in modules/asset yields "modules/asset", not "modules/asset/.".
 (define (rz-join dir sub)
 	(cond ((or (string=? sub "") (string=? sub ".")) dir)
 	      ((string=? dir "") sub)
@@ -88,16 +88,19 @@
 		(if c (rz-paths dir (cdr c)) '())))
 
 ;; ---------------------------------------------------------------------------
-;; Target table. Walk every spec, flattening (native-only ...) wrappers, and
-;; record each link/include target (library, interface-library, executable) as
-;; an alist entry name -> (dir kind public private links). side-module/test and
-;; the root scaffolding forms are not link targets and are skipped here.
+;; Target table. Walk every spec, flattening (native-only ...) / (wasm-only ...)
+;; wrappers, and record each link/include target (library, interface-library,
+;; executable) as an alist entry name -> (dir kind public private links
+;; wasm-modules). test and the root scaffolding forms are not link targets and
+;; are skipped here. An executable's (wasm-modules ...) clause names the plugin
+;; libraries the WASM main module folds in beyond its own (link ...); it is
+;; empty for every other target.
 ;; ---------------------------------------------------------------------------
 
-(define (rz-make-target name dir kind public private links)
+(define (rz-make-target name dir kind public private links wasm-modules)
 	(list name (cons 'dir dir) (cons 'kind kind)
 	      (cons 'public public) (cons 'private private)
-	      (cons 'links links)))
+	      (cons 'links links) (cons 'wasm-modules wasm-modules)))
 
 (define (rz-field target key) (cdr (assq key (cdr target))))
 
@@ -110,19 +113,24 @@
 		  (cadr form) dir (car form)
 		  (rz-clause-dirs dir clauses 'public)
 		  (rz-clause-dirs dir clauses 'private)
-		  (let ((c (rz-clause 'link clauses))) (if c (cdr c) '())))))
+		  (let ((c (rz-clause 'link clauses))) (if c (cdr c) '()))
+		  (let ((c (rz-clause 'wasm-modules clauses)))
+		    (if c (cdr c) '())))))
 	  ((interface-library)
 	   (rz-make-target
 	     (cadr form) dir 'interface-library
 	     (rz-clause-dirs dir (cddr form) 'interface)
-	     '() '()))
+	     '() '() '()))
 	  (else #f)))
 
-;; Flatten one spec into its target records, descending into native-only.
+;; Flatten one spec into its target records, descending into native-only and
+;; wasm-only (both are toolchain gates around otherwise ordinary target forms;
+;; the resolver treats their contents as plain targets — only the emitter cares
+;; which toolchain builds them).
 (define (rz-spec-targets dir spec)
 	(let loop ((forms spec) (out '()))
 		(cond ((null? forms) (reverse out))
-		      ((eq? (caar forms) 'native-only)
+		      ((memq (caar forms) '(native-only wasm-only))
 		       (loop (cdr forms)
 			     (append (reverse (rz-spec-targets dir (cdar forms)))
 				     out)))
@@ -190,6 +198,18 @@
 ;; itself is not in the result.
 (define (resolve-link-libs table name)
 	(rz-closure table (rz-direct-deps table name)))
+
+;; The full internal-library closure the WASM main module folds in: NAME's own
+;; direct deps (the core libraries the executable links) together with the
+;; plugin libraries its (wasm-modules ...) clause names, flattened
+;; dependents-first. Unlike resolve-link-libs, the wasm-module libraries ARE in
+;; the result — they are the plugins themselves, not just NAME's dependencies —
+;; each pulled in as its own archive.
+(define (resolve-wasm-module-libs table name)
+	(let ((target (rz-lookup table name)))
+		(rz-closure table
+			(append (if target (rz-field target 'wasm-modules) '())
+				(rz-direct-deps table name)))))
 
 ;; The system libraries (-l flags) a target must link. A static library's own
 ;; system-lib dependency (asset_plugin links m) has to reach the final

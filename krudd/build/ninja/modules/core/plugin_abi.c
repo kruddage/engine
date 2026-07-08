@@ -1,41 +1,20 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
-#include <emscripten/html5.h>
-#include <emscripten/fetch.h>
-#include <GLES3/gl3.h>
-#include <stdint.h>
 
 /*
- * VAO entry points used by Dear ImGui's GLES backend (imgui_plugin.wasm).
- * ImGui calls the GL_OES_vertex_array_object-suffixed names; their Khronos
- * prototypes live in <GLES2/gl2ext.h> behind GL_GLEXT_PROTOTYPES, so declare
- * the three we need directly to keep the include surface small.
- */
-extern void glGenVertexArraysOES(GLsizei n, GLuint *arrays);
-extern void glBindVertexArrayOES(GLuint array);
-extern void glDeleteVertexArraysOES(GLsizei n, const GLuint *arrays);
-
-/*
- * Emscripten JS-library glue kept in the main module.  Every plugin is now
- * compiled straight into this single WASM module (there are no side modules),
- * so a plugin's own reference to an HTML5 / Fetch / WebGL JS-library function
- * is what pulls that function into asmLibraryArg.  Two things still live here:
+ * Emscripten JS-library glue kept in the main module.  Every plugin is compiled
+ * straight into this single WASM module (there are no side modules and no
+ * dynamic loading), so a plugin's own reference to an HTML5 / Fetch / WebGL
+ * JS-library function is what pulls that function into asmLibraryArg — no
+ * address-taking table is needed to force those symbols in (an earlier version
+ * kept plugin_abi_refs[] / gl_abi_refs[] for exactly that, a leftover of the
+ * side-module era, now removed).
  *
- *   - The EM_JS bridges below (get_device_pixel_ratio and the text-input
- *     helpers).  An EM_JS body must be defined in the module that links the JS
- *     glue, and the imgui plugin calls these.
- *
- *   - The address-taking arrays further down.  These predate the single-module
- *     collapse, when they forced JS-library symbols into asmLibraryArg so side
- *     modules could resolve them at runtime.  In one static module they are
- *     most likely redundant, but confirming that needs a browser run (a missing
- *     symbol becomes a throwing stub, not a link error), so they are retained
- *     until that verification happens.
- *
- * The emscripten_set_*_callback names in html5.h are function-like macros that
- * expand to the _on_thread variants; reference those directly so the compiler
- * sees a proper function identifier rather than an unexpanded macro.
+ * What must still live here are the EM_JS bridges below (get_device_pixel_ratio
+ * and the text-input helpers): an EM_JS body has to be defined in the module
+ * that links the JS glue, and the imgui plugin — compiled into this same module
+ * — calls them.
  */
 
 /*
@@ -247,116 +226,4 @@ EM_JS(int, krudd_text_input_pop_key, (void), {
 		return 0;
 	return Module.__kruddText.keys.shift();
 })
-
-EMSCRIPTEN_KEEPALIVE void *plugin_abi_refs[] = {
-	/* HTML5 WebGL context — renderer_webgl.wasm */
-	(void *)emscripten_webgl_init_context_attributes,
-	(void *)emscripten_webgl_create_context,
-	(void *)emscripten_webgl_make_context_current,
-	(void *)emscripten_webgl_destroy_context,
-	(void *)emscripten_webgl_get_drawing_buffer_size,
-	/* HTML5 input events — imgui_plugin.wasm, kruddboard.wasm.
-	 * The emscripten_set_*_callback names are function-like macros;
-	 * use the _on_thread functions they expand to. */
-	(void *)emscripten_set_mousemove_callback_on_thread,
-	(void *)emscripten_set_mousedown_callback_on_thread,
-	(void *)emscripten_set_mouseup_callback_on_thread,
-	(void *)emscripten_set_touchstart_callback_on_thread,
-	(void *)emscripten_set_touchmove_callback_on_thread,
-	(void *)emscripten_set_touchend_callback_on_thread,
-	(void *)emscripten_set_touchcancel_callback_on_thread,
-	(void *)emscripten_set_keydown_callback_on_thread,
-	/* HTML5 canvas dimensions — imgui_plugin.wasm */
-	(void *)emscripten_get_element_css_size,
-	(void *)emscripten_set_canvas_element_size,
-	/* Device pixel ratio — imgui_plugin.wasm */
-	(void *)get_device_pixel_ratio,
-	/* Fetch API — asset_plugin.wasm */
-	(void *)emscripten_fetch,
-	(void *)emscripten_fetch_close,
-	/* Web text-input bridge — imgui_plugin.wasm */
-	(void *)krudd_text_input_init,
-	(void *)krudd_text_input_show,
-	(void *)krudd_text_input_hide,
-	(void *)krudd_text_input_drain_chars,
-	(void *)krudd_text_input_pop_key,
-};
-
-/*
- * WebGL / GLES drawing functions.  Same rationale as above: these are JS
- * library functions and are only added to asmLibraryArg when the main module's
- * own WASM imports them.  The main module renders nothing itself — the WebGL 2
- * calls all live in renderer_webgl.wasm and imgui_plugin.wasm (the latter via
- * Dear ImGui's GLES backend) — so without taking their addresses here they
- * would all be throwing stubs at runtime.  scripts/check-plugin-symbols.mjs
- * verifies that every gl* a plugin imports is covered by this list.
- */
-EMSCRIPTEN_KEEPALIVE void *gl_abi_refs[] = {
-	/* Buffers and vertex array objects */
-	(void *)glGenBuffers,
-	(void *)glBindBuffer,
-	(void *)glBufferData,
-	(void *)glBufferSubData,
-	(void *)glDeleteBuffers,
-	(void *)glGenVertexArraysOES,
-	(void *)glBindVertexArrayOES,
-	(void *)glDeleteVertexArraysOES,
-	/* Core GLES3 VAO + UBO entry points — renderer_webgl.wasm */
-	(void *)glGenVertexArrays,
-	(void *)glBindVertexArray,
-	(void *)glDeleteVertexArrays,
-	(void *)glBindBufferRange,
-	(void *)glGetUniformBlockIndex,
-	(void *)glUniformBlockBinding,
-	/* Shaders and programs */
-	(void *)glCreateShader,
-	(void *)glShaderSource,
-	(void *)glCompileShader,
-	(void *)glGetShaderiv,
-	(void *)glGetShaderInfoLog,
-	(void *)glDeleteShader,
-	(void *)glAttachShader,
-	(void *)glDetachShader,
-	(void *)glCreateProgram,
-	(void *)glLinkProgram,
-	(void *)glGetProgramiv,
-	(void *)glGetProgramInfoLog,
-	(void *)glUseProgram,
-	(void *)glDeleteProgram,
-	(void *)glIsProgram,
-	/* Attributes and uniforms */
-	(void *)glGetAttribLocation,
-	(void *)glGetUniformLocation,
-	(void *)glUniform1i,
-	(void *)glUniformMatrix4fv,
-	(void *)glEnableVertexAttribArray,
-	(void *)glVertexAttribPointer,
-	/* Textures */
-	(void *)glGenTextures,
-	(void *)glBindTexture,
-	(void *)glActiveTexture,
-	(void *)glTexImage2D,
-	(void *)glTexParameteri,
-	(void *)glDeleteTextures,
-	/* Pipeline state */
-	(void *)glEnable,
-	(void *)glDisable,
-	(void *)glIsEnabled,
-	(void *)glDepthFunc,
-	(void *)glDepthMask,
-	(void *)glGetIntegerv,
-	(void *)glBlendEquation,
-	(void *)glBlendEquationSeparate,
-	(void *)glBlendFuncSeparate,
-	(void *)glScissor,
-	(void *)glViewport,
-	/* Framebuffer and clear */
-	(void *)glBindFramebuffer,
-	(void *)glClear,
-	(void *)glClearColor,
-	(void *)glClearDepthf,
-	/* Draw */
-	(void *)glDrawElements,
-	(void *)glDrawElementsInstanced,
-};
 #endif /* __EMSCRIPTEN__ */

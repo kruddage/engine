@@ -31,7 +31,8 @@ cp "$BUILD_DIR/index.html" "$OUT_DIR/"
 # JS loader — renamed with the commit hash so stale cached copies are bypassed.
 cp "$BUILD_DIR/index.js" "$OUT_DIR/index.${HASH}.js"
 
-# index.wasm plus every plugin SIDE_MODULE .wasm — likewise renamed.
+# The single WASM module (there are no separate plugin .wasm files) — likewise
+# renamed. The glob keeps this robust if a build ever emits more than one.
 for wasm in "$BUILD_DIR"/*.wasm; do
 	base=$(basename "$wasm" .wasm)
 	cp "$wasm" "$OUT_DIR/${base}.${HASH}.wasm"

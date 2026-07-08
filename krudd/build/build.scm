@@ -13,9 +13,9 @@
 ; Two targets, selected by KRUDD_TARGET (unset defaults to native):
 ;   native  cc/ar — every static library and test; the test stamps run the
 ;           suite, so a green build is a green test run.
-;   wasm    emcc/em++ — the main module (index.html/.js/.wasm) and the plugin
-;           side modules, plus the imgui fetch and the configure_file/embed
-;           codegen krudd owns.
+;   wasm    emcc/em++ — the single main module (index.html/.js/.wasm) with
+;           every plugin compiled straight into it, plus the imgui fetch and the
+;           configure_file/embed codegen krudd owns.
 ;
 ; Everything is generated into and built under build/.
 
@@ -61,7 +61,8 @@
   (let ((target (getenv "KRUDD_TARGET")))
     (and target (string=? target "wasm"))))
 
-;; The WASM side modules need imgui; fetch it (idempotent) before generating.
+;; The imgui module needs the imgui checkout; fetch it (idempotent) before
+;; generating.
 (if wasm-build?
     (krudd-fetch "imgui" "https://github.com/ocornut/imgui.git" "v1.90.9"))
 

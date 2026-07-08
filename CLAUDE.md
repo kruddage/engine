@@ -24,9 +24,9 @@ krudd/                    The build tool and the whole build tree it owns —
       manifest.scm        The list of owned directories
       modules/            C source modules (compiled into the main WASM module)
         core/             Engine heartbeat — init/tick/shutdown, subsystem
-                          manager, plugin loader, ring buffer, and the embedded
-                          s7 Scheme runtime (script.c + runtime.scm) that owns
-                          the body of the frame
+                          manager, ring buffer, and the embedded s7 Scheme
+                          runtime (script.c + runtime.scm) that owns the body
+                          of the frame
         log/              Structured logging with level filtering and
                           ring-buffer history
         memory/           Allocator and fixed-size pool allocator

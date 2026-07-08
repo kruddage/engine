@@ -1,8 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "backend_record.h"
 #include "backend_api.h"
-#include "branch_api.h"
-#include "branch_host.h"
 #include "asset_api.h"
 #include "log_api.h"
 #include "memory_api.h"
@@ -142,35 +140,8 @@ static void backend_poll(void *ctx)
 
 static uint32_t backend_get_caps(void)
 {
-	uint32_t caps = backend_record_get_caps();
-
-	/* Branching is live iff the host stood up (Local provider, v1). */
-	if (branch_host_api())
-		caps |= BACKEND_CAP_BRANCHING;
-	return caps;
+	return backend_record_get_caps();
 }
-
-static const struct branch_api *backend_branching(void)
-{
-	return branch_host_api();
-}
-
-#ifdef __EMSCRIPTEN__
-/*
- * An authored asset just changed (save or delete).  Signal the branching host
- * so it debounces a live-save + auto-snapshot of the active branch (#213).  A
- * no-op when branching is absent (a provider without it), so asset persistence
- * keeps working whether or not the store bootstraps `main`.  Only reachable on
- * the browser path, where persistence — and thus branching — actually runs.
- */
-static void backend_note_project_changed(void)
-{
-	const struct branch_api *br = branch_host_api();
-
-	if (br)
-		br->mark_dirty();
-}
-#endif
 
 static int32_t backend_persist_asset(uint32_t id, const char *path,
 				     int32_t type, const void *bytes,
@@ -185,7 +156,6 @@ static int32_t backend_persist_asset(uint32_t id, const char *path,
 	}
 #ifdef __EMSCRIPTEN__
 	krudd_idb_put(id, path, type, bytes, size);
-	backend_note_project_changed();
 	return 0;
 #else
 	(void)type;
@@ -201,7 +171,6 @@ static int32_t backend_delete_asset(uint32_t id)
 		return -1;
 #ifdef __EMSCRIPTEN__
 	krudd_idb_del(id);
-	backend_note_project_changed();
 	return 0;
 #else
 	return -1;
@@ -212,17 +181,7 @@ static const struct backend_api g_backend_api = {
 	.get_caps      = backend_get_caps,
 	.persist_asset = backend_persist_asset,
 	.delete_asset  = backend_delete_asset,
-	.branching     = backend_branching,
 };
-
-/*
- * Per-frame tick: drive the branching host's debounce clock so a burst of edits
- * coalesces into one manifest advance + auto-snapshot on quiescence.
- */
-static void backend_tick(void)
-{
-	branch_host_tick();
-}
 
 /* ------------------------------------------------------------------ */
 /* Subsystem lifecycle                                                 */
@@ -246,7 +205,6 @@ static void backend_async_init(void (*done)(void *ctx), void *ctx)
 
 static void backend_shutdown(void)
 {
-	branch_host_shutdown();
 	g_log->write(LOG_LEVEL_INFO, "backend: shutdown");
 }
 
@@ -254,7 +212,6 @@ static const struct async_subsystem desc = {
 	.name       = "backend",
 	.api        = &g_backend_api,
 	.async_init = backend_async_init,
-	.tick       = backend_tick,
 	.shutdown   = backend_shutdown,
 };
 
@@ -273,15 +230,6 @@ void backend_plugin_entry(struct subsystem_manager *mgr)
 	g_mem = subsystem_manager_get_api(mgr, "memory");
 #endif
 	g_mgr = mgr;
-
-	/*
-	 * Stand up the branching host (#213) over the in-memory store.  This
-	 * lights BACKEND_CAP_BRANCHING; if memory is unavailable it stays clear
-	 * and branching() returns NULL, so consumers degrade safely.
-	 */
-	if (branch_host_init(mgr, subsystem_manager_get_api(mgr, "memory")) != 0)
-		g_log->write(LOG_LEVEL_WARN,
-			     "backend: branching host unavailable");
 
 	subsystem_manager_register_async(mgr, &desc);
 }

@@ -26,8 +26,8 @@ struct asset_codec_api {
 	 * `encode` serializes a typed object back to a freshly allocated byte
 	 * buffer, writing its size to *out_size; the caller owns the buffer.
 	 * Attaches to the same ext slot as register_codec, so one codec holds
-	 * both directions.  Added for content-addressing (#214/#235): the
-	 * branching runtime encodes the live scene to canonical bytes to hash it.
+	 * both directions — a typed object can be serialized to canonical bytes
+	 * (#235) and decoded back through the same ext.
 	 */
 	void  (*register_encoder)(const char *ext,
 				  void *(*encode)(const void *typed,

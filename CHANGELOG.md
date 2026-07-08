@@ -35,6 +35,13 @@ someone using the engine, before it lands anywhere else.
   `shader_graph` plugins, kruddboard's Shader Graph tab, and the
   `ASSET_TYPE_VSCRIPT` asset type are gone. Neither system had shipped a
   supported authoring path beyond the in-editor node canvas.
+- **Project branching & snapshots.** kruddboard's Branches tab and the whole
+  branching subsystem behind it are gone: the `branch`, `snapshot`, and `cas`
+  (content-addressed store) plugins, the backend's branching host, and the
+  `branch_api.h` ABI. The backend no longer advertises `BACKEND_CAP_BRANCHING`
+  or exposes `branching()`, and the `scene` subsystem drops the
+  `export_scene_bytes` / `ingest_scene_bytes` entry points that existed only to
+  feed it — a breaking change to the backend and entity plugin ABIs.
 
 ## [6.4.0] - 2026-07-07
 

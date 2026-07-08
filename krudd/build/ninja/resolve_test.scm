@@ -80,8 +80,6 @@
 (inc-check "renderer_null_test"
 	   '("plugins/renderer_null" "plugins/renderer" "modules/log/include"
 	     "plugins/include" "modules/core/include"))
-(inc-check "snapshot" '("plugins/snapshot" "plugins/include" "plugins/cas"
-			"plugins/branch"))
 (inc-check "fg_test" '("plugins/frame_graph" "plugins/renderer"
 		       "plugins/renderer_null" "modules/log/include"
 		       "plugins/include" "modules/memory/include"
@@ -90,8 +88,7 @@
 			    "modules/log/include" "modules/memory/include"
 			    "modules/core/include"))
 (inc-check "backend_plugin" '("plugins/backend" "modules/core/include"
-			      "plugins/include" "plugins/cas" "plugins/branch"
-			      "plugins/snapshot" "modules/log/include"))
+			      "plugins/include" "modules/log/include"))
 (inc-check "scene_test" '("plugins/scene_plugin" "plugins/include"
 			  "modules/core/include" "plugins/asset"
 			  "modules/log/include" "modules/memory/include"))
@@ -112,10 +109,6 @@
 	       (and (< (index-of "renderer_null" libs) (index-of "log" libs))
 		    (< (index-of "renderer_null" libs)
 		       (index-of "subsystem" libs)))))
-
-(let ((libs (resolve-link-libs table "snapshot")))
-	(check "closure snapshot: branch before cas"
-	       (< (index-of "branch" libs) (index-of "cas" libs))))
 
 ;; ---------------------------------------------------------------------------
 ;; Failure modes must fail loudly.

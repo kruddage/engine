@@ -13,14 +13,6 @@
 #define BACKEND_CAP_PROJECT_PERSIST	(1u << 0)
 #define BACKEND_CAP_AUTH		(1u << 1)
 #define BACKEND_CAP_MESSAGING		(1u << 2)
-/*
- * Project branching & snapshots (#213).  Set by the Local provider once the
- * branching host is up; a provider without branching leaves it clear and
- * branching() returns NULL, so consumers degrade safely.
- */
-#define BACKEND_CAP_BRANCHING		(1u << 3)
-
-struct branch_api;
 
 /*
  * Backend subsystem API.  Obtain via
@@ -54,14 +46,6 @@ struct backend_api {
 	 * Returns 0 on success, -1 on failure (no capability or bad id).
 	 */
 	int32_t (*delete_asset)(uint32_t id);
-
-	/*
-	 * The branching capability (#213), or NULL when BACKEND_CAP_BRANCHING is
-	 * clear.  Gives the editor and the live-save wiring branches, snapshots,
-	 * switch, and fork without knowing IndexedDB or the cas store.  See
-	 * branch_api.h.
-	 */
-	const struct branch_api *(*branching)(void);
 };
 
 #endif /* BACKEND_API_H */

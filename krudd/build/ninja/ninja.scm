@@ -440,10 +440,12 @@
 ;; generated into <builddir>/generated at synthesis time (as CMake ran
 ;; configure_file / the embed script at configure time).
 (define (ninja-generate-codegen srcroot builddir)
-	(let ((gen     (string-append builddir "/generated"))
-	      (mdscm   (string-append (krudd-repo-root)
+	(let ((gen      (string-append builddir "/generated"))
+	      (mdscm    (string-append (krudd-repo-root)
 				      "/krudd/build/modules/md_parse.scm"))
-	      (mathscm (string-append (krudd-repo-root)
+	      (primscm  (string-append (krudd-repo-root)
+				      "/krudd/build/modules/primitives.scm"))
+	      (mathscm  (string-append (krudd-repo-root)
 				      "/krudd/build/modules/math.scm")))
 		(system (string-append "mkdir -p \"" gen "\""))
 		(krudd-configure-file
@@ -464,6 +466,16 @@
 		  mdscm
 		  (string-append gen "/md_parse.h")
 		  (string-append gen "/md_parse.scm.c"))
+		;; primitives.scm (also under krudd/build/modules/): the engine's
+		;; built-in geometry, ported from modules/asset/primitives.c. The
+		;; generator emits primitives_gen.h (the prim_vertex struct + the
+		;; two export prototypes) and the primitives.scm.c shim; the
+		;; hand-written primitives_blob.c packs the marshaled arrays into a
+		;; mesh_blob. The .scm is the only ABI artifact in git.
+		(krudd-embed-scheme-module
+		  primscm
+		  (string-append gen "/primitives_gen.h")
+		  (string-append gen "/primitives.scm.c"))
 		;; math.scm (also under krudd/build/modules/) is the monolang: its
 		;; (define-c-fn ...) arithmetic bodies are transpiled straight to
 		;; native C — no s7 image, no runtime marshaling. The generated

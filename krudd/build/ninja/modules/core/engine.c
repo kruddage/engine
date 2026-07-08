@@ -58,7 +58,6 @@ static const struct subsystem subsystems[] = {
  * after the services it depends on — the order the old dlopen chain enforced.
  */
 void asset_plugin_entry(struct subsystem_manager *mgr);
-void backend_plugin_entry(struct subsystem_manager *mgr);
 void scene_plugin_entry(struct subsystem_manager *mgr);
 void edit_plugin_entry(struct subsystem_manager *mgr);
 void entity_plugin_entry(struct subsystem_manager *mgr);
@@ -71,7 +70,6 @@ void kruddboard_plugin_entry(struct subsystem_manager *mgr);
 static void register_plugins(struct subsystem_manager *mgr)
 {
 	asset_plugin_entry(mgr);
-	backend_plugin_entry(mgr);
 	scene_plugin_entry(mgr);
 	edit_plugin_entry(mgr);
 	entity_plugin_entry(mgr);

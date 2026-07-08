@@ -87,8 +87,6 @@
 (inc-check "asset_plugin" '("plugins/asset" "plugins/include"
 			    "modules/log/include" "modules/memory/include"
 			    "modules/core/include"))
-(inc-check "backend_plugin" '("plugins/backend" "modules/core/include"
-			      "plugins/include" "modules/log/include"))
 (inc-check "scene_test" '("plugins/scene_plugin" "plugins/include"
 			  "modules/core/include" "plugins/asset"
 			  "modules/log/include" "modules/memory/include"))

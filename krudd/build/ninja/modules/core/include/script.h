@@ -2,6 +2,10 @@
 #ifndef SCRIPT_H
 #define SCRIPT_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /*
  * script — the s7 Scheme runtime embedded in the engine.
  *
@@ -32,5 +36,9 @@ void script_tick(void);
 
 /* Tear the interpreter down. */
 void script_shutdown(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* SCRIPT_H */

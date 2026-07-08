@@ -22,6 +22,5 @@
  "plugins/frame_graph"
  "plugins/scene_renderer"
  "plugins/asset"
- "plugins/backend"
  "plugins/imgui_plugin"
  "plugins/kruddboard")

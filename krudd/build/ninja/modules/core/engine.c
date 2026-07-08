@@ -133,7 +133,7 @@ void engine_init(void)
 {
 	subsystem_manager_init(&manager, subsystems);
 	frame_count = 0;
-	LOG_INFO("engine: init " ENGINE_VERSION_FULL);
+	LOG_INFO("engine: init " ENGINE_VERSION_STRING);
 #ifdef __EMSCRIPTEN__
 	/* Register the statically-linked plugins now that core services exist. */
 	register_plugins(&manager);

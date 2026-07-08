@@ -69,16 +69,16 @@
 
 ;; scm-lint:off
 ;; The version string. There is no VERSION file and no git tag to read: CI
-;; computes the real semver by folding each merged PR's release:{breaking,
-;; feature,fix,chore} label (see .github/workflows/ci.yml and
-;; .github/scripts/compute-version.js) and hands it down via KRUDD_VERSION.
-;; A plain local `./krudd.sh build` has no GitHub token to do that fold with,
-;; so it falls back to a placeholder — real version numbers only ever come
-;; from CI.
+;; computes the real X.Y.Z.W version by folding each merged PR's
+;; release:{breaking,feature,fix,chore} label (see .github/workflows/ci.yml
+;; and .github/scripts/compute-version.js) and hands it down via
+;; KRUDD_VERSION. A plain local `./krudd.sh build` has no GitHub token to do
+;; that fold with, so it falls back to a placeholder — real version numbers
+;; only ever come from CI.
 ;; scm-lint:on
 (define (krudd-version)
 	(let ((v (getenv "KRUDD_VERSION")))
-		(if (and v (> (string-length v) 0)) v "0.0.0-dev")))
+		(if (and v (> (string-length v) 0)) v "0.0.0.0-dev")))
 
 ;; scm-lint:off
 ;; Run git in the repo root and return its captured, stripped stdout ("" on
@@ -92,17 +92,9 @@
 		  #t)))
 
 ;; scm-lint:off
-;; The build number: how many merged PRs CI folded to reach KRUDD_VERSION,
-;; supplied alongside it as KRUDD_BUILD_NUMBER. "0" outside CI.
-;; scm-lint:on
-(define (krudd-build-number)
-	(let ((n (getenv "KRUDD_BUILD_NUMBER")))
-		(if (and n (> (string-length n) 0)) n "0")))
-
-;; scm-lint:off
-;; MAJOR.MINOR.PATCH out of a version string that may carry a CI prerelease
-;; suffix (e.g. "10.1.0-pr482+a1b2c3d" for an unmerged PR build) — take only
-;; what precedes the first "-" or "+".
+;; MAJOR.MINOR.PATCH.CHORE out of a version string that may carry a CI
+;; prerelease suffix (e.g. "10.1.0.23-pr482+a1b2c3d" for an unmerged PR
+;; build) — take only what precedes the first "-" or "+".
 ;; scm-lint:on
 (define (krudd-version-core version)
 	(let loop ((i 0))
@@ -172,7 +164,7 @@
 		      (cons "PROJECT_VERSION_MAJOR" (list-ref parts 0))
 		      (cons "PROJECT_VERSION_MINOR" (list-ref parts 1))
 		      (cons "PROJECT_VERSION_PATCH" (list-ref parts 2))
-		      (cons "ENGINE_BUILD_NUMBER" (krudd-build-number))
+		      (cons "PROJECT_VERSION_CHORE" (list-ref parts 3))
 		      (cons "GIT_COMMIT_HASH" (krudd-commit-hash)))))
 
 (define (krudd-replace s old new)

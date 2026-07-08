@@ -15,5 +15,5 @@ labels: ""
 
 ## Environment
 
-- Engine version (from the title bar / `ENGINE_VERSION_FULL`):
+- Engine version (from the title bar / `ENGINE_VERSION_STRING`):
 - Browser / platform:

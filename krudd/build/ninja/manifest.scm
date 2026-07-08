@@ -5,7 +5,6 @@
  "modules/memory"
  "modules/math"
  "modules/renderer"
- "modules/scene_plugin"
  "modules/edit_plugin"
  "modules/entity_plugin"
  "modules/renderer_null"

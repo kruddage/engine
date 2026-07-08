@@ -63,9 +63,6 @@
 (inc-check "asset_plugin" '("modules/asset" "modules/include"
 			    "modules/log/include" "modules/memory/include"
 			    "modules/core/include"))
-(inc-check "scene_test" '("modules/scene_plugin" "modules/include"
-			  "modules/core/include" "modules/asset"
-			  "modules/log/include" "modules/memory/include"))
 
 (display "resolver: transitive link closures\n")
 (let ((libs (resolve-link-libs table "renderer_null_test")))
@@ -135,9 +132,9 @@
        (not (contains? ninja-text "renderer_interface")))
 (check "C plugin compiles as a WASM library object (emcc_c), no side-module rule"
        (and (contains? ninja-text
-	      (string-append "build wasm-obj/scene_plugin/modules/scene_plugin/"
-			     "scene_plugin.c.o: emcc_c "))
-	    (contains? ninja-text "build wasm/libscene_plugin.a: emar ")
+	      (string-append "build wasm-obj/edit_plugin/modules/edit_plugin/"
+			     "edit_plugin.c.o: emcc_c "))
+	    (contains? ninja-text "build wasm/libedit_plugin.a: emar ")
 	    (not (contains? ninja-text "sm_cc"))
 	    (not (contains? ninja-text "side_module"))))
 (check "C++ module compiles with emcc_cxx and its wasm-flags"
@@ -149,7 +146,7 @@
        (and (contains? ninja-text
 	      (string-append "main_module wasm-obj/index/modules/core/engine.c.o "
 			     "wasm-obj/index/modules/core/plugin_abi.c.o "))
-	    (contains? ninja-text "wasm/libscene_plugin.a")
+	    (contains? ninja-text "wasm/libedit_plugin.a")
 	    (contains? ninja-text "wasm/libimgui_plugin.a")))
 (check "default target is native"
        (contains? ninja-text "default native"))

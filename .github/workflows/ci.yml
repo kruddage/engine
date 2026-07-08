@@ -2,11 +2,18 @@ name: CI
 
 on:
   pull_request:
+    # `closed` is included so the preview job can tear down a PR's preview
+    # directory when the PR is merged or closed. The default set is
+    # [opened, synchronize, reopened]; adding closed keeps those and adds it.
+    types: [opened, reopened, synchronize, closed]
   push:
     branches: [main]
 
 jobs:
   build:
+    # Skip the build on PR-close events — there is nothing to publish, the
+    # preview job only needs to remove the stale directory.
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
     runs-on: ubuntu-latest
     container: emscripten/emsdk:6.0.2
     steps:
@@ -63,3 +70,51 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./public
           publish_branch: gh-pages
+          # keep_files preserves the pr-preview/ directory tree that the
+          # preview job writes into the same gh-pages branch; without it a
+          # main deploy would delete every open PR's preview. The trade-off is
+          # that old hash-named index.<hash>.{js,wasm} from previous main
+          # deploys are no longer pruned and accumulate at the site root.
+          keep_files: true
+
+  # Publishes each pull request's staged build to
+  # gh-pages/pr-preview/pr-<N>/ and comments the preview URL on the PR, then
+  # removes that directory when the PR is closed or merged. Scoped to
+  # same-repository PRs: the pull_request token is read-only for forks, so a
+  # fork PR cannot push to gh-pages. (Supporting forks safely would require a
+  # separate pull_request_target/workflow_run job that deploys outside the
+  # untrusted build context.)
+  preview:
+    needs: build
+    # !cancelled() lifts the implicit "needs succeeded" gate so this still runs
+    # on the close event (where build is skipped). Deploys only when the build
+    # succeeded; the close path tears down regardless of the build.
+    if: >-
+      ${{ !cancelled() && github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && (github.event.action == 'closed' || needs.build.result == 'success') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    # Serialize a single PR's preview runs so rapid pushes don't race each
+    # other pushing to gh-pages; keyed per-PR so different PRs stay independent.
+    concurrency:
+      group: preview-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download staged site
+        if: github.event.action != 'closed'
+        uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: public
+
+      - name: Deploy preview
+        uses: rossjrw/pr-preview-action@v1
+        with:
+          source-dir: public
+          preview-branch: gh-pages
+          umbrella-dir: pr-preview

@@ -69,7 +69,7 @@
 
 ;; The WASM build resolves the krudd-owned path tokens the side-module specs
 ;; reference (${imgui} from the fetch, ${generated} for the configure_file /
-;; changelog headers) to real Ninja paths, rather than escaping them for native
+;; embed headers) to real Ninja paths, rather than escaping them for native
 ;; output.
 (define (ninja-resolve-var p)
 	(krudd-replace
@@ -414,7 +414,7 @@
 		(ninja-emit "")
 		(ninja-wasm! "index.html")))
 
-;; The configure_file / changelog outputs the WASM build compiles against,
+;; The configure_file / embed outputs the WASM build compiles against,
 ;; generated into <builddir>/generated at synthesis time (as CMake ran
 ;; configure_file / the embed script at configure time).
 (define (ninja-generate-codegen srcroot builddir)
@@ -428,9 +428,6 @@
 		(krudd-configure-file
 		  (string-append srcroot "/modules/core/shell.html.in")
 		  (string-append gen "/shell.html"))
-		(krudd-embed-file
-		  (string-append (krudd-repo-root) "/CHANGELOG.md")
-		  (string-append gen "/changelog_data.h") "CHANGELOG_MD")
 		(krudd-embed-file
 		  (string-append srcroot "/modules/core/runtime.scm")
 		  (string-append gen "/runtime_scm.h") "RUNTIME_SCM")
@@ -447,7 +444,7 @@
 ;; Render the whole manifest to build.ninja text. MANIFEST is a list of
 ;; (DIR . SPEC) pairs; SRCROOT is the absolute path of the tree root
 ;; (krudd/build/ninja/) the paths resolve against. When BUILDDIR is given, the
-;; configure_file / changelog outputs are generated into it so `ninja wasm` can
+;; configure_file / embed outputs are generated into it so `ninja wasm` can
 ;; compile against them.
 (define (ninja-synthesize manifest srcroot . rest)
 	(let ((builddir (if (pair? rest) (car rest) #f)))

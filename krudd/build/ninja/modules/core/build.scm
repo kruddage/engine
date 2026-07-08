@@ -18,7 +18,7 @@
 	(private "include" (raw "${generated}")
 		(root "modules/include"))
 	(link "subsystem" "subsystem_manager" "log" "memory" "script")
-	(wasm-modules "asset_plugin" "scene_plugin" "edit_plugin" "entity_plugin"
+	(wasm-modules "asset_plugin" "edit_plugin" "entity_plugin"
 		"renderer_webgl" "frame_graph" "scene_renderer" "imgui_plugin"
 		"kruddboard"))
 

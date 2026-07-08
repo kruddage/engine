@@ -3,20 +3,29 @@
 ; In-browser tabbed authoring surface + markdown parser. The side module reuses
 ; the same shape every other plugin's WASM build uses. imgui is fetched into
 ; ${imgui}, a path this spec doesn't own, so it passes through (raw ...).
+;
+; The browser now parses markdown through the Scheme port: kruddboard.cpp calls
+; md_parse() (declared in the generated md_parse.h), and the object it links is
+; the generated ${generated}/md_parse.scm.c shim — the s7 image baked in, run
+; through the shared script runtime. There is no md_parse.c in the module any
+; more. ../../third_party is on the include path for the shim's s7.h; script_s7
+; / script_eval resolve straight from the single module's "script" archive.
 ((side-module "kruddboard"
 	(compiler cxx)
 	(flags "--std=c++17" "-fno-exceptions" "-fno-rtti")
 	(includes (current) (raw "${generated}")
 		(root "modules/core/include") (root "plugins/include")
+		(raw "../../third_party")
 		(raw "${imgui}") (raw "${imgui}/backends"))
-	(sources (current "kruddboard.cpp") (current "md_parse.c"))
-	(depends (current "kruddboard.cpp") (current "md_parse.c")
-		(current "md_draw.h")
-		(raw "${generated}/md_parse.h")))
+	(sources (current "kruddboard.cpp") (raw "${generated}/md_parse.scm.c"))
+	(depends (current "kruddboard.cpp") (current "md_draw.h")
+		(raw "${generated}/md_parse.h")
+		(raw "${generated}/md_parse.scm.c")))
 
  (native-only
-	;; The C parser, still compiled into the WASM side module above and kept
-	;; under its own test until the Scheme port takes over the browser too.
+	;; The original C parser: no longer in any WASM build, kept as the golden
+	;; reference the Scheme port is proven byte-for-byte equal to (both run the
+	;; same md_parse_test.c below).
 	(library "md_parse"
 		(sources "md_parse.c")
 		(public (current) (raw "${generated}")))

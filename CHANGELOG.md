@@ -8,15 +8,10 @@ Entries are grouped by theme — features and fixes that matter to users of the
 engine — rather than by individual commit. Pre-`0.3.0` releases predate this file
 and are summarized at a high level.
 
-This file has a build-time consumer: kruddboard's "What's New" tab renders it
-in-app, so a shipped change is visible to anyone running the engine, not just
-to someone reading git history. The contents are baked into the WASM module at
-build time, which makes this file the app's release notes — a change is only
-visible in the "What's New" tab once it's written down here. (`release.yml`
-still auto-generates GitHub Release notes from merged PR titles rather than
-from `[Unreleased]`.) This file remains the release-notes source of truth:
-every user-facing change is recorded here, in prose meant for someone using the
-engine, before it lands anywhere else.
+(`release.yml` auto-generates GitHub Release notes from merged PR titles
+rather than from `[Unreleased]`.) This file remains the release-notes source
+of truth: every user-facing change is recorded here, in prose meant for
+someone using the engine, before it lands anywhere else.
 
 ## [Unreleased]
 
@@ -30,6 +25,12 @@ engine, before it lands anywhere else.
   primitive backed by the log subsystem. This is the first step toward writing
   game and engine logic in Scheme, with C/Rust reserved for the paths that need
   them.
+
+### Removed
+
+- **kruddboard's "What's New" tab.** The in-app changelog viewer is gone;
+  `CHANGELOG.md` is still the release-notes source of truth, just read from
+  git history instead of rendered in the editor overlay.
 
 ## [6.4.0] - 2026-07-07
 

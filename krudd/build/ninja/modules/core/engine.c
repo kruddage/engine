@@ -57,7 +57,6 @@ static const struct subsystem subsystems[] = {
  * init at register time, so calling these in dependency order boots each plugin
  * after the services it depends on — the order the old dlopen chain enforced.
  */
-void hello_plugin_entry(struct subsystem_manager *mgr);
 void asset_plugin_entry(struct subsystem_manager *mgr);
 void scene_plugin_entry(struct subsystem_manager *mgr);
 void edit_plugin_entry(struct subsystem_manager *mgr);
@@ -70,7 +69,6 @@ void kruddboard_plugin_entry(struct subsystem_manager *mgr);
 
 static void register_plugins(struct subsystem_manager *mgr)
 {
-	hello_plugin_entry(mgr);
 	asset_plugin_entry(mgr);
 	scene_plugin_entry(mgr);
 	edit_plugin_entry(mgr);

@@ -50,7 +50,6 @@ krudd/                    The build tool and the whole build tree it owns —
         scene_renderer/   Draws COMPONENT_RENDER entities via the frame graph (#172)
         imgui_plugin/     ImGui debug UI shell
         kruddboard/       In-browser tabbed authoring surface + markdown parser
-        hello_plugin/     Minimal example plugin
 
 docs/                     Design documentation
   backend-abstraction.md  Local provider + IndexedDB persistence design

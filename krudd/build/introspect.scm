@@ -109,7 +109,7 @@
 		dir))
 
 ;; ---------------------------------------------------------------------------
-;; Codegen: krudd's replacements for CMake's configure_file and its changelog
+;; Codegen: krudd's replacements for CMake's configure_file and its embed
 ;; embed script — the file transforms the build needs generated before
 ;; compiling. The emitter calls these at synthesis time (as CMake ran them at
 ;; configure time) and references the outputs.
@@ -167,7 +167,7 @@
 		(string (string-ref digits (quotient b 16))
 			(string-ref digits (remainder b 16)))))
 
-;; Changelog embed: bake the file at IN into a NUL-terminated char array under
+;; File embed: bake the file at IN into a NUL-terminated char array under
 ;; SYMBOL, each byte written as a 0xNN element (so non-ASCII bytes and quotes
 ;; survive and md_parse()/script_eval() get a valid string), and write the
 ;; header to OUT.
@@ -183,7 +183,7 @@
 ;; Format the bytes of S as a C array-initializer body: each byte as (char)0xNN
 ;; (see the rationale above), twelve per line, terminated with an explicit
 ;; (char)0x00 so the embedded string stays NUL-terminated. Shared by the
-;; changelog/runtime header embed and the md_parse shim's baked-in image.
+;; runtime header embed and the md_parse shim's baked-in image.
 (define (krudd-bytes->c-init s)
 	(let* ((n    (string-length s))
 	       (body (let loop ((i 0) (acc ""))

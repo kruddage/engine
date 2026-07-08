@@ -2,7 +2,7 @@
 ;
 ; introspect_test.scm — native s7-only checks for krudd/build/introspect.scm:
 ; the build-time introspection krudd owns now that CMake is gone (version +
-; git facts, the configure_file / changelog codegen, and the dependency
+; git facts, the configure_file / embed codegen, and the dependency
 ; fetch).
 ;
 ; Run via krudd/build/run-tests.sh. Prints "INTROSPECT-TESTS: OK" and exits 0
@@ -59,7 +59,7 @@
 (check "commit hash non-empty" (> (string-length (krudd-commit-hash)) 0))
 
 ;; ---------------------------------------------------------------------------
-;; Codegen: configure_file and the changelog embed.
+;; Codegen: configure_file and the file embed.
 ;; ---------------------------------------------------------------------------
 
 (display "introspect: codegen\n")
@@ -74,12 +74,13 @@
 	       (has? v (string-append "ENGINE_VERSION_STRING \"" version "\"")))
 	(check "version.h has no unexpanded @VAR@ tokens" (not (has? v "@"))))
 
-(krudd-embed-file (string-append krudd-root "/CHANGELOG.md")
-		  (string-append tmp "/changelog_data.h") "CHANGELOG_MD")
-(let ((h (slurp (string-append tmp "/changelog_data.h"))))
-	(check "changelog header declares the symbol"
-	       (has? h "static const char CHANGELOG_MD[] ="))
-	(check "changelog body is a NUL-terminated byte array"
+(krudd-embed-file
+  (string-append krudd-root "/krudd/build/ninja/modules/core/runtime.scm")
+  (string-append tmp "/runtime_scm.h") "RUNTIME_SCM")
+(let ((h (slurp (string-append tmp "/runtime_scm.h"))))
+	(check "embed header declares the symbol"
+	       (has? h "static const char RUNTIME_SCM[] ="))
+	(check "embed body is a NUL-terminated byte array"
 	       (and (has? h "(char)0x") (has? h "(char)0x00"))))
 
 ;; ---------------------------------------------------------------------------

@@ -10,9 +10,4 @@
 		(sources "renderer_null_test.c")
 		(private "." (root "plugins/renderer"))
 		(link "renderer_null" "log" "subsystem_manager"))
-	(test "renderer_null" "renderer_null_test"))
- (side-module "renderer_null"
-	(includes (current) (root "plugins/renderer")
-		(root "modules/core/include") (root "plugins/include"))
-	(sources (current "renderer_null.c"))
-	(depends (current "renderer_null.c"))))
+	(test "renderer_null" "renderer_null_test")))

@@ -1015,11 +1015,7 @@ static const struct subsystem desc = {
 	.shutdown = asset_shutdown,
 };
 
-#ifdef __EMSCRIPTEN__
-void plugin_entry(struct subsystem_manager *mgr)
-#else
 void asset_plugin_entry(struct subsystem_manager *mgr)
-#endif
 {
 #ifdef __EMSCRIPTEN__
 	g_log = subsystem_manager_get_api(mgr, "log");

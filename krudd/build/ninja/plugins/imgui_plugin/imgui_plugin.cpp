@@ -319,11 +319,7 @@ static const struct subsystem desc = {
 	imgui_shutdown,
 };
 
-#ifdef __EMSCRIPTEN__
-extern "C" void plugin_entry(struct subsystem_manager *mgr)
-#else
 extern "C" void imgui_plugin_entry(struct subsystem_manager *mgr)
-#endif
 {
 #ifdef __EMSCRIPTEN__
 	g_log   = (const struct log_api *)

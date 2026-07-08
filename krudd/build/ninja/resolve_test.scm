@@ -178,8 +178,16 @@
        (contains? ninja-text "build test/log.stamp: run_test bin/log_test"))
 (check "interface-library emits no build output"
        (not (contains? ninja-text "renderer_interface")))
-(check "side-module stanza present"
-       (contains? ninja-text "build hello_plugin.wasm: side_module "))
+(check "plugin folds into an object, no standalone .wasm"
+       (and (contains? ninja-text
+	      (string-append "build wasm-obj/hello_plugin/plugins/hello_plugin/"
+			     "hello_plugin.c.o: sm_cc "))
+	    (not (contains? ninja-text "side_module"))))
+(check "plugin object folds into the main module link"
+       (contains? ninja-text
+	 (string-append "main_module wasm-obj/index/modules/core/engine.c.o "
+			"wasm-obj/index/modules/core/plugin_abi.c.o "
+			"wasm-obj/hello_plugin/")))
 (check "default target is native"
        (contains? ninja-text "default native"))
 (check "wasm main module stanza present"

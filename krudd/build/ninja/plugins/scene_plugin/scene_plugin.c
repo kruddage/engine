@@ -147,11 +147,7 @@ static void *scene_encode_typed(const void *typed, uint32_t *out_size)
 	return scene_encode((const struct scene *)typed, out_size);
 }
 
-#ifdef __EMSCRIPTEN__
-void plugin_entry(struct subsystem_manager *mgr)
-#else
 void scene_plugin_entry(struct subsystem_manager *mgr)
-#endif
 {
 	const struct asset_codec_api *codec;
 

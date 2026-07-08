@@ -25,7 +25,7 @@ static const struct subsystem desc = {
 	.shutdown = hello_shutdown,
 };
 
-void plugin_entry(struct subsystem_manager *mgr)
+void hello_plugin_entry(struct subsystem_manager *mgr)
 {
 	subsystem_manager_register(mgr, &desc);
 }

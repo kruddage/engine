@@ -429,11 +429,7 @@ static const struct subsystem camera_desc = {
 	.api  = &g_camera_api,
 };
 
-#ifdef __EMSCRIPTEN__
-void plugin_entry(struct subsystem_manager *mgr)
-#else
 void scene_renderer_plugin_entry(struct subsystem_manager *mgr)
-#endif
 {
 	g_mgr = mgr;
 #ifdef __EMSCRIPTEN__

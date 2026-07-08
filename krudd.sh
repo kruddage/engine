@@ -26,6 +26,10 @@ fi
 
 echo "krudd.sh: found C compiler $cc"
 
+# s7.c/s7.h aren't committed; sync.sh fetches the pinned amalgamation (see
+# krudd/third_party/s7.artifact) before we compile the tool that embeds it.
+. "$root/krudd/third_party/sync.sh"
+
 bin="$root/krudd/krudd"
 src="$root/krudd/krudd.c"
 s7="$root/krudd/third_party/s7.c"

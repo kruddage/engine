@@ -21,6 +21,8 @@ if [ -z "$cc" ]; then
 fi
 [ -n "$cc" ] || { echo "krudd: no C compiler (set CC)" >&2; exit 1; }
 
+. "$root/krudd/third_party/sync.sh"
+
 work="$root/build-ninja"
 mkdir -p "$work"
 s7bin="$work/s7"

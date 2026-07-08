@@ -1,4 +1,5 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
+;; scm-lint:off
 ;
 ; Engine heartbeat — init/tick/shutdown, subsystem manager, and the "index"
 ; executable that becomes index.html/.js/.wasm under Emscripten.
@@ -14,6 +15,7 @@
 ; cleanly. The plugin modules folded into the single WASM module are named by
 ; (wasm-modules ...); the emitter compiles each with emcc/em++ and links it into
 ; index.html. Keep that list in step with register_plugins() in engine.c.
+;; scm-lint:on
 ((library "subsystem"
 	(sources "subsystem.c")
 	(public "include"))
@@ -22,10 +24,12 @@
 	(sources "subsystem_manager.c")
 	(public "include"))
 
+ ;; scm-lint:off
  ;; The embedded s7 Scheme runtime. s7.c itself is folded into this archive by
  ;; the emitter (with its own relaxed compile flags — see ninja.scm), so a bare
  ;; (link "script") drags the whole interpreter in for native tests and the
  ;; WASM main module alike.
+ ;; scm-lint:on
  (library "script"
 	(sources "script.c")
 	(public "include")

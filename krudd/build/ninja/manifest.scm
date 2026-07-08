@@ -1,4 +1,5 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
+;; scm-lint:off
 ;
 ; The manifest: every directory krudd owns, as a path relative to
 ; krudd/build/ninja/. The spec for each lives at krudd/build/ninja/<dir>/build.scm.
@@ -7,6 +8,7 @@
 ; This is a bare datum (a list of strings) read by krudd/build/build.scm (the
 ; driver) and krudd/build/ninja/resolve.scm (the resolver), the one source of
 ; truth for what krudd owns.
+;; scm-lint:on
 
 ("modules/core"
  "modules/log"

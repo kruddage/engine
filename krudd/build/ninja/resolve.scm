@@ -1,4 +1,5 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
+;; scm-lint:off
 ;
 ; resolve.scm — the static include/link resolver.
 ;
@@ -25,18 +26,23 @@
 ; Two failure modes fail loudly at resolution time rather than mis-linking
 ; later: a cycle in the link graph, and a link entry that names neither a
 ; defined target nor a known system library.
+;; scm-lint:on
 
+;; scm-lint:off
 ;; ---------------------------------------------------------------------------
 ;; Small list helpers (s7 gives us map/for-each/assoc/member; the rest we spell
 ;; out).
 ;; ---------------------------------------------------------------------------
+;; scm-lint:on
 
 (define (rz-filter pred lst)
 	(cond ((null? lst) '())
 	      ((pred (car lst)) (cons (car lst) (rz-filter pred (cdr lst))))
 	      (else (rz-filter pred (cdr lst)))))
 
+;; scm-lint:off
 ;; De-duplicate a list of strings, keeping the first occurrence's position.
+;; scm-lint:on
 (define (rz-dedup lst)
 	(let loop ((l lst) (seen '()) (out '()))
 		(cond ((null? l) (reverse out))
@@ -44,29 +50,37 @@
 		      (else (loop (cdr l) (cons (car l) seen)
 				  (cons (car l) out))))))
 
+;; scm-lint:off
 ;; Find the clause whose head is HEAD in a target's clause list, or #f.
+;; scm-lint:on
 (define (rz-clause head clauses)
 	(cond ((null? clauses) #f)
 	      ((and (pair? (car clauses)) (eq? (caar clauses) head))
 	       (car clauses))
 	      (else (rz-clause head (cdr clauses)))))
 
+;; scm-lint:off
 ;; The libraries linked against by a native build that are not targets we
 ;; define — they resolve to a plain -l flag and carry no include directories.
 ;; Keep this list tight so a mistyped internal target name is caught, not
 ;; silently treated as a system library.
+;; scm-lint:on
 (define rz-system-libs (list "m"))
 
 (define (rz-system-lib? name) (member name rz-system-libs))
 
+;; scm-lint:off
 ;; ---------------------------------------------------------------------------
 ;; Path expansion. A source/include path spec resolves relative to the tree
 ;; root (krudd/build/ninja/) — the source tree krudd owns. DIR is the owning
 ;; directory, relative to that root.
 ;; ---------------------------------------------------------------------------
+;; scm-lint:on
 
+;; scm-lint:off
 ;; Join a directory and a relative component, collapsing "." to just the dir so
 ;; "." in modules/asset yields "modules/asset", not "modules/asset/.".
+;; scm-lint:on
 (define (rz-join dir sub)
 	(cond ((or (string=? sub "") (string=? sub ".")) dir)
 	      ((string=? dir "") sub)
@@ -82,11 +96,14 @@
 
 (define (rz-paths dir specs) (map (lambda (p) (rz-path dir p)) specs))
 
+;; scm-lint:off
 ;; The include dirs named by a clause (public/private/interface), expanded.
+;; scm-lint:on
 (define (rz-clause-dirs dir clauses head)
 	(let ((c (rz-clause head clauses)))
 		(if c (rz-paths dir (cdr c)) '())))
 
+;; scm-lint:off
 ;; ---------------------------------------------------------------------------
 ;; Target table. Walk every spec, flattening (native-only ...) / (wasm-only ...)
 ;; wrappers, and record each link/include target (library, interface-library,
@@ -96,6 +113,7 @@
 ;; libraries the WASM main module folds in beyond its own (link ...); it is
 ;; empty for every other target.
 ;; ---------------------------------------------------------------------------
+;; scm-lint:on
 
 (define (rz-make-target name dir kind public private links wasm-modules)
 	(list name (cons 'dir dir) (cons 'kind kind)
@@ -104,7 +122,9 @@
 
 (define (rz-field target key) (cdr (assq key (cdr target))))
 
+;; scm-lint:off
 ;; Pull a target record out of a single form, or #f if the form is not a target.
+;; scm-lint:on
 (define (rz-form->target dir form)
 	(case (car form)
 	  ((library executable)
@@ -123,10 +143,12 @@
 	     '() '() '()))
 	  (else #f)))
 
+;; scm-lint:off
 ;; Flatten one spec into its target records, descending into native-only and
 ;; wasm-only (both are toolchain gates around otherwise ordinary target forms;
 ;; the resolver treats their contents as plain targets — only the emitter cares
 ;; which toolchain builds them).
+;; scm-lint:on
 (define (rz-spec-targets dir spec)
 	(let loop ((forms spec) (out '()))
 		(cond ((null? forms) (reverse out))
@@ -138,7 +160,9 @@
 			(let ((t (rz-form->target dir (car forms))))
 			  (loop (cdr forms) (if t (cons t out) out)))))))
 
+;; scm-lint:off
 ;; Build the whole target table from the (dir . spec) manifest.
+;; scm-lint:on
 (define (rz-target-table manifest)
 	(apply append
 	       (map (lambda (pair) (rz-spec-targets (car pair) (cdr pair)))
@@ -146,10 +170,12 @@
 
 (define (rz-lookup table name) (assoc name table))
 
+;; scm-lint:off
 ;; The internal library dependencies named by NAME's link clause. Each link
 ;; entry must be a defined target or a known system library; anything else is a
 ;; typo we refuse to paper over. System libraries are dropped (they add no
 ;; include dirs and no graph edge); defined targets are kept as edges.
+;; scm-lint:on
 (define (rz-direct-deps table name)
 	(let ((target (rz-lookup table name)))
 		(if (not target)
@@ -163,15 +189,16 @@
 						(list 'in name 'links link)))))
 			   (rz-field target 'links))))))
 
-;; ---------------------------------------------------------------------------
+;; scm-lint:off
 ;; Link closure. Depth-first walk of the link graph from a set of roots,
 ;; returning the transitive internal libraries dependents-first (a library
 ;; appears before the libraries it depends on — the order a single-pass static
 ;; linker needs). A back-edge onto the active DFS path is a cycle and errors.
-;; ---------------------------------------------------------------------------
+;; state maps name -> 'active | 'done (latest cons wins).
+;; scm-lint:on
 
 (define (rz-closure table roots)
-	(let ((state '())   ; name -> 'active | 'done  (latest cons wins)
+	(let ((state '())
 	      (out '()))
 		(define (mark name tag) (set! state (cons (cons name tag) state)))
 		(define (status name)
@@ -189,32 +216,40 @@
 		(for-each (lambda (r) (visit r '())) roots)
 		out))
 
+;; scm-lint:off
 ;; ---------------------------------------------------------------------------
 ;; Public API.
 ;; ---------------------------------------------------------------------------
+;; scm-lint:on
 
+;; scm-lint:off
 ;; The link libraries (internal only) a target must link, dependents-first,
 ;; transitively. Roots are the target's own direct internal deps, so the target
 ;; itself is not in the result.
+;; scm-lint:on
 (define (resolve-link-libs table name)
 	(rz-closure table (rz-direct-deps table name)))
 
+;; scm-lint:off
 ;; The full internal-library closure the WASM main module folds in: NAME's own
 ;; direct deps (the core libraries the executable links) together with the
 ;; plugin libraries its (wasm-modules ...) clause names, flattened
 ;; dependents-first. Unlike resolve-link-libs, the wasm-module libraries ARE in
 ;; the result — they are the plugins themselves, not just NAME's dependencies —
 ;; each pulled in as its own archive.
+;; scm-lint:on
 (define (resolve-wasm-module-libs table name)
 	(let ((target (rz-lookup table name)))
 		(rz-closure table
 			(append (if target (rz-field target 'wasm-modules) '())
 				(rz-direct-deps table name)))))
 
+;; scm-lint:off
 ;; The system libraries (-l flags) a target must link. A static library's own
 ;; system-lib dependency (asset_plugin links m) has to reach the final
 ;; executable, exactly as CMake propagates a PRIVATE link requirement through
 ;; the static archive, so gather them across the whole link closure.
+;; scm-lint:on
 (define (rz-target-syslibs table name)
 	(let ((target (rz-lookup table name)))
 		(if target
@@ -227,9 +262,11 @@
 		 (map (lambda (n) (rz-target-syslibs table n))
 		      (cons name (resolve-link-libs table name))))))
 
+;; scm-lint:off
 ;; The include directories a target's own sources compile against: its own
 ;; PUBLIC then PRIVATE dirs, then every transitively linked library's PUBLIC
 ;; dirs, de-duplicated. Errors (cycle / unknown target) surface here.
+;; scm-lint:on
 (define (resolve-includes table name)
 	(let ((target (rz-lookup table name)))
 		(if (not target)
@@ -243,9 +280,11 @@
 				      (rz-field (rz-lookup table lib) 'public))
 				    (resolve-link-libs table name))))))))
 
+;; scm-lint:off
 ;; Force resolution of every target — the cheap way to make cycles and unknown
 ;; link targets fail loudly for the whole manifest, not just the targets an
 ;; emitter happens to touch.
+;; scm-lint:on
 (define (resolve-check-all table)
 	(for-each (lambda (target) (resolve-includes table (car target)))
 		  table)

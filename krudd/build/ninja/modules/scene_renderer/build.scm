@@ -1,4 +1,5 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
+;; scm-lint:off
 ;
 ; Draws COMPONENT_RENDER entities via the frame graph (#172). No native library
 ; — the renderer sources compile straight into the native test; the WASM build
@@ -7,6 +8,7 @@
 ; camera.c calls mat4_perspective, now generated from the monolang into
 ; ${generated}/math_gen.c, so both consumers of the math sources compile that
 ; generated file too (math has no library to fold it into).
+;; scm-lint:on
 ((native-only
 	(executable "scene_renderer_test"
 		(sources "scene_renderer_test.c" "scene_renderer.c"

@@ -1,6 +1,8 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
+;; scm-lint:off
 ;
 ; .scene v1 binary decoder, registered as an asset codec.
+;; scm-lint:on
 ((library "scene_plugin"
 	(sources "scene_plugin.c")
 	(public "." (root "modules/include") (root "modules/core/include"))

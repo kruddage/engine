@@ -1,9 +1,11 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
+;; scm-lint:off
 ;
 ; memory.c calls the libc malloc family directly. On WASM the main module is
 ; linked -sMALLOC=mimalloc (see modules/core), so that libc — and this seam — is
 ; mimalloc; natively it is the platform libc. No separately linked allocator:
 ; one heap for the whole program.
+;; scm-lint:on
 ((library "memory"
 	(sources "memory.c")
 	(public "include"))

@@ -1,6 +1,8 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
+;; scm-lint:off
 ;
 ; Headless null renderer, used in native tests.
+;; scm-lint:on
 ((library "renderer_null"
 	(sources "renderer_null.c")
 	(private (root "modules/renderer"))

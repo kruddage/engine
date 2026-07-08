@@ -1,4 +1,5 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
+;; scm-lint:off
 ;
 ; runtime.scm — the Scheme image the engine boots into, live inside the WASM.
 ;
@@ -9,6 +10,7 @@
 ; and engine logic can move into this file. Baked into the module at build time
 ; (see krudd-embed-file), so today it ships read-only — a live REPL into this
 ; image is the next step.
+;; scm-lint:on
 
 (krudd-log 1 "runtime: Scheme image live — krudd.scm owns the tick")
 

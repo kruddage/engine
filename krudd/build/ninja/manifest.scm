@@ -13,7 +13,6 @@
  "modules/memory"
  "plugins/math"
  "plugins/renderer"
- "plugins/hello_plugin"
  "plugins/scene_plugin"
  "plugins/edit_plugin"
  "plugins/entity_plugin"

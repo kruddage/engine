@@ -180,14 +180,14 @@
        (not (contains? ninja-text "renderer_interface")))
 (check "plugin folds into an object, no standalone .wasm"
        (and (contains? ninja-text
-	      (string-append "build wasm-obj/hello_plugin/plugins/hello_plugin/"
-			     "hello_plugin.c.o: sm_cc "))
+	      (string-append "build wasm-obj/scene_plugin/plugins/scene_plugin/"
+			     "scene_plugin.c.o: sm_cc "))
 	    (not (contains? ninja-text "side_module"))))
 (check "plugin object folds into the main module link"
        (contains? ninja-text
 	 (string-append "main_module wasm-obj/index/modules/core/engine.c.o "
 			"wasm-obj/index/modules/core/plugin_abi.c.o "
-			"wasm-obj/hello_plugin/")))
+			"wasm-obj/scene_plugin/")))
 (check "default target is native"
        (contains? ninja-text "default native"))
 (check "wasm main module stanza present"

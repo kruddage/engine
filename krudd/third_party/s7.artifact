@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# Pin for s7.c / s7.h, sourced by krudd/third_party/sync.sh. This is the one
+# place the s7 pin lives — see VENDOR.md for the fetch mechanism and license
+# rationale.
+#
+# Re-vendoring: bump S7_VERSION/S7_DATE/S7_COMMIT to the new upstream commit,
+# then delete any locally cached s7.c/s7.h and re-run sync.sh (or krudd.sh) —
+# it downloads the new pin and fails loudly if these checksums weren't updated
+# to match.
+
+S7_VERSION="10.8"
+S7_DATE="17-Apr-2024"
+S7_COMMIT="85bf12688518a5b4f40ef6f4b45338f770abc03c"
+
+S7_C_URL="https://raw.githubusercontent.com/aboalang/s7/$S7_COMMIT/s7.c"
+S7_H_URL="https://raw.githubusercontent.com/aboalang/s7/$S7_COMMIT/s7.h"
+
+S7_C_SHA256="f56190c1bfbc4baa083e64711dfeedddc53f25fa1db501168f0d40a9545a90bd"
+S7_H_SHA256="4054fd2b3dfd2416a87312e8ae78f5dbb4ec9c02031b10030634d555b27bc826"

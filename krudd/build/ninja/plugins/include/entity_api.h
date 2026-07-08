@@ -51,25 +51,6 @@ struct entity_api {
 	/* Shared selection: -1 = none. set ignores stale/out-of-range ids. */
 	int32_t (*get_selected)(void);
 	void    (*set_selected)(int32_t id);
-
-	/*
-	 * Serialize the live world to canonical .scene v1 bytes (#235) — the
-	 * whole-project scene the branching store content-addresses (#214).
-	 * Encodes via world_export_scene + the registered scene encoder and
-	 * writes the size to *out_size.  Returns a freshly allocated buffer the
-	 * caller owns (free via the engine allocator), or NULL on failure.  An
-	 * empty world yields a valid zero-entity scene, never NULL-for-empty.
-	 */
-	void   *(*export_scene_bytes)(uint32_t *out_size);
-
-	/*
-	 * Replace the live world with the scene decoded from `bytes` — the atomic
-	 * reload behind a branch switch / snapshot restore (#215/#216).  Decodes
-	 * via the registered scene decoder and world_ingest_scene, swapping the
-	 * world in one shot.  Returns 0 on success, -1 on a decode/ingest failure
-	 * (the live world is left unchanged on failure).
-	 */
-	int32_t (*ingest_scene_bytes)(const void *bytes, uint32_t size);
 };
 
 #endif /* ENTITY_API_H */

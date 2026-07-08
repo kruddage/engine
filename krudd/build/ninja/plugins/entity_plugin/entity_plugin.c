@@ -5,8 +5,6 @@
 #include "scene_edit.h"
 #include "edit_api.h"
 #include "asset_codec_api.h"
-#include "backend_api.h"
-#include "branch_api.h"
 #include "memory_api.h"
 #include "stats_api.h"
 #include "subsystem_manager.h"
@@ -24,28 +22,6 @@ static const struct asset_codec_api *g_codec;
 static const struct memory_api      *g_mem;
 static const struct stats_api       *g_stats;
 static const struct edit_api        *g_edit;  /* NULL = undo unavailable */
-static struct subsystem_manager     *g_mgr;    /* for lazy backend lookup */
-static const struct branch_api      *g_branch; /* NULL = branching off */
-
-/*
- * A recordable scene edit just landed — signal the branching host so it
- * debounces a live-save + auto-snapshot of the active branch (#213).  The
- * backend may register after this plugin and branching is absent on providers
- * without it, so the branch api is resolved lazily and a NULL one is a safe
- * no-op (undo/redo and editing still work without branching).
- */
-static void note_scene_edit(void)
-{
-	if (!g_branch && g_mgr) {
-		const struct backend_api *be =
-			subsystem_manager_get_api(g_mgr, "backend");
-
-		if (be && (be->get_caps() & BACKEND_CAP_BRANCHING))
-			g_branch = be->branching();
-	}
-	if (g_branch)
-		g_branch->mark_dirty();
-}
 
 /* True when id names a live entity — the precondition for a recordable edit. */
 static int32_t entity_is_live(int32_t id)
@@ -85,47 +61,6 @@ static int32_t scene_load(const char *path)
 	return rc;
 }
 
-/*
- * Serialize the live world to canonical .scene bytes for content-addressing
- * (#214/#235): export to an at-rest struct scene, then hand it to the scene
- * encoder registered on the codec.  The intermediate scene is freed here; the
- * caller owns the returned byte buffer.
- */
-static void *scene_export_bytes(uint32_t *out_size)
-{
-	struct scene *s;
-	void         *bytes;
-
-	if (!g_codec || !g_mem)
-		return NULL;
-	s = world_export_scene(&g_world, g_mem);
-	if (!s)
-		return NULL;
-	bytes = g_codec->encode("scene", s, out_size);
-	free_scene(s);
-	return bytes;
-}
-
-/*
- * Replace the live world with the scene decoded from raw bytes — the atomic
- * reload behind a branch switch / snapshot restore (#215/#216).  Decodes off
- * the bytes directly (not an asset path) via the codec, then ingests.
- */
-static int32_t scene_ingest_bytes(const void *bytes, uint32_t size)
-{
-	struct scene *s;
-	int32_t       rc;
-
-	if (!g_codec)
-		return -1;
-	s = g_codec->decode_bytes("scene", bytes, size);
-	if (!s)
-		return -1;
-	rc = world_ingest_scene(&g_world, s);
-	free_scene(s);
-	return rc;
-}
-
 static const struct world *scene_get_world(void)
 {
 	return &g_world;
@@ -146,7 +81,6 @@ static int32_t scene_create_entity(int32_t parent,
 	if (id >= 0) {
 		scene_edit_record(g_edit, g_mem, &g_world, before,
 				  "Create Entity", 0);
-		note_scene_edit();
 	} else {
 		world_snapshot_free(before, g_mem);
 	}
@@ -162,7 +96,6 @@ static void scene_destroy_entity(int32_t id)
 	if (live) {
 		scene_edit_record(g_edit, g_mem, &g_world, before,
 				  "Delete Entity", 0);
-		note_scene_edit();
 	}
 }
 
@@ -175,7 +108,6 @@ static void scene_set_transform(int32_t id, const struct transform *local)
 	if (live) {
 		scene_edit_record(g_edit, g_mem, &g_world, before, "Move Entity",
 				  scene_edit_key(id, SCENE_EDIT_TRANSFORM));
-		note_scene_edit();
 	}
 }
 
@@ -188,7 +120,6 @@ static void scene_set_name(int32_t id, const char *name)
 		scene_edit_record(g_edit, g_mem, &g_world, before,
 				  "Rename Entity",
 				  scene_edit_key(id, SCENE_EDIT_NAME));
-		note_scene_edit();
 	} else {
 		world_snapshot_free(before, g_mem);
 	}
@@ -203,7 +134,6 @@ static void scene_set_render_ref(int32_t id, uint32_t render_ref)
 	if (live) {
 		scene_edit_record(g_edit, g_mem, &g_world, before, "Bind Mesh",
 				  scene_edit_key(id, SCENE_EDIT_RENDER));
-		note_scene_edit();
 	}
 }
 
@@ -227,8 +157,6 @@ static const struct entity_api g_entity_api = {
 	.set_render_ref = scene_set_render_ref,
 	.get_selected   = scene_get_selected,
 	.set_selected   = scene_set_selected,
-	.export_scene_bytes = scene_export_bytes,
-	.ingest_scene_bytes = scene_ingest_bytes,
 };
 
 /*
@@ -274,8 +202,5 @@ void entity_plugin_entry(struct subsystem_manager *mgr)
 	g_mem   = subsystem_manager_get_api(mgr, "memory");
 	g_stats = subsystem_manager_get_api(mgr, "stats");
 	g_edit  = subsystem_manager_get_api(mgr, "edit");
-	/* Kept for a lazy "backend" lookup: it may register after this plugin,
-	 * so note_scene_edit() resolves branching on first edit, not here. */
-	g_mgr   = mgr;
 	subsystem_manager_register(mgr, &scene_desc);
 }

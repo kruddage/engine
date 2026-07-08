@@ -51,12 +51,16 @@
 (check "replace all occurrences"
        (string=? (krudd-replace "a@X@b@X@c" "@X@" "1") "a1b1c"))
 
-(define version (krudd-version))
-(check "version matches VERSION file"
-       (string=? version (krudd-strip (slurp (string-append krudd-root
-							     "/VERSION")))))
-(check "build number is numeric" (all-digits? (krudd-build-number version)))
+(check "version falls back to the dev placeholder outside CI"
+       (string=? (krudd-version) "0.0.0-dev"))
+(check "version-core strips a CI prerelease suffix"
+       (string=? (krudd-version-core "10.1.0-pr482+a1b2c3d") "10.1.0"))
+(check "version-core is a no-op on a bare version"
+       (string=? (krudd-version-core "10.1.0") "10.1.0"))
+(check "build number is numeric" (all-digits? (krudd-build-number)))
 (check "commit hash non-empty" (> (string-length (krudd-commit-hash)) 0))
+
+(define version (krudd-version))
 
 ;; ---------------------------------------------------------------------------
 ;; Codegen: configure_file and the file embed.

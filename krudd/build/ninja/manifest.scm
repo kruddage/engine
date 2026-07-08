@@ -18,8 +18,6 @@
  "plugins/snapshot"
  "plugins/hello_plugin"
  "plugins/scene_plugin"
- "plugins/vscript"
- "plugins/shader_graph"
  "plugins/edit_plugin"
  "plugins/entity_plugin"
  "plugins/renderer_null"

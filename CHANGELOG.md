@@ -31,6 +31,10 @@ someone using the engine, before it lands anywhere else.
 - **kruddboard's "What's New" tab.** The in-app changelog viewer is gone;
   `CHANGELOG.md` is still the release-notes source of truth, just read from
   git history instead of rendered in the editor overlay.
+- **Visual scripting and the shader graph editor.** The `vscript` and
+  `shader_graph` plugins, kruddboard's Shader Graph tab, and the
+  `ASSET_TYPE_VSCRIPT` asset type are gone. Neither system had shipped a
+  supported authoring path beyond the in-editor node canvas.
 
 ## [6.4.0] - 2026-07-07
 

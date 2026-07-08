@@ -14,7 +14,7 @@ krudd/                    The build tool and the whole build tree it owns —
                           specs below, renders a build.ninja (ninja/ninja.scm),
                           and drives ninja with cc / emcc directly — no CMake
     introspect.scm        Build-time introspection krudd owns: VERSION + git
-                          facts, configure_file / changelog codegen, dep fetch
+                          facts, configure_file / embed codegen, dep fetch
     ninja/                The build tree: the Ninja emitter plus the C sources
                           it renders. Each owned directory carries a build.scm
                           spec (a backend-agnostic list of target forms) beside
@@ -103,20 +103,13 @@ When you finish implementing a GitHub issue, create a pull request using the
 GitHub MCP tools (`mcp__github__create_pull_request`). Reference the issue
 number in the PR body (e.g. `Closes #N`).
 
-## Changelog & versioning
+## Versioning
 
-Every user-facing PR must add a bullet to `CHANGELOG.md` under the
-`[Unreleased]` heading (Added / Changed / Fixed / Removed, per [Keep a
-Changelog](https://keepachangelog.com/en/1.1.0/)). Internal-only changes —
-tests, CI config, docs, pure refactors — are exempt; mark an exempt PR with
-`[no changelog]` in its title or description so the changelog-gate CI check
-passes.
+The `VERSION` file is the single source of truth for the engine version;
+`modules/core/version.h.in` is expanded against it at build time. There is no
+`CHANGELOG.md` — release notes are not tracked in-tree.
 
-A version bump renames `[Unreleased]` to a dated version heading
-(`## [x.y.z] - YYYY-MM-DD`) and opens a fresh, empty `[Unreleased]` above it,
-in the same commit that bumps the `VERSION` file.
-
-Every PR also carries exactly one `release:feature` / `release:fix` /
+Every PR carries exactly one `release:feature` / `release:fix` /
 `release:breaking` / `release:chore` label, enforced by the release-label-gate
 CI check. Labels are defined in `.github/labels.yml` and synced to the repo by
 a workflow — don't create or edit them by hand in the GitHub UI.

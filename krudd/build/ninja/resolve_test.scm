@@ -145,7 +145,7 @@
 (display "emitter: rendered build.ninja\n")
 
 ;; The directory of KRUDD_NINJA_OUT is the build dir the WASM codegen (version.h,
-;; shell.html, changelog_data.h) is generated into; without it, render only.
+;; shell.html, runtime_scm.h) is generated into; without it, render only.
 (define (dirname path)
 	(let loop ((i (- (string-length path) 1)))
 		(cond ((< i 0) ".")

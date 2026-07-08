@@ -14,7 +14,7 @@
 ;   native  cc/ar — every static library and test; the test stamps run the
 ;           suite, so a green build is a green test run.
 ;   wasm    emcc/em++ — the main module (index.html/.js/.wasm) and the plugin
-;           side modules, plus the imgui fetch and the configure_file/changelog
+;           side modules, plus the imgui fetch and the configure_file/embed
 ;           codegen krudd owns.
 ;
 ; Everything is generated into and built under build/.

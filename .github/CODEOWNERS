@@ -16,6 +16,5 @@
 /krudd/                 @joshcoyne
 /.github/               @joshcoyne
 
-# Version and release-notes sources — must stay consistent.
+# Version source.
 /VERSION                @joshcoyne
-/CHANGELOG.md           @joshcoyne

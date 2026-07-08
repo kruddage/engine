@@ -1,8 +1,4 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
-;; scm-lint:off
-;
-; Frostbite-style render graph (GPU lent at execute time).
-;; scm-lint:on
 ((library "frame_graph"
 	(sources "fg.c")
 	(public ".")

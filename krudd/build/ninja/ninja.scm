@@ -1,51 +1,9 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
-;; scm-lint:off
-;
-; ninja.scm — the Ninja synthesizer, krudd's build backend.
-;
-; It reads the directory-spec forms (library, interface-library, executable,
-; test, and the native-only/wasm-only toolchain gates) that describe each owned
-; directory and renders a single build.ninja from them, driven by
-; krudd/build/build.scm. Ninja has no notion of directories or transitive usage
-; requirements, so this emitter renders the whole manifest into one build.ninja
-; and leans on resolve.scm to flatten the include graph that CMake's
-; target_link_libraries once did implicitly.
-;
-; Coverage of the spec forms:
-;   library / executable   compile each source to an object, then archive/link
-;   interface-library      no build output — only include dirs, via resolve.scm
-;   test                   a stamp rule that runs the test executable
-;   native-only / wasm-only
-;                          a toolchain gate: the forms inside build only under
-;                          that toolchain. A wasm-only library (imgui, the
-;                          markdown board, the scene renderer) has no native
-;                          archive; it is compiled with emcc/em++ and folded
-;                          into the single WASM module. There are no standalone
-;                          plugin .wasm outputs and no dynamic loading — every
-;                          module is one static archive in the main module.
-;
-; Object files live at obj/<target>/<source>.o — namespaced per target because a
-; source compiled into two targets sees different include flags (exactly as
-; CMake gives each target its own CMakeFiles/<target>.dir). Libraries archive to
-; lib<name>.a and executables link to bin/<name>, both at the build root.
-;
-; The default target, `native`, groups everything the native (non-Emscripten)
-; toolchain builds — every static library and every test stamp — so a bare
-; `ninja` builds and is buildable without Emscripten. The `wasm` target is the
-; single Emscripten module (index.{html,js,wasm}); the plugin objects reach it
-; transitively, so it is built only when named explicitly.
-;; scm-lint:on
 
 (load (string-append (or (getenv "KRUDD_ROOT") ".")
 		     "/krudd/build/ninja/resolve.scm"))
 (load (string-append (or (getenv "KRUDD_ROOT") ".")
 		     "/krudd/build/introspect.scm"))
-
-;; scm-lint:off
-;; ---------------------------------------------------------------------------
-;; String helpers (s7 has no string-join / string-suffix? we can lean on).
-;; ---------------------------------------------------------------------------
-;; scm-lint:on
 
 (define (ninja-join sep lst)
 	(cond ((null? lst) "")
@@ -62,17 +20,6 @@
 		      ((char=? (string-ref s i) #\$) #t)
 		      (else (loop (+ i 1))))))
 
-;; scm-lint:off
-;; ---------------------------------------------------------------------------
-;; Path references. A spec path resolved by resolve.scm is either tree-relative
-;; (compiled/included under $srcroot) or a raw literal carrying one of krudd's
-;; own path tokens (${imgui}, ${generated}). Tree-relative paths get the
-;; $srcroot prefix; the tokens resolve to real Ninja paths the same way for
-;; native and WASM, so a native target (the md_parse Scheme shim) can include
-;; the generated headers too.
-;; ---------------------------------------------------------------------------
-;; scm-lint:on
-
 (define (ninja-ref path)
 	(if (ninja-has-dollar? path)
 	    (ninja-resolve-var path)
@@ -82,12 +29,6 @@
 	(ninja-join " " (map (lambda (d) (string-append "-I" (ninja-ref d)))
 			     dirs)))
 
-;; scm-lint:off
-;; The WASM build resolves the krudd-owned path tokens the side-module specs
-;; reference (${imgui} from the fetch, ${generated} for the configure_file /
-;; embed headers) to real Ninja paths, rather than escaping them for native
-;; output.
-;; scm-lint:on
 (define (ninja-resolve-var p)
 	(krudd-replace
 	  (krudd-replace p "${imgui}" "$imgui")
@@ -102,23 +43,12 @@
 	(ninja-join " " (map (lambda (d) (string-append "-I" (ninja-wasm-ref d)))
 			     dirs)))
 
-;; scm-lint:off
-;; The compile rule for a source, by extension: C++ sources use cxx, all else
-;; cc. Native targets are C-only; this keeps the side-module path honest.
-;; scm-lint:on
 (define (ninja-compile-rule src)
 	(if (or (ninja-suffix? src ".cpp") (ninja-suffix? src ".cc"))
 	    "cxx" "cc"))
 
 (define (ninja-obj name treepath)
 	(string-append "obj/" name "/" treepath ".o"))
-
-;; scm-lint:off
-;; ---------------------------------------------------------------------------
-;; The emitter accumulates output lines and the list of native default-target
-;; outputs as it walks the manifest.
-;; ---------------------------------------------------------------------------
-;; scm-lint:on
 
 (define ninja-lines '())
 (define ninja-native '())
@@ -129,23 +59,10 @@
 (define (ninja-native! out) (set! ninja-native (cons out ninja-native)))
 (define (ninja-wasm! out) (set! ninja-wasm (cons out ninja-wasm)))
 
-;; scm-lint:off
-;; Object-path form of a resolved source path: the krudd path tokens become
-;; plain directory names (not the $imgui/generated Ninja vars ninja-wasm-ref
-;; produces) so obj/<target>/... stays a real relative filesystem path.
-;; scm-lint:on
 (define (ninja-obj-clean p)
 	(krudd-replace (krudd-replace p "${imgui}" "imgui")
 		       "${generated}" "generated"))
 
-;; scm-lint:off
-;; Compile one source of TARGET (in DIR) with INCLUDES; emit the build stanza
-;; and return the object path.
-;; A source spec may carry a krudd path token (${generated}/md_parse.scm.c —
-;; the generated Scheme shim compiled into a native library). Resolve it for the
-;; object path too, so obj/<target>/generated/... stays a real filesystem path
-;; rather than an unexpanded ${generated} segment.
-;; scm-lint:on
 (define (ninja-emit-compile name dir includes-flags src-spec)
 	(let* ((treepath (rz-path dir src-spec))
 	       (clean (ninja-resolve-var treepath))
@@ -156,17 +73,9 @@
 		(ninja-emit (string-append "  includes = " includes-flags))
 		obj))
 
-;; scm-lint:off
-;; The source path specs of a target's (sources ...) clause.
-;; scm-lint:on
 (define (ninja-sources clauses)
 	(let ((c (rz-clause 'sources clauses))) (if c (cdr c) '())))
 
-;; scm-lint:off
-;; The "script" library folds the third-party s7 amalgamation into its archive,
-;; compiled with the relaxed s7 rules. Emitted once per toolchain (native/WASM)
-;; so the object lands beside the archive that carries it.
-;; scm-lint:on
 (define (ninja-emit-s7-obj rule obj)
 	(ninja-emit (string-append "build " obj ": " rule " $s7dir/s7.c"))
 	obj)
@@ -176,10 +85,6 @@
 	    (append objs (list (ninja-emit-s7-obj rule obj)))
 	    objs))
 
-;; scm-lint:off
-;; library: compile sources, archive to lib<name>.a. An interface-library
-;; carries no sources and produces nothing here.
-;; scm-lint:on
 (define (ninja-emit-library table dir form)
 	(let* ((name (cadr form))
 	       (clauses (cddr form))
@@ -194,11 +99,6 @@
 		(ninja-emit "")
 		(ninja-native! lib)))
 
-;; scm-lint:off
-;; executable: compile sources, then link against the transitive closure of the
-;; libraries it links (dependents-first, so a single-pass static link resolves),
-;; plus any system libraries as -l flags.
-;; scm-lint:on
 (define (ninja-emit-executable table dir form)
 	(let* ((name (cadr form))
 	       (clauses (cddr form))
@@ -220,9 +120,6 @@
 						      syslibs)))))
 		(ninja-emit "")))
 
-;; scm-lint:off
-;; test: run the named executable, touch a stamp on success.
-;; scm-lint:on
 (define (ninja-emit-test form)
 	(let* ((name (cadr form))
 	       (cmd (caddr form))
@@ -231,15 +128,6 @@
 		(ninja-emit "")
 		(ninja-native! stamp)))
 
-;; scm-lint:off
-;; Dispatch one form. Non-target scaffolding forms (verbatim/set/subdirs/…) are
-;; the root spec's project bootstrap, not this emitter's job, and are skipped.
-;; interface-library is include-only, handled by resolve.scm. wasm-only forms
-;; emit nothing on this (native) walk: their libraries are recompiled with
-;; emcc/em++ and folded into the main module through the WASM library map
-;; (ninja-build-libmap descends into wasm-only for that; see
-;; ninja-emit-main-module), so a native `ninja` never tries to build them.
-;; scm-lint:on
 (define (ninja-emit-form table dir form)
 	(case (car form)
 	  ((library) (ninja-emit-library table dir form))
@@ -250,13 +138,6 @@
 	  ((native-only)
 	   (for-each (lambda (f) (ninja-emit-form table dir f)) (cdr form)))
 	  (else #t)))
-
-;; scm-lint:off
-;; ---------------------------------------------------------------------------
-;; Preamble: the build variables and rules, emitted once. srcroot is left as a
-;; variable the caller fills so the generated file is relocatable.
-;; ---------------------------------------------------------------------------
-;; scm-lint:on
 
 (define (ninja-preamble srcroot)
 	(list
@@ -275,40 +156,10 @@
 	  "emar = emar"
 	  "cflags = -std=gnu11 -Wall -Werror -Wpedantic"
 	  "cxxflags = -std=gnu11 -Wall -Werror -Wpedantic"
-	  ;; scm-lint:off
-	  ;; The WASM compile flags match the native ones; the Emscripten-specific
-	  ;; flags live on the emcc_cxx (C++ modules) and main_module rules, captured
-	  ;; explicitly here rather than inherited from an emcmake toolchain file.
-	  ;; scm-lint:on
 	  "emcflags = -std=gnu11 -Wall -Werror -Wpedantic"
-	  ;; scm-lint:off
-	  ;; The embedded s7 interpreter (krudd/third_party/s7.c) is a third-party
-	  ;; amalgamation compiled the way krudd.sh compiles it for the build tool:
-	  ;; warnings off and the same feature switches. It cannot go through the
-	  ;; -Werror -Wpedantic project rules, so it gets its own dir and rules,
-	  ;; native and WASM, and is folded into the "script" archive.
-	  ;; scm-lint:on
 	  "s7dir = $srcroot/../../third_party"
 	  "s7flags = -O2 -w -DWITH_C_LOADER=0 -DWITH_MAIN=0 -I$s7dir"
 	  (string-append "imgui = " (krudd-fetch-dir "imgui"))
-	  ;; scm-lint:off
-	  ;; Main-module link flags — the emscripten bootstrap for the index
-	  ;; target, owned here rather than in the directory spec. Two flags carry
-	  ;; hard-won rationale:
-	  ;;   -sGROWABLE_ARRAYBUFFERS=0  Emscripten 6.0.2 flipped this to default
-	  ;;     =1, backing the heap with a real resizable ArrayBuffer. Web APIs
-	  ;;     reject views over a resizable buffer — Firefox's
-	  ;;     crypto.getRandomValues (reached at startup via WASI random_get)
-	  ;;     throws "Argument 1 can't be a resizable ArrayBuffer...". Opting out
-	  ;;     keeps memory growth (copy into a fresh plain ArrayBuffer on grow),
-	  ;;     which the Web Crypto API accepts.
-	  ;;   -sMALLOC=mimalloc  the one allocator: libc, FETCH, and
-	  ;;     modules/memory (which allocates through libc) all share this
-	  ;;     single heap. Two allocators over one growable heap corrupted on
-	  ;;     growth.
-	  ;; The engine is a single WASM module: every plugin is compiled straight
-	  ;; into it (no -sMAIN_MODULE / side modules, no dynamic linking).
-	  ;; scm-lint:on
 	  (string-append "mainflags = -sENVIRONMENT=web -sALLOW_MEMORY_GROWTH=1 "
 			 "-sGROWABLE_ARRAYBUFFERS=0 -sMALLOC=mimalloc "
 			 "-sFETCH=1 -sMAX_WEBGL_VERSION=2 "
@@ -342,13 +193,6 @@
 	  "  command = $in && touch $out"
 	  "  description = TEST $out"
 	  ""
-	  ;; scm-lint:off
-	  ;; WASM rules — the whole WASM path goes through explicit emcc/em++ calls,
-	  ;; no emcmake. C sources take emcc_c with the project flags; C++ sources
-	  ;; (the imgui and markdown-board modules, plus third-party imgui) take
-	  ;; emcc_cxx, whose per-library $emcxxflags carries the C++ standard and the
-	  ;; -fno-exceptions/-fno-rtti + no-Werror the third-party sources need.
-	  ;; scm-lint:on
 	  "rule emcc_c"
 	  "  command = $emcc $emcflags $includes -c $in -o $out"
 	  "  description = EMCC $out"
@@ -361,32 +205,11 @@
 	  "  command = rm -f $out && $emar rcs $out $in"
 	  "  description = EMAR $out"
 	  ""
-	  ;; scm-lint:off
-	  ;; The single module: em++ links engine + every module archive (core plus
-	  ;; each plugin) into index.{html,js,wasm}. No -sMAIN_MODULE — nothing is
-	  ;; loaded dynamically.
-	  ;; scm-lint:on
 	  "rule main_module"
 	  "  command = $empp $mainflags $extraflags $in -o $out"
 	  "  description = LINK(wasm) $out"
 	  ""))
 
-;; scm-lint:off
-;; ---------------------------------------------------------------------------
-;; WASM main module. The Ninja backend owns the whole WASM path: the main module
-;; (index.html/.js/.wasm) links WASM-compiled copies of the same libraries the
-;; native tests use, so those are archived a second time with emcc. The
-;; emscripten-only source (plugin_abi.c) and the shell/pre-js live here.
-;; ---------------------------------------------------------------------------
-;; scm-lint:on
-
-;; scm-lint:off
-;; name -> (dir . clauses) for every library, so the WASM path can recompile a
-;; library's sources with emcc/em++. Descends into both native-only and
-;; wasm-only: a native-only library (md_parse) never reaches the main module's
-;; link closure so it is simply never emitted, while a wasm-only library (imgui,
-;; the board, the scene renderer) is emitted here and nowhere else.
-;; scm-lint:on
 (define (ninja-build-libmap manifest)
 	(let ((out '()))
 		(define (walk dir forms)
@@ -406,20 +229,10 @@
 (define (ninja-wasm-obj name treepath)
 	(string-append "wasm-obj/" name "/" treepath ".o"))
 
-;; scm-lint:off
-;; The WASM compile rule for a source, by extension: C++ takes emcc_cxx (which
-;; carries the per-library $emcxxflags), everything else emcc_c.
-;; scm-lint:on
 (define (ninja-wasm-compile-rule src)
 	(if (or (ninja-suffix? src ".cpp") (ninja-suffix? src ".cc"))
 	    "emcc_cxx" "emcc_c"))
 
-;; scm-lint:off
-;; Compile a library's sources with emcc/em++ and archive to wasm/lib<name>.a.
-;; A library may carry (wasm-flags ...) — the C++ standard and warning switches
-;; its C++ (and third-party) translation units need; they ride on $emcxxflags,
-;; so they reach the emcc_cxx sources only, never the plain-C emcc_c ones.
-;; scm-lint:on
 (define (ninja-emit-wasm-lib table libmap name)
 	(let* ((entry (assoc name libmap))
 	       (dir (cadr entry))
@@ -449,12 +262,6 @@
 		(ninja-emit "")
 		lib))
 
-;; scm-lint:off
-;; The main module: engine.c + the emscripten-only plugin_abi.c, compiled with
-;; emcc and linked with em++ against the whole WASM library closure — the core
-;; libraries the executable links plus every plugin module named by its
-;; (wasm-modules ...) clause — to index.html/.js/.wasm.
-;; scm-lint:on
 (define (ninja-emit-main-module table libmap)
 	(let* ((dir "modules/core")
 	       (srcs (list "engine.c" "plugin_abi.c"))
@@ -470,16 +277,6 @@
 			  srcs))
 	       (libs (map (lambda (l) (ninja-emit-wasm-lib table libmap l))
 			  (resolve-wasm-module-libs table "index"))))
-		;; scm-lint:off
-		;; emcc -o index.html also emits index.js and index.wasm; declare
-		;; them as implicit outputs so $out stays just index.html. Each
-		;; module is one archive, ordered dependents-first (the order
-		;; resolve-wasm-module-libs returns), so a plugin's undefined symbols
-		;; resolve from the core archives that follow it; each plugin's
-		;; <name>_plugin_entry is called from engine.c, so its archive member
-		;; is pulled in and wasm-ld's --gc-sections drops only what nothing
-		;; reaches.
-		;; scm-lint:on
 		(ninja-emit (string-append
 			      "build index.html | index.js index.wasm: main_module "
 			      (ninja-join " " (append objs libs))))
@@ -489,11 +286,6 @@
 		(ninja-emit "")
 		(ninja-wasm! "index.html")))
 
-;; scm-lint:off
-;; The configure_file / embed outputs the WASM build compiles against,
-;; generated into <builddir>/generated at synthesis time (as CMake ran
-;; configure_file / the embed script at configure time).
-;; scm-lint:on
 (define (ninja-generate-codegen srcroot builddir)
 	(let ((gen      (string-append builddir "/generated"))
 	      (mdscm    (string-append (krudd-repo-root)
@@ -512,47 +304,18 @@
 		(krudd-embed-file
 		  (string-append srcroot "/modules/core/runtime.scm")
 		  (string-append gen "/runtime_scm.h") "RUNTIME_SCM")
-		;; scm-lint:off
-		;; md_parse.scm (under krudd/build/modules/, outside the ninja
-		;; tree) carries its own C ABI declaration; krudd's binding
-		;; generator emits the whole C seam from it — the md_parse.h
-		;; header and the md_parse.scm.c marshaling shim (image + generated
-		;; marshalers + driver). The .scm is the only ABI artifact in git.
-		;; scm-lint:on
 		(krudd-embed-scheme-module
 		  mdscm
 		  (string-append gen "/md_parse.h")
 		  (string-append gen "/md_parse.scm.c"))
-		;; scm-lint:off
-		;; primitives.scm (also under krudd/build/modules/): the engine's
-		;; built-in geometry, ported from modules/asset/primitives.c. The
-		;; generator emits primitives_gen.h (the prim_vertex struct + the
-		;; two export prototypes) and the primitives.scm.c shim; the
-		;; hand-written primitives_blob.c packs the marshaled arrays into a
-		;; mesh_blob. The .scm is the only ABI artifact in git.
-		;; scm-lint:on
 		(krudd-embed-scheme-module
 		  primscm
 		  (string-append gen "/primitives_gen.h")
 		  (string-append gen "/primitives.scm.c"))
-		;; scm-lint:off
-		;; math.scm (also under krudd/build/modules/) is the monolang: its
-		;; (define-c-fn ...) arithmetic bodies are transpiled straight to
-		;; native C — no s7 image, no runtime marshaling. The generated
-		;; math_gen.c compiles into math_test beside the hand-written
-		;; math.c; math_types.h stays a hand-written header in the tree.
-		;; scm-lint:on
 		(krudd-emit-math-module
 		  mathscm
 		  (string-append gen "/math_gen.c"))))
 
-;; scm-lint:off
-;; Render the whole manifest to build.ninja text. MANIFEST is a list of
-;; (DIR . SPEC) pairs; SRCROOT is the absolute path of the tree root
-;; (krudd/build/ninja/) the paths resolve against. When BUILDDIR is given, the
-;; configure_file / embed outputs are generated into it so `ninja wasm` can
-;; compile against them.
-;; scm-lint:on
 (define (ninja-synthesize manifest srcroot . rest)
 	(let ((builddir (if (pair? rest) (car rest) #f)))
 		(set! ninja-lines '())
@@ -560,9 +323,6 @@
 		(set! ninja-wasm '())
 		(let ((table (rz-target-table manifest))
 		      (libmap (ninja-build-libmap manifest)))
-			;; scm-lint:off
-			;; Fail loud on a cycle or an unknown link target before emitting.
-			;; scm-lint:on
 			(resolve-check-all table)
 			(ninja-emit* (ninja-preamble srcroot))
 			(for-each

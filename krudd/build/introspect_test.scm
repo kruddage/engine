@@ -1,15 +1,4 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
-;; scm-lint:off
-;
-; introspect_test.scm — native s7-only checks for krudd/build/introspect.scm:
-; the build-time introspection krudd owns now that CMake is gone (version +
-; git facts, the configure_file / embed codegen, and the dependency
-; fetch).
-;
-; Run via krudd/build/run-tests.sh. Prints "INTROSPECT-TESTS: OK" and exits 0
-; when every check passes; prints failures and exits 1 otherwise. No network
-; I/O.
-;; scm-lint:on
 
 (define krudd-root (or (getenv "KRUDD_ROOT") "."))
 (load (string-append krudd-root "/krudd/build/introspect.scm"))
@@ -42,12 +31,6 @@
 	      (if (eof-object? c) (list->string (reverse cs))
 		  (loop (cons c cs) (read-char p)))))))
 
-;; scm-lint:off
-;; ---------------------------------------------------------------------------
-;; String / version helpers.
-;; ---------------------------------------------------------------------------
-;; scm-lint:on
-
 (display "introspect: helpers\n")
 (check "strip trims whitespace/newlines"
        (string=? (krudd-strip "  6.3.2\n\t") "6.3.2"))
@@ -64,12 +47,6 @@
 (check "commit hash non-empty" (> (string-length (krudd-commit-hash)) 0))
 
 (define version (krudd-version))
-
-;; scm-lint:off
-;; ---------------------------------------------------------------------------
-;; Codegen: configure_file and the file embed.
-;; ---------------------------------------------------------------------------
-;; scm-lint:on
 
 (display "introspect: codegen\n")
 (define tmp (string-append krudd-root "/build/_introspect_test"))
@@ -95,14 +72,6 @@
 	       (has? h "static const char RUNTIME_SCM[] ="))
 	(check "embed body is a NUL-terminated byte array"
 	       (and (has? h "(char)0x") (has? h "(char)0x00"))))
-
-;; scm-lint:off
-;; ---------------------------------------------------------------------------
-;; Binding generator: md_parse.scm's embedded ABI declaration -> the C header
-;; and marshaling shim. Driven by the declaration, not hardcoded to md_parse;
-;; here we just check the whole seam comes out of the real module.
-;; ---------------------------------------------------------------------------
-;; scm-lint:on
 
 (display "introspect: binding generator\n")
 (krudd-embed-scheme-module
@@ -137,21 +106,11 @@
 	(check "shim emits the driver"
 	       (has? c "int32_t md_parse(const char *src, struct md_block *out, int32_t max)")))
 
-;; scm-lint:off
-;; ---------------------------------------------------------------------------
-;; Fetch hardening: an existing directory without a .git checkout must not count
-;; as present (it would leave the build on a broken dependency).
-;; ---------------------------------------------------------------------------
-;; scm-lint:on
-
 (display "introspect: fetch hardening\n")
 (let ((broken (string-append tmp "/broken-dep")))
 	(system (string-append "mkdir -p " broken))
 	(check "empty dir is not a valid checkout"
 	       (not (krudd-path-exists? (string-append broken "/.git"))))
-	;; scm-lint:off
-	;; A real checkout (has .git) is recognised.
-	;; scm-lint:on
 	(system (string-append "mkdir -p " broken "/.git"))
 	(check "dir with .git is a valid checkout"
 	       (krudd-path-exists? (string-append broken "/.git"))))

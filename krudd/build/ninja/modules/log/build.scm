@@ -1,9 +1,4 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
-;; scm-lint:off
-;
-; Structured logging with level filtering and ring-buffer history. The ring
-; buffer itself lives in modules/core and compiles straight in.
-;; scm-lint:on
 ((library "log"
 	(sources "log.c" (root "modules/core/ring_buf.c"))
 	(public "include" (root "modules/include"))

@@ -4,9 +4,6 @@
 	(public "." (root "modules/include") (root "modules/core/include"))
 	(link "subsystem_manager"))
  (native-only
-	;; scm-lint:off
-	; Link the pure history ops directly so the test needs no plugin glue.
-	;; scm-lint:on
 	(executable "edit_test"
 		(sources "edit_test.c" "edit.c")
 		(private "." (root "modules/include"))

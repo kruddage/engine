@@ -691,3 +691,161 @@
 		  "#include <math.h>\n\n"
 		  (krudd-join "\n" (map krudd-math-emit-fn fns)))
 		port)))))
+
+;;! Interface-header emitter. Turns a declarative spec (c-include, c-handle,
+;;! c-enum, c-define, c-typedef, c-struct) into a pure C ABI header. Unlike the
+;;! marshaling path above there is no Scheme runtime side: the spec is the
+;;! source of truth for a header that used to be hand-written. Forms render in
+;;! file order so C sees every type declared before it is used.
+
+(define (krudd-if-ends-star? s)
+	(let ((n (string-length s)))
+	  (and (> n 0) (char=? (string-ref s (- n 1)) #\*))))
+
+(define (krudd-if-var ctype name)
+	(if (krudd-if-ends-star? ctype)
+	    (string-append ctype name)
+	    (string-append ctype " " name)))
+
+(define (krudd-if-registry forms)
+	(krudd-filter
+	  (lambda (x) x)
+	  (map (lambda (f)
+		 (case (car f)
+		   ((c-handle)  (cons (cadr f) 'handle))
+		   ((c-enum)    (cons (cadr f) 'enum))
+		   ((c-typedef) (cons (cadr f) 'typedef))
+		   ((c-struct)  (cons (cadr f) 'struct))
+		   (else #f)))
+	       forms)))
+
+(define (krudd-if-kind reg name)
+	(let ((p (assq name reg))) (and p (cdr p))))
+
+(define (krudd-if-ctype reg t)
+	(cond
+	  ((eq? t 'void) "void")
+	  ((eq? t 'char) "char")
+	  ((eq? t 'size_t) "size_t")
+	  ((krudd-scalar? t) (krudd-scalar-ctype t))
+	  ((symbol? t)
+	   (let ((kind (krudd-if-kind reg t)))
+	     (cond ((eq? kind 'handle) (string-append (krudd-snake t) "_t"))
+		   ((eq? kind 'struct) (string-append "struct " (krudd-snake t)))
+		   ((or (eq? kind 'enum) (eq? kind 'typedef)) (krudd-snake t))
+		   (else (error 'krudd-if-unknown-type t)))))
+	  ((and (pair? t) (eq? (car t) 'const))
+	   (string-append "const " (krudd-if-ctype reg (cadr t))))
+	  ((and (pair? t) (eq? (car t) 'ptr))
+	   (let ((base (krudd-if-ctype reg (cadr t))))
+	     (string-append base (if (krudd-if-ends-star? base) "*" " *"))))
+	  (else (error 'krudd-if-bad-type t))))
+
+(define (krudd-if-val v)
+	(cond ((integer? v) (number->string v))
+	      ((and (pair? v) (eq? (car v) '<<))
+	       (string-append (number->string (cadr v)) "u << "
+			      (number->string (caddr v))))
+	      (else (error 'krudd-if-bad-value v))))
+
+(define (krudd-if-size s)
+	(cond ((integer? s) (number->string s))
+	      ((symbol? s) (krudd-screaming s))
+	      (else (error 'krudd-if-bad-size s))))
+
+(define (krudd-if-render-handle form)
+	(let ((s (krudd-snake (cadr form))))
+	  (string-append "typedef struct " s " *" s "_t;")))
+
+(define (krudd-if-enum-member m)
+	(if (pair? m)
+	    (string-append "\t" (krudd-screaming (car m)) " = "
+			   (krudd-if-val (cadr m)) ",")
+	    (string-append "\t" (krudd-screaming m) ",")))
+
+(define (krudd-if-render-enum form)
+	(string-append
+	  "typedef enum {\n"
+	  (krudd-join "\n" (map krudd-if-enum-member (cddr form)))
+	  "\n} " (krudd-snake (cadr form)) ";"))
+
+(define (krudd-if-render-define form)
+	(let ((name (krudd-screaming (cadr form))) (val (caddr form)))
+	  (string-append "#define " name " "
+	    (if (pair? val)
+		(string-append "(" (krudd-if-val val) ")")
+		(krudd-if-val val)))))
+
+(define (krudd-if-render-typedef reg form)
+	(string-append "typedef " (krudd-if-ctype reg (caddr form)) " "
+		       (krudd-snake (cadr form)) ";"))
+
+(define (krudd-if-param reg p)
+	(krudd-if-var (krudd-if-ctype reg (cadr p)) (krudd-snake (car p))))
+
+(define (krudd-if-fnptr reg name ret params)
+	(let ((rct   (krudd-if-ctype reg ret))
+	      (plist (if (null? params)
+			 "void"
+			 (krudd-join ", "
+			   (map (lambda (p) (krudd-if-param reg p)) params)))))
+	  (string-append
+	    (if (krudd-if-ends-star? rct) rct (string-append rct " "))
+	    "(*" name ")(" plist ");")))
+
+(define (krudd-if-field reg f)
+	(let ((name (krudd-snake (car f))) (spec (cadr f)))
+	  (cond
+	    ((and (pair? spec) (eq? (car spec) 'array))
+	     (string-append "\t" (krudd-if-ctype reg (cadr spec)) " " name
+			    "[" (krudd-if-size (caddr spec)) "];"))
+	    ((and (pair? spec) (eq? (car spec) 'fn))
+	     (string-append "\t"
+			    (krudd-if-fnptr reg name (cadr spec) (caddr spec))))
+	    (else
+	     (string-append "\t"
+			    (krudd-if-var (krudd-if-ctype reg spec) name) ";")))))
+
+(define (krudd-if-render-struct reg form)
+	(string-append
+	  "struct " (krudd-snake (cadr form)) " {\n"
+	  (krudd-join "\n" (map (lambda (f) (krudd-if-field reg f)) (cddr form)))
+	  "\n};"))
+
+(define (krudd-if-render reg form)
+	(case (car form)
+	  ((c-section) (string-append "/* --- " (cadr form) " --- */"))
+	  ((c-handle)  (krudd-if-render-handle form))
+	  ((c-enum)    (krudd-if-render-enum form))
+	  ((c-define)  (krudd-if-render-define form))
+	  ((c-typedef) (krudd-if-render-typedef reg form))
+	  ((c-struct)  (krudd-if-render-struct reg form))
+	  (else (error 'krudd-if-unknown-form (car form)))))
+
+(define (krudd-emit-interface-header in out)
+	(let* ((forms    (krudd-scm-forms in))
+	       (reg      (krudd-if-registry forms))
+	       (label    (krudd-rel-label in))
+	       (hname    (krudd-basename out))
+	       (guard    (krudd-upcase (krudd-replace hname "." "_")))
+	       (includes (krudd-filter (lambda (f) (eq? (car f) 'c-include))
+				       forms))
+	       (decls    (krudd-filter (lambda (f) (not (eq? (car f) 'c-include)))
+				       forms)))
+	  (call-with-output-file out
+	    (lambda (port)
+	      (write-string
+		(string-append
+		  "/* SPDX-License-Identifier: GPL-2.0-or-later */\n"
+		  "/* Generated by krudd from " label ". Do not edit. */\n"
+		  "#ifndef " guard "\n"
+		  "#define " guard "\n\n"
+		  (krudd-join "\n"
+		    (map (lambda (f) (string-append "#include <" (cadr f) ">"))
+			 includes))
+		  "\n\n"
+		  (krudd-join "\n\n"
+		    (map (lambda (f) (krudd-if-render reg f)) decls))
+		  "\n\n"
+		  "#endif /* " guard " */\n")
+		port)))))

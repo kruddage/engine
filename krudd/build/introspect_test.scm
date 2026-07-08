@@ -106,6 +106,42 @@
 	(check "shim emits the driver"
 	       (has? c "int32_t md_parse(const char *src, struct md_block *out, int32_t max)")))
 
+(display "introspect: interface header\n")
+(krudd-emit-interface-header
+  (string-append krudd-root "/krudd/build/modules/renderer.scm")
+  (string-append tmp "/renderer.h"))
+
+(let ((h (slurp (string-append tmp "/renderer.h"))))
+	(check "header has the include guard" (has? h "#ifndef RENDERER_H"))
+	(check "header pulls in its c-include forms"
+	       (and (has? h "#include <stddef.h>") (has? h "#include <stdint.h>")))
+	(check "handle becomes an opaque typedef"
+	       (has? h "typedef struct gpu_cmd_buf *gpu_cmd_buf_t;"))
+	(check "enum folds to a typedef enum with screaming members"
+	       (and (has? h "typedef enum {")
+		    (has? h "GPU_CAP_DRAW_DIRECT = 1u << 0,")
+		    (has? h "} gpu_cap;")))
+	(check "auto-valued enum member carries no initializer"
+	       (has? h "GPU_FORMAT_RGBA8_UNORM,"))
+	(check "define renders bare int and parenthesized shift"
+	       (and (has? h "#define GPU_MAX_VERTEX_ATTRS 8")
+		    (has? h "#define GPU_STAGE_TOP (1u << 0)")))
+	(check "scalar typedef alias emitted"
+	       (has? h "typedef uint32_t gpu_stage_mask;"))
+	(check "struct field with a #define-sized array of structs"
+	       (has? h "struct gpu_vertex_attr attrs[GPU_MAX_VERTEX_ATTRS];"))
+	(check "pointer-to-const field hugs the name"
+	       (has? h "const void *initial_data;"))
+	(check "vtable function pointer with a const-struct-pointer arg"
+	       (has? h
+		 "gpu_pipeline_t (*pipeline_create)(const struct gpu_pipeline_desc *desc);"))
+	(check "void-returning zero-arg function pointer takes (void)"
+	       (has? h "gpu_cmd_buf_t (*cmd_buf_begin)(void);"))
+	(check "pointer return hugs the star"
+	       (has? h "void *(*gpu_malloc)(size_t size);"))
+	(check "declaration forms do not leak into the header"
+	       (and (not (has? h "c-struct")) (not (has? h "c-handle")))))
+
 (display "introspect: fetch hardening\n")
 (let ((broken (string-append tmp "/broken-dep")))
 	(system (string-append "mkdir -p " broken))

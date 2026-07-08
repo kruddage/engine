@@ -51,18 +51,18 @@
 (inc-check "log" '("modules/log/include" "modules/include"
 		   "modules/core/include"))
 (inc-check "log_test" '("modules/log/include" "modules/include"))
-(inc-check "renderer_null" '("modules/renderer" "modules/log/include"
+(inc-check "renderer_null" '("${generated}" "modules/log/include"
 			     "modules/include" "modules/core/include"))
 (inc-check "renderer_null_test"
-	   '("modules/renderer_null" "modules/renderer" "modules/log/include"
+	   '("modules/renderer_null" "${generated}" "modules/log/include"
 	     "modules/include" "modules/core/include"))
-(inc-check "fg_test" '("modules/frame_graph" "modules/renderer"
+(inc-check "fg_test" '("modules/frame_graph" "${generated}"
 		       "modules/renderer_null" "modules/log/include"
 		       "modules/include" "modules/memory/include"
 		       "modules/core/include"))
-(inc-check "asset_plugin" '("modules/asset" "modules/include"
-			    "modules/log/include" "modules/memory/include"
-			    "modules/core/include"))
+(inc-check "asset_plugin" '("modules/asset" "modules/include" "${generated}"
+			    "../../third_party" "modules/log/include"
+			    "modules/memory/include" "modules/core/include"))
 
 (display "resolver: transitive link closures\n")
 (let ((libs (resolve-link-libs table "renderer_null_test")))

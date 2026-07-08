@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-"""Fail on any .scm comment that isn't SPDX or inside a scm-lint:off/on block.
+"""Fail on any .scm comment that isn't SPDX or a ;;! shebang comment.
 
 Usage: lint-scm-comments.py <file.scm> [file.scm ...]
+
+A full-line comment is allowed only when it begins with the ;;! shebang
+marker (leading whitespace is fine), mirroring how a #! shebang opts a line
+in. The SPDX license header is exempt. Trailing same-line comments are
+rejected outright since they can't carry a shebang.
 """
 import sys
 
-OFF = ";; scm-lint:off"
-ON = ";; scm-lint:on"
+SHEBANG = ";;!"
 SPDX_PREFIX = "; SPDX-License-Identifier:"
 
 
@@ -39,38 +43,22 @@ def lint_file(path):
     with open(path, encoding="utf-8") as f:
         lines = f.read().split("\n")
 
-    in_block = False
     for lineno, line in enumerate(lines, start=1):
-        stripped = line.strip()
-
-        if stripped == OFF:
-            if in_block:
-                errors.append((lineno, "nested scm-lint:off (already inside a block)"))
-            in_block = True
-            continue
-        if stripped == ON:
-            if not in_block:
-                errors.append((lineno, "scm-lint:on without a matching scm-lint:off"))
-            in_block = False
-            continue
-
         idx = find_comment_start(line)
         if idx == -1:
             continue
 
         prefix = line[:idx].strip()
         if prefix != "":
-            errors.append((lineno, "trailing comment — move it to its own line inside a scm-lint:off/on block"))
+            errors.append((lineno, "trailing comment — move it to its own line with a ;;! shebang"))
             continue
 
-        if in_block:
+        stripped = line.strip()
+        if stripped.startswith(SHEBANG):
             continue
         if stripped.startswith(SPDX_PREFIX):
             continue
-        errors.append((lineno, "comment outside a scm-lint:off/on exception block"))
-
-    if in_block:
-        errors.append((len(lines), "unterminated scm-lint:off block (missing scm-lint:on)"))
+        errors.append((lineno, "comment without a ;;! shebang marker"))
 
     return errors
 

@@ -1,26 +1,8 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
-;; scm-lint:off
-;
-; resolve_test.scm — native s7-only checks for the include/link resolver and the
-; Ninja emitter. Runs without any WASM (or even C) toolchain: it exercises the
-; Scheme passes over the real manifest and a few synthetic specs.
-;
-; Run via krudd/build/ninja/run-tests.sh. Prints "RESOLVE-TESTS: OK" and exits
-; 0 when every check passes; prints failures and exits 1 otherwise.
-;
-; If KRUDD_NINJA_OUT is set, also renders the real manifest to a build.ninja at
-; that path (with an absolute srcroot) so the harness can hand it to ninja(1).
-;; scm-lint:on
 
 (define krudd-root (or (getenv "KRUDD_ROOT") "."))
 
 (load (string-append krudd-root "/krudd/build/ninja/ninja.scm"))
-
-;; scm-lint:off
-;; ---------------------------------------------------------------------------
-;; Assertion plumbing.
-;; ---------------------------------------------------------------------------
-;; scm-lint:on
 
 (define fail-count 0)
 
@@ -47,12 +29,6 @@
 		      ((equal? (car l) x) i)
 		      (else (loop (cdr l) (+ i 1))))))
 
-;; scm-lint:off
-;; ---------------------------------------------------------------------------
-;; The real manifest.
-;; ---------------------------------------------------------------------------
-;; scm-lint:on
-
 (define (load-datum path) (call-with-input-file path read))
 
 (define manifest-dirs
@@ -66,14 +42,6 @@
 	(map (lambda (d) (cons d (load-spec d))) manifest-dirs))
 
 (define table (rz-target-table manifest))
-
-;; scm-lint:off
-;; ---------------------------------------------------------------------------
-;; Include-set checks. Expected sets are the reference -I lists for these
-;; targets (paths normalised relative to krudd/build/ninja/). The resolver must
-;; produce the same *set*; order is not build-relevant.
-;; ---------------------------------------------------------------------------
-;; scm-lint:on
 
 (define (inc-check name expected)
 	(check (string-append "includes " name)
@@ -99,34 +67,15 @@
 			  "modules/core/include" "modules/asset"
 			  "modules/log/include" "modules/memory/include"))
 
-;; scm-lint:off
-;; ---------------------------------------------------------------------------
-;; Link-closure checks: transitive membership and dependents-first ordering.
-;; ---------------------------------------------------------------------------
-;; scm-lint:on
-
 (display "resolver: transitive link closures\n")
 (let ((libs (resolve-link-libs table "renderer_null_test")))
-	;; scm-lint:off
-	;; renderer_null_test links renderer_null (which links log, subsystem,
-	;; subsystem_manager); subsystem is pulled in transitively.
-	;; scm-lint:on
 	(check "closure renderer_null_test membership"
 	       (set=? libs '("renderer_null" "log" "subsystem"
 			     "subsystem_manager")))
-	;; scm-lint:off
-	;; A library must precede the libraries it depends on.
-	;; scm-lint:on
 	(check "closure renderer_null before its deps"
 	       (and (< (index-of "renderer_null" libs) (index-of "log" libs))
 		    (< (index-of "renderer_null" libs)
 		       (index-of "subsystem" libs)))))
-
-;; scm-lint:off
-;; ---------------------------------------------------------------------------
-;; Failure modes must fail loudly.
-;; ---------------------------------------------------------------------------
-;; scm-lint:on
 
 (display "resolver: loud failures\n")
 (let ((cyc (rz-target-table
@@ -147,25 +96,11 @@
 	       (and (null? (resolve-link-libs sys "A"))
 		    (member "d/inc" (resolve-includes sys "A")))))
 
-;; scm-lint:off
-;; Whole-manifest resolution must not raise (no cycles, no unknown targets).
-;; scm-lint:on
 (check "resolve-check-all over the real manifest"
        (not (expect-error (lambda () (resolve-check-all table)))))
 
-;; scm-lint:off
-;; ---------------------------------------------------------------------------
-;; Emitter smoke: the rendered build.ninja must carry the generated header and
-;; a build stanza for a known leaf target.
-;; ---------------------------------------------------------------------------
-;; scm-lint:on
-
 (display "emitter: rendered build.ninja\n")
 
-;; scm-lint:off
-;; The directory of KRUDD_NINJA_OUT is the build dir the WASM codegen (version.h,
-;; shell.html, runtime_scm.h) is generated into; without it, render only.
-;; scm-lint:on
 (define (dirname path)
 	(let loop ((i (- (string-length path) 1)))
 		(cond ((< i 0) ".")
@@ -198,10 +133,6 @@
        (contains? ninja-text "build test/log.stamp: run_test bin/log_test"))
 (check "interface-library emits no build output"
        (not (contains? ninja-text "renderer_interface")))
-;; scm-lint:off
-;; A plugin is now an ordinary WASM library: its C sources compile with emcc_c
-;; and archive to wasm/lib<name>.a — no side-module rule survives.
-;; scm-lint:on
 (check "C plugin compiles as a WASM library object (emcc_c), no side-module rule"
        (and (contains? ninja-text
 	      (string-append "build wasm-obj/scene_plugin/modules/scene_plugin/"
@@ -209,18 +140,11 @@
 	    (contains? ninja-text "build wasm/libscene_plugin.a: emar ")
 	    (not (contains? ninja-text "sm_cc"))
 	    (not (contains? ninja-text "side_module"))))
-;; scm-lint:off
-;; The C++ modules (imgui, the board) take emcc_cxx with their own $emcxxflags.
-;; scm-lint:on
 (check "C++ module compiles with emcc_cxx and its wasm-flags"
        (and (contains? ninja-text
 	      (string-append "build wasm-obj/imgui_plugin/modules/imgui_plugin/"
 			     "imgui_plugin.cpp.o: emcc_cxx "))
 	    (contains? ninja-text "emcxxflags = --std=c++17")))
-;; scm-lint:off
-;; The main module links each module as an archive (engine + plugin_abi objects
-;; first), not a pile of loose plugin objects.
-;; scm-lint:on
 (check "plugin archive folds into the main module link"
        (and (contains? ninja-text
 	      (string-append "main_module wasm-obj/index/modules/core/engine.c.o "
@@ -234,23 +158,11 @@
 (check "wasm target present"
        (contains? ninja-text "build wasm: phony "))
 
-;; scm-lint:off
-;; ---------------------------------------------------------------------------
-;; Optional: write build.ninja for the harness to build with ninja(1).
-;; ---------------------------------------------------------------------------
-;; scm-lint:on
-
 (if (and ninja-out (> (string-length ninja-out) 0))
     (begin
       (call-with-output-file ninja-out
 	(lambda (port) (write-string ninja-text port)))
       (display (string-append "wrote " ninja-out "\n"))))
-
-;; scm-lint:off
-;; ---------------------------------------------------------------------------
-;; Verdict.
-;; ---------------------------------------------------------------------------
-;; scm-lint:on
 
 (if (= fail-count 0)
     (begin (display "RESOLVE-TESTS: OK\n") (exit 0))

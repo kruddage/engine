@@ -40,6 +40,23 @@ header {
 	font-size: 11px;
 	color: #555;
 	letter-spacing: 0.1em;
+	cursor: pointer;
+	user-select: none;
+}
+
+.version:hover {
+	color: #888;
+}
+
+.version-detail {
+	display: none;
+	font-size: 11px;
+	color: #444;
+	letter-spacing: 0.05em;
+}
+
+.version-detail.visible {
+	display: inline;
 }
 
 .canvas-wrap {
@@ -263,7 +280,8 @@ footer {
 
 <header>
 	<span class="wordmark">KRUDD</span>
-	<span class="version">@PROJECT_VERSION@</span>
+	<span class="version" id="version" title="click for build info">@PROJECT_VERSION@</span>
+	<span class="version-detail" id="version-detail">commit @GIT_COMMIT_HASH@ &middot; built @BUILD_DATE@</span>
 </header>
 
 <div class="canvas-wrap">
@@ -373,6 +391,10 @@ footer {
 	window.kruddSetRunning = function () {
 		document.getElementById('status').textContent = 'running';
 	};
+
+	document.getElementById('version').addEventListener('click', function () {
+		document.getElementById('version-detail').classList.toggle('visible');
+	});
 </script>
 
 <script>

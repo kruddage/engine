@@ -43,6 +43,7 @@ static void make_entity(struct scene_entity *e, int32_t parent, uint32_t mask,
 	e->scale.z     = s;
 	e->name_off    = SCENE_NO_NAME;
 	e->render_ref  = 0;
+	e->material_ref = 0;
 }
 
 /*
@@ -280,6 +281,32 @@ static void test_set_render_ref(void)
 	assert((w.mask[e] & COMPONENT_RENDER) == 0);
 }
 
+/* set_material_ref binds a material (sets COMPONENT_MATERIAL); a zero ref
+ * unbinds, exactly mirroring set_render_ref. */
+static void test_set_material_ref(void)
+{
+	struct transform t;
+	int32_t          e;
+
+	make_identity(&t);
+	world_reset(&w);
+	e = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+
+	world_set_material_ref(&w, e, 11u);
+	assert(w.material_ref[e] == 11u);
+	assert((w.mask[e] & COMPONENT_MATERIAL) != 0);
+
+	/* Rebinding to a different ref keeps the component and swaps the material. */
+	world_set_material_ref(&w, e, 22u);
+	assert(w.material_ref[e] == 22u);
+	assert((w.mask[e] & COMPONENT_MATERIAL) != 0);
+
+	/* A zero ref unbinds: component cleared, ref reset. */
+	world_set_material_ref(&w, e, 0u);
+	assert(w.material_ref[e] == 0u);
+	assert((w.mask[e] & COMPONENT_MATERIAL) == 0);
+}
+
 /* Selection takes -1 and live ids, rejects stale ones, clears on death. */
 static void test_selection(void)
 {
@@ -333,6 +360,7 @@ static void test_export_compaction(void)
 	world_set_name(&w, e0, "root");
 	world_set_name(&w, e2, "keep");
 	world_set_render_ref(&w, e2, 7u);
+	world_set_material_ref(&w, e2, 9u);
 	world_destroy_entity(&w, e1);                           /* kills e1 + child */
 
 	s = world_export_scene(&w, &test_mem);
@@ -346,6 +374,8 @@ static void test_export_compaction(void)
 	assert(strcmp(s->names + s->entities[1].name_off, "keep") == 0);
 	assert((s->entities[1].mask & COMPONENT_RENDER) != 0);
 	assert(s->entities[1].render_ref == 7u);
+	assert((s->entities[1].mask & COMPONENT_MATERIAL) != 0);
+	assert(s->entities[1].material_ref == 9u);
 
 	test_mem.free(s->entities);
 	test_mem.free(s->names);
@@ -366,8 +396,10 @@ static void test_export_ingest_roundtrip(void)
 	ents[0].name_off = 0;
 	make_entity(&ents[1], 0, COMPONENT_NAME, 1.0f, 0.0f, 0.0f, 1.0f);
 	ents[1].name_off = 5;
-	make_entity(&ents[2], 1, COMPONENT_RENDER, 2.0f, 3.0f, 4.0f, 2.0f);
-	ents[2].render_ref = 42u;
+	make_entity(&ents[2], 1, COMPONENT_RENDER | COMPONENT_MATERIAL,
+		    2.0f, 3.0f, 4.0f, 2.0f);
+	ents[2].render_ref   = 42u;
+	ents[2].material_ref = 5u;
 	s0.count    = 3;
 	s0.entities = ents;
 	s0.names    = names;
@@ -382,6 +414,7 @@ static void test_export_ingest_roundtrip(void)
 		assert(w2.mask[i] == w.mask[i]);
 		assert(w2.parent[i] == w.parent[i]);
 		assert(w2.render_ref[i] == w.render_ref[i]);
+		assert(w2.material_ref[i] == w.material_ref[i]);
 		assert(feq(w2.local[i].position[0], w.local[i].position[0]));
 	}
 	assert(strcmp(world_entity_name(&w2, 0), "root") == 0);
@@ -406,6 +439,7 @@ int main(void)
 	test_set_transform();
 	test_set_name();
 	test_set_render_ref();
+	test_set_material_ref();
 	test_selection();
 	test_export_compaction();
 	test_export_ingest_roundtrip();

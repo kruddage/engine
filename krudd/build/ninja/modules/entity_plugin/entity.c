@@ -87,6 +87,7 @@ int32_t world_create_entity(struct world *w, int32_t parent,
 	w->world_xform[e] = *local;
 	w->name_off[e]    = WORLD_NO_NAME;
 	w->render_ref[e]  = 0;
+	w->material_ref[e] = 0;
 	return (int32_t)e;
 }
 
@@ -164,6 +165,22 @@ void world_set_render_ref(struct world *w, int32_t e, uint32_t render_ref)
 	w->mask[e]       |= COMPONENT_RENDER;
 }
 
+void world_set_material_ref(struct world *w, int32_t e, uint32_t material_ref)
+{
+	if (e < 0 || (uint32_t)e >= w->count || !w->alive[e])
+		return;
+
+	/* A zero ref unbinds: clear the component rather than leave a dangling
+	 * material_ref that resolves to no material (mirrors world_set_render_ref). */
+	if (material_ref == 0) {
+		w->material_ref[e]  = 0;
+		w->mask[e]         &= ~(uint32_t)COMPONENT_MATERIAL;
+		return;
+	}
+	w->material_ref[e]  = material_ref;
+	w->mask[e]         |= COMPONENT_MATERIAL;
+}
+
 void world_set_selected(struct world *w, int32_t e)
 {
 	if (e < 0) {
@@ -212,6 +229,8 @@ int32_t world_ingest_scene(struct world *w, const struct scene *s)
 		w->name_off[i]    = WORLD_NO_NAME;
 		w->render_ref[i]  = (se->mask & COMPONENT_RENDER)
 				    ? se->render_ref : 0;
+		w->material_ref[i] = (se->mask & COMPONENT_MATERIAL)
+				    ? se->material_ref : 0;
 
 		if ((se->mask & COMPONENT_NAME)
 		    && se->name_off != SCENE_NO_NAME && s->names) {
@@ -294,6 +313,8 @@ struct scene *world_export_scene(const struct world *w,
 		memcpy(&se->scale,    w->local[i].scale,    sizeof(se->scale));
 		se->render_ref = (w->mask[i] & COMPONENT_RENDER)
 				 ? w->render_ref[i] : 0u;
+		se->material_ref = (w->mask[i] & COMPONENT_MATERIAL)
+				 ? w->material_ref[i] : 0u;
 
 		if ((w->mask[i] & COMPONENT_NAME)
 		    && w->name_off[i] != WORLD_NO_NAME) {
@@ -335,6 +356,7 @@ struct world_snapshot {
 	struct transform *local;
 	uint32_t         *name_off;
 	uint32_t         *render_ref;
+	uint32_t         *material_ref;
 	char             *names;
 };
 
@@ -348,6 +370,7 @@ void world_snapshot_free(struct world_snapshot *s, const struct memory_api *mem)
 	mem->free(s->local);
 	mem->free(s->name_off);
 	mem->free(s->render_ref);
+	mem->free(s->material_ref);
 	mem->free(s->names);
 	mem->free(s);
 }
@@ -391,11 +414,14 @@ struct world_snapshot *world_snapshot_capture(const struct world *w,
 			dup_bytes(mem, w->name_off, n * sizeof(*w->name_off));
 	s->render_ref = (uint32_t *)
 			dup_bytes(mem, w->render_ref, n * sizeof(*w->render_ref));
+	s->material_ref = (uint32_t *)
+			dup_bytes(mem, w->material_ref,
+				  n * sizeof(*w->material_ref));
 	s->names      = (char *)dup_bytes(mem, w->names, w->name_bytes);
 
 	/* A zero-length column dups to NULL; only a real short alloc is OOM. */
 	if ((n && (!s->alive || !s->mask || !s->parent || !s->local ||
-		   !s->name_off || !s->render_ref)) ||
+		   !s->name_off || !s->render_ref || !s->material_ref)) ||
 	    (w->name_bytes && !s->names)) {
 		world_snapshot_free(s, mem);
 		return NULL;
@@ -422,6 +448,8 @@ void world_snapshot_restore(struct world *w, const struct world_snapshot *s)
 		memcpy(w->local,      s->local,      n * sizeof(*w->local));
 		memcpy(w->name_off,   s->name_off,   n * sizeof(*w->name_off));
 		memcpy(w->render_ref, s->render_ref, n * sizeof(*w->render_ref));
+		memcpy(w->material_ref, s->material_ref,
+		       n * sizeof(*w->material_ref));
 	}
 	if (s->name_bytes)
 		memcpy(w->names, s->names, s->name_bytes);

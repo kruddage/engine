@@ -47,6 +47,13 @@ struct entity_api {
 	 * counterpart to the render_ref that create_entity / drag-to-spawn set.
 	 */
 	void    (*set_render_ref)(int32_t id, uint32_t render_ref);
+	/*
+	 * Bind id to a material by asset id (sets COMPONENT_MATERIAL); a zero
+	 * material_ref unbinds, clearing COMPONENT_MATERIAL. Mirrors
+	 * set_render_ref, but for the material asset that tints the draw
+	 * rather than the mesh it draws.
+	 */
+	void    (*set_material_ref)(int32_t id, uint32_t material_ref);
 
 	/* Shared selection: -1 = none. set ignores stale/out-of-range ids. */
 	int32_t (*get_selected)(void);

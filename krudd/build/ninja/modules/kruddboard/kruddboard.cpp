@@ -381,6 +381,33 @@ static int      g_shader_compile_ok = -1; /* -1 = untried, 0 = fail, 1 = ok */
 static struct md_block g_blocks[MD_BLOCKS_MAX];
 static int32_t         g_nblocks;
 
+/* Material color editor state — the RGBA base_color the fragment shader
+ * multiplies in (see the Material uniform block in SCENE_SHADER_SRC). */
+static float    g_material_color[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+static uint32_t g_material_color_id; /* id whose bytes are in g_material_color */
+
+/*
+ * (Re)load the color editor from the asset catalog when the selection
+ * changes. A missing or short (pre-Save) asset falls back to white, same as
+ * the renderer's resolve_material_color default.
+ */
+static void maybe_reload_material_color(uint32_t id)
+{
+	const void *src;
+	uint32_t    sz = 0;
+
+	if (g_material_color_id == id)
+		return;
+	g_material_color_id = id;
+	g_material_color[0] = g_material_color[1] =
+		g_material_color[2] = g_material_color[3] = 1.0f;
+	if (!g_asset_api || !g_asset_api->get_data)
+		return;
+	src = g_asset_api->get_data(id, &sz);
+	if (src && sz >= sizeof(g_material_color))
+		memcpy(g_material_color, src, sizeof(g_material_color));
+}
+
 /*
  * (Re)load the edit buffer from the asset catalog when the selection
  * changes.  Clamps to EDIT_BUF_MAX - 1 bytes and NUL-terminates.
@@ -634,6 +661,76 @@ static void draw_asset_inspector(uint32_t id)
 
 		return;
 	}
+
+	/*
+	 * Material assets — a single authored RGBA base_color, edited with a
+	 * color picker rather than a text box. #materials v0: no fixed-
+	 * function state, no textures, one parameter (see scene_renderer.c).
+	 */
+	if (info.type == ASSET_TYPE_MATERIAL) {
+		bool editable    = !info.read_only;
+		int  can_persist = editable && g_backend &&
+			(g_backend->get_caps() & BACKEND_CAP_PROJECT_PERSIST);
+
+		maybe_reload_material_color(id);
+
+		ImGui::Separator();
+
+		if (ImGui::CollapsingHeader("Color",
+					    ImGuiTreeNodeFlags_DefaultOpen)) {
+			ImGui::BeginDisabled(!editable);
+			ImGui::ColorEdit4("##basecolor", g_material_color);
+			ImGui::EndDisabled();
+		}
+
+		ImGui::Separator();
+
+		if (!editable) {
+			ImGui::BeginDisabled();
+			ImGui::Button("Save");
+			ImGui::EndDisabled();
+			ImGui::SameLine();
+			ImGui::TextDisabled("read-only");
+		} else {
+			/*
+			 * Save always writes the in-memory asset — the entity
+			 * inspector's material combo and the renderer both read
+			 * live catalog bytes — so the edit is visible this
+			 * session even with no backend to persist it to (mirrors
+			 * the shader Save fix in #390).
+			 */
+			if (ImGui::Button("Save")) {
+				if (g_asset_mut)
+					g_asset_mut->set_data(
+						id, g_material_color,
+						(uint32_t)sizeof(g_material_color));
+				if (can_persist)
+					g_backend->persist_asset(
+						id, info.path, ASSET_TYPE_MATERIAL,
+						g_material_color,
+						(uint32_t)sizeof(g_material_color));
+			}
+			if (!can_persist) {
+				ImGui::SameLine();
+				ImGui::TextDisabled(
+					"in-memory only (persistence unavailable)");
+			}
+		}
+
+		if (editable) {
+			ImGui::SameLine();
+			if (ImGui::Button("Delete")) {
+				if (g_asset_mut)
+					g_asset_mut->destroy(id);
+				if (g_backend && can_persist)
+					g_backend->delete_asset(id);
+				g_material_color_id = 0;
+				g_asset_sel          = 0;
+			}
+		}
+
+		return;
+	}
 #endif /* __EMSCRIPTEN__ */
 
 	ImGui::Separator();
@@ -758,9 +855,10 @@ static void draw_tab_assets(void)
 	if (g_asset_sel == 0 && g_asset_mut) {
 		static char new_name[256];
 		static int  naming;   /* 1 while the form is visible */
-		static int  new_type; /* 0 = Text, 1 = Shader */
+		static int  new_type; /* 0 = Text, 1 = Shader, 2 = Material */
 
-		static const char *const NEW_TYPES[] = { "Text", "Shader" };
+		static const char *const NEW_TYPES[] =
+			{ "Text", "Shader", "Material" };
 
 		if (!naming) {
 			if (ImGui::Button("New Asset")) {
@@ -775,7 +873,7 @@ static void draw_tab_assets(void)
 				ImGuiInputTextFlags_EnterReturnsTrue);
 
 			ImGui::SetNextItemWidth(160.0f);
-			ImGui::Combo("type", &new_type, NEW_TYPES, 2);
+			ImGui::Combo("type", &new_type, NEW_TYPES, 3);
 
 			confirm |= ImGui::Button("Create");
 			ImGui::SameLine();
@@ -783,23 +881,41 @@ static void draw_tab_assets(void)
 				naming = 0;
 
 			if (confirm && new_name[0] != '\0') {
+				static const float DEFAULT_COLOR[4] =
+					{ 1.0f, 1.0f, 1.0f, 1.0f };
 				char        path[256];
 				int32_t     atype;
 				uint32_t    nid;
 				int         can_persist;
-				const char *seed;
-				uint32_t    seed_len;
+				const void *bytes;
+				uint32_t    size;
 
-				atype = (new_type == 1) ? ASSET_TYPE_SHADER
-							: ASSET_TYPE_TEXT;
-				seed  = (atype == ASSET_TYPE_SHADER)
-						? default_shader_src() : "";
-				seed_len = (uint32_t)strlen(seed);
+				atype = (new_type == 2) ? ASSET_TYPE_MATERIAL
+					: (new_type == 1) ? ASSET_TYPE_SHADER
+							  : ASSET_TYPE_TEXT;
+
+				/*
+				 * A material's bytes are its base_color vec4;
+				 * a new shader seeds from the built-in scene
+				 * shader so it starts from working source;
+				 * text still authors as empty.
+				 */
+				if (atype == ASSET_TYPE_MATERIAL) {
+					bytes = DEFAULT_COLOR;
+					size  = (uint32_t)sizeof(DEFAULT_COLOR);
+				} else if (atype == ASSET_TYPE_SHADER) {
+					const char *seed = default_shader_src();
+
+					bytes = seed;
+					size  = (uint32_t)strlen(seed);
+				} else {
+					bytes = "";
+					size  = 0;
+				}
 
 				snprintf(path, sizeof(path), "%s", new_name);
 
-				nid = g_asset_mut->create(path, atype, seed,
-							  seed_len);
+				nid = g_asset_mut->create(path, atype, bytes, size);
 				if (nid != 0) {
 					can_persist =
 						g_backend &&
@@ -808,7 +924,7 @@ static void draw_tab_assets(void)
 					if (can_persist)
 						g_backend->persist_asset(
 							nid, path, atype,
-							seed, seed_len);
+							bytes, size);
 					g_asset_sel = nid;
 				}
 				naming = 0;
@@ -987,9 +1103,10 @@ static void draw_inspector_details(const struct world *w, uint32_t e)
 	char comps[64];
 	char parent_buf[64];
 
-	snprintf(comps, sizeof(comps), "Transform%s%s",
-		 (w->mask[e] & COMPONENT_NAME)   ? ", Name"   : "",
-		 (w->mask[e] & COMPONENT_RENDER) ? ", Render" : "");
+	snprintf(comps, sizeof(comps), "Transform%s%s%s",
+		 (w->mask[e] & COMPONENT_NAME)     ? ", Name"     : "",
+		 (w->mask[e] & COMPONENT_RENDER)   ? ", Render"   : "",
+		 (w->mask[e] & COMPONENT_MATERIAL) ? ", Material" : "");
 
 	if (w->parent[e] < 0) {
 		snprintf(parent_buf, sizeof(parent_buf), "(root)");
@@ -1093,6 +1210,76 @@ static void draw_inspector_mesh(const struct world *w, uint32_t e)
 			is_cur = has_render && mi.id == cur_ref;
 			if (ImGui::Selectable(row, is_cur) && can_edit)
 				g_entity_api->set_render_ref((int32_t)e, mi.id);
+			if (is_cur)
+				ImGui::SetItemDefaultFocus();
+		}
+		ImGui::EndCombo();
+	}
+	ImGui::EndDisabled();
+
+	ImGui::EndTable();
+}
+
+/*
+ * Material binding row: the entity-inspector counterpart of
+ * draw_inspector_mesh, for the material asset that tints the entity's draw
+ * (see the Material uniform block in SCENE_SHADER_SRC / scene_renderer.c).
+ * Reads material_ref[e] (valid iff COMPONENT_MATERIAL) and writes it back
+ * through the scene api's set_material_ref, which records an undo step.
+ */
+static void draw_inspector_material(const struct world *w, uint32_t e)
+{
+	bool     has_material = (w->mask[e] & COMPONENT_MATERIAL) != 0;
+	uint32_t cur_ref      = has_material ? w->material_ref[e] : 0u;
+	char     cur_label[160];
+	bool     can_edit;
+
+	if (!has_material) {
+		snprintf(cur_label, sizeof(cur_label), "(none)");
+	} else {
+		struct asset_info bi;
+
+		if (g_asset_api && g_asset_api->find &&
+		    g_asset_api->find(cur_ref, &bi) == 0)
+			snprintf(cur_label, sizeof(cur_label), "%s", bi.path);
+		else
+			snprintf(cur_label, sizeof(cur_label),
+				 "(missing #%u)", cur_ref);
+	}
+
+	can_edit = g_entity_api && g_entity_api->set_material_ref && g_asset_api;
+
+	if (!ImGui::BeginTable("##ematerial", 2, ImGuiTableFlags_SizingStretchProp))
+		return;
+	ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+	ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthStretch);
+
+	ImGui::TableNextRow();
+	ImGui::TableSetColumnIndex(0);
+	ImGui::TextUnformatted("Material");
+	ImGui::TableSetColumnIndex(1);
+	ImGui::SetNextItemWidth(-1.0f);
+	ImGui::BeginDisabled(!can_edit);
+	if (ImGui::BeginCombo("##materialsel", cur_label)) {
+		uint32_t k, n;
+
+		/* "(none)" unbinds — material_ref 0 clears COMPONENT_MATERIAL. */
+		if (ImGui::Selectable("(none)", !has_material) && can_edit)
+			g_entity_api->set_material_ref((int32_t)e, 0u);
+
+		n = g_asset_api ? g_asset_api->count() : 0u;
+		for (k = 0; k < n; k++) {
+			struct asset_info mi;
+			char              row[176];
+			bool              is_cur;
+
+			if (g_asset_api->info(k, &mi) != 0 ||
+			    mi.type != ASSET_TYPE_MATERIAL || mi.id == 0)
+				continue;
+			snprintf(row, sizeof(row), "%s##m%u", mi.path, mi.id);
+			is_cur = has_material && mi.id == cur_ref;
+			if (ImGui::Selectable(row, is_cur) && can_edit)
+				g_entity_api->set_material_ref((int32_t)e, mi.id);
 			if (is_cur)
 				ImGui::SetItemDefaultFocus();
 		}
@@ -1597,6 +1784,7 @@ static void draw_tab_world(void)
 
 			draw_inspector_details(w, e);
 			draw_inspector_mesh(w, e);
+			draw_inspector_material(w, e);
 		}
 	}
 }

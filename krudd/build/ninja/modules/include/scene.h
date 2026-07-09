@@ -7,16 +7,17 @@
 #include <stdint.h>
 
 enum component_bit {
-	COMPONENT_NAME   = 1u << 0,
-	COMPONENT_RENDER = 1u << 1,
+	COMPONENT_NAME     = 1u << 0,
+	COMPONENT_RENDER   = 1u << 1,
+	COMPONENT_MATERIAL = 1u << 2,
 };
 
 #define SCENE_NO_NAME 0xFFFFFFFFu
 
-/* On-disk .scene v1 — packed, little-endian. */
+/* On-disk .scene v2 — packed, little-endian. */
 struct scene_header {
 	uint8_t  magic[4];     /* "KSCN" */
-	uint32_t version;      /* 1 */
+	uint32_t version;      /* 2 */
 	uint32_t entity_count;
 	uint32_t string_bytes; /* size of trailing name blob */
 };
@@ -30,6 +31,7 @@ struct scene_entity {
 	vec3_t   scale;
 	uint32_t name_off;     /* byte offset into name blob; SCENE_NO_NAME = none */
 	uint32_t render_ref;   /* valid iff COMPONENT_RENDER set */
+	uint32_t material_ref; /* valid iff COMPONENT_MATERIAL set */
 };
 
 /*

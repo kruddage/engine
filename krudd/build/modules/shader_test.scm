@@ -23,7 +23,8 @@
 ;;! The built-in scene shader, the exact DSL asset_plugin seeds.
 (define scene "(shader scene
   (inputs (a_pos vec3 (location 0)) (a_normal vec3 (location 1)) (a_uv0 vec2 (location 2)))
-  (uniforms (Camera (block 0) (layout std140) (view_proj mat4) (model mat4)))
+  (uniforms (Camera (block 0) (layout std140) (view_proj mat4) (model mat4))
+            (Material (block 1) (layout std140) (base_color vec4)))
   (varyings (v_normal vec3))
   (targets (frag_color vec4 (location 0)))
   (vertex
@@ -34,7 +35,7 @@
            (base (+ 0.5 (* 0.5 n)))
            (diff (max (dot n (normalize (vec3 0.5 0.8 0.4))) 0.0))
            (col (* base (+ 0.35 (* 0.65 diff)))))
-      (set frag_color (vec4 col 1.0)))))")
+      (set frag_color (vec4 (* col (swizzle base_color rgb)) 1.0)))))")
 
 (define vs (shader-transpile scene "vertex"))
 (define fs (shader-transpile scene "fragment"))
@@ -60,6 +61,8 @@
        (has? vs "gl_Position = (view_proj * model * vec4(a_pos, 1.0));"))
 (check "vertex declares no fragment precision"
        (not (has? vs "precision mediump float;")))
+(check "vertex omits the Material block it never reads"
+       (not (has? vs "uniform Material")))
 
 (display "shader: fragment codegen\n")
 (check "fragment sets the float precision"
@@ -68,6 +71,8 @@
        (has? fs "in vec3 v_normal;"))
 (check "the fragment omits the Camera block it never reads (no precision clash)"
        (not (has? fs "uniform Camera")))
+(check "std140 Material block is declared from the DSL, members pinned highp"
+       (has? fs "layout(std140) uniform Material {\n\thighp vec4 base_color;\n};"))
 (check "the color target carries its location"
        (has? fs "layout(location = 0) out vec4 frag_color;"))
 (check "let* locals get inferred types (vec3 from normalize)"
@@ -80,6 +85,8 @@
        (has? fs "0.35 + "))
 (check "vector*scalar infers vec3 for the final color"
        (has? fs "vec3 col = (base * (0.35 + (0.65 * diff)));"))
+(check "the material base_color tints the final output"
+       (has? fs "frag_color = vec4((col * base_color.rgb), 1.0);"))
 
 (display "shader: missing-stage shader\n")
 (let ((frag-only "(shader glow (targets (c vec4 (location 0)))

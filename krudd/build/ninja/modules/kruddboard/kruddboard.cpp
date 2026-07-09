@@ -430,6 +430,514 @@ static s7_pointer sp_krudd_log_history(s7_scheme *sc, s7_pointer args)
 	return out;
 }
 
+/* ------------------------------------------------------------------ */
+/* World-tab primitives (#401)                                         */
+/* ------------------------------------------------------------------ */
+
+/* Read n reals off a Scheme list into a float array (short lists pad nothing). */
+static void read_reals(s7_scheme *sc, s7_pointer lst, float *out, int n)
+{
+	int i;
+
+	for (i = 0; i < n && s7_is_pair(lst); i++) {
+		out[i] = (float)s7_number_to_real(sc, s7_car(lst));
+		lst    = s7_cdr(lst);
+	}
+}
+
+/* Build a fresh (x y z ...) list of n reals from a float array. */
+static s7_pointer real_list(s7_scheme *sc, const float *v, int n)
+{
+	s7_pointer out = s7_nil(sc);
+	int        i;
+
+	for (i = n - 1; i >= 0; i--)
+		out = s7_cons(sc, s7_make_real(sc, (s7_double)v[i]), out);
+	return out;
+}
+
+/*
+ * (imgui-begin-table-plain id ncols) -> #t when the table opened. Proportional-
+ * stretch but borderless and unstriped — the layout-only tables the inspector
+ * used (transform, details, bindings), distinct from the bordered
+ * imgui-begin-table. A #t result must be paired with imgui-end-table.
+ */
+static s7_pointer sp_imgui_begin_table_plain(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer id     = s7_car(args);
+	s7_pointer ncols  = s7_cadr(args);
+	bool       opened = false;
+
+	if (s7_is_string(id) && s7_is_integer(ncols) && s7_integer(ncols) > 0)
+		opened = ImGui::BeginTable(s7_string(id),
+					   (int)s7_integer(ncols),
+					   ImGuiTableFlags_SizingStretchProp);
+	return s7_make_boolean(sc, opened);
+}
+
+/* (imgui-table-setup-column-fixed label width) -> unspecified. Fixed px width. */
+static s7_pointer sp_imgui_table_setup_column_fixed(s7_scheme *sc,
+						    s7_pointer args)
+{
+	s7_pointer label = s7_car(args);
+	float      width = (float)s7_number_to_real(sc, s7_cadr(args));
+
+	if (s7_is_string(label))
+		ImGui::TableSetupColumn(s7_string(label),
+					ImGuiTableColumnFlags_WidthFixed, width);
+	return s7_unspecified(sc);
+}
+
+/*
+ * (imgui-begin-disabled flag) -> unspecified. Grey out and swallow input for
+ * every widget until imgui-end-disabled — the BeginDisabled/EndDisabled pairs
+ * the World tab wrapped its create/edit widgets in when the scene api is absent.
+ */
+static s7_pointer sp_imgui_begin_disabled(s7_scheme *sc, s7_pointer args)
+{
+	ImGui::BeginDisabled(s7_boolean(sc, s7_car(args)));
+	return s7_unspecified(sc);
+}
+
+/* (imgui-end-disabled) -> unspecified. */
+static s7_pointer sp_imgui_end_disabled(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	ImGui::EndDisabled();
+	return s7_unspecified(sc);
+}
+
+/* (imgui-set-next-item-width w) -> unspecified. A negative w fills to the right. */
+static s7_pointer sp_imgui_set_next_item_width(s7_scheme *sc, s7_pointer args)
+{
+	ImGui::SetNextItemWidth((float)s7_number_to_real(sc, s7_car(args)));
+	return s7_unspecified(sc);
+}
+
+/*
+ * (imgui-input-text id text) -> (current-text . committed?). Seeds a single-line
+ * field from text each frame; ImGui keeps the in-progress edit alive while the
+ * field is focused, so re-seeding from the model is a no-op mid-edit. committed?
+ * is #t only on the frame focus is lost after an edit — the "commit once, on
+ * deactivate" the C name field used so the name blob doesn't churn per keystroke.
+ */
+static s7_pointer sp_imgui_input_text(s7_scheme *sc, s7_pointer args)
+{
+	static char buf[256];
+	s7_pointer  id   = s7_car(args);
+	s7_pointer  text = s7_cadr(args);
+	bool        done;
+
+	buf[0] = '\0';
+	if (s7_is_string(text)) {
+		strncpy(buf, s7_string(text), sizeof(buf) - 1);
+		buf[sizeof(buf) - 1] = '\0';
+	}
+	if (s7_is_string(id))
+		ImGui::InputText(s7_string(id), buf, sizeof(buf));
+	done = ImGui::IsItemDeactivatedAfterEdit();
+	return s7_cons(sc, s7_make_string(sc, buf), s7_make_boolean(sc, done));
+}
+
+/* (imgui-input-float3 id (x y z)) -> ((x y z) . changed?). */
+static s7_pointer sp_imgui_input_float3(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer id      = s7_car(args);
+	float      v[3];
+	bool       changed = false;
+
+	read_reals(sc, s7_cadr(args), v, 3);
+	if (s7_is_string(id))
+		changed = ImGui::InputFloat3(s7_string(id), v);
+	return s7_cons(sc, real_list(sc, v, 3), s7_make_boolean(sc, changed));
+}
+
+/* (imgui-input-float4 id (x y z w)) -> ((x y z w) . changed?). */
+static s7_pointer sp_imgui_input_float4(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer id      = s7_car(args);
+	float      v[4];
+	bool       changed = false;
+
+	read_reals(sc, s7_cadr(args), v, 4);
+	if (s7_is_string(id))
+		changed = ImGui::InputFloat4(s7_string(id), v);
+	return s7_cons(sc, real_list(sc, v, 4), s7_make_boolean(sc, changed));
+}
+
+/*
+ * (imgui-begin-combo id preview) -> #t when the dropdown is open. A #t result
+ * must be paired with imgui-end-combo and holds the selectable rows.
+ */
+static s7_pointer sp_imgui_begin_combo(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer id      = s7_car(args);
+	s7_pointer preview = s7_cadr(args);
+	bool       open    = false;
+
+	if (s7_is_string(id) && s7_is_string(preview))
+		open = ImGui::BeginCombo(s7_string(id), s7_string(preview));
+	return s7_make_boolean(sc, open);
+}
+
+/* (imgui-end-combo) -> unspecified. */
+static s7_pointer sp_imgui_end_combo(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	ImGui::EndCombo();
+	return s7_unspecified(sc);
+}
+
+/*
+ * (imgui-selectable label selected? span-all?) -> #t when clicked this frame.
+ * span-all? spans every table column, as the entity-list rows did; the combo
+ * rows pass #f.
+ */
+static s7_pointer sp_imgui_selectable(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer           label = s7_car(args);
+	bool                 sel   = s7_boolean(sc, s7_cadr(args));
+	bool                 span  = s7_boolean(sc, s7_caddr(args));
+	ImGuiSelectableFlags flags = span ? ImGuiSelectableFlags_SpanAllColumns
+					  : 0;
+	bool                 hit   = false;
+
+	if (s7_is_string(label))
+		hit = ImGui::Selectable(s7_string(label), sel, flags);
+	return s7_make_boolean(sc, hit);
+}
+
+/* (imgui-set-item-default-focus) -> unspecified. Focus the last item on open. */
+static s7_pointer sp_imgui_set_item_default_focus(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	ImGui::SetItemDefaultFocus();
+	return s7_unspecified(sc);
+}
+
+/* (imgui-calc-text-width str) -> the rendered width of str in pixels. */
+static s7_pointer sp_imgui_calc_text_width(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer str = s7_car(args);
+	float      w   = 0.0f;
+
+	if (s7_is_string(str))
+		w = ImGui::CalcTextSize(s7_string(str)).x;
+	return s7_make_real(sc, (s7_double)w);
+}
+
+/*
+ * (imgui-same-line-right px) -> unspecified. Place the next widget flush to the
+ * window's right edge, reserving px for its own width — the CalcTextSize-based
+ * right alignment the C scene header used for the "Save As..." button.
+ */
+static s7_pointer sp_imgui_same_line_right(s7_scheme *sc, s7_pointer args)
+{
+	float       px = (float)s7_number_to_real(sc, s7_car(args));
+	ImGuiStyle &st = ImGui::GetStyle();
+
+	ImGui::SameLine();
+	ImGui::SetCursorPosX(ImGui::GetWindowWidth() - px
+			     - st.FramePadding.x * 2.0f - st.WindowPadding.x);
+	return s7_unspecified(sc);
+}
+
+/* (imgui-push-style-color-button r g b a) -> unspecified. Tint the button fill. */
+static s7_pointer sp_imgui_push_style_color_button(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer p = args;
+	double     r = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double     g = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double     b = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double     a = s7_number_to_real(sc, s7_car(p));
+
+	ImGui::PushStyleColor(ImGuiCol_Button,
+			      ImVec4((float)r, (float)g, (float)b, (float)a));
+	return s7_unspecified(sc);
+}
+
+/* (imgui-pop-style-color) -> unspecified. Undo one imgui-push-style-color-*. */
+static s7_pointer sp_imgui_pop_style_color(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	ImGui::PopStyleColor();
+	return s7_unspecified(sc);
+}
+
+/* Selection id honouring the api / g_entity_sel fallback the World tab uses. */
+static int32_t world_sel(void)
+{
+	return g_entity_api ? g_entity_api->get_selected() : g_entity_sel;
+}
+
+/*
+ * (krudd-world-caps) -> (entity-api? asset-api?). The tab greys the create/edit
+ * widgets when the scene api is absent and the binding combos when either the
+ * scene or asset api is; these two booleans drive both.
+ */
+static s7_pointer sp_krudd_world_caps(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	return s7_list(sc, 2,
+		       s7_make_boolean(sc, g_entity_api != NULL),
+		       s7_make_boolean(sc, g_asset_api != NULL));
+}
+
+/* (krudd-selected) -> the selected entity id, or -1 when nothing is selected. */
+static s7_pointer sp_krudd_selected(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	return s7_make_integer(sc, (s7_int)world_sel());
+}
+
+/*
+ * (krudd-world-entities) -> a list of (id . name) for each live entity in id
+ * order; name is a string or #f when the entity has no name. Returns #f when the
+ * scene api or its world is absent, which the tab renders as "(no entities)".
+ */
+static s7_pointer sp_krudd_world_entities(s7_scheme *sc, s7_pointer args)
+{
+	const struct world *w = NULL;
+	s7_pointer          out;
+	uint32_t            i;
+
+	(void)args;
+	if (g_entity_api)
+		w = g_entity_api->get_world();
+	if (!w)
+		return s7_f(sc);
+
+	out = s7_nil(sc);
+	for (i = 0; i < w->count; i++) {
+		s7_pointer name;
+
+		if (!w->alive[i])
+			continue;
+		if ((w->mask[i] & COMPONENT_NAME) &&
+		    w->name_off[i] != SCENE_NO_NAME)
+			name = s7_make_string(sc, w->names + w->name_off[i]);
+		else
+			name = s7_f(sc);
+		out = s7_cons(sc,
+			      s7_cons(sc, s7_make_integer(sc, (s7_int)i), name),
+			      out);
+	}
+	return s7_reverse(sc, out);
+}
+
+/*
+ * (krudd-entity-inspect id) -> the inspector bundle for a live entity, else #f:
+ *   (name (px py pz) (rx ry rz rw) (sx sy sz) parent
+ *    has-name? has-render? has-material? render-ref material-ref)
+ * name is a string ("" when unnamed); parent is #f for a root or (pid . pname)
+ * where pname is a string or #f; the refs are asset ids (0 = unbound).
+ */
+static s7_pointer sp_krudd_entity_inspect(s7_scheme *sc, s7_pointer args)
+{
+	const struct world     *w  = NULL;
+	const struct transform *t;
+	int32_t                 id = (int32_t)s7_integer(s7_car(args));
+	uint32_t                e;
+	s7_pointer              parent;
+	const char             *name;
+
+	if (g_entity_api)
+		w = g_entity_api->get_world();
+	if (!w || id < 0 || (uint32_t)id >= w->count ||
+	    !w->alive[(uint32_t)id])
+		return s7_f(sc);
+	e = (uint32_t)id;
+	t = &w->local[e];
+
+	name = NULL;
+	if ((w->mask[e] & COMPONENT_NAME) && w->name_off[e] != SCENE_NO_NAME)
+		name = w->names + w->name_off[e];
+
+	if (w->parent[e] < 0) {
+		parent = s7_f(sc);
+	} else {
+		uint32_t    p  = (uint32_t)w->parent[e];
+		const char *pn = NULL;
+
+		if ((w->mask[p] & COMPONENT_NAME) &&
+		    w->name_off[p] != SCENE_NO_NAME)
+			pn = w->names + w->name_off[p];
+		parent = s7_cons(sc, s7_make_integer(sc, (s7_int)p),
+				 pn ? s7_make_string(sc, pn) : s7_f(sc));
+	}
+
+	return s7_list(sc, 10,
+		s7_make_string(sc, name ? name : ""),
+		real_list(sc, t->position, 3),
+		real_list(sc, t->rotation, 4),
+		real_list(sc, t->scale, 3),
+		parent,
+		s7_make_boolean(sc, (w->mask[e] & COMPONENT_NAME)     != 0),
+		s7_make_boolean(sc, (w->mask[e] & COMPONENT_RENDER)   != 0),
+		s7_make_boolean(sc, (w->mask[e] & COMPONENT_MATERIAL) != 0),
+		s7_make_integer(sc, (s7_int)((w->mask[e] & COMPONENT_RENDER)
+					     ? w->render_ref[e] : 0u)),
+		s7_make_integer(sc, (s7_int)((w->mask[e] & COMPONENT_MATERIAL)
+					     ? w->material_ref[e] : 0u)));
+}
+
+/* (id . path) rows for every catalog asset of the given ASSET_TYPE_*. */
+static s7_pointer assets_of_type(s7_scheme *sc, int type)
+{
+	s7_pointer out = s7_nil(sc);
+	uint32_t   k, n;
+
+	if (!g_asset_api)
+		return out;
+	n = g_asset_api->count();
+	for (k = 0; k < n; k++) {
+		struct asset_info mi;
+
+		if (g_asset_api->info(k, &mi) != 0 || mi.type != type ||
+		    mi.id == 0)
+			continue;
+		out = s7_cons(sc,
+			      s7_cons(sc, s7_make_integer(sc, (s7_int)mi.id),
+				      s7_make_string(sc, mi.path)),
+			      out);
+	}
+	return s7_reverse(sc, out);
+}
+
+/* (krudd-mesh-assets) -> ((id . path) ...) for the mesh-binding combo. */
+static s7_pointer sp_krudd_mesh_assets(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	return assets_of_type(sc, ASSET_TYPE_MESH);
+}
+
+/* (krudd-material-assets) -> ((id . path) ...) for the material-binding combo. */
+static s7_pointer sp_krudd_material_assets(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	return assets_of_type(sc, ASSET_TYPE_MATERIAL);
+}
+
+/* (krudd-asset-find ref) -> the asset's path, or #f when ref is 0 / unknown. */
+static s7_pointer sp_krudd_asset_find(s7_scheme *sc, s7_pointer args)
+{
+	uint32_t          ref = (uint32_t)s7_integer(s7_car(args));
+	struct asset_info bi;
+
+	if (ref == 0 || !g_asset_api || !g_asset_api->find ||
+	    g_asset_api->find(ref, &bi) != 0)
+		return s7_f(sc);
+	return s7_make_string(sc, bi.path);
+}
+
+/*
+ * (krudd-entity-create) -> the new entity id, or -1 on failure. Appends a root
+ * entity with an identity transform at the origin — what the "+ Entity" button
+ * seeds; the caller names and selects it. Undo is recorded by the scene api.
+ */
+static s7_pointer sp_krudd_entity_create(s7_scheme *sc, s7_pointer args)
+{
+	struct transform seed;
+	int32_t          id = -1;
+
+	(void)args;
+	if (g_entity_api && g_entity_api->create_entity) {
+		memset(&seed, 0, sizeof(seed));
+		seed.rotation[3] = 1.0f;
+		seed.scale[0] = seed.scale[1] = seed.scale[2] = 1.0f;
+		id = g_entity_api->create_entity(WORLD_NO_PARENT, &seed, 0u,
+						 0u);
+	}
+	return s7_make_integer(sc, (s7_int)id);
+}
+
+/* (krudd-entity-destroy id) -> unspecified. Tombstones the entity and subtree. */
+static s7_pointer sp_krudd_entity_destroy(s7_scheme *sc, s7_pointer args)
+{
+	int32_t id = (int32_t)s7_integer(s7_car(args));
+
+	if (g_entity_api && g_entity_api->destroy_entity)
+		g_entity_api->destroy_entity(id);
+	return s7_unspecified(sc);
+}
+
+/* (krudd-entity-select id) -> unspecified. Uses g_entity_sel without the api. */
+static s7_pointer sp_krudd_entity_select(s7_scheme *sc, s7_pointer args)
+{
+	int32_t id = (int32_t)s7_integer(s7_car(args));
+
+	if (g_entity_api)
+		g_entity_api->set_selected(id);
+	else
+		g_entity_sel = id;
+	return s7_unspecified(sc);
+}
+
+/* (krudd-entity-set-name id str) -> unspecified. Empty str clears the name. */
+static s7_pointer sp_krudd_entity_set_name(s7_scheme *sc, s7_pointer args)
+{
+	int32_t    id = (int32_t)s7_integer(s7_car(args));
+	s7_pointer nm = s7_cadr(args);
+
+	if (g_entity_api && g_entity_api->set_name && s7_is_string(nm))
+		g_entity_api->set_name(id, s7_string(nm));
+	return s7_unspecified(sc);
+}
+
+/* (krudd-entity-set-transform id (px py pz) (rx ry rz rw) (sx sy sz)). */
+static s7_pointer sp_krudd_entity_set_transform(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer       p  = args;
+	int32_t          id = (int32_t)s7_integer(s7_car(p)); p = s7_cdr(p);
+	struct transform nt;
+
+	read_reals(sc, s7_car(p), nt.position, 3); p = s7_cdr(p);
+	read_reals(sc, s7_car(p), nt.rotation, 4); p = s7_cdr(p);
+	read_reals(sc, s7_car(p), nt.scale, 3);
+	if (g_entity_api && g_entity_api->set_transform)
+		g_entity_api->set_transform(id, &nt);
+	return s7_unspecified(sc);
+}
+
+/* (krudd-entity-set-render-ref id ref) -> unspecified. ref 0 unbinds the mesh. */
+static s7_pointer sp_krudd_entity_set_render_ref(s7_scheme *sc, s7_pointer args)
+{
+	int32_t  id  = (int32_t)s7_integer(s7_car(args));
+	uint32_t ref = (uint32_t)s7_integer(s7_cadr(args));
+
+	if (g_entity_api && g_entity_api->set_render_ref)
+		g_entity_api->set_render_ref(id, ref);
+	return s7_unspecified(sc);
+}
+
+/* (krudd-entity-set-material-ref id ref) -> unspecified. ref 0 unbinds it. */
+static s7_pointer sp_krudd_entity_set_material_ref(s7_scheme *sc, s7_pointer args)
+{
+	int32_t  id  = (int32_t)s7_integer(s7_car(args));
+	uint32_t ref = (uint32_t)s7_integer(s7_cadr(args));
+
+	if (g_entity_api && g_entity_api->set_material_ref)
+		g_entity_api->set_material_ref(id, ref);
+	return s7_unspecified(sc);
+}
+
+/* (krudd-gizmo-mode) -> the shared gizmo tool: 0 move, 1 rotate, 2 scale. */
+static s7_pointer sp_krudd_gizmo_mode(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	return s7_make_integer(sc, (s7_int)g_gizmo_mode);
+}
+
+/* (krudd-set-gizmo-mode m) -> unspecified. Out-of-range m is ignored. */
+static s7_pointer sp_krudd_set_gizmo_mode(s7_scheme *sc, s7_pointer args)
+{
+	int m = (int)s7_integer(s7_car(args));
+
+	if (m >= GIZMO_MOVE && m <= GIZMO_SCALE)
+		g_gizmo_mode = (enum gizmo_mode)m;
+	return s7_unspecified(sc);
+}
+
 } /* extern "C" — s7 callbacks */
 
 /*
@@ -498,6 +1006,91 @@ static s7_scheme *ensure_panel_scm(void)
 	s7_define_function(sc, "krudd-log-history", sp_krudd_log_history, 0, 0,
 			   false,
 			   "(krudd-log-history) -> ((level . text) ...) or #f");
+	s7_define_function(sc, "imgui-begin-disabled", sp_imgui_begin_disabled,
+			   1, 0, false,
+			   "(imgui-begin-disabled flag) grey out widgets");
+	s7_define_function(sc, "imgui-end-disabled", sp_imgui_end_disabled, 0, 0,
+			   false, "(imgui-end-disabled) end a disabled block");
+	s7_define_function(sc, "imgui-set-next-item-width",
+			   sp_imgui_set_next_item_width, 1, 0, false,
+			   "(imgui-set-next-item-width w) width the next widget");
+	s7_define_function(sc, "imgui-input-text", sp_imgui_input_text, 2, 0,
+			   false,
+			   "(imgui-input-text id text) -> (text . committed?)");
+	s7_define_function(sc, "imgui-input-float3", sp_imgui_input_float3, 2, 0,
+			   false,
+			   "(imgui-input-float3 id vec) -> (vec . changed?)");
+	s7_define_function(sc, "imgui-input-float4", sp_imgui_input_float4, 2, 0,
+			   false,
+			   "(imgui-input-float4 id vec) -> (vec . changed?)");
+	s7_define_function(sc, "imgui-begin-combo", sp_imgui_begin_combo, 2, 0,
+			   false, "(imgui-begin-combo id preview) -> #t if open");
+	s7_define_function(sc, "imgui-end-combo", sp_imgui_end_combo, 0, 0,
+			   false, "(imgui-end-combo) close the dropdown");
+	s7_define_function(sc, "imgui-selectable", sp_imgui_selectable, 3, 0,
+			   false,
+			   "(imgui-selectable label sel? span?) -> #t if clicked");
+	s7_define_function(sc, "imgui-set-item-default-focus",
+			   sp_imgui_set_item_default_focus, 0, 0, false,
+			   "(imgui-set-item-default-focus) focus the last item");
+	s7_define_function(sc, "imgui-calc-text-width",
+			   sp_imgui_calc_text_width, 1, 0, false,
+			   "(imgui-calc-text-width str) -> width px");
+	s7_define_function(sc, "imgui-same-line-right", sp_imgui_same_line_right,
+			   1, 0, false,
+			   "(imgui-same-line-right px) right-align the next item");
+	s7_define_function(sc, "imgui-push-style-color-button",
+			   sp_imgui_push_style_color_button, 4, 0, false,
+			   "(imgui-push-style-color-button r g b a) tint button");
+	s7_define_function(sc, "imgui-pop-style-color", sp_imgui_pop_style_color,
+			   0, 0, false,
+			   "(imgui-pop-style-color) undo a pushed colour");
+	s7_define_function(sc, "krudd-world-caps", sp_krudd_world_caps, 0, 0,
+			   false,
+			   "(krudd-world-caps) -> (entity-api? asset-api?)");
+	s7_define_function(sc, "krudd-selected", sp_krudd_selected, 0, 0, false,
+			   "(krudd-selected) -> selected entity id or -1");
+	s7_define_function(sc, "krudd-world-entities", sp_krudd_world_entities,
+			   0, 0, false,
+			   "(krudd-world-entities) -> ((id . name) ...) or #f");
+	s7_define_function(sc, "krudd-entity-inspect", sp_krudd_entity_inspect,
+			   1, 0, false,
+			   "(krudd-entity-inspect id) -> inspector bundle or #f");
+	s7_define_function(sc, "krudd-mesh-assets", sp_krudd_mesh_assets, 0, 0,
+			   false, "(krudd-mesh-assets) -> ((id . path) ...)");
+	s7_define_function(sc, "krudd-material-assets", sp_krudd_material_assets,
+			   0, 0, false,
+			   "(krudd-material-assets) -> ((id . path) ...)");
+	s7_define_function(sc, "krudd-asset-find", sp_krudd_asset_find, 1, 0,
+			   false, "(krudd-asset-find ref) -> path or #f");
+	s7_define_function(sc, "krudd-entity-create", sp_krudd_entity_create, 0,
+			   0, false, "(krudd-entity-create) -> new id or -1");
+	s7_define_function(sc, "krudd-entity-destroy", sp_krudd_entity_destroy,
+			   1, 0, false, "(krudd-entity-destroy id) tombstone it");
+	s7_define_function(sc, "krudd-entity-select", sp_krudd_entity_select, 1,
+			   0, false, "(krudd-entity-select id) set the selection");
+	s7_define_function(sc, "krudd-entity-set-name", sp_krudd_entity_set_name,
+			   2, 0, false,
+			   "(krudd-entity-set-name id str) rename the entity");
+	s7_define_function(sc, "krudd-entity-set-transform",
+			   sp_krudd_entity_set_transform, 4, 0, false,
+			   "(krudd-entity-set-transform id pos rot scl)");
+	s7_define_function(sc, "krudd-entity-set-render-ref",
+			   sp_krudd_entity_set_render_ref, 2, 0, false,
+			   "(krudd-entity-set-render-ref id ref) bind a mesh");
+	s7_define_function(sc, "krudd-entity-set-material-ref",
+			   sp_krudd_entity_set_material_ref, 2, 0, false,
+			   "(krudd-entity-set-material-ref id ref) bind material");
+	s7_define_function(sc, "imgui-begin-table-plain",
+			   sp_imgui_begin_table_plain, 2, 0, false,
+			   "(imgui-begin-table-plain id ncols) borderless table");
+	s7_define_function(sc, "imgui-table-setup-column-fixed",
+			   sp_imgui_table_setup_column_fixed, 2, 0, false,
+			   "(imgui-table-setup-column-fixed label w) fixed column");
+	s7_define_function(sc, "krudd-gizmo-mode", sp_krudd_gizmo_mode, 0, 0,
+			   false, "(krudd-gizmo-mode) -> 0 move 1 rotate 2 scale");
+	s7_define_function(sc, "krudd-set-gizmo-mode", sp_krudd_set_gizmo_mode,
+			   1, 0, false, "(krudd-set-gizmo-mode m) set the tool");
 	script_eval(KRUDDBOARD_SCM);
 	ready = true;
 	return sc;
@@ -1584,7 +2177,13 @@ static void draw_tab_krudd(void)
 /* Tab: World — entity list, create/delete, inspector                 */
 /* ------------------------------------------------------------------ */
 
+#ifndef __EMSCRIPTEN__
 /*
+ * The inspector rows below are the native fallback for draw_tab_world; the live
+ * (WASM) path draws them from Scheme (kruddboard.scm). kruddboard compiles only
+ * for WASM, so this block never builds — it is kept as the established fallback
+ * convention (see the #else in draw_tab_world).
+ *
  * Read-only identity / hierarchy / component summary for the selected entity.
  * The world exposes more per-entity state than the editable name+transform —
  * the dense id, the parent link, and the component mask — so surface it here.
@@ -1780,6 +2379,7 @@ static void draw_inspector_material(const struct world *w, uint32_t e)
 
 	ImGui::EndTable();
 }
+#endif /* !__EMSCRIPTEN__ — native inspector fallback */
 
 /* ------------------------------------------------------------------ */
 /* Transform gizmo (#178)                                              */
@@ -2042,7 +2642,12 @@ static void gizmo_update_and_draw(void)
 	}
 }
 
-/* Move / Rotate / Scale selector — shared state with the viewport handles. */
+#ifndef __EMSCRIPTEN__
+/*
+ * Move / Rotate / Scale selector — shared state with the viewport handles.
+ * Native fallback only; the live tool chips are drawn from Scheme through
+ * krudd-gizmo-mode / krudd-set-gizmo-mode.
+ */
 static void draw_gizmo_mode_chips(void)
 {
 	static const char *const NAME[3] = { "Move", "Rotate", "Scale" };
@@ -2064,9 +2669,17 @@ static void draw_gizmo_mode_chips(void)
 			ImGui::PopStyleColor();
 	}
 }
+#endif /* !__EMSCRIPTEN__ — native gizmo-chip fallback */
 
 static void draw_tab_world(void)
 {
+#ifdef __EMSCRIPTEN__
+	/* Ported to Scheme (kruddboard.scm). Fall back only if the image can't
+	 * run at all — an empty panel would read as "no world". */
+	if (call_scm_panel("kruddboard-draw-world"))
+		return;
+	ImGui::TextDisabled("(world unavailable)");
+#else
 	const struct world     *w = NULL;
 	const struct transform *t;
 	const char             *ename;
@@ -2278,6 +2891,7 @@ static void draw_tab_world(void)
 			draw_inspector_material(w, e);
 		}
 	}
+#endif /* __EMSCRIPTEN__ */
 }
 
 /* ------------------------------------------------------------------ */

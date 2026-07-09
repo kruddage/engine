@@ -191,10 +191,15 @@ static const char *TRIANGLE_SHADER_SRC =
 
 /*
  * Scene shader: the entity-driven pipeline the scene renderer (#172) binds.
- * Consumes the mesh_vertex layout (position/normal/uv0) and a std140 Camera
- * block carrying view_proj and per-draw model. The single uniform block binds
- * at point 0 (declaration order), matching the renderer's slot-0 UBO binding.
- * The fragment stage shades from the world normal (readable 3D, no lighting).
+ * Consumes the mesh_vertex layout (position/normal/uv0), a std140 Camera
+ * block carrying view_proj and per-draw model, and a std140 Material block
+ * carrying a single per-draw base_color tint (#materials v0 — the smallest
+ * possible material parameter, with no fixed-function state or textures
+ * yet). Each block binds at the GL index matching its declaration order
+ * among the blocks a stage actually uses (see scene_renderer.c), so Camera
+ * (vertex-only) lands at slot 0 and Material (fragment-only) at slot 1. The
+ * fragment stage shades from the world normal (readable 3D, no lighting)
+ * then multiplies in the material tint.
  */
 static const char *SCENE_SHADER_SRC =
 	"(shader scene\n"
@@ -205,7 +210,9 @@ static const char *SCENE_SHADER_SRC =
 	"  (uniforms\n"
 	"    (Camera (block 0) (layout std140)\n"
 	"      (view_proj mat4)\n"
-	"      (model     mat4)))\n"
+	"      (model     mat4))\n"
+	"    (Material (block 1) (layout std140)\n"
+	"      (base_color vec4)))\n"
 	"  (varyings\n"
 	"    (v_normal vec3))\n"
 	"  (targets\n"
@@ -218,7 +225,7 @@ static const char *SCENE_SHADER_SRC =
 	"           (base (+ 0.5 (* 0.5 n)))\n"
 	"           (diff (max (dot n (normalize (vec3 0.5 0.8 0.4))) 0.0))\n"
 	"           (col  (* base (+ 0.35 (* 0.65 diff)))))\n"
-	"      (set frag_color (vec4 col 1.0)))))\n";
+	"      (set frag_color (vec4 (* col (swizzle base_color rgb)) 1.0)))))\n";
 
 static int builtins_seeded;
 

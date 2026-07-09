@@ -35,6 +35,7 @@ static const char *const CAT_PATHS[] = {
 	"builtin://plane",
 	"builtin://pyramid",
 	"builtin://shader/scene",
+	"material/red",
 };
 #define CAT_COUNT ((uint32_t)(sizeof(CAT_PATHS) / sizeof(CAT_PATHS[0])))
 
@@ -44,6 +45,8 @@ static uint32_t g_blob_size[4];
 static const char *const SHADER_SRC =
 	"(shader scene (vertex (set position (vec4 0.0 0.0 0.0 1.0)))"
 	" (fragment (set c (vec4 1.0 1.0 1.0 1.0))))";
+/* A material asset is just its base_color RGBA, raw floats — id 6. */
+static const float MATERIAL_RED[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
 
 static uint32_t cat_count(void) { return CAT_COUNT; }
 
@@ -54,7 +57,7 @@ static int32_t cat_info(uint32_t i, struct asset_info *out)
 	memset(out, 0, sizeof(*out));
 	out->path      = CAT_PATHS[i];
 	out->id        = i + 1;
-	out->type      = ASSET_TYPE_MESH;
+	out->type      = (i == 5) ? ASSET_TYPE_MATERIAL : ASSET_TYPE_MESH;
 	out->state     = 1;
 	out->read_only = 1;
 	return 0;
@@ -71,6 +74,11 @@ static const void *cat_get_data(uint32_t id, uint32_t *out_size)
 		if (out_size)
 			*out_size = (uint32_t)strlen(SHADER_SRC) + 1;
 		return SHADER_SRC;
+	}
+	if (id == 6) {
+		if (out_size)
+			*out_size = (uint32_t)sizeof(MATERIAL_RED);
+		return MATERIAL_RED;
 	}
 	return NULL;
 }
@@ -108,9 +116,12 @@ static void build_world(uint32_t cube_ref)
 	memset(&g_world, 0, sizeof(g_world));
 	g_world.count = 4;
 
-	g_world.alive[0]      = 1;
-	g_world.mask[0]       = COMPONENT_RENDER;
-	g_world.render_ref[0] = cube_ref;
+	/* Entity 0 carries a material (base_color red); entity 1 has none and
+	 * must fall back to the renderer's default (opaque white) tint. */
+	g_world.alive[0]        = 1;
+	g_world.mask[0]         = COMPONENT_RENDER | COMPONENT_MATERIAL;
+	g_world.render_ref[0]   = cube_ref;
+	g_world.material_ref[0] = 6u;
 	set_identity_xform(&g_world.world_xform[0], -1.0f, 0.0f, 0.0f);
 
 	g_world.alive[1]      = 1;
@@ -142,6 +153,23 @@ static uint32_t count_draws(uint32_t *out_index_count)
 			*out_index_count = log[i].args.cmd_draw_indexed.index_count;
 	}
 	return draws;
+}
+
+/* Every draw binds the material UBO at slot 1, materialed or not (the
+ * renderer falls back to a white tint when an entity has no material_ref). */
+static uint32_t count_material_binds(void)
+{
+	const struct gpu_call_record *log;
+	uint32_t count, i, binds = 0;
+
+	log = renderer_null_get_log(&count);
+	for (i = 0; i < count; i++) {
+		if (log[i].type == GPU_CALL_CMD_BIND_UNIFORM_BUFFER &&
+		    log[i].args.cmd_bind_uniform_buffer.slot == 1 &&
+		    log[i].args.cmd_bind_uniform_buffer.size == 4 * sizeof(float))
+			binds++;
+	}
+	return binds;
 }
 
 int main(void)
@@ -177,6 +205,7 @@ int main(void)
 	subsystem_manager_tick(&mgr);
 	assert(count_draws(&idx_count) == 2);
 	assert(idx_count == 36);            /* cube: 36 indices */
+	assert(count_material_binds() == 2); /* one per draw, materialed or not */
 
 	/* Degrade safe: an empty world draws nothing and does not crash. */
 	g_world.count = 0;

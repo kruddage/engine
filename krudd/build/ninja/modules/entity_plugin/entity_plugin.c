@@ -137,6 +137,18 @@ static void scene_set_render_ref(int32_t id, uint32_t render_ref)
 	}
 }
 
+static void scene_set_material_ref(int32_t id, uint32_t material_ref)
+{
+	int32_t                live   = entity_is_live(id);
+	struct world_snapshot *before = live ? edit_before() : NULL;
+
+	world_set_material_ref(&g_world, id, material_ref);
+	if (live) {
+		scene_edit_record(g_edit, g_mem, &g_world, before, "Bind Material",
+				  scene_edit_key(id, SCENE_EDIT_MATERIAL));
+	}
+}
+
 static int32_t scene_get_selected(void)
 {
 	return world_get_selected(&g_world);
@@ -155,6 +167,7 @@ static const struct entity_api g_entity_api = {
 	.set_transform  = scene_set_transform,
 	.set_name       = scene_set_name,
 	.set_render_ref = scene_set_render_ref,
+	.set_material_ref = scene_set_material_ref,
 	.get_selected   = scene_get_selected,
 	.set_selected   = scene_set_selected,
 };

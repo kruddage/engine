@@ -201,16 +201,57 @@ webgl_pipeline_create(const struct gpu_pipeline_desc *desc)
 	p->program     = build_program(desc);
 	p->gl_topology = translate_topology(desc->topology);
 	/*
-	 * Bind each uniform block to the binding point matching its index, so a
-	 * consumer with no GL access can bind its UBO to cmd_bind_uniform_buffer
-	 * slot == block index (the sole block lands at slot 0).
+	 * Bind each active uniform block to a binding point a consumer with no
+	 * GL access can predict, so it can hand cmd_bind_uniform_buffer a fixed
+	 * slot per block name (e.g. scene_renderer.c: Camera -> 0, Material ->
+	 * 1). GLSL ES 3.00 (WebGL 2) has no `layout(binding=N)` for uniform
+	 * blocks — that needs ES 3.10+ — so there is no way for the shader
+	 * source itself to pin a block's slot; GL_ACTIVE_UNIFORM_BLOCKS order
+	 * is implementation-defined and NOT guaranteed to match declaration
+	 * order once more than one block is active (confirmed: two blocks were
+	 * silently observed out of order on at least one driver, corrupting
+	 * every draw's transform with no link/compile error to show for it).
+	 * Sorting by block name before assigning slots makes the mapping
+	 * deterministic instead of driver-dependent — alphabetical order is an
+	 * arbitrary tiebreak, but a fixed one, and happens to match the Camera
+	 * (0) / Material (1) order the DSL's "(block N)" already documents.
 	 */
 	if (p->program) {
-		GLint nblocks = 0, bi;
+#define WEBGL_MAX_UNIFORM_BLOCKS 8
+		GLint  nblocks = 0, a, b;
+		GLuint idx[WEBGL_MAX_UNIFORM_BLOCKS];
+		char   name[WEBGL_MAX_UNIFORM_BLOCKS][64];
 
 		glGetProgramiv(p->program, GL_ACTIVE_UNIFORM_BLOCKS, &nblocks);
-		for (bi = 0; bi < nblocks; bi++)
-			glUniformBlockBinding(p->program, (GLuint)bi, (GLuint)bi);
+		if (nblocks > WEBGL_MAX_UNIFORM_BLOCKS)
+			nblocks = WEBGL_MAX_UNIFORM_BLOCKS;
+		for (a = 0; a < nblocks; a++) {
+			GLsizei len = 0;
+
+			idx[a] = (GLuint)a;
+			glGetActiveUniformBlockName(p->program, (GLuint)a,
+						    (GLsizei)sizeof(name[a]),
+						    &len, name[a]);
+		}
+		/* nblocks is tiny (<= WEBGL_MAX_UNIFORM_BLOCKS); insertion
+		 * sort by name is plenty. */
+		for (a = 1; a < nblocks; a++) {
+			for (b = a; b > 0 &&
+			     strcmp(name[b - 1], name[b]) > 0; b--) {
+				char   tmp_name[64];
+				GLuint tmp_idx;
+
+				memcpy(tmp_name, name[b - 1], sizeof(tmp_name));
+				memcpy(name[b - 1], name[b], sizeof(tmp_name));
+				memcpy(name[b], tmp_name, sizeof(tmp_name));
+				tmp_idx    = idx[b - 1];
+				idx[b - 1] = idx[b];
+				idx[b]     = tmp_idx;
+			}
+		}
+		for (a = 0; a < nblocks; a++)
+			glUniformBlockBinding(p->program, idx[a], (GLuint)a);
+#undef WEBGL_MAX_UNIFORM_BLOCKS
 	}
 	/*
 	 * A VAO owns the pipeline's attribute state. WebGL 2 (GLES 3.0) has no

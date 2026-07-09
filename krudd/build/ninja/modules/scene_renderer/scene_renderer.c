@@ -45,9 +45,11 @@ static const struct asset_api   *g_asset;
 /* Persistent resources, created once against the device (never per-frame). */
 static gpu_pipeline_t g_pso;
 static gpu_buffer_t   g_ubo;         /* 2 * mat4: { view_proj, model } */
+static gpu_buffer_t   g_material_ubo; /* vec4: { base_color } */
 static int            g_ready;
 
 #define SCENE_UBO_FLOATS 32          /* view_proj[16] + model[16] */
+#define MATERIAL_UBO_FLOATS 4        /* base_color[4] */
 
 /* One uploaded mesh, selected by an entity's render_ref (== asset id). */
 struct mesh_gpu {
@@ -146,6 +148,27 @@ static struct mesh_gpu *find_mesh(uint32_t render_ref)
 			return &g_meshes[i];
 	}
 	return NULL;
+}
+
+/*
+ * Resolve a material asset's base_color (its only parameter today — see the
+ * Material uniform block in SCENE_SHADER_SRC). A material asset is nothing
+ * more than 4 raw floats (RGBA); no material_ref, a missing asset, or a
+ * short/malformed one all fall back to opaque white, the multiplicative
+ * identity, so an unmaterialed entity renders exactly as it always has.
+ */
+static void resolve_material_color(uint32_t material_ref, float out[4])
+{
+	const float *bytes;
+	uint32_t     size = 0;
+
+	out[0] = out[1] = out[2] = out[3] = 1.0f;
+	if (!material_ref || !g_asset)
+		return;
+	bytes = g_asset->get_data(material_ref, &size);
+	if (!bytes || size < MATERIAL_UBO_FLOATS * sizeof(float))
+		return;
+	memcpy(out, bytes, MATERIAL_UBO_FLOATS * sizeof(float));
 }
 
 /* Compile the entity pipeline from the seeded scene shader. */
@@ -296,6 +319,9 @@ static void scene_renderer_init(void)
 		bd.usage = GPU_BUFFER_USAGE_UNIFORM;
 		bd.size  = SCENE_UBO_FLOATS * sizeof(float);
 		g_ubo = gpu->buffer_create(&bd);
+
+		bd.size = MATERIAL_UBO_FLOATS * sizeof(float);
+		g_material_ubo = gpu->buffer_create(&bd);
 	}
 
 	/* A fixed camera framing the unit primitives at the origin. */
@@ -342,6 +368,8 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 		struct gpu_draw_indexed_args draw;
 		struct mesh_gpu             *m;
 		struct mat4                  model;
+		float                         material[MATERIAL_UBO_FLOATS];
+		uint32_t                      mat_ref;
 
 		if (!w->alive[i] || !(w->mask[i] & COMPONENT_RENDER))
 			continue;
@@ -355,6 +383,15 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 
 		gpu->cmd_bind_uniform_buffer(cmd, 0, g_ubo, 0,
 					     (uint32_t)sizeof(ubo));
+
+		mat_ref = (w->mask[i] & COMPONENT_MATERIAL) ? w->material_ref[i]
+							     : 0u;
+		resolve_material_color(mat_ref, material);
+		gpu->buffer_update(g_material_ubo, 0, material,
+				   (uint32_t)sizeof(material));
+		gpu->cmd_bind_uniform_buffer(cmd, 1, g_material_ubo, 0,
+					     (uint32_t)sizeof(material));
+
 		gpu->cmd_bind_vertex_buffer(cmd, 0, m->vbo, 0);
 		gpu->cmd_bind_index_buffer(cmd, m->ebo, 0,
 					   GPU_INDEX_FORMAT_UINT16);
@@ -406,6 +443,8 @@ static void scene_renderer_shutdown(void)
 		}
 		if (g_ubo)
 			gpu->buffer_destroy(g_ubo);
+		if (g_material_ubo)
+			gpu->buffer_destroy(g_material_ubo);
 		if (g_pso)
 			gpu->pipeline_destroy(g_pso);
 	}

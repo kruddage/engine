@@ -47,6 +47,7 @@ struct world {
 	struct transform world_xform[WORLD_MAX_ENTITIES];  /* derived each tick */
 	uint32_t         name_off[WORLD_MAX_ENTITIES];     /* into names; NO_NAME=none */
 	uint32_t         render_ref[WORLD_MAX_ENTITIES];   /* valid iff COMPONENT_RENDER */
+	uint32_t         material_ref[WORLD_MAX_ENTITIES]; /* valid iff COMPONENT_MATERIAL */
 	char             names[WORLD_NAME_BYTES];          /* NUL-terminated blob */
 };
 
@@ -91,6 +92,14 @@ int32_t world_set_name(struct world *w, int32_t e, const char *name);
  * ignored.
  */
 void world_set_render_ref(struct world *w, int32_t e, uint32_t render_ref);
+
+/*
+ * Bind a live entity to a material: store material_ref and set
+ * COMPONENT_MATERIAL. A zero material_ref unbinds instead, clearing
+ * COMPONENT_MATERIAL (mirrors world_set_render_ref). Out-of-range or
+ * tombstoned ids are ignored.
+ */
+void world_set_material_ref(struct world *w, int32_t e, uint32_t material_ref);
 
 /*
  * Editor selection model. set accepts -1 (none) or a live entity id; any

@@ -28,6 +28,7 @@ extern "C" {
 #include "camera_api.h"
 #ifdef __EMSCRIPTEN__
 #include "backend_api.h"
+#include "script.h"
 #endif
 }
 
@@ -322,6 +323,49 @@ static const char *shader_stages_from_source(const char *src)
 		buf[0] = '\0';
 	return buf;
 }
+
+/*
+ * Try to transpile every stage SRC declares. A declared stage that fails to
+ * transpile — or no declared stage at all — means the shader can't bind, so
+ * treat it as a compile failure rather than committing broken source.
+ */
+static bool shader_compiles(const char *src)
+{
+	int has_vertex   = src && strstr(src, "(vertex")   != NULL;
+	int has_fragment = src && strstr(src, "(fragment") != NULL;
+
+	if (!has_vertex && !has_fragment)
+		return false;
+	if (has_vertex && !script_shader_transpile(src, "vertex"))
+		return false;
+	if (has_fragment && !script_shader_transpile(src, "fragment"))
+		return false;
+	return true;
+}
+
+/*
+ * The engine's built-in scene shader — always present, read-only — used to
+ * seed new shader assets so they start from working source instead of blank.
+ */
+static const char *default_shader_src(void)
+{
+	uint32_t          n, i;
+	struct asset_info info;
+
+	if (!g_asset_api)
+		return "";
+	n = g_asset_api->count();
+	for (i = 0; i < n; i++) {
+		if (g_asset_api->info(i, &info) != 0 || !info.read_only ||
+		    info.type != ASSET_TYPE_SHADER)
+			continue;
+		if (strcmp(info.path, "builtin://shader/scene") == 0) {
+			const void *data = g_asset_api->get_data(info.id, NULL);
+			return data ? (const char *)data : "";
+		}
+	}
+	return "";
+}
 #endif /* __EMSCRIPTEN__ */
 
 /*
@@ -332,6 +376,7 @@ static const char *shader_stages_from_source(const char *src)
 #define EDIT_BUF_MAX (64 * 1024)
 static char     g_edit[EDIT_BUF_MAX];
 static uint32_t g_edit_id; /* id whose bytes are in g_edit; 0 = none */
+static int      g_shader_compile_ok = -1; /* -1 = untried, 0 = fail, 1 = ok */
 
 static struct md_block g_blocks[MD_BLOCKS_MAX];
 static int32_t         g_nblocks;
@@ -350,6 +395,7 @@ static void maybe_reload_edit(uint32_t id)
 	g_edit_id  = id;
 	g_edit[0]  = '\0';
 	g_nblocks  = 0;
+	g_shader_compile_ok = -1;
 	if (!g_asset_api || !g_asset_api->get_data)
 		return;
 	src = g_asset_api->get_data(id, &sz);
@@ -525,36 +571,51 @@ static void draw_asset_inspector(uint32_t id)
 			ImGui::EndDisabled();
 			ImGui::SameLine();
 			ImGui::TextDisabled("read-only");
-		} else if (can_persist) {
-			if (ImGui::Button("Save")) {
-				struct asset_decl_field decl[2];
-
-				decl[0].key   = "format";
-				decl[0].value = SHADER_FORMAT;
-				decl[1].key   = "stages";
-				decl[1].value =
-					shader_stages_from_source(g_edit);
-
-				if (g_asset_mut) {
-					g_asset_mut->set_data(
-						id, g_edit,
-						(uint32_t)edit_len);
-					if (g_asset_mut->set_decl)
-						g_asset_mut->set_decl(
-							id, decl, 2);
-				}
-				g_backend->persist_asset(
-					id, info.path,
-					ASSET_TYPE_SHADER, g_edit,
-					(uint32_t)edit_len);
-			}
 		} else {
-			ImGui::BeginDisabled();
-			ImGui::Button("Save");
-			ImGui::EndDisabled();
+			/*
+			 * Save always writes the in-memory asset, so this
+			 * session sees the change even with no backend to
+			 * persist it to. A failed compile keeps whatever was
+			 * last committed (the seeded default, for a brand new
+			 * shader) instead of pushing broken source live.
+			 */
+			if (ImGui::Button("Save")) {
+				if (shader_compiles(g_edit)) {
+					struct asset_decl_field decl[2];
+
+					decl[0].key   = "format";
+					decl[0].value = SHADER_FORMAT;
+					decl[1].key   = "stages";
+					decl[1].value =
+						shader_stages_from_source(g_edit);
+
+					if (g_asset_mut) {
+						g_asset_mut->set_data(
+							id, g_edit,
+							(uint32_t)edit_len);
+						if (g_asset_mut->set_decl)
+							g_asset_mut->set_decl(
+								id, decl, 2);
+					}
+					if (can_persist)
+						g_backend->persist_asset(
+							id, info.path,
+							ASSET_TYPE_SHADER, g_edit,
+							(uint32_t)edit_len);
+					g_shader_compile_ok = 1;
+				} else {
+					g_shader_compile_ok = 0;
+				}
+			}
 			ImGui::SameLine();
-			ImGui::TextDisabled(
-				"in-memory only (persistence unavailable)");
+			if (g_shader_compile_ok == 1)
+				ImGui::TextColored(
+					ImVec4(0.3f, 0.9f, 0.3f, 1.0f),
+					"Compiled OK");
+			else if (g_shader_compile_ok == 0)
+				ImGui::TextColored(
+					ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
+					"Compile failed");
 		}
 
 		if (editable) {
@@ -722,17 +783,23 @@ static void draw_tab_assets(void)
 				naming = 0;
 
 			if (confirm && new_name[0] != '\0') {
-				char     path[256];
-				int32_t  atype;
-				uint32_t nid;
-				int      can_persist;
+				char        path[256];
+				int32_t     atype;
+				uint32_t    nid;
+				int         can_persist;
+				const char *seed;
+				uint32_t    seed_len;
 
 				atype = (new_type == 1) ? ASSET_TYPE_SHADER
 							: ASSET_TYPE_TEXT;
+				seed  = (atype == ASSET_TYPE_SHADER)
+						? default_shader_src() : "";
+				seed_len = (uint32_t)strlen(seed);
 
 				snprintf(path, sizeof(path), "%s", new_name);
 
-				nid = g_asset_mut->create(path, atype, "", 0);
+				nid = g_asset_mut->create(path, atype, seed,
+							  seed_len);
 				if (nid != 0) {
 					can_persist =
 						g_backend &&
@@ -741,7 +808,7 @@ static void draw_tab_assets(void)
 					if (can_persist)
 						g_backend->persist_asset(
 							nid, path, atype,
-							"", 0);
+							seed, seed_len);
 					g_asset_sel = nid;
 				}
 				naming = 0;

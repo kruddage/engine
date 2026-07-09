@@ -25,40 +25,34 @@
 	  (imgui-text (format #f "Frame:     ~D"   (caddr s)))))))
 
 ;;! (kruddboard-draw-subsystem-row r) draws one subsystem: its name, then
-;;! yes/- for whether it exposes an API and a tick, then the WASM size — or a
-;;! dimmed "-" when the size is zero/unknown, as the old C did with
-;;! TextDisabled. r is a (name api? tick? wasm-size) list.
+;;! yes/- for whether it exposes an API and a tick. r is a (name api? tick?
+;;! wasm-size) list; wasm-size is no longer shown (#kruddboard, WASM Size
+;;! column removed) but stays in the row shape since krudd-subsystems is a
+;;! shared data accessor.
 (define (kruddboard-draw-subsystem-row r)
   (let ((name     (car r))
 	(has-api  (cadr r))
-	(has-tick (caddr r))
-	(size     (cadddr r)))
+	(has-tick (caddr r)))
     (imgui-table-next-row)
     (imgui-table-next-column)
     (imgui-text name)
     (imgui-table-next-column)
     (imgui-text (if has-api "yes" "-"))
     (imgui-table-next-column)
-    (imgui-text (if has-tick "yes" "-"))
-    (imgui-table-next-column)
-    (if (> size 0)
-	(imgui-text (number->string size))
-	(imgui-text-disabled "-"))))
+    (imgui-text (if has-tick "yes" "-"))))
 
-;;! (kruddboard-draw-subsystems) renders the subsystem manager's entries as the
-;;! four-column Name / API / Tick / WASM Size table the C draw_tab_subsystems
-;;! drew. (krudd-subsystems) returns one (name api? tick? wasm-size) row per
-;;! subsystem in table order (static then dynamic), or #f when the manager is
-;;! absent; the #f branch mirrors the old null check.
+;;! (kruddboard-draw-subsystems) renders the subsystem manager's entries as a
+;;! Name / API / Tick table. (krudd-subsystems) returns one (name api? tick?
+;;! wasm-size) row per subsystem in table order (static then dynamic), or #f
+;;! when the manager is absent; the #f branch mirrors the old null check.
 (define (kruddboard-draw-subsystems)
   (let ((rows (krudd-subsystems)))
     (if (not rows)
 	(imgui-text-disabled "(subsystem manager unavailable)")
-	(when (imgui-begin-table "##subsys" 4)
+	(when (imgui-begin-table "##subsys" 3)
 	  (imgui-table-setup-column "Name")
 	  (imgui-table-setup-column "API")
 	  (imgui-table-setup-column "Tick")
-	  (imgui-table-setup-column "WASM Size")
 	  (imgui-table-headers-row)
 	  (for-each kruddboard-draw-subsystem-row rows)
 	  (imgui-end-table)))))
@@ -118,11 +112,12 @@
 	    (imgui-end-child))))))
 
 ;;! (kruddboard-draw-krudd) is the whole KRUDD tab: frame stats, subsystems,
-;;! and log, each under its own default-open collapsing header — the Scheme
-;;! composition that replaces the C draw_tab_krudd.
+;;! and log, each under its own collapsing header — the Scheme composition
+;;! that replaces the C draw_tab_krudd. Frame Stats and Log default open;
+;;! Subsystems starts rolled up since its table is rarely needed at a glance.
 (define (kruddboard-draw-krudd)
   (when (imgui-collapsing-header "Frame Stats") (kruddboard-draw-stats))
-  (when (imgui-collapsing-header "Subsystems")  (kruddboard-draw-subsystems))
+  (when (imgui-collapsing-header "Subsystems" #f) (kruddboard-draw-subsystems))
   (when (imgui-collapsing-header "Log")         (kruddboard-draw-log)))
 
 ;;! World tab — the entity list and inspector, ported from the C draw_tab_world.

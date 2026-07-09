@@ -178,7 +178,11 @@ static s7_pointer st_separator(s7_scheme *sc, s7_pointer a)
 
 static s7_pointer st_collapsing_header(s7_scheme *sc, s7_pointer a)
 {
-	rec("header|%s", s7_string(s7_car(a)));
+	s7_pointer rest         = s7_cdr(a);
+	int        default_open = s7_is_pair(rest) ?
+				   s7_boolean(sc, s7_car(rest)) : 1;
+
+	rec("header|%s|%d", s7_string(s7_car(a)), default_open);
 	return s7_make_boolean(sc, 1);
 }
 
@@ -1157,7 +1161,8 @@ static s7_scheme *setup(void)
 	def(sc, "imgui-same-line", st_same_line, 0);
 	def(sc, "imgui-checkbox", st_checkbox, 2);
 	def(sc, "imgui-separator", st_separator, 0);
-	def(sc, "imgui-collapsing-header", st_collapsing_header, 1);
+	s7_define_function(sc, "imgui-collapsing-header",
+			   st_collapsing_header, 1, 1, false, "stub");
 	def(sc, "imgui-begin-table", st_begin_table, 2);
 	def(sc, "imgui-table-setup-column", st_setup_column, 1);
 	def(sc, "imgui-table-headers-row", st_headers_row, 0);
@@ -1276,8 +1281,8 @@ static void test_subsystems_table(void)
 	rec_reset();
 	draw("kruddboard-draw-subsystems");
 
-	assert(rec_has("table-begin|##subsys|4"));
-	assert(rec_has("col|Name") && rec_has("col|WASM Size"));
+	assert(rec_has("table-begin|##subsys|3"));
+	assert(rec_has("col|Name") && !rec_has("col|WASM Size"));
 	assert(rec_has("headers"));
 	assert(rec_count("row") == 3);
 	assert(rec_has("text|log"));
@@ -1286,7 +1291,7 @@ static void test_subsystems_table(void)
 	assert(rec_has("table-end"));
 }
 
-/* yes/- for API and Tick; the numeric size when set, a dimmed "-" when zero. */
+/* yes/- for API and Tick; no WASM size column is drawn. */
 static void test_subsystems_cells(void)
 {
 	reset_state();
@@ -1295,8 +1300,8 @@ static void test_subsystems_cells(void)
 
 	assert(rec_has("text|yes"));      /* an API/Tick that is present */
 	assert(rec_has("text|-"));        /* an API/Tick that is absent   */
-	assert(rec_has("text|1024"));     /* a known WASM size            */
-	assert(rec_count("disabled|-") == 2); /* two zero sizes, dimmed   */
+	assert(!rec_has("text|1024"));    /* WASM size no longer drawn    */
+	assert(rec_count("disabled|-") == 0); /* no dimmed size cells     */
 }
 
 /* No manager -> the dimmed unavailable line, and no table. */
@@ -1377,7 +1382,10 @@ static void test_krudd_composition(void)
 	assert(rec_index("header|Frame Stats") >= 0);
 	assert(rec_index("header|Frame Stats") < rec_index("header|Subsystems"));
 	assert(rec_index("header|Subsystems") < rec_index("header|Log"));
-	assert(rec_has("table-begin|##subsys|4")); /* subsystems drawn */
+	assert(rec_has("header|Frame Stats|1")); /* defaults open   */
+	assert(rec_has("header|Subsystems|0"));  /* starts rolled up */
+	assert(rec_has("header|Log|1"));         /* defaults open   */
+	assert(rec_has("table-begin|##subsys|3")); /* subsystems drawn */
 	assert(rec_has("child-begin|##logscroll")); /* log drawn */
 }
 

@@ -4,7 +4,3 @@
 *.o
 krudd/krudd
 public/
-
-# Fetched at build time by krudd/third_party/sync.sh — see s7.artifact.
-/krudd/third_party/s7.c
-/krudd/third_party/s7.h

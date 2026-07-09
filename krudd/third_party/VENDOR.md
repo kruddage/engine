@@ -1,12 +1,13 @@
-# s7 Scheme (krudd's build interpreter) — fetched, not vendored
+# s7 Scheme (krudd's build interpreter) — vendored
 
 `s7.c` / `s7.h` are third-party source, **not** engine-authored code, and are
-**not committed to this repo**. `sync.sh` downloads them from the pinned
-commit in `s7.artifact` and checks the sha256 before any build compiles them,
-so the tree never carries the ~3.9 MB amalgamation and every build compiles
-the exact same bytes. They keep their upstream `SPDX-License-Identifier: 0BSD`
-header and are **not** stamped with the project's `GPL-2.0-or-later` line —
-that line marks our own files; s7 keeps its own notice (see `LICENSE.s7`).
+committed to this repo at the pinned commit in `s7.artifact`. `sync.sh` checks
+the sha256 of the committed files before any build compiles them, so every
+build compiles the exact same bytes; it can also (re-)download them from the
+pinned commit when re-vendoring (see Pin below). They keep their upstream
+`SPDX-License-Identifier: 0BSD` header and are **not** stamped with the
+project's `GPL-2.0-or-later` line — that line marks our own files; s7 keeps
+its own notice (see `LICENSE.s7`).
 
 s7 is linked into the `krudd` **host tool** (see `../krudd.c`), where it runs the
 Scheme build description `../build.scm`. This is s7 as *build authority* — the
@@ -18,8 +19,10 @@ WASM module through the `script` library, but that is a separate deployment.
 `../krudd.sh` and both `run-tests.sh` harnesses source `sync.sh` before
 compiling anything that touches s7 — including the `krudd.sh` bootstrap
 itself, which needs `s7.c` before the `krudd` host tool (and its own
-`krudd-fetch`) exist. `sync.sh` is idempotent: once `s7.c`/`s7.h` match their
-pinned checksum, no network I/O happens.
+`krudd-fetch`) exist. `sync.sh` is idempotent: since the committed
+`s7.c`/`s7.h` already match their pinned checksum, no network I/O happens in
+the common case — fetching only kicks in if the committed files are missing
+or a re-vendor bumped the pin.
 
 ## Pin
 

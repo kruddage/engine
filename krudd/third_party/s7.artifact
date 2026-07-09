@@ -5,9 +5,10 @@
 # rationale.
 #
 # Re-vendoring: bump S7_VERSION/S7_DATE/S7_COMMIT to the new upstream commit,
-# then delete any locally cached s7.c/s7.h and re-run sync.sh (or krudd.sh) —
-# it downloads the new pin and fails loudly if these checksums weren't updated
-# to match.
+# update S7_C_SHA256/S7_H_SHA256, then delete the committed s7.c/s7.h and
+# re-run sync.sh (or krudd.sh) — it downloads the new pin, fails loudly if
+# these checksums weren't updated to match, and the result should be
+# committed back to the repo.
 
 S7_VERSION="10.8"
 S7_DATE="17-Apr-2024"

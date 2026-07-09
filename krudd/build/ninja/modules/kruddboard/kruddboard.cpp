@@ -524,24 +524,21 @@ static void draw_asset_inspector(uint32_t id)
 
 		/* -- Action buttons -- */
 		edit_len = strlen(g_edit);
-		if (can_persist) {
-			if (ImGui::Button("Save")) {
-				if (g_asset_mut)
-					g_asset_mut->set_data(
-						id, g_edit,
-						(uint32_t)edit_len);
+		/*
+		 * Save always writes the in-memory asset, so this session sees
+		 * the change even with no backend to persist it to (mirrors
+		 * the shader Save fix in #390).
+		 */
+		if (ImGui::Button("Save")) {
+			if (g_asset_mut)
+				g_asset_mut->set_data(
+					id, g_edit,
+					(uint32_t)edit_len);
+			if (can_persist)
 				g_backend->persist_asset(
 					id, info.path,
 					ASSET_TYPE_TEXT, g_edit,
 					(uint32_t)edit_len);
-			}
-		} else {
-			ImGui::BeginDisabled();
-			ImGui::Button("Save");
-			ImGui::EndDisabled();
-			ImGui::SameLine();
-			ImGui::TextDisabled(
-				"in-memory only (persistence unavailable)");
 		}
 
 		ImGui::SameLine();
@@ -783,11 +780,6 @@ static void draw_asset_inspector(uint32_t id)
 						id, info.path, ASSET_TYPE_MATERIAL,
 						g_material_color,
 						(uint32_t)sizeof(g_material_color));
-			}
-			if (!can_persist) {
-				ImGui::SameLine();
-				ImGui::TextDisabled(
-					"in-memory only (persistence unavailable)");
 			}
 		}
 

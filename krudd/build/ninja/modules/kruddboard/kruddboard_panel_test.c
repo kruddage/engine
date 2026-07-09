@@ -1645,6 +1645,7 @@ static void test_assets_no_assets(void)
 	rec_reset();
 	script_eval("(kruddboard-draw-assets)");
 
+	assert(rec_has("header|Browser"));
 	assert(rec_has("disabled|(no assets)"));
 }
 
@@ -1657,6 +1658,7 @@ static void test_assets_browser_table(void)
 	rec_reset();
 	script_eval("(kruddboard-draw-assets)");
 
+	assert(rec_has("header|Browser"));
 	assert(rec_has("table-begin|##assets|6"));
 	assert(rec_has("disabled|-- BUILT-IN (read-only) --"));
 	assert(rec_has("disabled|-- PROJECT --"));
@@ -1955,7 +1957,8 @@ static void test_assets_composition(void)
 	rec_reset();
 	script_eval("(kruddboard-draw-assets)");
 
-	assert(rec_index("btn|New Asset") >= 0);
+	assert(rec_index("header|Browser") >= 0);
+	assert(rec_index("header|Browser") < rec_index("btn|New Asset"));
 	assert(rec_index("btn|New Asset") < rec_index("table-begin|##assets|6"));
 }
 

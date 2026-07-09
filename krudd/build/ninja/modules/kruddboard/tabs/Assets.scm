@@ -408,22 +408,30 @@
 ;;! Top level
 ;;! ------------------------------------------------------------------
 
-;;! (kruddboard-draw-assets) is the whole Assets tab: the New Asset form
-;;! (browsing view only, when mutation is available), then either "(no
-;;! assets)", the inspector, or the browser table — the Scheme composition
-;;! that replaces the C draw_tab_assets. (krudd-assets) returning #f (no
-;;! asset api) mirrors the old top-of-function null check.
+;;! (kruddboard-draw-assets) is the whole Assets tab: either the inspector
+;;! (once something is selected — it draws its own red collapsing headers,
+;;! see below) or a single "Browser" section holding the New Asset form and
+;;! the table/"(no assets)" placeholder — the Scheme composition that
+;;! replaces the C draw_tab_assets. (krudd-assets) returning #f (no asset
+;;! api) mirrors the old top-of-function null check.
+;;!
+;;! "Browser" has no C ancestor — draw_tab_assets never wrapped the table in
+;;! a header. It exists purely so the tab reads as Scheme-driven the instant
+;;! it opens, the same way World's top-level "Entities" header (which
+;;! likewise nests its "+ Entity" creation control inside) does; every
+;;! header here draws through imgui-collapsing-header, the same red-tinted
+;;! primitive KRUDD and World's headers use (see sp_imgui_collapsing_header
+;;! in kruddboard.cpp), so nothing extra was needed to make it match them.
 (define (kruddboard-draw-assets)
   (let ((groups (krudd-assets)))
     (if (not groups)
 	(imgui-text-disabled "(assets unavailable)")
-	(begin
-	  (when (and (= kruddboard-assets-sel 0) (krudd-asset-mut?))
-	    (kruddboard-draw-new-asset-form)
-	    (imgui-separator))
-	  (cond
-	   ((and (null? (car groups)) (null? (cadr groups)))
-	    (imgui-text-disabled "(no assets)"))
-	   ((not (= kruddboard-assets-sel 0))
-	    (kruddboard-draw-asset-inspector kruddboard-assets-sel))
-	   (else (kruddboard-draw-asset-table groups)))))))
+	(if (not (= kruddboard-assets-sel 0))
+	    (kruddboard-draw-asset-inspector kruddboard-assets-sel)
+	    (when (imgui-collapsing-header "Browser")
+	      (when (krudd-asset-mut?)
+		(kruddboard-draw-new-asset-form)
+		(imgui-separator))
+	      (if (and (null? (car groups)) (null? (cadr groups)))
+		  (imgui-text-disabled "(no assets)")
+		  (kruddboard-draw-asset-table groups)))))))

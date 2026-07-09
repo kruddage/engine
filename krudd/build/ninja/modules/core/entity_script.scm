@@ -21,9 +21,13 @@
 ;;! source text (the bytes of the bound ASSET_TYPE_SCRIPT), and the clock. The
 ;;! source is parsed and registered once per name; results are cached per id.
 
-(define *entity-scripts*       (make-hash-table)) ; name -> ((hook . proc) ...)
-(define *entity-script-bound*  (make-hash-table)) ; id   -> resolved hooks
-(define *entity-script-begun*  (make-hash-table)) ; id   -> #t once on-begin ran
+;;! Registry and per-entity caches:
+;;!   *entity-scripts*      name -> ((hook . proc) ...)  the registered scripts
+;;!   *entity-script-bound* id   -> resolved hooks        cached on first tick
+;;!   *entity-script-begun* id   -> #t                    set once on-begin runs
+(define *entity-scripts*       (make-hash-table))
+(define *entity-script-bound*  (make-hash-table))
+(define *entity-script-begun*  (make-hash-table))
 
 ;;! Register a script under its NAME: build an alist mapping each hook symbol to
 ;;! a procedure over the clause's parameters. Idempotent — re-registering the

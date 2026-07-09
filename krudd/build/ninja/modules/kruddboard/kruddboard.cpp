@@ -40,6 +40,8 @@ extern "C" {
 #include <math.h>
 #include "md_parse.h"
 #include "md_draw.h"
+#include "s7.h"			/* self-guards for C++ linkage */
+#include "kruddboard_scm.h"	/* KRUDDBOARD_SCM — the panel image */
 
 /*
  * Soft-keyboard toggle (plugin_abi.c, main module — see imgui_plugin.cpp
@@ -130,11 +132,121 @@ static EM_BOOL on_keydown(int /*type*/, const EmscriptenKeyboardEvent *e,
 #endif
 
 /* ------------------------------------------------------------------ */
+/* Scheme panel host                                                   */
+/* ------------------------------------------------------------------ */
+
+#ifdef __EMSCRIPTEN__
+/*
+ * The seam that lets a kruddboard panel be authored in Scheme instead of C++.
+ * The image (kruddboard.scm, embedded as KRUDDBOARD_SCM) draws through the
+ * primitives registered here against the shared s7 interpreter — the same one
+ * the shader DSL and the runtime tick already run in. A primitive only issues
+ * an ImGui call, so a panel procedure must be invoked while a frame is open;
+ * call_scm_panel() does exactly that at draw time. Nothing here touches the
+ * engine ABI — only kruddboard's own tabs cross this seam, one at a time.
+ */
+
+/*
+ * The three primitives below are s7 callbacks, so they carry C language
+ * linkage to match the s7_function pointer type they are registered as.
+ *
+ * (imgui-text str) -> unspecified. Draw one line. A non-string argument is
+ * ignored rather than trapped, so a malformed call in the image cannot take
+ * the frame down.
+ */
+extern "C" {
+
+static s7_pointer sp_imgui_text(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer str = s7_car(args);
+
+	if (s7_is_string(str))
+		ImGui::TextUnformatted(s7_string(str));
+	return s7_unspecified(sc);
+}
+
+/* (imgui-text-disabled str) -> unspecified. As imgui-text, dimmed. */
+static s7_pointer sp_imgui_text_disabled(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer str = s7_car(args);
+
+	if (s7_is_string(str))
+		ImGui::TextDisabled("%s", s7_string(str));
+	return s7_unspecified(sc);
+}
+
+/* (krudd-stats) -> (fps frame-ms frame-count), or #f when stats are absent. */
+static s7_pointer sp_krudd_stats(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	if (!g_stats)
+		return s7_f(sc);
+	return s7_list(sc, 3,
+		       s7_make_real(sc, (s7_double)g_stats->fps_avg),
+		       s7_make_real(sc, (s7_double)g_stats->last_frame_ms),
+		       s7_make_integer(sc, (s7_int)g_stats->frame_count));
+}
+
+} /* extern "C" — s7 callbacks */
+
+/*
+ * Start the interpreter (if needed), register the panel primitives, and load
+ * the image — once. Idempotent and lazy: it costs nothing until the first
+ * Scheme-drawn panel renders. Returns the interpreter, or NULL if it failed
+ * to start, in which case callers fall back.
+ */
+static s7_scheme *ensure_panel_scm(void)
+{
+	static bool ready;
+	s7_scheme  *sc = script_s7();
+
+	if (ready || !sc)
+		return sc;
+	s7_define_function(sc, "imgui-text", sp_imgui_text, 1, 0, false,
+			   "(imgui-text str) draw a line of text");
+	s7_define_function(sc, "imgui-text-disabled", sp_imgui_text_disabled,
+			   1, 0, false,
+			   "(imgui-text-disabled str) draw a dimmed line of text");
+	s7_define_function(sc, "krudd-stats", sp_krudd_stats, 0, 0, false,
+			   "(krudd-stats) -> (fps frame-ms frame-count) or #f");
+	script_eval(KRUDDBOARD_SCM);
+	ready = true;
+	return sc;
+}
+
+/*
+ * Call a nullary panel procedure the image defines (e.g. kruddboard-draw-stats)
+ * inside the current frame. Returns true if it ran, false if the interpreter
+ * is down or the image never defined it, so the caller can fall back.
+ */
+static bool call_scm_panel(const char *proc)
+{
+	s7_scheme *sc = ensure_panel_scm();
+	s7_pointer fn;
+
+	if (!sc)
+		return false;
+	fn = s7_name_to_value(sc, proc);
+	if (!s7_is_procedure(fn))
+		return false;
+	s7_call(sc, fn, s7_nil(sc));
+	return true;
+}
+#endif /* __EMSCRIPTEN__ */
+
+/* ------------------------------------------------------------------ */
 /* Tab: Frame Stats                                                    */
 /* ------------------------------------------------------------------ */
 
 static void draw_tab_stats(void)
 {
+#ifdef __EMSCRIPTEN__
+	/* Ported to Scheme (kruddboard.scm). Fall back only if the image
+	 * can't run at all — an empty panel would read as "no stats". */
+	if (call_scm_panel("kruddboard-draw-stats"))
+		return;
+	ImGui::TextDisabled("(stats unavailable)");
+#else
 	if (!g_stats) {
 		ImGui::TextDisabled("(stats unavailable)");
 		return;
@@ -142,6 +254,7 @@ static void draw_tab_stats(void)
 	ImGui::Text("FPS (avg): %.1f", (double)g_stats->fps_avg);
 	ImGui::Text("Frame ms:  %.2f", (double)g_stats->last_frame_ms);
 	ImGui::Text("Frame:     %u",   g_stats->frame_count);
+#endif
 }
 
 /* ------------------------------------------------------------------ */

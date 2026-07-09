@@ -593,11 +593,70 @@ static void draw_asset_inspector(uint32_t id)
 		/* -- Action buttons -- */
 		edit_len = strlen(g_edit);
 		if (!editable) {
-			ImGui::BeginDisabled();
-			ImGui::Button("Save");
-			ImGui::EndDisabled();
+			/*
+			 * Built-ins can't be saved in place, but they make a good
+			 * starting point: name a project shader and clone this
+			 * source into it, then land straight in its (editable)
+			 * inspector.
+			 */
+			static uint32_t clone_src_id;
+			static char     clone_name[256];
+			static int      clone_conflict;
+			bool            confirm;
+
+			if (clone_src_id != id) {
+				clone_src_id = id;
+				snprintf(clone_name, sizeof(clone_name),
+					 "%s_copy", info.path);
+				clone_conflict = 0;
+			}
+
+			ImGui::SetNextItemWidth(240.0f);
+			confirm = ImGui::InputText(
+				"##clonename", clone_name, sizeof(clone_name),
+				ImGuiInputTextFlags_EnterReturnsTrue);
 			ImGui::SameLine();
-			ImGui::TextDisabled("read-only");
+			confirm |= ImGui::Button("Clone");
+
+			if (confirm && clone_name[0] != '\0') {
+				uint32_t nid = g_asset_mut ?
+					g_asset_mut->create(
+						clone_name, ASSET_TYPE_SHADER,
+						g_edit, (uint32_t)edit_len) : 0;
+
+				if (nid == 0) {
+					clone_conflict = 1;
+				} else {
+					struct asset_decl_field decl[2];
+
+					decl[0].key   = "format";
+					decl[0].value = SHADER_FORMAT;
+					decl[1].key   = "stages";
+					decl[1].value =
+						shader_stages_from_source(g_edit);
+					if (g_asset_mut->set_decl)
+						g_asset_mut->set_decl(
+							nid, decl, 2);
+
+					if (g_backend &&
+					    (g_backend->get_caps() &
+					     BACKEND_CAP_PROJECT_PERSIST))
+						g_backend->persist_asset(
+							nid, clone_name,
+							ASSET_TYPE_SHADER,
+							g_edit,
+							(uint32_t)edit_len);
+
+					clone_conflict = 0;
+					g_asset_sel    = nid;
+				}
+			}
+			if (clone_conflict) {
+				ImGui::SameLine();
+				ImGui::TextColored(
+					ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
+					"\"%s\" already exists", clone_name);
+			}
 		} else {
 			/*
 			 * Save always writes the in-memory asset, so this

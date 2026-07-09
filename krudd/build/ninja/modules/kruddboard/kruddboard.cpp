@@ -3105,6 +3105,20 @@ static void draw_board(void * /*userdata*/)
 	if (!g_collapsed) {
 		if (ImGui::BeginTabBar("##tabs",
 				       ImGuiTabBarFlags_FittingPolicyScroll)) {
+			/*
+			 * KRUDD and World are fully Scheme-driven now (draw_tab_krudd /
+			 * draw_tab_world hand the whole tab to kruddboard.scm); tint
+			 * their tab chrome the same red as sp_imgui_collapsing_header
+			 * so the strangler-fig progress reads at the tab bar too, not
+			 * only inside each tab. Assets stays native blue until it
+			 * makes the same crossing.
+			 */
+			ImGui::PushStyleColor(ImGuiCol_Tab,
+					      ImVec4(0.80f, 0.25f, 0.25f, 0.60f));
+			ImGui::PushStyleColor(ImGuiCol_TabHovered,
+					      ImVec4(0.90f, 0.30f, 0.30f, 0.90f));
+			ImGui::PushStyleColor(ImGuiCol_TabActive,
+					      ImVec4(0.80f, 0.25f, 0.25f, 1.00f));
 			if (ImGui::BeginTabItem("KRUDD")) {
 				draw_tab_krudd();
 				ImGui::EndTabItem();
@@ -3113,6 +3127,7 @@ static void draw_board(void * /*userdata*/)
 				draw_tab_world();
 				ImGui::EndTabItem();
 			}
+			ImGui::PopStyleColor(3);
 			if (ImGui::BeginTabItem("Assets")) {
 				draw_tab_assets();
 				ImGui::EndTabItem();

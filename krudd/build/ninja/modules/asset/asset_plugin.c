@@ -163,72 +163,67 @@ static const char *builtin_paths[] = {
 	((int32_t)(sizeof(builtin_paths) / sizeof(builtin_paths[0])))
 
 /*
- * Default proof-of-life shader: a GLSL ES 3.00 vertex/fragment pair seeded
- * as built-in shader assets.  These carry the same source the WebGL renderer
- * draws the demo triangle with; the renderer fetches them through the asset
- * vtable rather than embedding the strings, exercising the "shaders are
- * assets" delivery seam.  Dialect/stage metadata rides on the describe()
- * decl-fields below.
+ * Built-in shaders, authored in the krudd shader DSL (a Scheme S-expression
+ * carrying both stages and a shared IO model).  This source — not GLSL — is
+ * what the asset stores, so the editor shows the DSL when you click a built-in
+ * shader and the same bytes feed native and WebGPU backends later; the WebGL
+ * renderer lowers the DSL to GLSL ES 3.00 at bind time (see script.h's
+ * shader_transpile).  describe()'s decl-fields below advertise the source
+ * format and which stages are present.
  */
-static const char *TRIANGLE_VERT_SRC =
-	"#version 300 es\n"
-	"layout(location = 0) in vec3 a_pos;\n"
-	"layout(location = 1) in vec3 a_color;\n"
-	"layout(std140) uniform Globals { vec4 u_tint; };\n"
-	"out vec3 v_color;\n"
-	"void main() {\n"
-	"	v_color = a_color * u_tint.rgb;\n"
-	"	gl_Position = vec4(a_pos, 1.0);\n"
-	"}\n";
-
-static const char *TRIANGLE_FRAG_SRC =
-	"#version 300 es\n"
-	"precision mediump float;\n"
-	"in vec3 v_color;\n"
-	"out vec4 frag_color;\n"
-	"void main() {\n"
-	"	frag_color = vec4(v_color, 1.0);\n"
-	"}\n";
+static const char *TRIANGLE_SHADER_SRC =
+	"(shader triangle\n"
+	"  (inputs\n"
+	"    (a_pos   vec3 (location 0))\n"
+	"    (a_color vec3 (location 1)))\n"
+	"  (uniforms\n"
+	"    (Globals (block 0) (layout std140)\n"
+	"      (u_tint vec4)))\n"
+	"  (varyings\n"
+	"    (v_color vec3))\n"
+	"  (targets\n"
+	"    (frag_color vec4 (location 0)))\n"
+	"  (vertex\n"
+	"    (set v_color (* a_color (swizzle u_tint rgb)))\n"
+	"    (set position (vec4 a_pos 1.0)))\n"
+	"  (fragment\n"
+	"    (set frag_color (vec4 v_color 1.0))))\n";
 
 /*
- * Scene shader: the entity-driven pipeline the scene renderer (#172) compiles.
+ * Scene shader: the entity-driven pipeline the scene renderer (#172) binds.
  * Consumes the mesh_vertex layout (position/normal/uv0) and a std140 Camera
  * block carrying view_proj and per-draw model. The single uniform block binds
- * at point 0 by default, matching the renderer's slot-0 UBO binding. The
- * fragment stage shades from the world normal (readable 3D, no lighting system).
+ * at point 0 (declaration order), matching the renderer's slot-0 UBO binding.
+ * The fragment stage shades from the world normal (readable 3D, no lighting).
  */
-static const char *SCENE_VERT_SRC =
-	"#version 300 es\n"
-	"layout(location = 0) in vec3 a_pos;\n"
-	"layout(location = 1) in vec3 a_normal;\n"
-	"layout(location = 2) in vec2 a_uv0;\n"
-	"layout(std140) uniform Camera {\n"
-	"	mat4 view_proj;\n"
-	"	mat4 model;\n"
-	"};\n"
-	"out vec3 v_normal;\n"
-	"void main() {\n"
-	"	v_normal = mat3(model) * a_normal;\n"
-	"	gl_Position = view_proj * model * vec4(a_pos, 1.0);\n"
-	"}\n";
-
-static const char *SCENE_FRAG_SRC =
-	"#version 300 es\n"
-	"precision mediump float;\n"
-	"in vec3 v_normal;\n"
-	"out vec4 frag_color;\n"
-	"void main() {\n"
-	"	vec3 n = normalize(v_normal);\n"
-	"	vec3 base = 0.5 + 0.5 * n;\n"
-	"	float diff = max(dot(n, normalize(vec3(0.5, 0.8, 0.4))), 0.0);\n"
-	"	vec3 col = base * (0.35 + 0.65 * diff);\n"
-	"	frag_color = vec4(col, 1.0);\n"
-	"}\n";
+static const char *SCENE_SHADER_SRC =
+	"(shader scene\n"
+	"  (inputs\n"
+	"    (a_pos    vec3 (location 0))\n"
+	"    (a_normal vec3 (location 1))\n"
+	"    (a_uv0    vec2 (location 2)))\n"
+	"  (uniforms\n"
+	"    (Camera (block 0) (layout std140)\n"
+	"      (view_proj mat4)\n"
+	"      (model     mat4)))\n"
+	"  (varyings\n"
+	"    (v_normal vec3))\n"
+	"  (targets\n"
+	"    (frag_color vec4 (location 0)))\n"
+	"  (vertex\n"
+	"    (set v_normal (* (mat3 model) a_normal))\n"
+	"    (set position (* view_proj model (vec4 a_pos 1.0))))\n"
+	"  (fragment\n"
+	"    (let* ((n    (normalize v_normal))\n"
+	"           (base (+ 0.5 (* 0.5 n)))\n"
+	"           (diff (max (dot n (normalize (vec3 0.5 0.8 0.4))) 0.0))\n"
+	"           (col  (* base (+ 0.35 (* 0.65 diff)))))\n"
+	"      (set frag_color (vec4 col 1.0)))))\n";
 
 static int builtins_seeded;
 
 /*
- * Seed one built-in shader asset from NUL-terminated GLSL source.  A heap
+ * Seed one built-in shader asset from NUL-terminated DSL source.  A heap
  * copy of the source (including its trailing NUL) becomes the asset's bytes,
  * so consumers can use get_data() directly as a C string and shutdown frees
  * it uniformly with fetched assets.  size counts the stored bytes (NUL
@@ -278,10 +273,8 @@ static void seed_builtins(void)
 		e->type      = ASSET_TYPE_MESH;
 	}
 
-	seed_shader("builtin://shader/triangle.vert", TRIANGLE_VERT_SRC);
-	seed_shader("builtin://shader/triangle.frag", TRIANGLE_FRAG_SRC);
-	seed_shader("builtin://shader/scene.vert", SCENE_VERT_SRC);
-	seed_shader("builtin://shader/scene.frag", SCENE_FRAG_SRC);
+	seed_shader("builtin://shader/triangle", TRIANGLE_SHADER_SRC);
+	seed_shader("builtin://shader/scene", SCENE_SHADER_SRC);
 }
 
 #ifdef __EMSCRIPTEN__
@@ -615,28 +608,19 @@ static const struct asset_decl_field pyramid_decl[] = {
 };
 
 /*
- * Shader assets carry dialect + stage so the renderer can select the right
- * compiler without inspecting the source.  This is the forward-looking bit:
- * a second dialect (e.g. WGSL) slots in here without the renderer changing.
+ * A shader asset is one DSL source holding every stage, so it advertises its
+ * source format and the stages it defines (not a single stage per asset).  The
+ * renderer lowers the DSL to whatever its backend speaks; a WebGPU/WGSL backend
+ * slots in without the asset — or this metadata — changing.
  */
-static const struct asset_decl_field triangle_vert_decl[] = {
-	{ "dialect", "glsl_es_300" },
-	{ "stage",   "vertex"      },
+static const struct asset_decl_field triangle_shader_decl[] = {
+	{ "format", "krudd-shader"     },
+	{ "stages", "vertex, fragment" },
 };
 
-static const struct asset_decl_field triangle_frag_decl[] = {
-	{ "dialect", "glsl_es_300" },
-	{ "stage",   "fragment"    },
-};
-
-static const struct asset_decl_field scene_vert_decl[] = {
-	{ "dialect", "glsl_es_300" },
-	{ "stage",   "vertex"      },
-};
-
-static const struct asset_decl_field scene_frag_decl[] = {
-	{ "dialect", "glsl_es_300" },
-	{ "stage",   "fragment"    },
+static const struct asset_decl_field scene_shader_decl[] = {
+	{ "format", "krudd-shader"     },
+	{ "stages", "vertex, fragment" },
 };
 
 struct builtin_desc {
@@ -652,45 +636,13 @@ static const struct builtin_desc builtin_descs[] = {
 	{ "builtin://sphere",  sphere_decl,  ARRAY_SIZE(sphere_decl)  },
 	{ "builtin://plane",   plane_decl,   ARRAY_SIZE(plane_decl)   },
 	{ "builtin://pyramid", pyramid_decl, ARRAY_SIZE(pyramid_decl) },
-	{ "builtin://shader/triangle.vert", triangle_vert_decl,
-	  ARRAY_SIZE(triangle_vert_decl) },
-	{ "builtin://shader/triangle.frag", triangle_frag_decl,
-	  ARRAY_SIZE(triangle_frag_decl) },
-	{ "builtin://shader/scene.vert", scene_vert_decl,
-	  ARRAY_SIZE(scene_vert_decl) },
-	{ "builtin://shader/scene.frag", scene_frag_decl,
-	  ARRAY_SIZE(scene_frag_decl) },
+	{ "builtin://shader/triangle", triangle_shader_decl,
+	  ARRAY_SIZE(triangle_shader_decl) },
+	{ "builtin://shader/scene", scene_shader_decl,
+	  ARRAY_SIZE(scene_shader_decl) },
 };
 
 #define BUILTIN_DESC_COUNT ARRAY_SIZE(builtin_descs)
-
-/*
- * Synthesize a shader's declaration from its path when none was set
- * explicitly (e.g. after a reload from persistence, which restores bytes and
- * type but not in-memory decl).  Stage derives from the file extension;
- * dialect defaults to the only one we speak.  All strings are static
- * literals, valid for the process lifetime.
- */
-static uint32_t shader_decl_from_path(const char *path,
-				      struct asset_decl_field *out,
-				      uint32_t max)
-{
-	const char *dot;
-	uint32_t    n = 0;
-
-	out[n].key   = "dialect";
-	out[n].value = "glsl_es_300";
-	n++;
-	if (n >= max)
-		return n;
-
-	dot = strrchr(path, '.');
-	out[n].key   = "stage";
-	out[n].value = (dot && strcmp(dot, ".vert") == 0) ? "vertex"
-							  : "fragment";
-	n++;
-	return n;
-}
 
 uint32_t asset_catalog_describe(uint32_t i,
 				struct asset_decl_field *out,
@@ -727,10 +679,6 @@ uint32_t asset_catalog_describe(uint32_t i,
 		       n * sizeof(struct asset_decl_field));
 		return n;
 	}
-
-	/* A shader with no explicit decl still reports stage + dialect. */
-	if (e->type == ASSET_TYPE_SHADER)
-		return shader_decl_from_path(e->path, out, max);
 
 	return 0;
 }

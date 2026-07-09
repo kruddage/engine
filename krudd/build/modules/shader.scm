@@ -1,0 +1,278 @@
+; SPDX-License-Identifier: GPL-2.0-or-later
+
+;;! shader — the krudd shader DSL and its transpiler.
+;;!
+;;! A shader asset is a single (shader NAME ...) S-expression carrying BOTH
+;;! stages and a shared IO model (inputs, uniforms, varyings, targets) declared
+;;! once. This is the source of truth; GLSL is a backend target the renderer
+;;! lowers to at bind time. The same file is embedded into the runtime image so
+;;! the web editor transpiles on the fly, and loaded at build time by the
+;;! Scheme oracle test — write once, run in both hosts.
+;;!
+;;! (shader-transpile SRC STAGE) parses the DSL text SRC and returns the
+;;! GLSL ES 3.00 for STAGE ("vertex" or "fragment"), or #f when the shader has
+;;! no such stage — the "matching stage else error" contract the renderer wants.
+
+;;! --- small list helpers (the runtime image has only base s7) ---
+
+(define (shader-keep pred lst)
+	(cond ((null? lst) '())
+	      ((pred (car lst)) (cons (car lst) (shader-keep pred (cdr lst))))
+	      (else (shader-keep pred (cdr lst)))))
+
+(define (shader-foldl f init lst)
+	(if (null? lst) init (shader-foldl f (f init (car lst)) (cdr lst))))
+
+;;! Join STRS with SEP between them (no trailing separator).
+(define (shader-join sep strs)
+	(cond ((null? strs) "")
+	      ((null? (cdr strs)) (car strs))
+	      (else (string-append (car strs) sep (shader-join sep (cdr strs))))))
+
+;;! --- type system ---
+
+(define (shader-vec? t) (and (memq t '(vec2 vec3 vec4)) #t))
+(define (shader-mat? t) (and (memq t '(mat2 mat3 mat4)) #t))
+
+;;! GLSL name of a DSL type. GLSL ES 300 spells them the same; a future WGSL or
+;;! MSL backend is where these diverge.
+(define (shader-type->glsl t) (symbol->string t))
+
+;;! Result type of a * b, covering matrix·matrix, matrix·vector, scalar
+;;! broadcast, and component-wise vector products the way GLSL's * overloads.
+(define (shader-mul-type a b)
+	(cond ((and (shader-mat? a) (shader-mat? b)) a)
+	      ((and (shader-mat? a) (shader-vec? b)) b)
+	      ((and (shader-vec? a) (shader-mat? b)) a)
+	      ((eq? a 'float) b)
+	      ((eq? b 'float) a)
+	      (else a)))
+
+;;! Result type of a + b / a - b: a matrix or vector operand widens a scalar.
+(define (shader-add-type a b)
+	(cond ((shader-mat? a) a) ((shader-mat? b) b)
+	      ((shader-vec? a) a) ((shader-vec? b) b)
+	      (else 'float)))
+
+(define (shader-swizzle-type comps)
+	(let ((n (string-length (symbol->string comps))))
+	  (if (= n 1) 'float
+	      (string->symbol (string-append "vec" (number->string n))))))
+
+;;! Infer the type of expression E under the identifier→type alist ENV.
+(define (shader-infer e env)
+	(cond
+	  ((number? e) 'float)
+	  ((symbol? e)
+	   (let ((p (assq e env)))
+	     (if p (cdr p) (error 'shader-unknown-identifier e))))
+	  ((pair? e)
+	   (let ((op (car e)) (args (cdr e)))
+	     (case op
+	       ((vec2) 'vec2) ((vec3) 'vec3) ((vec4) 'vec4)
+	       ((mat2) 'mat2) ((mat3) 'mat3) ((mat4) 'mat4)
+	       ((float) 'float) ((int) 'int)
+	       ((swizzle) (shader-swizzle-type (cadr args)))
+	       ((dot length distance) 'float)
+	       ((cross) 'vec3)
+	       ((normalize sin cos tan sqrt abs floor fract exp log
+		 radians degrees)
+		(shader-infer (car args) env))
+	       ((max min pow mod step reflect mix clamp smoothstep)
+		(shader-infer (car args) env))
+	       ((*) (shader-foldl (lambda (acc x)
+				    (shader-mul-type acc (shader-infer x env)))
+				  (shader-infer (car args) env) (cdr args)))
+	       ((+ -) (shader-foldl (lambda (acc x)
+				      (shader-add-type acc (shader-infer x env)))
+				    (shader-infer (car args) env) (cdr args)))
+	       ((/) (shader-infer (car args) env))
+	       (else (error 'shader-unknown-op op)))))
+	  (else (error 'shader-bad-expr e))))
+
+;;! --- expression emit ---
+
+(define (shader-has-char? s ch)
+	(let loop ((i 0))
+	  (cond ((>= i (string-length s)) #f)
+		((char=? (string-ref s i) ch) #t)
+		(else (loop (+ i 1))))))
+
+;;! A GLSL float literal for N: always carries a decimal point (so it reads as
+;;! float, not int), integral values print plainly (avoiding 1e+02), and
+;;! fractional ones use the fewest digits that still round-trip exactly.
+(define (shader-num n)
+	(let ((x (exact->inexact n)))
+	  (if (= x (floor x))
+	      (string-append (number->string (inexact->exact (floor x))) ".0")
+	      (let loop ((p 1))
+		(let ((s (format #f (string-append "~," (number->string p) "g") x)))
+		  (if (or (>= p 17) (= (string->number s) x))
+		      (if (or (shader-has-char? s #\.) (shader-has-char? s #\e)
+			      (shader-has-char? s #\E))
+			  s
+			  (string-append s ".0"))
+		      (loop (+ p 1))))))))
+
+(define (shader-emit e env)
+	(cond
+	  ((number? e) (shader-num e))
+	  ((symbol? e) (symbol->string e))
+	  ((pair? e)
+	   (let ((op (car e)) (args (cdr e)))
+	     (case op
+	       ((vec2 vec3 vec4 mat2 mat3 mat4 float int)
+		(string-append (symbol->string op) "("
+			       (shader-join ", "
+				 (map (lambda (a) (shader-emit a env)) args))
+			       ")"))
+	       ((swizzle)
+		(string-append (shader-emit (car args) env) "."
+			       (symbol->string (cadr args))))
+	       ((+ - * /)
+		(if (and (eq? op '-) (= (length args) 1))
+		    (string-append "(-" (shader-emit (car args) env) ")")
+		    (string-append "("
+		      (shader-join (string-append " " (symbol->string op) " ")
+				   (map (lambda (a) (shader-emit a env)) args))
+		      ")")))
+	       (else
+		(string-append (symbol->string op) "("
+			       (shader-join ", "
+				 (map (lambda (a) (shader-emit a env)) args))
+			       ")")))))
+	  (else (error 'shader-bad-expr e))))
+
+;;! --- statement emit ---
+
+;;! Emit a statement, returning (cons GLSL-TEXT NEW-ENV). let* locals stay in
+;;! NEW-ENV so later sibling statements see them — GLSL has no block here.
+(define (shader-emit-stmt s env)
+	(case (car s)
+	  ((set)
+	   (let* ((target (cadr s))
+		  (name   (if (eq? target 'position) "gl_Position"
+			      (symbol->string target))))
+	     (cons (string-append "\t" name " = "
+				  (shader-emit (caddr s) env) ";\n")
+		   env)))
+	  ((let*)
+	   (let loop ((bs (cadr s)) (env env) (acc ""))
+	     (if (null? bs)
+		 (let ((r (shader-emit-stmts (cddr s) env)))
+		   (cons (string-append acc (car r)) (cdr r)))
+		 (let* ((b  (car bs))
+			(nm (car b))
+			(ty (shader-infer (cadr b) env)))
+		   (loop (cdr bs)
+			 (cons (cons nm ty) env)
+			 (string-append acc "\t" (shader-type->glsl ty) " "
+					(symbol->string nm) " = "
+					(shader-emit (cadr b) env) ";\n"))))))
+	  (else (error 'shader-bad-statement s))))
+
+(define (shader-emit-stmts stmts env)
+	(if (null? stmts)
+	    (cons "" env)
+	    (let* ((r1 (shader-emit-stmt (car stmts) env))
+		   (r2 (shader-emit-stmts (cdr stmts) (cdr r1))))
+	      (cons (string-append (car r1) (car r2)) (cdr r2)))))
+
+;;! --- declaration sections ---
+
+;;! The (KEY ...) subforms of a shader, skipping the leading 'shader and NAME.
+(define (shader-section form key)
+	(let ((p (assq key (cddr form))))
+	  (if p (cdr p) '())))
+
+(define (shader-opt-value opts key)
+	(let ((p (assq key opts)))
+	  (and p (cadr p))))
+
+;;! Fields of a uniform block are its (NAME TYPE) forms; (block N)/(layout X)
+;;! are options, filtered out here.
+(define (shader-block-fields block)
+	(shader-keep (lambda (f) (not (memq (car f) '(block layout))))
+		     (cdr block)))
+
+(define (shader-emit-inputs inputs)
+	(apply string-append
+	  (map (lambda (i)
+		 (string-append "layout(location = "
+				(number->string
+				  (shader-opt-value (cddr i) 'location))
+				") in " (shader-type->glsl (cadr i)) " "
+				(symbol->string (car i)) ";\n"))
+	       inputs)))
+
+(define (shader-emit-uniforms blocks)
+	(apply string-append
+	  (map (lambda (b)
+		 (string-append
+		   "layout(std140) uniform " (symbol->string (car b)) " {\n"
+		   (apply string-append
+			  (map (lambda (f)
+				 (string-append "\t" (shader-type->glsl (cadr f))
+						" " (symbol->string (car f))
+						";\n"))
+			       (shader-block-fields b)))
+		   "};\n"))
+	       blocks)))
+
+(define (shader-emit-varyings varys stage)
+	(let ((dir (if (eq? stage 'vertex) "out " "in ")))
+	  (apply string-append
+	    (map (lambda (v)
+		   (string-append dir (shader-type->glsl (cadr v)) " "
+				  (symbol->string (car v)) ";\n"))
+		 varys))))
+
+(define (shader-emit-targets tgts)
+	(apply string-append
+	  (map (lambda (tg)
+		 (string-append "layout(location = "
+				(number->string
+				  (shader-opt-value (cddr tg) 'location))
+				") out " (shader-type->glsl (cadr tg)) " "
+				(symbol->string (car tg)) ";\n"))
+	       tgts)))
+
+;;! Identifier→type alist visible inside a stage body: everything declared in
+;;! the shared IO model. Locals are layered on top during emission.
+(define (shader-env form)
+	(append
+	  (map (lambda (i) (cons (car i) (cadr i))) (shader-section form 'inputs))
+	  (apply append
+		 (map (lambda (b)
+			(map (lambda (f) (cons (car f) (cadr f)))
+			     (shader-block-fields b)))
+		      (shader-section form 'uniforms)))
+	  (map (lambda (v) (cons (car v) (cadr v)))
+	       (shader-section form 'varyings))
+	  (map (lambda (tg) (cons (car tg) (cadr tg)))
+	       (shader-section form 'targets))))
+
+;;! --- stage assembly ---
+
+;;! GLSL ES 300 for one stage, or #f when the shader declares no such stage.
+(define (shader->glsl form stage)
+	(let ((body (assq stage (cddr form))))
+	  (and body
+	       (let ((env (shader-env form)))
+		 (string-append
+		   "#version 300 es\n"
+		   (if (eq? stage 'fragment) "precision mediump float;\n" "")
+		   (if (eq? stage 'vertex)
+		       (shader-emit-inputs (shader-section form 'inputs)) "")
+		   (shader-emit-uniforms (shader-section form 'uniforms))
+		   (shader-emit-varyings (shader-section form 'varyings) stage)
+		   (if (eq? stage 'fragment)
+		       (shader-emit-targets (shader-section form 'targets)) "")
+		   "void main() {\n"
+		   (car (shader-emit-stmts (cdr body) env))
+		   "}\n")))))
+
+;;! Entry point called from the runtime (via s7_call) and the oracle test.
+(define (shader-transpile src stage-str)
+	(shader->glsl (with-input-from-string src (lambda () (read)))
+		      (string->symbol stage-str)))

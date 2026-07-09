@@ -20,7 +20,7 @@ void scene_renderer_plugin_entry(struct subsystem_manager *mgr);
 
 /* ------------------------------------------------------------------ */
 /* A minimal fake asset catalog: the built-in primitive blobs and the  */
-/* two scene shaders, addressed by stable id (index + 1).              */
+/* one scene shader (DSL, both stages), addressed by stable id (i + 1). */
 /* ------------------------------------------------------------------ */
 
 /* Route through modules/memory (raw malloc is banned outside it). */
@@ -34,14 +34,16 @@ static const char *const CAT_PATHS[] = {
 	"builtin://sphere",
 	"builtin://plane",
 	"builtin://pyramid",
-	"builtin://shader/scene.vert",
-	"builtin://shader/scene.frag",
+	"builtin://shader/scene",
 };
 #define CAT_COUNT ((uint32_t)(sizeof(CAT_PATHS) / sizeof(CAT_PATHS[0])))
 
 static void    *g_blob[4];       /* cube, sphere, plane, pyramid */
 static uint32_t g_blob_size[4];
-static const char *const SHADER_SRC = "#version 300 es\nvoid main(){}\n";
+/* The null backend records rather than compiles, so any DSL bytes suffice. */
+static const char *const SHADER_SRC =
+	"(shader scene (vertex (set position (vec4 0.0 0.0 0.0 1.0)))"
+	" (fragment (set c (vec4 1.0 1.0 1.0 1.0))))";
 
 static uint32_t cat_count(void) { return CAT_COUNT; }
 
@@ -65,7 +67,7 @@ static const void *cat_get_data(uint32_t id, uint32_t *out_size)
 			*out_size = g_blob_size[id - 1];
 		return g_blob[id - 1];
 	}
-	if (id == 5 || id == 6) {
+	if (id == 5) {
 		if (out_size)
 			*out_size = (uint32_t)strlen(SHADER_SRC) + 1;
 		return SHADER_SRC;

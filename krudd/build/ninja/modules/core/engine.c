@@ -133,10 +133,15 @@ void engine_init(void)
 	frame_count = 0;
 	LOG_INFO("engine: init " ENGINE_VERSION_STRING);
 #ifdef __EMSCRIPTEN__
+	/*
+	 * Boot the Scheme interpreter first: script_init loads the shader
+	 * transpiler into the image, and the renderer plugins lower their
+	 * shaders through it as they build pipelines at register time.
+	 */
+	script_init();
 	/* Register the statically-linked plugins now that core services exist. */
 	register_plugins(&manager);
-	/* Boot the Scheme image: it owns the body of the frame from here. */
-	script_init();
+	/* Load the runtime image: it owns the body of the frame from here. */
 	script_eval(RUNTIME_SCM);
 #endif
 }

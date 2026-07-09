@@ -12,6 +12,7 @@
 #ifdef __EMSCRIPTEN__
 #include <emscripten/html5.h>
 #include <GLES3/gl3.h>
+#include "script.h"
 #else
 #include "log.h"
 #include "memory.h"
@@ -96,13 +97,27 @@ static unsigned int usage_target(uint32_t usage)
 }
 
 /*
- * Compile one stage from raw GLSL ES 3.00 source. Returns 0 and logs the
- * compiler's info log on failure.
+ * Compile one stage of a pipeline. A glsl_es_300 source compiles as-is; a
+ * krudd (DSL) source is lowered to GLSL first through the Scheme transpiler in
+ * the runtime image — the backend owns turning the portable DSL into what this
+ * GPU speaks. Returns 0 and logs on a transpile miss or a compiler error.
  */
-static GLuint compile_shader(GLenum type, const char *src)
+static GLuint compile_shader(GLenum type, const struct gpu_shader_source *s)
 {
-	GLuint shader;
-	GLint  ok = 0;
+	const char *src   = s->src;
+	const char *label = type == GL_VERTEX_SHADER ? "vertex" : "fragment";
+	GLuint      shader;
+	GLint       ok = 0;
+
+	if (s->dialect == GPU_SHADER_DIALECT_KRUDD) {
+		src = script_shader_transpile(s->src, label);
+		if (!src) {
+			g_log->write(LOG_LEVEL_ERROR,
+				     "renderer_webgl: %s shader transpile failed",
+				     label);
+			return 0;
+		}
+	}
 
 	shader = glCreateShader(type);
 	glShaderSource(shader, 1, &src, NULL);
@@ -114,8 +129,7 @@ static GLuint compile_shader(GLenum type, const char *src)
 		glGetShaderInfoLog(shader, (GLsizei)sizeof(info), NULL, info);
 		g_log->write(LOG_LEVEL_ERROR,
 			     "renderer_webgl: %s shader compile failed: %s",
-			     type == GL_VERTEX_SHADER ? "vertex" : "fragment",
-			     info);
+			     label, info);
 		glDeleteShader(shader);
 		return 0;
 	}
@@ -133,10 +147,10 @@ static GLuint build_program(const struct gpu_pipeline_desc *desc)
 
 	if (!desc->vert.src || !desc->frag.src)
 		return 0;
-	vs = compile_shader(GL_VERTEX_SHADER, desc->vert.src);
+	vs = compile_shader(GL_VERTEX_SHADER, &desc->vert);
 	if (!vs)
 		return 0;
-	fs = compile_shader(GL_FRAGMENT_SHADER, desc->frag.src);
+	fs = compile_shader(GL_FRAGMENT_SHADER, &desc->frag);
 	if (!fs) {
 		glDeleteShader(vs);
 		return 0;

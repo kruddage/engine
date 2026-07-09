@@ -1,0 +1,94 @@
+; SPDX-License-Identifier: GPL-2.0-or-later
+
+(define krudd-root (or (getenv "KRUDD_ROOT") "."))
+
+(load (string-append krudd-root "/krudd/build/modules/shader.scm"))
+
+(define fail-count 0)
+
+(define (check name ok)
+	(if ok
+	    (display (string-append "  ok    " name "\n"))
+	    (begin
+	      (set! fail-count (+ fail-count 1))
+	      (display (string-append "  FAIL  " name "\n")))))
+
+(define (has? s sub)
+	(let ((hl (string-length s)) (nl (string-length sub)))
+	  (let loop ((i 0))
+	    (cond ((> (+ i nl) hl) #f)
+		  ((string=? (substring s i (+ i nl)) sub) #t)
+		  (else (loop (+ i 1)))))))
+
+;;! The built-in scene shader, the exact DSL asset_plugin seeds.
+(define scene "(shader scene
+  (inputs (a_pos vec3 (location 0)) (a_normal vec3 (location 1)) (a_uv0 vec2 (location 2)))
+  (uniforms (Camera (block 0) (layout std140) (view_proj mat4) (model mat4)))
+  (varyings (v_normal vec3))
+  (targets (frag_color vec4 (location 0)))
+  (vertex
+    (set v_normal (* (mat3 model) a_normal))
+    (set position (* view_proj model (vec4 a_pos 1.0))))
+  (fragment
+    (let* ((n (normalize v_normal))
+           (base (+ 0.5 (* 0.5 n)))
+           (diff (max (dot n (normalize (vec3 0.5 0.8 0.4))) 0.0))
+           (col (* base (+ 0.35 (* 0.65 diff)))))
+      (set frag_color (vec4 col 1.0)))))")
+
+(define vs (shader-transpile scene "vertex"))
+(define fs (shader-transpile scene "fragment"))
+
+(display "shader: stage presence\n")
+(check "vertex stage transpiles to a string" (string? vs))
+(check "fragment stage transpiles to a string" (string? fs))
+(check "absent stage returns #f (the renderer's error signal)"
+       (eq? #f (shader-transpile scene "compute")))
+
+(display "shader: vertex codegen\n")
+(check "vertex opens with the GLSL ES 300 version"
+       (has? vs "#version 300 es\n"))
+(check "attribute locations come from the shared IO model"
+       (has? vs "layout(location = 1) in vec3 a_normal;"))
+(check "std140 uniform block is declared once, from the DSL"
+       (has? vs "layout(std140) uniform Camera {\n\tmat4 view_proj;\n\tmat4 model;\n};"))
+(check "the varying is an out in the vertex stage"
+       (has? vs "out vec3 v_normal;"))
+(check "mat3 constructor and component multiply lower to GLSL"
+       (has? vs "v_normal = (mat3(model) * a_normal);"))
+(check "the position builtin lowers to gl_Position"
+       (has? vs "gl_Position = (view_proj * model * vec4(a_pos, 1.0));"))
+(check "vertex declares no fragment precision"
+       (not (has? vs "precision mediump float;")))
+
+(display "shader: fragment codegen\n")
+(check "fragment sets the float precision"
+       (has? fs "precision mediump float;\n"))
+(check "the same varying is an in in the fragment stage"
+       (has? fs "in vec3 v_normal;"))
+(check "the color target carries its location"
+       (has? fs "layout(location = 0) out vec4 frag_color;"))
+(check "let* locals get inferred types (vec3 from normalize)"
+       (has? fs "vec3 n = normalize(v_normal);"))
+(check "scalar+vector broadcast infers vec3"
+       (has? fs "vec3 base = (0.5 + (0.5 * n));"))
+(check "dot infers float and prints clean literals"
+       (has? fs "float diff = max(dot(n, normalize(vec3(0.5, 0.8, 0.4))), 0.0);"))
+(check "0.35 round-trips to a short literal, not 0.35000000000000003"
+       (has? fs "0.35 + "))
+(check "vector*scalar infers vec3 for the final color"
+       (has? fs "vec3 col = (base * (0.35 + (0.65 * diff)));"))
+
+(display "shader: missing-stage shader\n")
+(let ((frag-only "(shader glow (targets (c vec4 (location 0)))
+                    (fragment (set c (vec4 1.0 1.0 1.0 1.0))))"))
+  (check "a shader with only a fragment stage has no vertex GLSL"
+	 (eq? #f (shader-transpile frag-only "vertex")))
+  (check "and its fragment stage still transpiles"
+	 (string? (shader-transpile frag-only "fragment"))))
+
+(if (= fail-count 0)
+    (begin (display "SHADER-TESTS: OK\n") (exit 0))
+    (begin (display (string-append "SHADER-TESTS: FAIL ("
+				   (number->string fail-count) ")\n"))
+	   (exit 1)))

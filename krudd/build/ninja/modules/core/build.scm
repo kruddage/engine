@@ -10,7 +10,7 @@
  (library "script"
 	(sources "script.c")
 	(public "include")
-	(private (raw "../../third_party"))
+	(private (raw "../../third_party") (raw "${generated}"))
 	(link "log" "m"))
 
  (executable "index"
@@ -36,4 +36,9 @@
 	(executable "script_test"
 		(sources "script_test.c")
 		(link "script"))
-	(test "script" "script_test")))
+	(test "script" "script_test")
+
+	(executable "shader_transpile_test"
+		(sources "shader_transpile_test.c")
+		(link "script"))
+	(test "shader_transpile" "shader_transpile_test")))

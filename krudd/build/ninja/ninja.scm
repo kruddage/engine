@@ -294,6 +294,8 @@
 				      "/krudd/build/modules/primitives.scm"))
 	      (mathscm  (string-append (krudd-repo-root)
 				      "/krudd/build/modules/math.scm"))
+	      (shaderscm (string-append (krudd-repo-root)
+				      "/krudd/build/modules/shader.scm"))
 	      (rendscm  (string-append (krudd-repo-root)
 				      "/krudd/build/modules/renderer.scm")))
 		(system (string-append "mkdir -p \"" gen "\""))
@@ -317,6 +319,9 @@
 		(krudd-emit-math-module
 		  mathscm
 		  (string-append gen "/math_gen.c"))
+		(krudd-embed-file
+		  shaderscm
+		  (string-append gen "/shader_scm.h") "SHADER_SCM")
 		(krudd-emit-interface-header
 		  rendscm
 		  (string-append gen "/renderer.h"))))

@@ -1561,10 +1561,33 @@ static void draw_tab_assets(void)
 static void draw_tab_krudd(void)
 {
 #ifdef __EMSCRIPTEN__
-	/* The whole tab — the three sections and their headers — is composed in
+	/*
+	 * The whole tab — the three sections and their headers — is composed in
 	 * Scheme (kruddboard-draw-krudd). Fall back to the C composition below
-	 * only if the image can't run at all. */
-	if (call_scm_panel("kruddboard-draw-krudd"))
+	 * only if the image can't run at all.
+	 *
+	 * Paint a faint red wash behind whatever renders, so a glance at the
+	 * board tells Scheme-driven content (this tab) apart from the native
+	 * C++ tabs (World, Assets). Drawn after the fact via a draw-list
+	 * channel split — a fixed-size BeginChild would fight the window's
+	 * content-driven auto-sizing (see file header comment).
+	 */
+	ImDrawList *draw_list = ImGui::GetWindowDrawList();
+	ImVec2      p0        = ImGui::GetCursorScreenPos();
+	float       avail_w   = ImGui::GetContentRegionAvail().x;
+	bool        ran;
+
+	draw_list->ChannelsSplit(2);
+	draw_list->ChannelsSetCurrent(1);
+	ran = call_scm_panel("kruddboard-draw-krudd");
+	if (ran) {
+		ImVec2 p1(p0.x + avail_w, ImGui::GetCursorScreenPos().y);
+
+		draw_list->ChannelsSetCurrent(0);
+		draw_list->AddRectFilled(p0, p1, IM_COL32(120, 30, 30, 60));
+	}
+	draw_list->ChannelsMerge();
+	if (ran)
 		return;
 #endif
 	if (ImGui::CollapsingHeader("Frame Stats",

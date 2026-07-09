@@ -178,6 +178,39 @@
 		   (r2 (shader-emit-stmts (cdr stmts) (cdr r1))))
 	      (cons (string-append (car r1) (car r2)) (cdr r2)))))
 
+;;! --- reference analysis ---
+;;!
+;;! Which identifiers a stage body touches, so a stage only declares the
+;;! uniform blocks and varyings it uses. A uniform block declared in two stages
+;;! must be byte-identical, and the fragment's `precision mediump float` would
+;;! otherwise make its members mediump against the vertex's highp — the link
+;;! error that motivates this.
+
+(define (shader-syms-expr e acc)
+	(cond ((symbol? e) (cons e acc))
+	      ((pair? e)
+	       (if (eq? (car e) 'swizzle)
+		   (shader-syms-expr (cadr e) acc)
+		   (shader-foldl (lambda (a x) (shader-syms-expr x a))
+				 acc (cdr e))))
+	      (else acc)))
+
+(define (shader-syms-stmt s acc)
+	(case (car s)
+	  ((set)
+	   (let ((acc (shader-syms-expr (caddr s) acc)))
+	     (if (eq? (cadr s) 'position) acc (cons (cadr s) acc))))
+	  ((let*)
+	   (let ((acc (shader-foldl (lambda (a b) (shader-syms-expr (cadr b) a))
+				    acc (cadr s))))
+	     (shader-foldl (lambda (a st) (shader-syms-stmt st a)) acc (cddr s))))
+	  (else acc)))
+
+(define (shader-refs stmts)
+	(shader-foldl (lambda (a s) (shader-syms-stmt s a)) '() stmts))
+
+(define (shader-uses? refs name) (and (memq name refs) #t))
+
 ;;! --- declaration sections ---
 
 ;;! The (KEY ...) subforms of a shader, skipping the leading 'shader and NAME.
@@ -205,26 +238,38 @@
 				(symbol->string (car i)) ";\n"))
 	       inputs)))
 
-(define (shader-emit-uniforms blocks)
+(define (shader-block-used? fields refs)
+	(shader-foldl (lambda (acc f) (or acc (shader-uses? refs (car f))))
+		      #f fields))
+
+;;! Emit only the blocks a stage uses; members are pinned highp so a block
+;;! shared across stages stays identical regardless of default precision.
+(define (shader-emit-uniforms blocks refs)
 	(apply string-append
 	  (map (lambda (b)
-		 (string-append
-		   "layout(std140) uniform " (symbol->string (car b)) " {\n"
-		   (apply string-append
-			  (map (lambda (f)
-				 (string-append "\t" (shader-type->glsl (cadr f))
-						" " (symbol->string (car f))
-						";\n"))
-			       (shader-block-fields b)))
-		   "};\n"))
+		 (let ((fields (shader-block-fields b)))
+		   (if (not (shader-block-used? fields refs))
+		       ""
+		       (string-append
+			 "layout(std140) uniform " (symbol->string (car b)) " {\n"
+			 (apply string-append
+				(map (lambda (f)
+				       (string-append "\thighp "
+						      (shader-type->glsl (cadr f))
+						      " " (symbol->string (car f))
+						      ";\n"))
+				     fields))
+			 "};\n"))))
 	       blocks)))
 
-(define (shader-emit-varyings varys stage)
+(define (shader-emit-varyings varys stage refs)
 	(let ((dir (if (eq? stage 'vertex) "out " "in ")))
 	  (apply string-append
 	    (map (lambda (v)
-		   (string-append dir (shader-type->glsl (cadr v)) " "
-				  (symbol->string (car v)) ";\n"))
+		   (if (shader-uses? refs (car v))
+		       (string-append dir (shader-type->glsl (cadr v)) " "
+				      (symbol->string (car v)) ";\n")
+		       ""))
 		 varys))))
 
 (define (shader-emit-targets tgts)
@@ -258,14 +303,16 @@
 (define (shader->glsl form stage)
 	(let ((body (assq stage (cddr form))))
 	  (and body
-	       (let ((env (shader-env form)))
+	       (let ((env  (shader-env form))
+		     (refs (shader-refs (cdr body))))
 		 (string-append
 		   "#version 300 es\n"
 		   (if (eq? stage 'fragment) "precision mediump float;\n" "")
 		   (if (eq? stage 'vertex)
 		       (shader-emit-inputs (shader-section form 'inputs)) "")
-		   (shader-emit-uniforms (shader-section form 'uniforms))
-		   (shader-emit-varyings (shader-section form 'varyings) stage)
+		   (shader-emit-uniforms (shader-section form 'uniforms) refs)
+		   (shader-emit-varyings (shader-section form 'varyings)
+					 stage refs)
 		   (if (eq? stage 'fragment)
 		       (shader-emit-targets (shader-section form 'targets)) "")
 		   "void main() {\n"

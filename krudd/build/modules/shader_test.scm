@@ -50,8 +50,8 @@
        (has? vs "#version 300 es\n"))
 (check "attribute locations come from the shared IO model"
        (has? vs "layout(location = 1) in vec3 a_normal;"))
-(check "std140 uniform block is declared once, from the DSL"
-       (has? vs "layout(std140) uniform Camera {\n\tmat4 view_proj;\n\tmat4 model;\n};"))
+(check "std140 uniform block is declared from the DSL, members pinned highp"
+       (has? vs "layout(std140) uniform Camera {\n\thighp mat4 view_proj;\n\thighp mat4 model;\n};"))
 (check "the varying is an out in the vertex stage"
        (has? vs "out vec3 v_normal;"))
 (check "mat3 constructor and component multiply lower to GLSL"
@@ -66,6 +66,8 @@
        (has? fs "precision mediump float;\n"))
 (check "the same varying is an in in the fragment stage"
        (has? fs "in vec3 v_normal;"))
+(check "the fragment omits the Camera block it never reads (no precision clash)"
+       (not (has? fs "uniform Camera")))
 (check "the color target carries its location"
        (has? fs "layout(location = 0) out vec4 frag_color;"))
 (check "let* locals get inferred types (vec3 from normalize)"

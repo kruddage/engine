@@ -46,4 +46,19 @@
 	"      0\n"                                                          \
 	"      (* 15 (cos (* t 2.7))))))\n"
 
+/*
+ * orbit-camera — proof-of-life camera behavior: circle the origin at a
+ * fixed radius/height, no input. Bound to the world's dedicated camera entity
+ * the same way spinner/bounce/wobble bind to a mesh entity; scene_renderer
+ * reads this entity's animated world_xform each tick and feeds it into the
+ * camera's eye, so "camera behavior" is just another entity script.
+ */
+#define ORBIT_CAMERA_SCRIPT_SRC                                              \
+	"(script orbit-camera\n"                                             \
+	"  (on-tick (self t)\n"                                              \
+	"    (entity-set-position! self\n"                                   \
+	"      (* 5.0 (cos (* t 0.4)))\n"                                    \
+	"      2.5\n"                                                        \
+	"      (* 5.0 (sin (* t 0.4))))))\n"
+
 #endif /* BUILTIN_SCRIPTS_H */

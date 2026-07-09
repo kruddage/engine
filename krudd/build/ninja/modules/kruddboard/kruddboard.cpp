@@ -249,8 +249,10 @@ static s7_pointer sp_imgui_separator(s7_scheme *sc, s7_pointer args)
 }
 
 /*
- * (imgui-collapsing-header label) -> #t when the section is open. Default-open,
- * matching the C headers that passed ImGuiTreeNodeFlags_DefaultOpen.
+ * (imgui-collapsing-header label [default-open]) -> #t when the section is
+ * open. default-open is optional and defaults to #t, matching the C headers
+ * that passed ImGuiTreeNodeFlags_DefaultOpen; pass #f to start the section
+ * collapsed instead (used by the Subsystems section, which starts rolled up).
  *
  * Recolored red (the stock theme's blue Header/HeaderHovered/HeaderActive,
  * hue-swapped) so a header drawn through this primitive reads as
@@ -261,8 +263,11 @@ static s7_pointer sp_imgui_separator(s7_scheme *sc, s7_pointer args)
  */
 static s7_pointer sp_imgui_collapsing_header(s7_scheme *sc, s7_pointer args)
 {
-	s7_pointer label = s7_car(args);
-	bool       open  = false;
+	s7_pointer label        = s7_car(args);
+	s7_pointer rest         = s7_cdr(args);
+	bool       default_open = s7_is_pair(rest) ?
+				   s7_boolean(sc, s7_car(rest)) : true;
+	bool       open         = false;
 
 	if (s7_is_string(label)) {
 		ImGui::PushStyleColor(ImGuiCol_Header,
@@ -272,7 +277,8 @@ static s7_pointer sp_imgui_collapsing_header(s7_scheme *sc, s7_pointer args)
 		ImGui::PushStyleColor(ImGuiCol_HeaderActive,
 				      ImVec4(0.80f, 0.25f, 0.25f, 1.00f));
 		open = ImGui::CollapsingHeader(s7_string(label),
-					      ImGuiTreeNodeFlags_DefaultOpen);
+					      default_open ?
+					      ImGuiTreeNodeFlags_DefaultOpen : 0);
 		ImGui::PopStyleColor(3);
 	}
 	return s7_make_boolean(sc, open);
@@ -1711,8 +1717,8 @@ static s7_scheme *ensure_panel_scm(void)
 	s7_define_function(sc, "imgui-separator", sp_imgui_separator, 0, 0,
 			   false, "(imgui-separator) horizontal rule");
 	s7_define_function(sc, "imgui-collapsing-header",
-			   sp_imgui_collapsing_header, 1, 0, false,
-			   "(imgui-collapsing-header label) -> #t when open");
+			   sp_imgui_collapsing_header, 1, 1, false,
+			   "(imgui-collapsing-header label [default-open]) -> #t when open");
 	s7_define_function(sc, "imgui-begin-table", sp_imgui_begin_table, 2, 0,
 			   false, "(imgui-begin-table id ncols) -> #t if opened");
 	s7_define_function(sc, "imgui-table-setup-column",
@@ -2025,21 +2031,19 @@ static void draw_tab_subsystems(void)
 	ImGui::TextDisabled("(subsystem manager unavailable)");
 #else
 	int i;
-	char size_buf[32];
 
 	if (!g_mgr) {
 		ImGui::TextDisabled("(subsystem manager unavailable)");
 		return;
 	}
 
-	if (ImGui::BeginTable("##subsys", 4,
+	if (ImGui::BeginTable("##subsys", 3,
 			      ImGuiTableFlags_Borders        |
 			      ImGuiTableFlags_RowBg          |
 			      ImGuiTableFlags_SizingStretchProp)) {
 		ImGui::TableSetupColumn("Name");
 		ImGui::TableSetupColumn("API");
 		ImGui::TableSetupColumn("Tick");
-		ImGui::TableSetupColumn("WASM Size");
 		ImGui::TableHeadersRow();
 
 		for (i = 0; g_mgr->static_table[i].name; i++) {
@@ -2052,14 +2056,6 @@ static void draw_tab_subsystems(void)
 			ImGui::TableSetColumnIndex(2);
 			ImGui::TextUnformatted(
 				g_mgr->static_table[i].tick ? "yes" : "-");
-			ImGui::TableSetColumnIndex(3);
-			if (g_mgr->static_table[i].wasm_size) {
-				snprintf(size_buf, sizeof(size_buf), "%u",
-					g_mgr->static_table[i].wasm_size);
-				ImGui::TextUnformatted(size_buf);
-			} else {
-				ImGui::TextDisabled("-");
-			}
 		}
 
 		for (i = 0; i < g_mgr->dynamic_count; i++) {
@@ -2072,14 +2068,6 @@ static void draw_tab_subsystems(void)
 			ImGui::TableSetColumnIndex(2);
 			ImGui::TextUnformatted(
 				g_mgr->dynamic[i].tick ? "yes" : "-");
-			ImGui::TableSetColumnIndex(3);
-			if (g_mgr->dynamic[i].wasm_size) {
-				snprintf(size_buf, sizeof(size_buf), "%u",
-					g_mgr->dynamic[i].wasm_size);
-				ImGui::TextUnformatted(size_buf);
-			} else {
-				ImGui::TextDisabled("-");
-			}
 		}
 
 		ImGui::EndTable();
@@ -2918,8 +2906,7 @@ static void draw_tab_krudd(void)
 				    ImGuiTreeNodeFlags_DefaultOpen))
 		draw_tab_stats();
 
-	if (ImGui::CollapsingHeader("Subsystems",
-				    ImGuiTreeNodeFlags_DefaultOpen))
+	if (ImGui::CollapsingHeader("Subsystems"))
 		draw_tab_subsystems();
 
 	if (ImGui::CollapsingHeader("Log",

@@ -66,6 +66,16 @@ static uint32_t        g_mesh_count;
 static struct camera g_cam;
 
 /*
+ * The world entity that owns the camera's eye (proof of life), or -1
+ * when none is bound. A camera "behavior" is just a COMPONENT_SCRIPT entity
+ * like any other — scene_renderer_tick copies its animated world_xform
+ * position into g_cam.eye each frame, after the scene subsystem has ticked
+ * scripts (see the "scene" before "scene_renderer" registration order in
+ * engine.c). target/up/fov stay fixed for this proof of life; only eye moves.
+ */
+static int32_t g_camera_entity_id = -1;
+
+/*
  * Camera service (#178) — lets editor overlays project world points with the
  * exact view·projection the forward pass draws with.  get_view_proj recomputes
  * on demand so a freshly set aspect is reflected immediately, without waiting
@@ -320,6 +330,28 @@ static void seed_demo_scene(void)
 				g_scene->set_script_ref(id, script);
 		}
 	}
+
+	/*
+	 * The camera entity (proof of life): no mesh, no material, just a
+	 * COMPONENT_SCRIPT entity bound to orbit-camera. scene_renderer_tick
+	 * reads its world_xform position into g_cam.eye every frame.
+	 */
+	if (g_scene->set_script_ref) {
+		uint32_t orbit_script = asset_id_by_path("builtin://script/orbit-camera");
+
+		if (orbit_script) {
+			struct transform ct;
+			int32_t          cam_id;
+
+			memset(&ct, 0, sizeof(ct));
+			ct.rotation[3] = 1.0f;
+			ct.scale[0] = ct.scale[1] = ct.scale[2] = 1.0f;
+			cam_id = g_scene->create_entity(WORLD_NO_PARENT, &ct, 0u, 0u);
+			if (cam_id >= 0)
+				g_scene->set_script_ref(cam_id, orbit_script);
+			g_camera_entity_id = cam_id;
+		}
+	}
 }
 
 static void scene_renderer_init(void)
@@ -443,6 +475,20 @@ static void scene_renderer_tick(void)
 
 	if (!g_ready || !g_fg_api || !g_scene)
 		return;
+
+	if (g_camera_entity_id >= 0) {
+		const struct world *w = g_scene->get_world();
+
+		if (w && (uint32_t)g_camera_entity_id < w->count &&
+		    w->alive[g_camera_entity_id]) {
+			const struct transform *x =
+				&w->world_xform[g_camera_entity_id];
+
+			g_cam.eye[0] = x->position[0];
+			g_cam.eye[1] = x->position[1];
+			g_cam.eye[2] = x->position[2];
+		}
+	}
 
 	camera_update(&g_cam);
 

@@ -359,6 +359,7 @@ static void seed_builtins(void)
 	seed_script("builtin://script/spinner", SPINNER_SCRIPT_SRC);
 	seed_script("builtin://script/bounce",  BOUNCE_SCRIPT_SRC);
 	seed_script("builtin://script/wobble",  WOBBLE_SCRIPT_SRC);
+	seed_script("builtin://script/orbit-camera", ORBIT_CAMERA_SCRIPT_SRC);
 }
 
 #ifdef __EMSCRIPTEN__
@@ -737,6 +738,11 @@ static const struct asset_decl_field wobble_script_decl[] = {
 	{ "hooks",  "on-tick"      },
 };
 
+static const struct asset_decl_field orbit_camera_script_decl[] = {
+	{ "format", "krudd-script" },
+	{ "hooks",  "on-tick"      },
+};
+
 struct builtin_desc {
 	const char                   *path;
 	const struct asset_decl_field *fields;
@@ -762,6 +768,8 @@ static const struct builtin_desc builtin_descs[] = {
 	  ARRAY_SIZE(bounce_script_decl) },
 	{ "builtin://script/wobble", wobble_script_decl,
 	  ARRAY_SIZE(wobble_script_decl) },
+	{ "builtin://script/orbit-camera", orbit_camera_script_decl,
+	  ARRAY_SIZE(orbit_camera_script_decl) },
 };
 
 #define BUILTIN_DESC_COUNT ARRAY_SIZE(builtin_descs)

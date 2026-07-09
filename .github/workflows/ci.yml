@@ -32,7 +32,7 @@ jobs:
       - uses: actions/checkout@v4
 
       # Folds every merged PR's release:{breaking,feature,fix,chore} label
-      # into an X.Y.Z.W version — no VERSION file, no git tag. See the script
+      # into an X.Y.Z version — no VERSION file, no git tag. See the script
       # for the full explanation, including how a not-yet-merged PR build gets
       # a prerelease version instead of a final one.
       - name: Compute version

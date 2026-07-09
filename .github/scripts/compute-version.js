@@ -3,12 +3,10 @@
 // Derives the engine's version with no VERSION file and no git tags: fold
 // every PR merged to main, in merge order, by its release:{breaking,feature,
 // fix,chore} label (release-label-gate.yml guarantees each carries exactly
-// one) into an X.Y.Z.W version. That fold IS the version — recomputed fresh
-// every build, not stored anywhere. X/Y/Z keep their conventional semver
-// meaning (breaking/feature/fix); W is a 4th component that counts chores
-// since the last X/Y/Z bump, so a purely internal PR (docs, CI, refactor)
-// still moves the displayed version instead of needing a separate build
-// number tacked on.
+// one) into an X.Y.Z version. That fold IS the version — recomputed fresh
+// every build, not stored anywhere. It's ordinary semver: breaking bumps X,
+// feature bumps Y, and fix and chore both bump Z — so every merge, including a
+// purely internal one (docs, CI, refactor), still moves the displayed version.
 //
 // On a pull_request build the PR hasn't merged yet, so there's no final
 // version to hand out: fold the already-merged history, then apply this PR's
@@ -44,9 +42,8 @@ module.exports = async ({ github, context, core }) => {
 			case "release:feature":
 				return "minor";
 			case "release:fix":
-				return "patch";
 			case "release:chore":
-				return "chore";
+				return "patch";
 			default:
 				// Shouldn't happen once the label gate is in place: a merged
 				// PR with no release:* label at all.
@@ -54,22 +51,20 @@ module.exports = async ({ github, context, core }) => {
 		}
 	};
 
-	const fold = ([major, minor, patch, chore], bump) => {
+	const fold = ([major, minor, patch], bump) => {
 		switch (bump) {
 			case "major":
-				return [major + 1, 0, 0, 0];
+				return [major + 1, 0, 0];
 			case "minor":
-				return [major, minor + 1, 0, 0];
+				return [major, minor + 1, 0];
 			case "patch":
-				return [major, minor, patch + 1, 0];
-			case "chore":
-				return [major, minor, patch, chore + 1];
+				return [major, minor, patch + 1];
 			default:
-				return [major, minor, patch, chore];
+				return [major, minor, patch];
 		}
 	};
 
-	let version = [0, 0, 0, 0];
+	let version = [0, 0, 0];
 	for (const pr of merged) {
 		version = fold(version, bumpOf(pr));
 	}

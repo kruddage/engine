@@ -16,4 +16,4 @@
 
 - name: release:chore
   color: "BFD4F2"
-  description: Internal-only change (tests, CI, docs, refactor) — no version bump
+  description: Internal-only change (tests, CI, docs, refactor) — bumps the patch version

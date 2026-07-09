@@ -39,11 +39,11 @@
        (string=? (krudd-replace "a@X@b@X@c" "@X@" "1") "a1b1c"))
 
 (check "version falls back to the dev placeholder outside CI"
-       (string=? (krudd-version) "0.0.0.0-dev"))
+       (string=? (krudd-version) "0.0.0-dev"))
 (check "version-core strips a CI prerelease suffix"
-       (string=? (krudd-version-core "10.1.0.23-pr482+a1b2c3d") "10.1.0.23"))
+       (string=? (krudd-version-core "10.1.0-pr482+a1b2c3d") "10.1.0"))
 (check "version-core is a no-op on a bare version"
-       (string=? (krudd-version-core "10.1.0.23") "10.1.0.23"))
+       (string=? (krudd-version-core "10.1.0") "10.1.0"))
 (check "commit hash non-empty" (> (string-length (krudd-commit-hash)) 0))
 
 (define version (krudd-version))
@@ -59,10 +59,12 @@
 	(check "version.h carries the literal version"
 	       (has? v (string-append "ENGINE_VERSION_STRING \"" version "\"")))
 	(check "version.h has no unexpanded @VAR@ tokens" (not (has? v "@")))
-	(check "version.h defines the chore component numerically"
-	       (all-digits? (list-ref (krudd-split (krudd-version-core version) #\.) 3)))
+	(check "version.h defines the patch component numerically"
+	       (all-digits? (list-ref (krudd-split (krudd-version-core version) #\.) 2)))
 	(check "version.h has no leftover build-number macro"
-	       (not (has? v "ENGINE_BUILD_NUMBER"))))
+	       (not (has? v "ENGINE_BUILD_NUMBER")))
+	(check "version.h has no leftover chore macro"
+	       (not (has? v "ENGINE_VERSION_CHORE"))))
 
 (krudd-embed-file
   (string-append krudd-root "/krudd/build/ninja/modules/core/runtime.scm")

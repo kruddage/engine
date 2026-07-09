@@ -226,4 +226,17 @@ EM_JS(int, krudd_text_input_pop_key, (void), {
 		return 0;
 	return Module.__kruddText.keys.shift();
 })
+
+/*
+ * krudd_is_touch_device — true if the browser reports touch support.
+ *
+ * Lets imgui_plugin and kruddboard tell mobile browsers apart from desktop:
+ * on a touch device the soft keyboard is driven by an explicit on-screen
+ * toggle instead of the WantTextInput-driven auto-focus used on desktop
+ * (see imgui_plugin.cpp), since auto-focusing the hidden <input> there pops
+ * the native keyboard on every tap into the debug UI.
+ */
+EM_JS(int, krudd_is_touch_device, (void), {
+	return (('ontouchstart' in window) || navigator.maxTouchPoints > 0) ? 1 : 0;
+})
 #endif /* __EMSCRIPTEN__ */

@@ -49,6 +49,7 @@ extern "C" void krudd_text_input_show(void);
 extern "C" void krudd_text_input_hide(void);
 extern "C" int  krudd_text_input_drain_chars(char *buf, int cap);
 extern "C" int  krudd_text_input_pop_key(void);
+extern "C" int  krudd_is_touch_device(void);
 #endif
 
 static const struct log_api   *g_log;
@@ -86,9 +87,16 @@ static const imgui_api g_imgui_api = { imgui_register_panel };
  *   widget (WantTextInput).  s_kbd_grace — countdown for a *speculative* show
  *   raised from a touch gesture that has not yet been claimed by a text widget;
  *   when it reaches zero unclaimed, the keyboard is dismissed.
+ *
+ * Both only apply on desktop (s_touch_device == false).  On a touch device
+ * this whole auto-focus dance is skipped — kruddboard's on-screen toggle
+ * button owns krudd_text_input_show/hide there instead, since auto-focusing
+ * on WantTextInput or on every gesture pops the native keyboard on any tap
+ * into the debug UI, not just text fields.
  */
 static bool s_kbd_shown;
 static int  s_kbd_grace;
+static bool s_touch_device;
 
 /*
  * Frames a gesture-driven speculative show() may go unclaimed by
@@ -153,8 +161,12 @@ static EM_BOOL on_touch(int type, const EmscriptenTouchEvent *e,
 	 * flash a couple frames later.  Gating on WantCaptureMouse skips that:
 	 * the keyboard stays down unless the tap is inside the debug UI, where
 	 * a text field might claim it.
+	 *
+	 * Touch devices skip this: it's precisely the "keyboard pops up on
+	 * every tap" behaviour kruddboard's on-screen toggle replaces.
 	 */
-	if (type == EMSCRIPTEN_EVENT_TOUCHEND && io.WantCaptureMouse) {
+	if (!s_touch_device && type == EMSCRIPTEN_EVENT_TOUCHEND &&
+	    io.WantCaptureMouse) {
 		krudd_text_input_show();
 		s_kbd_grace = KBD_GESTURE_GRACE_FRAMES;
 	}
@@ -187,6 +199,7 @@ static void imgui_init(void)
 
 	/* Create the hidden <input> element for keyboard / soft-keyboard capture. */
 	krudd_text_input_init();
+	s_touch_device = krudd_is_touch_device() != 0;
 #endif
 
 	g_log->write(LOG_LEVEL_INFO, "imgui_plugin: init");
@@ -246,24 +259,34 @@ static void imgui_tick(void)
 	 *   9=Home       10=End        11=Escape
 	 */
 	{
-		bool want = io.WantTextInput;
+		/*
+		 * Auto-focus reconciliation is desktop-only.  On a touch device
+		 * the hidden <input>'s focus is owned entirely by kruddboard's
+		 * on-screen keyboard toggle button (krudd_text_input_show/hide
+		 * called directly from there) — driving it from WantTextInput
+		 * here too would re-pop the keyboard the instant any ImGui text
+		 * widget takes focus, defeating the manual toggle.
+		 */
+		if (!s_touch_device) {
+			bool want = io.WantTextInput;
 
-		if (want) {
-			/* A text widget wants input: ensure focus, cancel any
-			 * pending speculative-show grace. */
-			if (!s_kbd_shown) {
-				krudd_text_input_show();
-				s_kbd_shown = true;
+			if (want) {
+				/* A text widget wants input: ensure focus, cancel any
+				 * pending speculative-show grace. */
+				if (!s_kbd_shown) {
+					krudd_text_input_show();
+					s_kbd_shown = true;
+				}
+				s_kbd_grace = 0;
+			} else if (s_kbd_shown) {
+				/* The active text widget went away: dismiss now. */
+				krudd_text_input_hide();
+				s_kbd_shown = false;
+			} else if (s_kbd_grace > 0 && --s_kbd_grace == 0) {
+				/* A gesture speculatively raised the keyboard but no
+				 * text widget claimed it: dismiss it. */
+				krudd_text_input_hide();
 			}
-			s_kbd_grace = 0;
-		} else if (s_kbd_shown) {
-			/* The active text widget went away: dismiss now. */
-			krudd_text_input_hide();
-			s_kbd_shown = false;
-		} else if (s_kbd_grace > 0 && --s_kbd_grace == 0) {
-			/* A gesture speculatively raised the keyboard but no
-			 * text widget claimed it: dismiss it. */
-			krudd_text_input_hide();
 		}
 
 		/* Drain printable / IME characters. */

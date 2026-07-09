@@ -5615,6 +5615,20 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   var _emscripten_glGenVertexArraysOES = _glGenVertexArrays;
   var _glGenVertexArraysOES = _emscripten_glGenVertexArraysOES;
 
+  var _emscripten_glGetActiveUniformBlockName = (program, uniformBlockIndex, bufSize, length, uniformBlockName) => {
+      program = GL.programs[program];
+  
+      var result = GLctx.getActiveUniformBlockName(program, uniformBlockIndex);
+      if (!result) return; // If an error occurs, nothing will be written to uniformBlockName or length.
+      if (uniformBlockName && bufSize > 0) {
+        var numBytesWrittenExclNull = stringToUTF8(result, uniformBlockName, bufSize);
+        if (length) HEAP32[((length)>>2)] = numBytesWrittenExclNull;
+      } else {
+        if (length) HEAP32[((length)>>2)] = 0;
+      }
+    };
+  var _glGetActiveUniformBlockName = _emscripten_glGetActiveUniformBlockName;
+
   
   var _emscripten_glGetAttribLocation = (program, name) =>
       GLctx.getAttribLocation(GL.programs[program], UTF8ToString(name));
@@ -7010,6 +7024,8 @@ var wasmImports = {
   glGenVertexArrays: _glGenVertexArrays,
   /** @export */
   glGenVertexArraysOES: _glGenVertexArraysOES,
+  /** @export */
+  glGetActiveUniformBlockName: _glGetActiveUniformBlockName,
   /** @export */
   glGetAttribLocation: _glGetAttribLocation,
   /** @export */

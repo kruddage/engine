@@ -48,6 +48,7 @@ struct world {
 	uint32_t         name_off[WORLD_MAX_ENTITIES];     /* into names; NO_NAME=none */
 	uint32_t         render_ref[WORLD_MAX_ENTITIES];   /* valid iff COMPONENT_RENDER */
 	uint32_t         material_ref[WORLD_MAX_ENTITIES]; /* valid iff COMPONENT_MATERIAL */
+	uint32_t         script_ref[WORLD_MAX_ENTITIES];   /* valid iff COMPONENT_SCRIPT */
 	char             names[WORLD_NAME_BYTES];          /* NUL-terminated blob */
 };
 
@@ -100,6 +101,14 @@ void world_set_render_ref(struct world *w, int32_t e, uint32_t render_ref);
  * tombstoned ids are ignored.
  */
 void world_set_material_ref(struct world *w, int32_t e, uint32_t material_ref);
+
+/*
+ * Bind a live entity to a behavior script: store script_ref (an asset id) and
+ * set COMPONENT_SCRIPT. A zero script_ref unbinds instead, clearing
+ * COMPONENT_SCRIPT (mirrors world_set_render_ref). Out-of-range or tombstoned
+ * ids are ignored.
+ */
+void world_set_script_ref(struct world *w, int32_t e, uint32_t script_ref);
 
 /*
  * Editor selection model. set accepts -1 (none) or a live entity id; any

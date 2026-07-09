@@ -28,6 +28,7 @@ enum scene_edit_field {
 	SCENE_EDIT_NAME      = 2,
 	SCENE_EDIT_RENDER    = 3,	/* mesh (render_ref) rebind */
 	SCENE_EDIT_MATERIAL  = 4,	/* material (material_ref) rebind */
+	SCENE_EDIT_SCRIPT    = 5,	/* script (script_ref) rebind */
 };
 
 /* Compose an entity id and field tag into a non-zero coalesce key (0 when the

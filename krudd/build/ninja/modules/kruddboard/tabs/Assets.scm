@@ -68,6 +68,7 @@
 	((= t 5) "Font")
 	((= t 6) "Scene")
 	((= t 7) "Text")
+	((= t 8) "Script")
 	(else "Unknown")))
 
 ;;! (kruddboard-assets-maybe-reload-edit id) (re)loads the edit buffer from

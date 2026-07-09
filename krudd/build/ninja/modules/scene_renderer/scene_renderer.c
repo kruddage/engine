@@ -257,10 +257,14 @@ static void upload_mesh(const struct gpu_api *gpu, uint32_t render_ref)
  */
 static void seed_demo_scene(void)
 {
-	static const struct { const char *path; float pos[3]; } DEMO[] = {
-		{ "builtin://cube",    { -1.5f, 0.0f,  0.0f } },
-		{ "builtin://sphere",  {  0.0f, 0.0f, -1.0f } },
-		{ "builtin://pyramid", {  1.5f, 0.0f,  0.5f } },
+	static const struct {
+		const char *path;
+		float       pos[3];
+		const char *script; /* behavior script to bind, or NULL */
+	} DEMO[] = {
+		{ "builtin://cube",    { -1.5f, 0.0f,  0.0f }, "builtin://script/spinner" },
+		{ "builtin://sphere",  {  0.0f, 0.0f, -1.0f }, "builtin://script/bounce"  },
+		{ "builtin://pyramid", {  1.5f, 0.0f,  0.5f }, "builtin://script/wobble"  },
 	};
 	const struct world *w;
 	uint32_t            i;
@@ -302,6 +306,19 @@ static void seed_demo_scene(void)
 		id = g_scene->create_entity(WORLD_NO_PARENT, &t, 0u, ref);
 		if (id >= 0 && material && g_scene->set_material_ref)
 			g_scene->set_material_ref(id, material);
+
+		/*
+		 * Bind a behavior script so the demo scene animates on load — the
+		 * cube spins, the sphere bounces, the pyramid wobbles. Each is a
+		 * built-in ASSET_TYPE_SCRIPT; skipped cleanly on an engine build
+		 * without the script assets or the set_script_ref entry.
+		 */
+		if (id >= 0 && DEMO[i].script && g_scene->set_script_ref) {
+			uint32_t script = asset_id_by_path(DEMO[i].script);
+
+			if (script)
+				g_scene->set_script_ref(id, script);
+		}
 	}
 }
 

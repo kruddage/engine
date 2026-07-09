@@ -309,6 +309,9 @@
 		  (string-append srcroot "/modules/core/runtime.scm")
 		  (string-append gen "/runtime_scm.h") "RUNTIME_SCM")
 		(krudd-embed-file
+		  (string-append srcroot "/modules/core/entity_script.scm")
+		  (string-append gen "/entity_script_scm.h") "ENTITY_SCRIPT_SCM")
+		(krudd-embed-file
 		  (string-append srcroot "/modules/kruddboard/kruddboard.scm")
 		  (string-append gen "/kruddboard_scm.h") "KRUDDBOARD_SCM")
 		(krudd-embed-file

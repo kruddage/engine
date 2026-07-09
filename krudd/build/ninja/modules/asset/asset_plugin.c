@@ -2,6 +2,7 @@
 #include "asset.h"
 #include "asset_api.h"
 #include "asset_codec_api.h"
+#include "builtin_scripts.h"
 #include "asset_edit.h"
 #include "edit_api.h"
 #include "primitives.h"
@@ -299,6 +300,35 @@ static void seed_material(const char *path, const float rgba[4])
 	e->type      = ASSET_TYPE_MATERIAL;
 }
 
+/*
+ * Seed one built-in entity script from NUL-terminated Scheme source, the same
+ * shape as seed_shader: the (script NAME ...) text becomes the asset's bytes so
+ * the entity-script driver can read it back as a C string via get_data().  The
+ * asset is what an entity's script_ref points at; ASSET_TYPE_SCRIPT tags it for
+ * the script-only picker.
+ */
+static void seed_script(const char *path, const char *src)
+{
+	struct asset_entry *e;
+	uint32_t            n;
+
+	e = alloc_entry(path);
+	if (!e)
+		return;
+	n = (uint32_t)strlen(src) + 1;
+	e->data = g_mem->alloc(n);
+	if (!e->data) {
+		e->state = ASSET_ERROR;
+		return;
+	}
+	memcpy(e->data, src, n);
+	e->size      = n;
+	e->state     = ASSET_LOADED;
+	e->kind      = ASSET_KIND_PRIMITIVE;
+	e->read_only = 1;
+	e->type      = ASSET_TYPE_SCRIPT;
+}
+
 static void seed_builtins(void)
 {
 	int32_t            i;
@@ -325,6 +355,10 @@ static void seed_builtins(void)
 	seed_shader("builtin://shader/scene", SCENE_SHADER_SRC);
 
 	seed_material("builtin://material/default", DEFAULT_MATERIAL_COLOR);
+
+	seed_script("builtin://script/spinner", SPINNER_SCRIPT_SRC);
+	seed_script("builtin://script/bounce",  BOUNCE_SCRIPT_SRC);
+	seed_script("builtin://script/wobble",  WOBBLE_SCRIPT_SRC);
 }
 
 #ifdef __EMSCRIPTEN__
@@ -683,6 +717,26 @@ static const struct asset_decl_field default_material_decl[] = {
 	{ "base_color", "{ 1, 1, 1, 1 }"     },
 };
 
+/*
+ * A script asset is one (script NAME ...) Scheme form.  It advertises its
+ * source format and the lifecycle hooks the built-in defines, the way a shader
+ * advertises its stages.
+ */
+static const struct asset_decl_field spinner_script_decl[] = {
+	{ "format", "krudd-script"      },
+	{ "hooks",  "on-begin, on-tick" },
+};
+
+static const struct asset_decl_field bounce_script_decl[] = {
+	{ "format", "krudd-script" },
+	{ "hooks",  "on-tick"      },
+};
+
+static const struct asset_decl_field wobble_script_decl[] = {
+	{ "format", "krudd-script" },
+	{ "hooks",  "on-tick"      },
+};
+
 struct builtin_desc {
 	const char                   *path;
 	const struct asset_decl_field *fields;
@@ -702,6 +756,12 @@ static const struct builtin_desc builtin_descs[] = {
 	  ARRAY_SIZE(scene_shader_decl) },
 	{ "builtin://material/default", default_material_decl,
 	  ARRAY_SIZE(default_material_decl) },
+	{ "builtin://script/spinner", spinner_script_decl,
+	  ARRAY_SIZE(spinner_script_decl) },
+	{ "builtin://script/bounce", bounce_script_decl,
+	  ARRAY_SIZE(bounce_script_decl) },
+	{ "builtin://script/wobble", wobble_script_decl,
+	  ARRAY_SIZE(wobble_script_decl) },
 };
 
 #define BUILTIN_DESC_COUNT ARRAY_SIZE(builtin_descs)

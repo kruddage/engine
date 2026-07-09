@@ -15,6 +15,7 @@
 
 #include "s7.h"
 #include "kruddboard_scm.h"
+#include "assets_scm.h"
 
 #include <assert.h>
 #include <stdarg.h>
@@ -715,6 +716,427 @@ static s7_pointer st_set_gizmo_mode(s7_scheme *sc, s7_pointer a)
 }
 
 /* ------------------------------------------------------------------ */
+/* Assets-tab stub primitives + fixture (#402)                         */
+/* ------------------------------------------------------------------ */
+
+/* Fake authored asset catalog, driven by the mutating primitives. Mirrors
+ * struct asset_info's shape closely enough for the Scheme logic under test:
+ * type/kind/state/read_only/origin codes match asset_api.h. */
+#define FA_MAX 8
+
+struct fa_asset {
+	int         alive;
+	unsigned    id;
+	char        path[64];
+	int         type;
+	int         kind;
+	int         state;
+	int         read_only;
+	int         origin; /* 0 = FETCHED, 1 = AUTHORED */
+	char        data[512];
+	int         data_len;
+};
+
+static struct fa_asset g_fa[FA_MAX];
+static int              g_fa_n;
+static int              g_have_asset_api;
+static int              g_have_asset_mut;
+static int              g_create_fail;      /* next create()/clone() -> 0 */
+static int              g_shader_save_ok = 1; /* krudd-asset-save-shader ret */
+static int              g_combo_pick = -1;  /* next imgui-combo result, or -1 */
+
+/* Same id-keyed "what's being typed / just changed" simulation the World-tab
+ * text/float stubs use, shared across every Assets text-like primitive
+ * (single-line, enter-to-commit, and multiline all reduce to the same shape:
+ * an id, an override string, and a boolean flag). */
+static void asset_reset(void)
+{
+	memset(g_fa, 0, sizeof(g_fa));
+	g_fa_n = 0;
+
+	/* id 501: built-in mesh — read-only, a drag source in the browser. */
+	g_fa[0].alive = 1; g_fa[0].id = 501;
+	strcpy(g_fa[0].path, "builtin://mesh/cube");
+	g_fa[0].type = 1; g_fa[0].kind = 1; g_fa[0].state = 1;
+	g_fa[0].read_only = 1; g_fa[0].origin = 0;
+
+	/* id 601: built-in shader — read-only, gets the Clone flow. */
+	g_fa[1].alive = 1; g_fa[1].id = 601;
+	strcpy(g_fa[1].path, "builtin://shader/scene");
+	g_fa[1].type = 4; g_fa[1].kind = 1; g_fa[1].state = 1;
+	g_fa[1].read_only = 1; g_fa[1].origin = 0;
+	strcpy(g_fa[1].data, "(vertex ...) (fragment ...)");
+	g_fa[1].data_len = (int)strlen(g_fa[1].data);
+
+	/* id 701: authored text (markdown) — mutable, gets the editor. */
+	g_fa[2].alive = 1; g_fa[2].id = 701;
+	strcpy(g_fa[2].path, "notes.md");
+	g_fa[2].type = 7; g_fa[2].kind = 0; g_fa[2].state = 1;
+	g_fa[2].read_only = 0; g_fa[2].origin = 1;
+	strcpy(g_fa[2].data, "# Hello");
+	g_fa[2].data_len = (int)strlen(g_fa[2].data);
+
+	/* id 801: authored shader — mutable, gets Save/Delete. */
+	g_fa[3].alive = 1; g_fa[3].id = 801;
+	strcpy(g_fa[3].path, "my.shader");
+	g_fa[3].type = 4; g_fa[3].kind = 0; g_fa[3].state = 1;
+	g_fa[3].read_only = 0; g_fa[3].origin = 1;
+	strcpy(g_fa[3].data, "(vertex ...)");
+	g_fa[3].data_len = (int)strlen(g_fa[3].data);
+
+	/* id 901: authored material — mutable, gets the color picker. */
+	g_fa[4].alive = 1; g_fa[4].id = 901;
+	strcpy(g_fa[4].path, "red.mat");
+	g_fa[4].type = 3; g_fa[4].kind = 0; g_fa[4].state = 1;
+	g_fa[4].read_only = 0; g_fa[4].origin = 1;
+
+	g_fa_n = 5;
+	g_have_asset_api = 1;
+	g_have_asset_mut = 1;
+	g_create_fail    = 0;
+	g_shader_save_ok = 1;
+
+	g_click        = NULL;
+	g_dis_top      = 0;
+	g_input_id     = NULL;
+	g_input_text   = NULL;
+	g_input_commit = 0;
+	g_combo_open   = NULL;
+}
+
+/* Reset the persistent Scheme-side Assets view state (kruddboard-assets-*)
+ * between tests, the same job reset_state() does for the KRUDD tab's Scheme
+ * state below. */
+static void assets_scheme_reset(void)
+{
+	script_eval("(set! kruddboard-assets-sel 0)");
+	script_eval("(set! kruddboard-assets-edit-id 0)");
+	script_eval("(set! kruddboard-assets-edit-text \"\")");
+	script_eval("(set! kruddboard-assets-shader-ok 'untried)");
+	script_eval("(set! kruddboard-assets-color-id 0)");
+	script_eval("(set! kruddboard-assets-color (list 1.0 1.0 1.0 1.0))");
+	script_eval("(set! kruddboard-assets-naming #f)");
+	script_eval("(set! kruddboard-assets-new-name \"\")");
+	script_eval("(set! kruddboard-assets-new-type 0)");
+	script_eval("(set! kruddboard-assets-clone-src 0)");
+	script_eval("(set! kruddboard-assets-clone-name \"\")");
+	script_eval("(set! kruddboard-assets-clone-conflict #f)");
+	g_combo_pick    = -1;
+	g_float_id      = NULL;
+	g_float_changed = 0;
+}
+
+static struct fa_asset *fa_find(unsigned id)
+{
+	int i;
+
+	for (i = 0; i < g_fa_n; i++)
+		if (g_fa[i].alive && g_fa[i].id == id)
+			return &g_fa[i];
+	return NULL;
+}
+
+static unsigned fa_next_id = 1001;
+
+static s7_pointer st_assets(s7_scheme *sc, s7_pointer a)
+{
+	s7_pointer builtin = s7_nil(sc);
+	s7_pointer project = s7_nil(sc);
+	int        i;
+
+	(void)a;
+	if (!g_have_asset_api)
+		return s7_f(sc);
+	for (i = 0; i < g_fa_n; i++) {
+		struct fa_asset *f = &g_fa[i];
+		s7_pointer       row;
+
+		if (!f->alive)
+			continue;
+		row = s7_list(sc, 7, s7_make_integer(sc, (s7_int)f->id),
+			      s7_make_string(sc, f->path),
+			      s7_make_integer(sc, f->type),
+			      s7_make_integer(sc, f->kind),
+			      s7_make_integer(sc, f->state),
+			      s7_make_integer(sc, f->data_len),
+			      s7_make_integer(sc, 0));
+		if (f->read_only)
+			builtin = s7_cons(sc, row, builtin);
+		else
+			project = s7_cons(sc, row, project);
+	}
+	return s7_list(sc, 2, s7_reverse(sc, builtin), s7_reverse(sc, project));
+}
+
+static s7_pointer st_asset_mut(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	return s7_make_boolean(sc, g_have_asset_mut);
+}
+
+static s7_pointer st_asset_info(s7_scheme *sc, s7_pointer a)
+{
+	unsigned          id = (unsigned)s7_integer(s7_car(a));
+	struct fa_asset  *f  = fa_find(id);
+
+	if (!f)
+		return s7_f(sc);
+	return s7_list(sc, 8, s7_make_string(sc, f->path),
+		       s7_make_integer(sc, f->type),
+		       s7_make_integer(sc, f->kind),
+		       s7_make_integer(sc, f->state),
+		       s7_make_integer(sc, f->data_len),
+		       s7_make_integer(sc, 0),
+		       s7_make_boolean(sc, f->read_only),
+		       s7_make_integer(sc, f->origin));
+}
+
+static s7_pointer st_asset_describe(s7_scheme *sc, s7_pointer a)
+{
+	unsigned         id = (unsigned)s7_integer(s7_car(a));
+	struct fa_asset *f  = fa_find(id);
+
+	if (!f)
+		return s7_nil(sc);
+	return s7_list(sc, 1,
+		s7_cons(sc, s7_make_string(sc, "path"),
+			s7_make_string(sc, f->path)));
+}
+
+static s7_pointer st_asset_data(s7_scheme *sc, s7_pointer a)
+{
+	unsigned         id = (unsigned)s7_integer(s7_car(a));
+	struct fa_asset *f  = fa_find(id);
+
+	return s7_make_string(sc, f ? f->data : "");
+}
+
+static s7_pointer st_asset_color(s7_scheme *sc, s7_pointer a)
+{
+	unsigned         id = (unsigned)s7_integer(s7_car(a));
+	struct fa_asset *f  = fa_find(id);
+	float            v[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+
+	if (f && f->data_len >= (int)sizeof(v))
+		memcpy(v, f->data, sizeof(v));
+	return real_vec(sc, v, 4);
+}
+
+/* Mirrors the real shader_stages_from_source substring scan exactly, so the
+ * Declaration display gets a meaningful test. */
+static s7_pointer st_shader_stages(s7_scheme *sc, s7_pointer a)
+{
+	const char *src = s7_is_string(s7_car(a)) ? s7_string(s7_car(a)) : "";
+	int         hv  = strstr(src, "(vertex")   != NULL;
+	int         hf  = strstr(src, "(fragment") != NULL;
+
+	if (hv && hf) return s7_make_string(sc, "vertex, fragment");
+	if (hv)       return s7_make_string(sc, "vertex");
+	if (hf)       return s7_make_string(sc, "fragment");
+	return s7_make_string(sc, "");
+}
+
+static s7_pointer st_asset_save_text(s7_scheme *sc, s7_pointer a)
+{
+	unsigned         id  = (unsigned)s7_integer(s7_car(a));
+	const char      *txt = s7_is_string(s7_cadr(a)) ? s7_string(s7_cadr(a)) : "";
+	struct fa_asset *f   = fa_find(id);
+
+	rec("save-text|%u|%s", id, txt);
+	if (f) {
+		strncpy(f->data, txt, sizeof(f->data) - 1);
+		f->data_len = (int)strlen(f->data);
+	}
+	return s7_unspecified(sc);
+}
+
+static s7_pointer st_asset_save_shader(s7_scheme *sc, s7_pointer a)
+{
+	unsigned         id  = (unsigned)s7_integer(s7_car(a));
+	const char      *txt = s7_is_string(s7_cadr(a)) ? s7_string(s7_cadr(a)) : "";
+	struct fa_asset *f   = fa_find(id);
+
+	rec("save-shader|%u|%s", id, txt);
+	if (!g_shader_save_ok)
+		return s7_f(sc);
+	if (f) {
+		strncpy(f->data, txt, sizeof(f->data) - 1);
+		f->data_len = (int)strlen(f->data);
+	}
+	return s7_t(sc);
+}
+
+static s7_pointer st_asset_save_material(s7_scheme *sc, s7_pointer a)
+{
+	s7_pointer       p  = a;
+	unsigned         id = (unsigned)s7_integer(s7_car(p)); p = s7_cdr(p);
+	float            v[4];
+	struct fa_asset *f;
+	int              i;
+
+	for (i = 0; i < 4 && s7_is_pair(p); i++) {
+		v[i] = (float)s7_number_to_real(sc, s7_car(p));
+		p    = s7_cdr(p);
+	}
+	rec("save-material|%u|%.2f,%.2f,%.2f,%.2f", id, v[0], v[1], v[2], v[3]);
+	f = fa_find(id);
+	if (f) {
+		memcpy(f->data, v, sizeof(v));
+		f->data_len = (int)sizeof(v);
+	}
+	return s7_unspecified(sc);
+}
+
+static s7_pointer st_asset_delete(s7_scheme *sc, s7_pointer a)
+{
+	unsigned         id = (unsigned)s7_integer(s7_car(a));
+	struct fa_asset *f  = fa_find(id);
+
+	rec("delete|%u", id);
+	if (f)
+		f->alive = 0;
+	return s7_unspecified(sc);
+}
+
+static unsigned fa_create(const char *path, int type, const char *data,
+			  int data_len, int read_only, int origin)
+{
+	struct fa_asset *f;
+
+	if (g_create_fail || g_fa_n >= FA_MAX)
+		return 0;
+	f = &g_fa[g_fa_n++];
+	memset(f, 0, sizeof(*f));
+	f->alive     = 1;
+	f->id        = fa_next_id++;
+	f->type      = type;
+	f->read_only = read_only;
+	f->origin    = origin;
+	f->state     = 1;
+	strncpy(f->path, path, sizeof(f->path) - 1);
+	if (data && data_len > 0) {
+		memcpy(f->data, data, (size_t)data_len);
+		f->data_len = data_len;
+	}
+	return f->id;
+}
+
+static s7_pointer st_asset_create_text(s7_scheme *sc, s7_pointer a)
+{
+	const char *path = s7_is_string(s7_car(a)) ? s7_string(s7_car(a)) : "";
+	unsigned    id;
+
+	rec("create-text|%s", path);
+	id = fa_create(path, 7, "", 0, 0, 1);
+	return s7_make_integer(sc, (s7_int)id);
+}
+
+static s7_pointer st_asset_create_shader(s7_scheme *sc, s7_pointer a)
+{
+	const char *path = s7_is_string(s7_car(a)) ? s7_string(s7_car(a)) : "";
+	unsigned    id;
+
+	rec("create-shader|%s", path);
+	id = fa_create(path, 4, "(vertex seed)", 13, 0, 1);
+	return s7_make_integer(sc, (s7_int)id);
+}
+
+static s7_pointer st_asset_create_material(s7_scheme *sc, s7_pointer a)
+{
+	const char *path = s7_is_string(s7_car(a)) ? s7_string(s7_car(a)) : "";
+	static const float white[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+	unsigned    id;
+
+	rec("create-material|%s", path);
+	id = fa_create(path, 3, (const char *)white, (int)sizeof(white), 0, 1);
+	return s7_make_integer(sc, (s7_int)id);
+}
+
+static s7_pointer st_asset_clone_shader(s7_scheme *sc, s7_pointer a)
+{
+	const char *name = s7_is_string(s7_car(a)) ? s7_string(s7_car(a)) : "";
+	const char *txt  = s7_is_string(s7_cadr(a)) ? s7_string(s7_cadr(a)) : "";
+	unsigned    id;
+
+	rec("clone-shader|%s|%s", name, txt);
+	id = fa_create(name, 4, txt, (int)strlen(txt), 0, 1);
+	return s7_make_integer(sc, (s7_int)id);
+}
+
+static s7_pointer st_md_preview(s7_scheme *sc, s7_pointer a)
+{
+	const char *txt = s7_is_string(s7_car(a)) ? s7_string(s7_car(a)) : "";
+
+	rec("md-preview|%s", txt);
+	return s7_unspecified(sc);
+}
+
+static s7_pointer st_button(s7_scheme *sc, s7_pointer a)
+{
+	const char *l = s7_string(s7_car(a));
+
+	rec("btn|%s", l);
+	return s7_make_boolean(sc, clicked(l) && !disabled_now());
+}
+
+static s7_pointer st_input_text_enter(s7_scheme *sc, s7_pointer a)
+{
+	const char *id  = s7_string(s7_car(a));
+	const char *cur = s7_is_string(s7_cadr(a)) ? s7_string(s7_cadr(a)) : "";
+	int         entered = 0;
+
+	if (g_input_id && strcmp(g_input_id, id) == 0) {
+		if (g_input_text)
+			cur = g_input_text;
+		entered = g_input_commit;
+	}
+	rec("input-enter|%s|%s", id, cur);
+	return s7_cons(sc, s7_make_string(sc, cur), s7_make_boolean(sc, entered));
+}
+
+static s7_pointer st_input_text_multiline(s7_scheme *sc, s7_pointer a)
+{
+	s7_pointer  p    = a;
+	const char *id   = s7_string(s7_car(p)); p = s7_cdr(p);
+	const char *cur  = s7_is_string(s7_car(p)) ? s7_string(s7_car(p)) : "";
+	int         changed = 0;
+
+	if (g_input_id && strcmp(g_input_id, id) == 0) {
+		if (g_input_text)
+			cur = g_input_text;
+		changed = g_input_commit;
+	}
+	rec("input-ml|%s|%s", id, cur);
+	return s7_cons(sc, s7_make_string(sc, cur), s7_make_boolean(sc, changed));
+}
+
+static s7_pointer st_combo(s7_scheme *sc, s7_pointer a)
+{
+	const char *id   = s7_string(s7_car(a));
+	int         cur  = (int)s7_integer(s7_caddr(a));
+
+	rec("combo|%s|%d", id, cur);
+	return s7_make_integer(sc, g_combo_pick >= 0 ? g_combo_pick : cur);
+}
+
+static s7_pointer st_color_edit4(s7_scheme *sc, s7_pointer a)
+{
+	const char *id = s7_string(s7_car(a));
+	int         changed = g_float_id && strcmp(g_float_id, id) == 0
+		&& g_float_changed;
+
+	rec("coloredit|%s", id);
+	return s7_cons(sc, s7_cadr(a), s7_make_boolean(sc, changed));
+}
+
+static s7_pointer st_mesh_drag_source(s7_scheme *sc, s7_pointer a)
+{
+	rec("drag-source|%lld|%s", (long long)s7_integer(s7_car(a)),
+	    s7_string(s7_cadr(a)));
+	return s7_unspecified(sc);
+}
+
+/* ------------------------------------------------------------------ */
 /* Harness setup                                                       */
 /* ------------------------------------------------------------------ */
 
@@ -783,7 +1205,31 @@ static s7_scheme *setup(void)
 	def(sc, "krudd-gizmo-mode", st_gizmo_mode, 0);
 	def(sc, "krudd-set-gizmo-mode", st_set_gizmo_mode, 1);
 
+	def(sc, "imgui-button", st_button, 1);
+	def(sc, "imgui-input-text-enter", st_input_text_enter, 2);
+	def(sc, "imgui-input-text-multiline", st_input_text_multiline, 4);
+	def(sc, "imgui-combo", st_combo, 3);
+	def(sc, "imgui-color-edit4", st_color_edit4, 2);
+	def(sc, "imgui-mesh-drag-source", st_mesh_drag_source, 2);
+	def(sc, "krudd-assets", st_assets, 0);
+	def(sc, "krudd-asset-mut?", st_asset_mut, 0);
+	def(sc, "krudd-asset-info", st_asset_info, 1);
+	def(sc, "krudd-asset-describe", st_asset_describe, 1);
+	def(sc, "krudd-asset-data", st_asset_data, 1);
+	def(sc, "krudd-asset-color", st_asset_color, 1);
+	def(sc, "krudd-shader-stages", st_shader_stages, 1);
+	def(sc, "krudd-asset-save-text", st_asset_save_text, 2);
+	def(sc, "krudd-asset-save-shader", st_asset_save_shader, 2);
+	def(sc, "krudd-asset-save-material", st_asset_save_material, 5);
+	def(sc, "krudd-asset-delete", st_asset_delete, 1);
+	def(sc, "krudd-asset-create-text", st_asset_create_text, 1);
+	def(sc, "krudd-asset-create-shader", st_asset_create_shader, 1);
+	def(sc, "krudd-asset-create-material", st_asset_create_material, 1);
+	def(sc, "krudd-asset-clone-shader", st_asset_clone_shader, 2);
+	def(sc, "krudd-md-preview", st_md_preview, 2);
+
 	assert(script_eval(KRUDDBOARD_SCM) == 0);
+	assert(script_eval(ASSETS_SCM) == 0);
 	return sc;
 }
 
@@ -811,6 +1257,12 @@ static int log_filter(void)
 {
 	return (int)s7_integer(
 		s7_name_to_value(script_s7(), "kruddboard-log-filter"));
+}
+
+static int assets_sel(void)
+{
+	return (int)s7_integer(
+		s7_name_to_value(script_s7(), "kruddboard-assets-sel"));
 }
 
 /* ------------------------------------------------------------------ */
@@ -1168,6 +1620,348 @@ static void test_world_composition(void)
 	assert(rec_index("text|Tool") < rec_index("header|Inspector"));
 }
 
+/* ------------------------------------------------------------------ */
+/* Assets-tab tests (#402)                                             */
+/* ------------------------------------------------------------------ */
+
+/* No asset api: the whole tab shows the dimmed placeholder. */
+static void test_assets_unavailable(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	g_have_asset_api = 0;
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+
+	assert(rec_has("disabled|(assets unavailable)"));
+}
+
+/* An empty catalog (api present, no rows) shows the other placeholder. */
+static void test_assets_no_assets(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	g_fa_n = 0;
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+
+	assert(rec_has("header|Browser"));
+	assert(rec_has("disabled|(no assets)"));
+}
+
+/* The browser table lists built-ins and project assets in two labeled
+ * groups; only the mesh row is a drag source. */
+static void test_assets_browser_table(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+
+	assert(rec_has("header|Browser"));
+	assert(rec_has("table-begin|##assets|6"));
+	assert(rec_has("disabled|-- BUILT-IN (read-only) --"));
+	assert(rec_has("disabled|-- PROJECT --"));
+	assert(rec_has("selectable|builtin://mesh/cube|0"));
+	assert(rec_has("selectable|my.shader|0"));
+	assert(rec_has("drag-source|501|builtin://mesh/cube"));
+	assert(!rec_has("drag-source|601|"));
+	assert(rec_has("colored|1.00,0.60,0.20,1.00|RO"));
+}
+
+/* Clicking a row's selectable opens that asset in the inspector next draw. */
+static void test_assets_row_select(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	g_click = "notes.md";
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL;
+
+	assert(assets_sel() == 701);
+}
+
+static void test_assets_new_asset_button(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+
+	assert(rec_has("btn|New Asset"));
+}
+
+/* With no mutation api, the New Asset button never draws. */
+static void test_assets_new_asset_hidden_without_mut(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	g_have_asset_mut = 0;
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+
+	assert(!rec_has("btn|New Asset"));
+}
+
+/* "New Asset" -> fill name, leave type at its Text default -> Create. */
+static void test_assets_create_text(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	g_click = "New Asset";
+	script_eval("(kruddboard-draw-assets)");
+	g_click = "Create";
+	g_input_id = "name"; g_input_text = "new.md"; g_input_commit = 0;
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL; g_input_id = NULL;
+
+	assert(rec_has("create-text|new.md"));
+	assert(assets_sel() != 0);
+}
+
+/* Picking "Shader" from the type combo dispatches to the shader creator. */
+static void test_assets_create_shader(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	g_click = "New Asset";
+	script_eval("(kruddboard-draw-assets)");
+	g_click = "Create";
+	g_input_id = "name"; g_input_text = "new.shader"; g_input_commit = 0;
+	g_combo_pick = 1; /* Shader */
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL; g_input_id = NULL; g_combo_pick = -1;
+
+	assert(rec_has("create-shader|new.shader"));
+}
+
+/* Cancel closes the form without creating anything; the button reappears. */
+static void test_assets_new_asset_cancel(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	g_click = "New Asset";
+	script_eval("(kruddboard-draw-assets)");
+	g_click = "Cancel";
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL;
+
+	assert(rec_has("btn|Cancel"));
+	assert(!rec_has("create-text|"));
+
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	assert(rec_has("btn|New Asset"));
+}
+
+/* Authored text: source box, live preview, Save/Delete. */
+static void test_assets_text_editor(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	script_eval("(set! kruddboard-assets-sel 701)");
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+
+	assert(rec_has("text|notes.md"));
+	assert(rec_has("header|Source"));
+	assert(rec_has("input-ml|##md|# Hello"));
+	assert(rec_has("header|Preview"));
+	assert(rec_has("md-preview|# Hello"));
+	assert(rec_has("btn|Save"));
+	assert(rec_has("btn|Delete"));
+}
+
+static void test_assets_text_save(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	script_eval("(set! kruddboard-assets-sel 701)");
+	g_click = "Save";
+	g_input_id = "##md"; g_input_text = "# Edited"; g_input_commit = 1;
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL; g_input_id = NULL;
+
+	assert(rec_has("save-text|701|# Edited"));
+}
+
+static void test_assets_text_delete(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	script_eval("(set! kruddboard-assets-sel 701)");
+	g_click = "Delete";
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL;
+
+	assert(rec_has("delete|701"));
+	assert(assets_sel() == 0);
+}
+
+/* An editable shader's Declaration is derived live from the edit buffer. */
+static void test_assets_shader_declaration(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	script_eval("(set! kruddboard-assets-sel 801)");
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+
+	assert(rec_has("text|format: krudd-shader"));
+	assert(rec_has("text|stages: vertex"));
+}
+
+static void test_assets_shader_save_ok(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	script_eval("(set! kruddboard-assets-sel 801)");
+	g_shader_save_ok = 1;
+	g_click = "Save";
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL;
+
+	assert(rec_has("save-shader|801|"));
+	assert(rec_has("colored|0.30,0.90,0.30,1.00|Compiled OK"));
+}
+
+/* A failed compile leaves the last-committed source live and shows the
+ * failure text instead of silently dropping the edit. */
+static void test_assets_shader_save_fail(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	script_eval("(set! kruddboard-assets-sel 801)");
+	g_shader_save_ok = 0;
+	g_click = "Save";
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL;
+
+	assert(rec_has("colored|1.00,0.30,0.30,1.00|Compile failed"));
+}
+
+/* A built-in shader gets the Clone flow, seeded "<path>_copy", instead of
+ * Save/Delete. */
+static void test_assets_shader_clone(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	script_eval("(set! kruddboard-assets-sel 601)");
+	script_eval("(kruddboard-draw-assets)"); /* seed the clone name */
+	g_click = "Clone";
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL;
+
+	assert(rec_has("input-enter|##clonename|builtin://shader/scene_copy"));
+	assert(rec_has("clone-shader|builtin://shader/scene_copy|"));
+	assert(assets_sel() != 601 && assets_sel() != 0);
+}
+
+/* A duplicate clone name reports the conflict and keeps the built-in
+ * selected instead of navigating to a nonexistent new asset. */
+static void test_assets_shader_clone_conflict(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	script_eval("(set! kruddboard-assets-sel 601)");
+	script_eval("(kruddboard-draw-assets)");
+	g_create_fail = 1;
+	g_click = "Clone";
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL;
+
+	assert(rec_has("colored|1.00,0.30,0.30,1.00|"
+		       "\"builtin://shader/scene_copy\" already exists"));
+	assert(assets_sel() == 601);
+}
+
+static void test_assets_material_editor(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	script_eval("(set! kruddboard-assets-sel 901)");
+	g_click = "Save";
+	g_float_id = "##basecolor"; g_float_changed = 1;
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL; g_float_id = NULL; g_float_changed = 0;
+
+	assert(rec_has("coloredit|##basecolor"));
+	assert(rec_has("save-material|901|"));
+}
+
+/* A read-only material shows a disabled Save and never saves. */
+static void test_assets_material_readonly(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	g_fa[4].read_only = 1;
+	script_eval("(set! kruddboard-assets-sel 901)");
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+
+	assert(rec_has("dis-begin|1"));
+	assert(rec_has("disabled|read-only"));
+	assert(!rec_has("save-material|"));
+}
+
+/* Every other asset type (mesh, texture, font, scene) falls back to the
+ * read-only Declaration + Catalog tables. */
+static void test_assets_generic_fallback(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	script_eval("(set! kruddboard-assets-sel 501)");
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+
+	assert(rec_has("text|Declaration"));
+	assert(rec_has("table-begin|##decl|2"));
+	assert(rec_has("text|path"));
+	assert(rec_has("text|builtin://mesh/cube"));
+	assert(rec_has("text|Catalog"));
+	assert(rec_has("table-begin|##catalog|2"));
+	assert(rec_has("text|Mesh"));
+	assert(rec_has("text|Primitive"));
+	assert(rec_has("text|yes")); /* read_only */
+}
+
+/* A stale selection (the asset was deleted elsewhere) returns to the
+ * browser instead of drawing a broken inspector. */
+static void test_assets_inspector_stale(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	script_eval("(set! kruddboard-assets-sel 9999)");
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+
+	assert(assets_sel() == 0);
+}
+
+/* The New Asset form draws before the browser table, in that order. */
+static void test_assets_composition(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+
+	assert(rec_index("header|Browser") >= 0);
+	assert(rec_index("header|Browser") < rec_index("btn|New Asset"));
+	assert(rec_index("btn|New Asset") < rec_index("table-begin|##assets|6"));
+}
+
 int main(void)
 {
 	setup();
@@ -1198,6 +1992,29 @@ int main(void)
 	RUN(world_bind_disabled);
 	RUN(world_gizmo_chips);
 	RUN(world_composition);
+
+	RUN(assets_unavailable);
+	RUN(assets_no_assets);
+	RUN(assets_browser_table);
+	RUN(assets_row_select);
+	RUN(assets_new_asset_button);
+	RUN(assets_new_asset_hidden_without_mut);
+	RUN(assets_create_text);
+	RUN(assets_create_shader);
+	RUN(assets_new_asset_cancel);
+	RUN(assets_text_editor);
+	RUN(assets_text_save);
+	RUN(assets_text_delete);
+	RUN(assets_shader_declaration);
+	RUN(assets_shader_save_ok);
+	RUN(assets_shader_save_fail);
+	RUN(assets_shader_clone);
+	RUN(assets_shader_clone_conflict);
+	RUN(assets_material_editor);
+	RUN(assets_material_readonly);
+	RUN(assets_generic_fallback);
+	RUN(assets_inspector_stale);
+	RUN(assets_composition);
 
 	printf("%d/%d kruddboard panel tests passed\n", tests_passed, tests_run);
 	return tests_passed == tests_run ? 0 : 1;

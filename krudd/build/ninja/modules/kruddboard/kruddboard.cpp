@@ -40,6 +40,17 @@ extern "C" {
 #include <math.h>
 #include "md_parse.h"
 #include "md_draw.h"
+
+/*
+ * Soft-keyboard toggle (plugin_abi.c, main module — see imgui_plugin.cpp
+ * for the fuller comment on the bridge).  On a touch device kruddboard owns
+ * krudd_text_input_show/hide directly via the top-right button below;
+ * imgui_plugin's own WantTextInput-driven auto-focus is disabled for touch
+ * devices precisely so the two don't fight over who's driving the keyboard.
+ */
+extern "C" void krudd_text_input_show(void);
+extern "C" void krudd_text_input_hide(void);
+extern "C" int  krudd_is_touch_device(void);
 #endif
 
 #include <cstdio>
@@ -50,6 +61,10 @@ static const struct asset_api         *g_asset_api;
 static const struct subsystem_manager *g_mgr;
 static int                             g_visible = 1;
 static int                             g_collapsed;
+#ifdef __EMSCRIPTEN__
+static bool                            g_touch_device;
+static bool                            g_kbd_shown;
+#endif
 static int                             g_panels_registered;
 static uint32_t                        g_asset_sel; /* 0 = none */
 static const struct entity_api        *g_entity_api;
@@ -1996,11 +2011,36 @@ static void draw_board(void * /*userdata*/)
 	ImGui::SameLine();
 	ImGui::TextDisabled("KRUDD EDITOR");
 	draw_undo_redo();
-	hint_x = ImGui::GetWindowWidth()
-		- ImGui::CalcTextSize("` to hide").x
-		- ImGui::GetStyle().WindowPadding.x;
-	ImGui::SameLine(hint_x);
-	ImGui::TextDisabled("` to hide");
+#ifdef __EMSCRIPTEN__
+	if (g_touch_device) {
+		/*
+		 * No physical backtick on a touch device, and no reason to
+		 * pop the native keyboard on every tap (see imgui_plugin.cpp)
+		 * — so replace the hint with a button that shows/hides it.
+		 */
+		const char *label = g_kbd_shown ? "Hide KB" : "Show KB";
+
+		hint_x = ImGui::GetWindowWidth()
+			- ImGui::CalcTextSize(label).x
+			- 2.0f * ImGui::GetStyle().FramePadding.x
+			- ImGui::GetStyle().WindowPadding.x;
+		ImGui::SameLine(hint_x);
+		if (ImGui::SmallButton(label)) {
+			g_kbd_shown = !g_kbd_shown;
+			if (g_kbd_shown)
+				krudd_text_input_show();
+			else
+				krudd_text_input_hide();
+		}
+	} else
+#endif
+	{
+		hint_x = ImGui::GetWindowWidth()
+			- ImGui::CalcTextSize("` to hide").x
+			- ImGui::GetStyle().WindowPadding.x;
+		ImGui::SameLine(hint_x);
+		ImGui::TextDisabled("` to hide");
+	}
 	ImGui::Separator();
 
 	if (!g_collapsed) {
@@ -2034,6 +2074,7 @@ static void kruddboard_init(void)
 #ifdef __EMSCRIPTEN__
 	emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT,
 					nullptr, 0, on_keydown);
+	g_touch_device = krudd_is_touch_device() != 0;
 #endif
 	if (g_log)
 		g_log->write(LOG_LEVEL_INFO, "kruddboard: init");

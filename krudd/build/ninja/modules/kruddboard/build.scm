@@ -17,6 +17,13 @@
 		(link "md_parse"))
 	(test "md_parse" "md_parse_test")
 
+	(executable "kruddboard_panel_test"
+		(sources "kruddboard_panel_test.c")
+		(private (root "modules/core/include") (raw "${generated}")
+			(raw "../../third_party"))
+		(link "script"))
+	(test "kruddboard_panel" "kruddboard_panel_test")
+
 	(library "md_parse_scheme"
 		(sources (raw "${generated}/md_parse.scm.c"))
 		(public (raw "${generated}"))

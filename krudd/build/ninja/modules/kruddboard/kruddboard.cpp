@@ -187,6 +187,249 @@ static s7_pointer sp_krudd_stats(s7_scheme *sc, s7_pointer args)
 		       s7_make_integer(sc, (s7_int)g_stats->frame_count));
 }
 
+/*
+ * (imgui-text-colored r g b a str) -> unspecified. Draw one line in an RGBA
+ * colour (each channel 0..1). A non-string str is ignored, like imgui-text.
+ */
+static s7_pointer sp_imgui_text_colored(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer p   = args;
+	double     r   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double     g   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double     b   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double     a   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	s7_pointer str = s7_car(p);
+
+	if (s7_is_string(str))
+		ImGui::TextColored(ImVec4((float)r, (float)g, (float)b,
+					  (float)a), "%s", s7_string(str));
+	return s7_unspecified(sc);
+}
+
+/* (imgui-small-button label) -> #t when clicked this frame, else #f. */
+static s7_pointer sp_imgui_small_button(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer label = s7_car(args);
+	bool       hit   = false;
+
+	if (s7_is_string(label))
+		hit = ImGui::SmallButton(s7_string(label));
+	return s7_make_boolean(sc, hit);
+}
+
+/* (imgui-same-line) -> unspecified. Keep the next widget on this line. */
+static s7_pointer sp_imgui_same_line(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	ImGui::SameLine();
+	return s7_unspecified(sc);
+}
+
+/*
+ * (imgui-checkbox label state) -> the (possibly toggled) boolean. s7 has no
+ * out-parameter, so the image passes the current state and stores the result,
+ * which flips on a click.
+ */
+static s7_pointer sp_imgui_checkbox(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer label = s7_car(args);
+	bool       state = s7_boolean(sc, s7_cadr(args));
+
+	if (s7_is_string(label))
+		ImGui::Checkbox(s7_string(label), &state);
+	return s7_make_boolean(sc, state);
+}
+
+/* (imgui-separator) -> unspecified. */
+static s7_pointer sp_imgui_separator(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	ImGui::Separator();
+	return s7_unspecified(sc);
+}
+
+/*
+ * (imgui-collapsing-header label) -> #t when the section is open. Default-open,
+ * matching the C headers that passed ImGuiTreeNodeFlags_DefaultOpen.
+ */
+static s7_pointer sp_imgui_collapsing_header(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer label = s7_car(args);
+	bool       open  = false;
+
+	if (s7_is_string(label))
+		open = ImGui::CollapsingHeader(s7_string(label),
+					      ImGuiTreeNodeFlags_DefaultOpen);
+	return s7_make_boolean(sc, open);
+}
+
+/*
+ * (imgui-begin-table id ncols) -> #t when the table opened. Bordered, row-
+ * striped, proportional-stretch — the flag set every kruddboard table used. A
+ * #t result must be paired with imgui-end-table.
+ */
+static s7_pointer sp_imgui_begin_table(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer id     = s7_car(args);
+	s7_pointer ncols  = s7_cadr(args);
+	bool       opened = false;
+
+	if (s7_is_string(id) && s7_is_integer(ncols) && s7_integer(ncols) > 0)
+		opened = ImGui::BeginTable(s7_string(id),
+					   (int)s7_integer(ncols),
+					   ImGuiTableFlags_Borders |
+					   ImGuiTableFlags_RowBg   |
+					   ImGuiTableFlags_SizingStretchProp);
+	return s7_make_boolean(sc, opened);
+}
+
+/* (imgui-table-setup-column label) -> unspecified. */
+static s7_pointer sp_imgui_table_setup_column(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer label = s7_car(args);
+
+	if (s7_is_string(label))
+		ImGui::TableSetupColumn(s7_string(label));
+	return s7_unspecified(sc);
+}
+
+/* (imgui-table-headers-row) -> unspecified. */
+static s7_pointer sp_imgui_table_headers_row(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	ImGui::TableHeadersRow();
+	return s7_unspecified(sc);
+}
+
+/* (imgui-table-next-row) -> unspecified. */
+static s7_pointer sp_imgui_table_next_row(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	ImGui::TableNextRow();
+	return s7_unspecified(sc);
+}
+
+/*
+ * (imgui-table-next-column) -> #t if the new cell is visible. Advances to the
+ * next column (ImGui::TableNextColumn), which after a row lands on column 0.
+ */
+static s7_pointer sp_imgui_table_next_column(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	return s7_make_boolean(sc, ImGui::TableNextColumn());
+}
+
+/* (imgui-end-table) -> unspecified. */
+static s7_pointer sp_imgui_end_table(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	ImGui::EndTable();
+	return s7_unspecified(sc);
+}
+
+/*
+ * (imgui-begin-child id w h) -> unspecified. A fixed-size scroll region with a
+ * horizontal scrollbar, as the log view used. Always paired with
+ * imgui-end-child. A zero width/height means "fill the available axis".
+ */
+static s7_pointer sp_imgui_begin_child(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer p  = args;
+	s7_pointer id = s7_car(p); p = s7_cdr(p);
+	double     w  = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double     h  = s7_number_to_real(sc, s7_car(p));
+
+	if (s7_is_string(id))
+		ImGui::BeginChild(s7_string(id),
+				  ImVec2((float)w, (float)h), false,
+				  ImGuiWindowFlags_HorizontalScrollbar);
+	return s7_unspecified(sc);
+}
+
+/* (imgui-end-child) -> unspecified. */
+static s7_pointer sp_imgui_end_child(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	ImGui::EndChild();
+	return s7_unspecified(sc);
+}
+
+/* (imgui-set-scroll-here-y ratio) -> unspecified. Snap the scroll to ratio. */
+static s7_pointer sp_imgui_set_scroll_here_y(s7_scheme *sc, s7_pointer args)
+{
+	ImGui::SetScrollHereY((float)s7_number_to_real(sc, s7_car(args)));
+	return s7_unspecified(sc);
+}
+
+/* (imgui-viewport-work-height) -> the main viewport's usable height in px. */
+static s7_pointer sp_imgui_viewport_work_height(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	return s7_make_real(sc,
+			    (s7_double)ImGui::GetMainViewport()->WorkSize.y);
+}
+
+/* One (name api? tick? wasm-size) row for the subsystems table. */
+static s7_pointer subsystem_row(s7_scheme *sc, const struct subsystem *s)
+{
+	return s7_list(sc, 4,
+		       s7_make_string(sc, s->name),
+		       s7_make_boolean(sc, s->api  != NULL),
+		       s7_make_boolean(sc, s->tick != NULL),
+		       s7_make_integer(sc, (s7_int)s->wasm_size));
+}
+
+/*
+ * (krudd-subsystems) -> a list of (name api? tick? wasm-size) rows in table
+ * order (static table then dynamic), or #f when the manager is absent. api?
+ * and tick? are booleans; wasm-size is an integer (0 = unknown).
+ */
+static s7_pointer sp_krudd_subsystems(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer out;
+	int        i;
+
+	(void)args;
+	if (!g_mgr)
+		return s7_f(sc);
+
+	out = s7_nil(sc);
+	for (i = 0; g_mgr->static_table[i].name; i++)
+		out = s7_cons(sc, subsystem_row(sc, &g_mgr->static_table[i]),
+			      out);
+	for (i = 0; i < g_mgr->dynamic_count; i++)
+		out = s7_cons(sc, subsystem_row(sc, &g_mgr->dynamic[i]), out);
+	return s7_reverse(sc, out);
+}
+
+/*
+ * (krudd-log-history) -> a list of (level . text) pairs oldest-first, or #f
+ * when the log subsystem is absent. level is a log_level integer.
+ */
+static s7_pointer sp_krudd_log_history(s7_scheme *sc, s7_pointer args)
+{
+	static struct log_message msgs[LOG_HISTORY_CAP];
+	uint32_t                  count, i;
+	s7_pointer                out;
+
+	(void)args;
+	if (!g_log)
+		return s7_f(sc);
+
+	count = g_log->get_history(msgs, LOG_HISTORY_CAP);
+	out   = s7_nil(sc);
+	for (i = 0; i < count; i++) {
+		uint32_t j = count - 1 - i;
+
+		out = s7_cons(sc,
+			      s7_cons(sc,
+				      s7_make_integer(sc, (s7_int)msgs[j].level),
+				      s7_make_string(sc, msgs[j].text)),
+			      out);
+	}
+	return out;
+}
+
 } /* extern "C" — s7 callbacks */
 
 /*
@@ -209,6 +452,52 @@ static s7_scheme *ensure_panel_scm(void)
 			   "(imgui-text-disabled str) draw a dimmed line of text");
 	s7_define_function(sc, "krudd-stats", sp_krudd_stats, 0, 0, false,
 			   "(krudd-stats) -> (fps frame-ms frame-count) or #f");
+	s7_define_function(sc, "imgui-text-colored", sp_imgui_text_colored,
+			   5, 0, false,
+			   "(imgui-text-colored r g b a str) coloured line");
+	s7_define_function(sc, "imgui-small-button", sp_imgui_small_button,
+			   1, 0, false,
+			   "(imgui-small-button label) -> #t when clicked");
+	s7_define_function(sc, "imgui-same-line", sp_imgui_same_line, 0, 0,
+			   false, "(imgui-same-line) stay on this line");
+	s7_define_function(sc, "imgui-checkbox", sp_imgui_checkbox, 2, 0, false,
+			   "(imgui-checkbox label state) -> new state");
+	s7_define_function(sc, "imgui-separator", sp_imgui_separator, 0, 0,
+			   false, "(imgui-separator) horizontal rule");
+	s7_define_function(sc, "imgui-collapsing-header",
+			   sp_imgui_collapsing_header, 1, 0, false,
+			   "(imgui-collapsing-header label) -> #t when open");
+	s7_define_function(sc, "imgui-begin-table", sp_imgui_begin_table, 2, 0,
+			   false, "(imgui-begin-table id ncols) -> #t if opened");
+	s7_define_function(sc, "imgui-table-setup-column",
+			   sp_imgui_table_setup_column, 1, 0, false,
+			   "(imgui-table-setup-column label) declare a column");
+	s7_define_function(sc, "imgui-table-headers-row",
+			   sp_imgui_table_headers_row, 0, 0, false,
+			   "(imgui-table-headers-row) draw the header row");
+	s7_define_function(sc, "imgui-table-next-row", sp_imgui_table_next_row,
+			   0, 0, false, "(imgui-table-next-row) start a row");
+	s7_define_function(sc, "imgui-table-next-column",
+			   sp_imgui_table_next_column, 0, 0, false,
+			   "(imgui-table-next-column) advance to the next cell");
+	s7_define_function(sc, "imgui-end-table", sp_imgui_end_table, 0, 0,
+			   false, "(imgui-end-table) close the table");
+	s7_define_function(sc, "imgui-begin-child", sp_imgui_begin_child, 3, 0,
+			   false, "(imgui-begin-child id w h) scroll region");
+	s7_define_function(sc, "imgui-end-child", sp_imgui_end_child, 0, 0,
+			   false, "(imgui-end-child) close the scroll region");
+	s7_define_function(sc, "imgui-set-scroll-here-y",
+			   sp_imgui_set_scroll_here_y, 1, 0, false,
+			   "(imgui-set-scroll-here-y ratio) snap the scroll");
+	s7_define_function(sc, "imgui-viewport-work-height",
+			   sp_imgui_viewport_work_height, 0, 0, false,
+			   "(imgui-viewport-work-height) -> usable height px");
+	s7_define_function(sc, "krudd-subsystems", sp_krudd_subsystems, 0, 0,
+			   false,
+			   "(krudd-subsystems) -> rows of (name api? tick? size)");
+	s7_define_function(sc, "krudd-log-history", sp_krudd_log_history, 0, 0,
+			   false,
+			   "(krudd-log-history) -> ((level . text) ...) or #f");
 	script_eval(KRUDDBOARD_SCM);
 	ready = true;
 	return sc;
@@ -263,6 +552,13 @@ static void draw_tab_stats(void)
 
 static void draw_tab_log(void)
 {
+#ifdef __EMSCRIPTEN__
+	/* Ported to Scheme (kruddboard.scm). Fall back only if the image can't
+	 * run at all — an empty panel would read as "no log". */
+	if (call_scm_panel("kruddboard-draw-log"))
+		return;
+	ImGui::TextDisabled("(log unavailable)");
+#else
 	static struct log_message msgs[LOG_HISTORY_CAP];
 	static int   filter     = LOG_LEVEL_DEBUG;
 	static bool  autoscroll = true;
@@ -316,6 +612,7 @@ static void draw_tab_log(void)
 		ImGui::SetScrollHereY(1.0f);
 
 	ImGui::EndChild();
+#endif
 }
 
 /* ------------------------------------------------------------------ */
@@ -324,6 +621,13 @@ static void draw_tab_log(void)
 
 static void draw_tab_subsystems(void)
 {
+#ifdef __EMSCRIPTEN__
+	/* Ported to Scheme (kruddboard.scm). Fall back only if the image can't
+	 * run at all — an empty panel would read as "no subsystems". */
+	if (call_scm_panel("kruddboard-draw-subsystems"))
+		return;
+	ImGui::TextDisabled("(subsystem manager unavailable)");
+#else
 	int i;
 	char size_buf[32];
 
@@ -384,6 +688,7 @@ static void draw_tab_subsystems(void)
 
 		ImGui::EndTable();
 	}
+#endif
 }
 
 /* ------------------------------------------------------------------ */
@@ -1255,6 +1560,13 @@ static void draw_tab_assets(void)
 
 static void draw_tab_krudd(void)
 {
+#ifdef __EMSCRIPTEN__
+	/* The whole tab — the three sections and their headers — is composed in
+	 * Scheme (kruddboard-draw-krudd). Fall back to the C composition below
+	 * only if the image can't run at all. */
+	if (call_scm_panel("kruddboard-draw-krudd"))
+		return;
+#endif
 	if (ImGui::CollapsingHeader("Frame Stats",
 				    ImGuiTreeNodeFlags_DefaultOpen))
 		draw_tab_stats();

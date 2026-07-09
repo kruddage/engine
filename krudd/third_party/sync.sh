@@ -1,12 +1,13 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
-# krudd/third_party/sync.sh — fetch the pinned s7 amalgamation.
+# krudd/third_party/sync.sh — verify (and, if needed, fetch) the pinned s7 amalgamation.
 #
-# s7.c / s7.h are not committed; this downloads them from the pinned commit in
-# s7.artifact and checks the sha256, so every build compiles the same bytes CI
-# does. Idempotent: once a file matches its pinned checksum, no network I/O
-# happens on the next run.
+# s7.c / s7.h are committed at the pin in s7.artifact; this checks their
+# sha256 so every build compiles the same bytes CI does, and re-downloads
+# from the pinned commit if a file is missing or doesn't match (e.g. after
+# bumping the pin). Idempotent: once a file matches its pinned checksum, no
+# network I/O happens on the next run.
 #
 # Sourced (not executed) by krudd.sh and the two run-tests.sh harnesses, each
 # of which compiles s7.c directly, before krudd itself exists to fetch

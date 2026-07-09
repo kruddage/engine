@@ -1,0 +1,49 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+#ifndef BUILTIN_SCRIPTS_H
+#define BUILTIN_SCRIPTS_H
+
+/*
+ * Built-in entity scripts, seeded as read-only ASSET_TYPE_SCRIPT assets (see
+ * asset_plugin.c) and bound to the demo scene (see scene_renderer.c). Each is a
+ * single (script NAME ...) form in the same S7 Scheme the shader DSL uses —
+ * the runtime image's (script ...) macro registers it and the entity-script
+ * driver calls its clauses each frame.
+ *
+ * The scripts are stateless (the design choice for v1): a bound entity's pose
+ * is a pure function of the clock `t` (seconds since boot) and the entity's
+ * authored rest transform. A clause READS the rest pose via entity-base-* and
+ * WRITES the animated render pose via entity-set-*!, so the authored transform
+ * is preserved frame to frame and the animation never drifts.
+ *
+ * Kept here as one shared source of truth so the asset seeder and the native
+ * entity_script oracle test compile the exact same script text.
+ */
+
+/* spinner — spin steadily about the Y axis, one full turn every 4 seconds. */
+#define SPINNER_SCRIPT_SRC                                                    \
+	"(script spinner\n"                                                   \
+	"  (on-begin (self)\n"                                               \
+	"    (krudd-log 1 \"spinner: awake\"))\n"                            \
+	"  (on-tick (self t)\n"                                              \
+	"    (entity-set-euler! self 0 (* t 90) 0)))\n"
+
+/* bounce — hop along Y above the rest position, a rectified sine. */
+#define BOUNCE_SCRIPT_SRC                                                     \
+	"(script bounce\n"                                                    \
+	"  (on-tick (self t)\n"                                              \
+	"    (let ((b (entity-base-position self)))\n"                       \
+	"      (entity-set-position! self\n"                                 \
+	"        (car b)\n"                                                  \
+	"        (+ (cadr b) (abs (* 0.6 (sin (* t 3.0)))))\n"              \
+	"        (caddr b)))))\n"
+
+/* wobble — rock gently on the X and Z axes, like a top losing balance. */
+#define WOBBLE_SCRIPT_SRC                                                     \
+	"(script wobble\n"                                                    \
+	"  (on-tick (self t)\n"                                              \
+	"    (entity-set-euler! self\n"                                      \
+	"      (* 15 (sin (* t 2.0)))\n"                                     \
+	"      0\n"                                                          \
+	"      (* 15 (cos (* t 2.7))))))\n"
+
+#endif /* BUILTIN_SCRIPTS_H */

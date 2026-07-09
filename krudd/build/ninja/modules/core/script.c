@@ -16,6 +16,7 @@
 #include "s7.h"
 
 #include "shader_scm.h"
+#include "entity_script_scm.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -57,6 +58,13 @@ void script_init(void)
 	 * assets to GLSL through it at bind time.
 	 */
 	script_eval(SHADER_SCM);
+	/*
+	 * Load the entity-script dispatcher: the (script ...) form and the
+	 * per-entity tick. The entity plugin registers the entity-* host
+	 * primitives its clauses call; those are only invoked at tick time, so
+	 * loading this image before they exist is fine.
+	 */
+	script_eval(ENTITY_SCRIPT_SCM);
 }
 
 s7_scheme *script_s7(void)

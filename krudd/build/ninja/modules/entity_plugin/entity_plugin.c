@@ -1,9 +1,11 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "world.h"
 #include "entity_api.h"
+#include "entity_script.h"
 #include "scene.h"
 #include "scene_edit.h"
 #include "edit_api.h"
+#include "asset_api.h"
 #include "asset_codec_api.h"
 #include "memory_api.h"
 #include "stats_api.h"
@@ -19,9 +21,13 @@
  */
 static struct world                  g_world;
 static const struct asset_codec_api *g_codec;
+static const struct asset_api       *g_asset;  /* NULL = script source unavailable */
 static const struct memory_api      *g_mem;
 static const struct stats_api       *g_stats;
-static const struct edit_api        *g_edit;  /* NULL = undo unavailable */
+static const struct edit_api        *g_edit;   /* NULL = undo unavailable */
+
+/* Seconds since the scene subsystem started, the clock entity scripts read. */
+static float                         g_clock;
 
 /* True when id names a live entity — the precondition for a recordable edit. */
 static int32_t entity_is_live(int32_t id)
@@ -149,6 +155,18 @@ static void scene_set_material_ref(int32_t id, uint32_t material_ref)
 	}
 }
 
+static void scene_set_script_ref(int32_t id, uint32_t script_ref)
+{
+	int32_t                live   = entity_is_live(id);
+	struct world_snapshot *before = live ? edit_before() : NULL;
+
+	world_set_script_ref(&g_world, id, script_ref);
+	if (live) {
+		scene_edit_record(g_edit, g_mem, &g_world, before, "Bind Script",
+				  scene_edit_key(id, SCENE_EDIT_SCRIPT));
+	}
+}
+
 static int32_t scene_get_selected(void)
 {
 	return world_get_selected(&g_world);
@@ -168,6 +186,7 @@ static const struct entity_api g_entity_api = {
 	.set_name       = scene_set_name,
 	.set_render_ref = scene_set_render_ref,
 	.set_material_ref = scene_set_material_ref,
+	.set_script_ref = scene_set_script_ref,
 	.get_selected   = scene_get_selected,
 	.set_selected   = scene_set_selected,
 };
@@ -181,6 +200,9 @@ static const struct entity_api g_entity_api = {
 static void scene_init(void)
 {
 	world_reset(&g_world);
+	g_clock = 0.0f;
+	/* Register the entity-* primitives so bound scripts can drive entities. */
+	entity_script_init();
 }
 
 static void scene_tick(void)
@@ -189,6 +211,16 @@ static void scene_tick(void)
 	float dt = g_stats ? g_stats->last_frame_ms : 0.0f;
 
 	world_tick(&g_world, dt);
+
+	/*
+	 * Run scripts after propagation: world_tick has just refilled
+	 * world_xform from the authored transforms, so a script reads its rest
+	 * pose (local) and overwrites this frame's render pose (world_xform)
+	 * without ever touching the authored data. The clock is seconds, so
+	 * time-based animation reads naturally (the stats delta is milliseconds).
+	 */
+	g_clock += dt / 1000.0f;
+	entity_script_tick(&g_world, g_asset, g_clock);
 }
 
 static void scene_shutdown(void)
@@ -208,6 +240,7 @@ void entity_plugin_entry(struct subsystem_manager *mgr)
 {
 	/* Resolve service vtables before register(), which calls init at once. */
 	g_codec = subsystem_manager_get_api(mgr, "asset_codec");
+	g_asset = subsystem_manager_get_api(mgr, "asset");
 	g_mem   = subsystem_manager_get_api(mgr, "memory");
 	g_stats = subsystem_manager_get_api(mgr, "stats");
 	g_edit  = subsystem_manager_get_api(mgr, "edit");

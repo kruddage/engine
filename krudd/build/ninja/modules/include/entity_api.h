@@ -54,6 +54,14 @@ struct entity_api {
 	 * rather than the mesh it draws.
 	 */
 	void    (*set_material_ref)(int32_t id, uint32_t material_ref);
+	/*
+	 * Bind id to a behavior script by asset id (sets COMPONENT_SCRIPT); a
+	 * zero script_ref unbinds, clearing COMPONENT_SCRIPT. Mirrors
+	 * set_render_ref / set_material_ref, but for the .kscm script asset that
+	 * drives the entity each tick (move, scale, rotate) rather than the mesh
+	 * it draws or the material that tints it.
+	 */
+	void    (*set_script_ref)(int32_t id, uint32_t script_ref);
 
 	/* Shared selection: -1 = none. set ignores stale/out-of-range ids. */
 	int32_t (*get_selected)(void);

@@ -42,6 +42,7 @@ extern "C" {
 #include "md_draw.h"
 #include "s7.h"			/* self-guards for C++ linkage */
 #include "kruddboard_scm.h"	/* KRUDDBOARD_SCM — the panel image */
+#include "assets_scm.h"		/* ASSETS_SCM — the Assets-tab panel image */
 
 /*
  * Soft-keyboard toggle (plugin_abi.c, main module — see imgui_plugin.cpp
@@ -68,7 +69,6 @@ static bool                            g_touch_device;
 static bool                            g_kbd_shown;
 #endif
 static int                             g_panels_registered;
-static uint32_t                        g_asset_sel; /* 0 = none */
 static const struct entity_api        *g_entity_api;
 static int32_t                         g_entity_sel = -1; /* -1 = none */
 static const struct edit_api          *g_edit_api;  /* NULL = no history */
@@ -953,6 +953,555 @@ static s7_pointer sp_krudd_set_gizmo_mode(s7_scheme *sc, s7_pointer args)
 	return s7_unspecified(sc);
 }
 
+/* ------------------------------------------------------------------ */
+/* Assets-tab primitives (#402)                                        */
+/* ------------------------------------------------------------------ */
+
+/* Buffer cap for the multiline text-edit and asset-data primitives below;
+ * matches the pre-port g_edit static buffer size. */
+#define ASSETS_EDIT_MAX (64 * 1024)
+
+/*
+ * Shader authoring metadata.  A krudd shader is a single DSL source that
+ * embeds every stage it defines (see shader.scm) — there is no per-asset
+ * stage or dialect to pick, so the editor has nothing to ask for beyond a
+ * name; the source itself is the only thing to author.
+ */
+#define SHADER_FORMAT "krudd-shader"
+
+/*
+ * Report the stage blocks SRC defines, the same way the built-in shaders
+ * advertise theirs via describe() — a comma-joined "vertex, fragment" list
+ * in declaration order.  Used both to display the (derived, read-only)
+ * declaration and to publish it back on Save.
+ */
+static const char *shader_stages_from_source(const char *src)
+{
+	static char buf[32];
+	int         has_vertex   = src && strstr(src, "(vertex")   != NULL;
+	int         has_fragment = src && strstr(src, "(fragment") != NULL;
+
+	if (has_vertex && has_fragment)
+		snprintf(buf, sizeof(buf), "vertex, fragment");
+	else if (has_vertex)
+		snprintf(buf, sizeof(buf), "vertex");
+	else if (has_fragment)
+		snprintf(buf, sizeof(buf), "fragment");
+	else
+		buf[0] = '\0';
+	return buf;
+}
+
+/*
+ * Try to transpile every stage SRC declares. A declared stage that fails to
+ * transpile — or no declared stage at all — means the shader can't bind, so
+ * treat it as a compile failure rather than committing broken source.
+ */
+static bool shader_compiles(const char *src)
+{
+	int has_vertex   = src && strstr(src, "(vertex")   != NULL;
+	int has_fragment = src && strstr(src, "(fragment") != NULL;
+
+	if (!has_vertex && !has_fragment)
+		return false;
+	if (has_vertex && !script_shader_transpile(src, "vertex"))
+		return false;
+	if (has_fragment && !script_shader_transpile(src, "fragment"))
+		return false;
+	return true;
+}
+
+/*
+ * The engine's built-in scene shader — always present, read-only — used to
+ * seed new shader assets so they start from working source instead of blank.
+ */
+static const char *default_shader_src(void)
+{
+	uint32_t          n, i;
+	struct asset_info info;
+
+	if (!g_asset_api)
+		return "";
+	n = g_asset_api->count();
+	for (i = 0; i < n; i++) {
+		if (g_asset_api->info(i, &info) != 0 || !info.read_only ||
+		    info.type != ASSET_TYPE_SHADER)
+			continue;
+		if (strcmp(info.path, "builtin://shader/scene") == 0) {
+			const void *data = g_asset_api->get_data(info.id, NULL);
+			return data ? (const char *)data : "";
+		}
+	}
+	return "";
+}
+
+/*
+ * Persist an authored asset's current bytes through the backend, if the
+ * backend is present and capable — the same "write it live even without
+ * persistence" fallback every Assets save button used pre-port (#390).
+ * Looks the path up fresh via find() so every mutation primitive below can
+ * share this instead of threading an asset_info through each call.
+ */
+static void maybe_persist_asset(uint32_t id, int32_t type, const void *bytes,
+				uint32_t size)
+{
+	struct asset_info info;
+
+	if (!g_backend || !(g_backend->get_caps() & BACKEND_CAP_PROJECT_PERSIST))
+		return;
+	if (!g_asset_api || g_asset_api->find(id, &info) != 0)
+		return;
+	g_backend->persist_asset(id, info.path, type, bytes, size);
+}
+
+/* (imgui-button label) -> #t when clicked this frame, else #f. */
+static s7_pointer sp_imgui_button(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer label = s7_car(args);
+	bool       hit   = false;
+
+	if (s7_is_string(label))
+		hit = ImGui::Button(s7_string(label));
+	return s7_make_boolean(sc, hit);
+}
+
+/*
+ * (imgui-input-text-enter id text) -> (text . entered?). Like imgui-input-
+ * text, but entered? is #t the instant Enter is pressed inside the field
+ * (ImGuiInputTextFlags_EnterReturnsTrue) rather than on focus loss — the New
+ * Asset name field and the shader clone-name field both confirm on Enter.
+ */
+static s7_pointer sp_imgui_input_text_enter(s7_scheme *sc, s7_pointer args)
+{
+	static char buf[256];
+	s7_pointer  id      = s7_car(args);
+	s7_pointer  text    = s7_cadr(args);
+	bool        entered = false;
+
+	buf[0] = '\0';
+	if (s7_is_string(text)) {
+		strncpy(buf, s7_string(text), sizeof(buf) - 1);
+		buf[sizeof(buf) - 1] = '\0';
+	}
+	if (s7_is_string(id))
+		entered = ImGui::InputText(s7_string(id), buf, sizeof(buf),
+					   ImGuiInputTextFlags_EnterReturnsTrue);
+	return s7_cons(sc, s7_make_string(sc, buf), s7_make_boolean(sc, entered));
+}
+
+/*
+ * (imgui-input-text-multiline id text h readonly?) -> (text . changed?).
+ * changed? is #t on any edit this frame (InputTextMultiline's own return),
+ * not just on commit — the markdown/shader source boxes reparse or redraw
+ * live as the source changes, unlike the single-line name field.
+ */
+static s7_pointer sp_imgui_input_text_multiline(s7_scheme *sc, s7_pointer args)
+{
+	static char buf[ASSETS_EDIT_MAX];
+	s7_pointer  p        = args;
+	s7_pointer  id       = s7_car(p); p = s7_cdr(p);
+	s7_pointer  text     = s7_car(p); p = s7_cdr(p);
+	float       h        = (float)s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	bool        readonly = s7_boolean(sc, s7_car(p));
+	bool        changed  = false;
+
+	buf[0] = '\0';
+	if (s7_is_string(text)) {
+		strncpy(buf, s7_string(text), sizeof(buf) - 1);
+		buf[sizeof(buf) - 1] = '\0';
+	}
+	if (s7_is_string(id))
+		changed = ImGui::InputTextMultiline(
+			s7_string(id), buf, sizeof(buf), ImVec2(-1.0f, h),
+			readonly ? ImGuiInputTextFlags_ReadOnly
+				 : ImGuiInputTextFlags_None);
+	return s7_cons(sc, s7_make_string(sc, buf), s7_make_boolean(sc, changed));
+}
+
+/*
+ * (imgui-combo id items current) -> the (possibly new) selected index. items
+ * is a list of label strings; the New Asset type picker is the only caller,
+ * capped at 8 entries (it uses 3).
+ */
+static s7_pointer sp_imgui_combo(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer  id    = s7_car(args);
+	s7_pointer  items = s7_cadr(args);
+	int         cur   = (int)s7_integer(s7_caddr(args));
+	const char *labels[8];
+	int         n     = 0;
+	s7_pointer  p;
+
+	for (p = items; s7_is_pair(p) && n < 8; p = s7_cdr(p))
+		labels[n++] = s7_string(s7_car(p));
+	if (s7_is_string(id))
+		ImGui::Combo(s7_string(id), &cur, labels, n);
+	return s7_make_integer(sc, cur);
+}
+
+/* (imgui-color-edit4 id rgba) -> (rgba . changed?). */
+static s7_pointer sp_imgui_color_edit4(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer id      = s7_car(args);
+	float      v[4];
+	bool       changed = false;
+
+	read_reals(sc, s7_cadr(args), v, 4);
+	if (s7_is_string(id))
+		changed = ImGui::ColorEdit4(s7_string(id), v);
+	return s7_cons(sc, real_list(sc, v, 4), s7_make_boolean(sc, changed));
+}
+
+/*
+ * (imgui-mesh-drag-source id label) -> unspecified. A mesh asset row is a
+ * drag source the whole frame it's drawn; the payload is the raw asset id,
+ * which draw_spawn_drop_target's viewport-wide target reads back to spawn
+ * an entity bound to that mesh (#176). id must fit a uint32_t.
+ */
+static s7_pointer sp_imgui_mesh_drag_source(s7_scheme *sc, s7_pointer args)
+{
+	uint32_t   id    = (uint32_t)s7_integer(s7_car(args));
+	s7_pointer label = s7_cadr(args);
+
+	if (s7_is_string(label) &&
+	    ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
+		ImGui::SetDragDropPayload("ASSET_ID", &id, sizeof(id));
+		ImGui::Text("Spawn %s", s7_string(label));
+		ImGui::EndDragDropSource();
+	}
+	return s7_unspecified(sc);
+}
+
+/* One (id path type kind state size refs) row for the asset browser. */
+static s7_pointer asset_row(s7_scheme *sc, const struct asset_info *info)
+{
+	return s7_list(sc, 7,
+		s7_make_integer(sc, (s7_int)info->id),
+		s7_make_string(sc, info->path),
+		s7_make_integer(sc, info->type),
+		s7_make_integer(sc, info->kind),
+		s7_make_integer(sc, info->state),
+		s7_make_integer(sc, (s7_int)info->size),
+		s7_make_integer(sc, info->refs));
+}
+
+/*
+ * (krudd-assets) -> (builtin-rows project-rows), each a list of (id path
+ * type kind state size refs) rows in catalog order, or #f when the asset
+ * api is absent. Split by read_only here so the browser table's two labeled
+ * groups need no filtering in Scheme.
+ */
+static s7_pointer sp_krudd_assets(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer builtin = s7_nil(sc);
+	s7_pointer project = s7_nil(sc);
+	uint32_t   n, i;
+
+	(void)args;
+	if (!g_asset_api)
+		return s7_f(sc);
+	n = g_asset_api->count();
+	for (i = 0; i < n; i++) {
+		struct asset_info info;
+
+		if (g_asset_api->info(i, &info) != 0)
+			continue;
+		if (info.read_only)
+			builtin = s7_cons(sc, asset_row(sc, &info), builtin);
+		else
+			project = s7_cons(sc, asset_row(sc, &info), project);
+	}
+	return s7_list(sc, 2, s7_reverse(sc, builtin), s7_reverse(sc, project));
+}
+
+/* (krudd-asset-mut?) -> #t when the mutation api is present (editor build). */
+static s7_pointer sp_krudd_asset_mut(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	return s7_make_boolean(sc, g_asset_mut != NULL);
+}
+
+/*
+ * (krudd-asset-info id) -> (path type kind state size refs read-only?
+ * origin), or #f when id is unknown.
+ */
+static s7_pointer sp_krudd_asset_info(s7_scheme *sc, s7_pointer args)
+{
+	uint32_t          id = (uint32_t)s7_integer(s7_car(args));
+	struct asset_info info;
+
+	if (!g_asset_api || g_asset_api->find(id, &info) != 0)
+		return s7_f(sc);
+	return s7_list(sc, 8,
+		s7_make_string(sc, info.path),
+		s7_make_integer(sc, info.type),
+		s7_make_integer(sc, info.kind),
+		s7_make_integer(sc, info.state),
+		s7_make_integer(sc, (s7_int)info.size),
+		s7_make_integer(sc, info.refs),
+		s7_make_boolean(sc, info.read_only),
+		s7_make_integer(sc, info.origin));
+}
+
+/*
+ * (krudd-asset-describe id) -> ((key . value) ...), the declaration fields
+ * describe() reports for id, or '() when id is unknown or has none. describe
+ * is index-addressed, so this scans the catalog once to find id's index.
+ */
+static s7_pointer sp_krudd_asset_describe(s7_scheme *sc, s7_pointer args)
+{
+	uint32_t                 id = (uint32_t)s7_integer(s7_car(args));
+	struct asset_decl_field  fields[16];
+	struct asset_info        tmp;
+	s7_pointer               out = s7_nil(sc);
+	uint32_t                 n, i, idx, nf;
+
+	if (!g_asset_api)
+		return out;
+	n   = g_asset_api->count();
+	idx = n;
+	for (i = 0; i < n; i++) {
+		if (g_asset_api->info(i, &tmp) == 0 && tmp.id == id) {
+			idx = i;
+			break;
+		}
+	}
+	if (idx >= n)
+		return out;
+	nf = g_asset_api->describe(idx, fields, 16);
+	for (i = nf; i > 0; i--)
+		out = s7_cons(sc,
+			s7_cons(sc, s7_make_string(sc, fields[i - 1].key),
+				s7_make_string(sc, fields[i - 1].value)),
+			out);
+	return out;
+}
+
+/*
+ * (krudd-asset-data id) -> the asset's bytes as a string, clamped to
+ * ASSETS_EDIT_MAX - 1 and NUL-terminated; "" when id is unknown or has no
+ * data. Used to (re)load the text/shader source edit buffer on selection.
+ */
+static s7_pointer sp_krudd_asset_data(s7_scheme *sc, s7_pointer args)
+{
+	static char buf[ASSETS_EDIT_MAX];
+	uint32_t    id = (uint32_t)s7_integer(s7_car(args));
+	const void *src;
+	uint32_t    sz = 0;
+
+	buf[0] = '\0';
+	if (g_asset_api && g_asset_api->get_data &&
+	    (src = g_asset_api->get_data(id, &sz)) != NULL) {
+		if (sz >= (uint32_t)ASSETS_EDIT_MAX)
+			sz = (uint32_t)ASSETS_EDIT_MAX - 1;
+		memcpy(buf, src, (size_t)sz);
+		buf[sz] = '\0';
+	}
+	return s7_make_string(sc, buf);
+}
+
+/*
+ * (krudd-asset-color id) -> (r g b a), the material's base_color; white when
+ * id has no data yet (pre-Save) — the renderer's own resolve_material_color
+ * default.
+ */
+static s7_pointer sp_krudd_asset_color(s7_scheme *sc, s7_pointer args)
+{
+	uint32_t    id     = (uint32_t)s7_integer(s7_car(args));
+	float       v[4]   = { 1.0f, 1.0f, 1.0f, 1.0f };
+	const void *src;
+	uint32_t    sz = 0;
+
+	if (g_asset_api && g_asset_api->get_data &&
+	    (src = g_asset_api->get_data(id, &sz)) != NULL &&
+	    sz >= sizeof(v))
+		memcpy(v, src, sizeof(v));
+	return real_list(sc, v, 4);
+}
+
+/* (krudd-shader-stages src) -> the declared stage list, or "" if none. */
+static s7_pointer sp_krudd_shader_stages(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer src = s7_car(args);
+
+	return s7_make_string(sc,
+		shader_stages_from_source(s7_is_string(src) ? s7_string(src) : ""));
+}
+
+/* (krudd-asset-save-text id text) -> unspecified. Writes live and persists. */
+static s7_pointer sp_krudd_asset_save_text(s7_scheme *sc, s7_pointer args)
+{
+	uint32_t    id  = (uint32_t)s7_integer(s7_car(args));
+	const char *txt = s7_is_string(s7_cadr(args)) ? s7_string(s7_cadr(args)) : "";
+	uint32_t    len = (uint32_t)strlen(txt);
+
+	if (g_asset_mut)
+		g_asset_mut->set_data(id, txt, len);
+	maybe_persist_asset(id, ASSET_TYPE_TEXT, txt, len);
+	return s7_unspecified(sc);
+}
+
+/*
+ * (krudd-asset-save-shader id text) -> #t on a successful compile+save, #f
+ * on a failed compile (nothing is committed, so a broken edit never reaches
+ * the live asset). Preserves the shader-transpile validation gate #390 added.
+ */
+static s7_pointer sp_krudd_asset_save_shader(s7_scheme *sc, s7_pointer args)
+{
+	uint32_t                 id  = (uint32_t)s7_integer(s7_car(args));
+	const char               *txt = s7_is_string(s7_cadr(args))
+		? s7_string(s7_cadr(args)) : "";
+	uint32_t                 len = (uint32_t)strlen(txt);
+	struct asset_decl_field  decl[2];
+
+	if (!shader_compiles(txt))
+		return s7_f(sc);
+
+	decl[0].key   = "format";
+	decl[0].value = SHADER_FORMAT;
+	decl[1].key   = "stages";
+	decl[1].value = shader_stages_from_source(txt);
+
+	if (g_asset_mut) {
+		g_asset_mut->set_data(id, txt, len);
+		if (g_asset_mut->set_decl)
+			g_asset_mut->set_decl(id, decl, 2);
+	}
+	maybe_persist_asset(id, ASSET_TYPE_SHADER, txt, len);
+	return s7_t(sc);
+}
+
+/* (krudd-asset-save-material id r g b a) -> unspecified. */
+static s7_pointer sp_krudd_asset_save_material(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer p  = args;
+	uint32_t   id = (uint32_t)s7_integer(s7_car(p)); p = s7_cdr(p);
+	float      v[4];
+
+	read_reals(sc, p, v, 4);
+	if (g_asset_mut)
+		g_asset_mut->set_data(id, v, (uint32_t)sizeof(v));
+	maybe_persist_asset(id, ASSET_TYPE_MATERIAL, v, (uint32_t)sizeof(v));
+	return s7_unspecified(sc);
+}
+
+/* (krudd-asset-delete id) -> unspecified. Works for any authored type. */
+static s7_pointer sp_krudd_asset_delete(s7_scheme *sc, s7_pointer args)
+{
+	uint32_t id = (uint32_t)s7_integer(s7_car(args));
+
+	if (g_asset_mut)
+		g_asset_mut->destroy(id);
+	if (g_backend && (g_backend->get_caps() & BACKEND_CAP_PROJECT_PERSIST))
+		g_backend->delete_asset(id);
+	return s7_unspecified(sc);
+}
+
+/* (krudd-asset-create-text path) -> the new id, or 0 on failure. */
+static s7_pointer sp_krudd_asset_create_text(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer  path = s7_car(args);
+	const char *p    = s7_is_string(path) ? s7_string(path) : "";
+	uint32_t    nid  = 0;
+
+	if (g_asset_mut)
+		nid = g_asset_mut->create(p, ASSET_TYPE_TEXT, "", 0);
+	if (nid != 0)
+		maybe_persist_asset(nid, ASSET_TYPE_TEXT, "", 0);
+	return s7_make_integer(sc, (s7_int)nid);
+}
+
+/*
+ * (krudd-asset-create-shader path) -> the new id, or 0 on failure. Seeds
+ * from the built-in scene shader so authoring starts from working source;
+ * no declaration is set yet, matching the pre-port New Asset flow — the
+ * first successful Save publishes it.
+ */
+static s7_pointer sp_krudd_asset_create_shader(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer  path = s7_car(args);
+	const char *p    = s7_is_string(path) ? s7_string(path) : "";
+	const char *seed = default_shader_src();
+	uint32_t    len  = (uint32_t)strlen(seed);
+	uint32_t    nid  = 0;
+
+	if (g_asset_mut)
+		nid = g_asset_mut->create(p, ASSET_TYPE_SHADER, seed, len);
+	if (nid != 0)
+		maybe_persist_asset(nid, ASSET_TYPE_SHADER, seed, len);
+	return s7_make_integer(sc, (s7_int)nid);
+}
+
+/* (krudd-asset-create-material path) -> the new id, or 0 on failure. White. */
+static s7_pointer sp_krudd_asset_create_material(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer          path = s7_car(args);
+	const char         *p    = s7_is_string(path) ? s7_string(path) : "";
+	static const float  white[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+	uint32_t             nid  = 0;
+
+	if (g_asset_mut)
+		nid = g_asset_mut->create(p, ASSET_TYPE_MATERIAL, white,
+					  (uint32_t)sizeof(white));
+	if (nid != 0)
+		maybe_persist_asset(nid, ASSET_TYPE_MATERIAL, white,
+				    (uint32_t)sizeof(white));
+	return s7_make_integer(sc, (s7_int)nid);
+}
+
+/*
+ * (krudd-asset-clone-shader name text) -> the new id, or 0 on failure (e.g.
+ * a duplicate path) — the built-in shader "Clone" flow's whole commit:
+ * create, publish the derived declaration, persist.
+ */
+static s7_pointer sp_krudd_asset_clone_shader(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer               name = s7_car(args);
+	s7_pointer               text = s7_cadr(args);
+	const char              *nm   = s7_is_string(name) ? s7_string(name) : "";
+	const char              *txt  = s7_is_string(text) ? s7_string(text) : "";
+	uint32_t                 len  = (uint32_t)strlen(txt);
+	uint32_t                 nid  = 0;
+	struct asset_decl_field  decl[2];
+
+	if (g_asset_mut)
+		nid = g_asset_mut->create(nm, ASSET_TYPE_SHADER, txt, len);
+	if (nid == 0)
+		return s7_make_integer(sc, 0);
+
+	decl[0].key   = "format";
+	decl[0].value = SHADER_FORMAT;
+	decl[1].key   = "stages";
+	decl[1].value = shader_stages_from_source(txt);
+	if (g_asset_mut->set_decl)
+		g_asset_mut->set_decl(nid, decl, 2);
+	maybe_persist_asset(nid, ASSET_TYPE_SHADER, txt, len);
+	return s7_make_integer(sc, (s7_int)nid);
+}
+
+/*
+ * (krudd-md-preview text h) -> unspecified. Parses text fresh every call
+ * (cheap relative to a 16ms frame budget) and draws it in a bordered,
+ * horizontally-scrolling child of height h — folding md_parse.h's block
+ * array entirely behind this primitive rather than marshalling md_block/
+ * md_span structs into Scheme data no caller needs to see.
+ */
+static s7_pointer sp_krudd_md_preview(s7_scheme *sc, s7_pointer args)
+{
+	static struct md_block blocks[MD_BLOCKS_MAX];
+	s7_pointer              text = s7_car(args);
+	float                   h    = (float)s7_number_to_real(sc, s7_cadr(args));
+	const char             *src  = s7_is_string(text) ? s7_string(text) : "";
+	int32_t                 n;
+
+	n = md_parse(src, blocks, MD_BLOCKS_MAX);
+	ImGui::BeginChild("##mdpreview", ImVec2(0.0f, h), true,
+			  ImGuiWindowFlags_HorizontalScrollbar);
+	md_draw_blocks(blocks, n);
+	ImGui::EndChild();
+	return s7_unspecified(sc);
+}
+
 } /* extern "C" — s7 callbacks */
 
 /*
@@ -1106,7 +1655,61 @@ static s7_scheme *ensure_panel_scm(void)
 			   false, "(krudd-gizmo-mode) -> 0 move 1 rotate 2 scale");
 	s7_define_function(sc, "krudd-set-gizmo-mode", sp_krudd_set_gizmo_mode,
 			   1, 0, false, "(krudd-set-gizmo-mode m) set the tool");
+	s7_define_function(sc, "imgui-button", sp_imgui_button, 1, 0, false,
+			   "(imgui-button label) -> #t when clicked");
+	s7_define_function(sc, "imgui-input-text-enter",
+			   sp_imgui_input_text_enter, 2, 0, false,
+			   "(imgui-input-text-enter id text) -> (text . entered?)");
+	s7_define_function(sc, "imgui-input-text-multiline",
+			   sp_imgui_input_text_multiline, 4, 0, false,
+			   "(imgui-input-text-multiline id text h ro?) -> (text . changed?)");
+	s7_define_function(sc, "imgui-combo", sp_imgui_combo, 3, 0, false,
+			   "(imgui-combo id items current) -> new index");
+	s7_define_function(sc, "imgui-color-edit4", sp_imgui_color_edit4, 2, 0,
+			   false, "(imgui-color-edit4 id rgba) -> (rgba . changed?)");
+	s7_define_function(sc, "imgui-mesh-drag-source",
+			   sp_imgui_mesh_drag_source, 2, 0, false,
+			   "(imgui-mesh-drag-source id label) drag-to-spawn source");
+	s7_define_function(sc, "krudd-assets", sp_krudd_assets, 0, 0, false,
+			   "(krudd-assets) -> (builtin-rows project-rows) or #f");
+	s7_define_function(sc, "krudd-asset-mut?", sp_krudd_asset_mut, 0, 0,
+			   false, "(krudd-asset-mut?) -> #t when mutation is available");
+	s7_define_function(sc, "krudd-asset-info", sp_krudd_asset_info, 1, 0,
+			   false, "(krudd-asset-info id) -> info tuple or #f");
+	s7_define_function(sc, "krudd-asset-describe", sp_krudd_asset_describe,
+			   1, 0, false, "(krudd-asset-describe id) -> ((key . value) ...)");
+	s7_define_function(sc, "krudd-asset-data", sp_krudd_asset_data, 1, 0,
+			   false, "(krudd-asset-data id) -> bytes as a string");
+	s7_define_function(sc, "krudd-asset-color", sp_krudd_asset_color, 1, 0,
+			   false, "(krudd-asset-color id) -> (r g b a)");
+	s7_define_function(sc, "krudd-shader-stages", sp_krudd_shader_stages, 1,
+			   0, false, "(krudd-shader-stages src) -> stage list string");
+	s7_define_function(sc, "krudd-asset-save-text", sp_krudd_asset_save_text,
+			   2, 0, false, "(krudd-asset-save-text id text)");
+	s7_define_function(sc, "krudd-asset-save-shader",
+			   sp_krudd_asset_save_shader, 2, 0, false,
+			   "(krudd-asset-save-shader id text) -> compiled-ok?");
+	s7_define_function(sc, "krudd-asset-save-material",
+			   sp_krudd_asset_save_material, 5, 0, false,
+			   "(krudd-asset-save-material id r g b a)");
+	s7_define_function(sc, "krudd-asset-delete", sp_krudd_asset_delete, 1,
+			   0, false, "(krudd-asset-delete id)");
+	s7_define_function(sc, "krudd-asset-create-text",
+			   sp_krudd_asset_create_text, 1, 0, false,
+			   "(krudd-asset-create-text path) -> new id or 0");
+	s7_define_function(sc, "krudd-asset-create-shader",
+			   sp_krudd_asset_create_shader, 1, 0, false,
+			   "(krudd-asset-create-shader path) -> new id or 0");
+	s7_define_function(sc, "krudd-asset-create-material",
+			   sp_krudd_asset_create_material, 1, 0, false,
+			   "(krudd-asset-create-material path) -> new id or 0");
+	s7_define_function(sc, "krudd-asset-clone-shader",
+			   sp_krudd_asset_clone_shader, 2, 0, false,
+			   "(krudd-asset-clone-shader name text) -> new id or 0");
+	s7_define_function(sc, "krudd-md-preview", sp_krudd_md_preview, 2, 0,
+			   false, "(krudd-md-preview text h) scrolling preview child");
 	script_eval(KRUDDBOARD_SCM);
+	script_eval(ASSETS_SCM);
 	ready = true;
 	return sc;
 }
@@ -1303,6 +1906,17 @@ static void draw_tab_subsystems(void)
 /* Tab: Assets                                                         */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Pre-port native fallback for the whole Assets tab (#402).  This library
+ * only ever builds wasm-only (see build.scm), so __EMSCRIPTEN__ is always
+ * defined in the one configuration that actually compiles; everything in
+ * this #ifndef block is dead code kept for the same reason draw_tab_world's
+ * native fallback was (#401) — a hypothetical native ImGui build would fall
+ * through to this instead of the Scheme-driven browser path below.
+ */
+#ifndef __EMSCRIPTEN__
+static uint32_t g_asset_sel; /* 0 = none */
+
 static const char *asset_state_str(int32_t s)
 {
 	switch (s) {
@@ -1333,87 +1947,10 @@ static const char *asset_type_str(int32_t t)
 	}
 }
 
-#ifdef __EMSCRIPTEN__
-/*
- * Shader authoring metadata.  A krudd shader is a single DSL source that
- * embeds every stage it defines (see shader.scm) — there is no per-asset
- * stage or dialect to pick, so the editor has nothing to ask for beyond a
- * name; the source itself is the only thing to author.
- */
-#define SHADER_FORMAT "krudd-shader"
-
-/*
- * Report the stage blocks SRC defines, the same way the built-in shaders
- * advertise theirs via describe() — a comma-joined "vertex, fragment" list
- * in declaration order.  Used both to display the (derived, read-only)
- * declaration and to publish it back on Save.
- */
-static const char *shader_stages_from_source(const char *src)
-{
-	static char buf[32];
-	int         has_vertex   = src && strstr(src, "(vertex")   != NULL;
-	int         has_fragment = src && strstr(src, "(fragment") != NULL;
-
-	if (has_vertex && has_fragment)
-		snprintf(buf, sizeof(buf), "vertex, fragment");
-	else if (has_vertex)
-		snprintf(buf, sizeof(buf), "vertex");
-	else if (has_fragment)
-		snprintf(buf, sizeof(buf), "fragment");
-	else
-		buf[0] = '\0';
-	return buf;
-}
-
-/*
- * Try to transpile every stage SRC declares. A declared stage that fails to
- * transpile — or no declared stage at all — means the shader can't bind, so
- * treat it as a compile failure rather than committing broken source.
- */
-static bool shader_compiles(const char *src)
-{
-	int has_vertex   = src && strstr(src, "(vertex")   != NULL;
-	int has_fragment = src && strstr(src, "(fragment") != NULL;
-
-	if (!has_vertex && !has_fragment)
-		return false;
-	if (has_vertex && !script_shader_transpile(src, "vertex"))
-		return false;
-	if (has_fragment && !script_shader_transpile(src, "fragment"))
-		return false;
-	return true;
-}
-
-/*
- * The engine's built-in scene shader — always present, read-only — used to
- * seed new shader assets so they start from working source instead of blank.
- */
-static const char *default_shader_src(void)
-{
-	uint32_t          n, i;
-	struct asset_info info;
-
-	if (!g_asset_api)
-		return "";
-	n = g_asset_api->count();
-	for (i = 0; i < n; i++) {
-		if (g_asset_api->info(i, &info) != 0 || !info.read_only ||
-		    info.type != ASSET_TYPE_SHADER)
-			continue;
-		if (strcmp(info.path, "builtin://shader/scene") == 0) {
-			const void *data = g_asset_api->get_data(info.id, NULL);
-			return data ? (const char *)data : "";
-		}
-	}
-	return "";
-}
-#endif /* __EMSCRIPTEN__ */
-
 /*
  * Markdown editor state.  Tracks which asset is loaded into the edit
  * buffer so we only reload on selection change, not every frame.
  */
-#ifdef __EMSCRIPTEN__
 #define EDIT_BUF_MAX (64 * 1024)
 static char     g_edit[EDIT_BUF_MAX];
 static uint32_t g_edit_id; /* id whose bytes are in g_edit; 0 = none */
@@ -1475,8 +2012,6 @@ static void maybe_reload_edit(uint32_t id)
 	g_edit[sz] = '\0';
 	g_nblocks  = md_parse(g_edit, g_blocks, MD_BLOCKS_MAX);
 }
-
-#endif /* __EMSCRIPTEN__ */
 
 static void draw_asset_inspector(uint32_t id)
 {
@@ -1921,7 +2456,7 @@ static void draw_asset_inspector(uint32_t id)
 	ImGui::EndTable();
 }
 
-static void draw_tab_assets(void)
+static void draw_tab_assets_native(void)
 {
 	uint32_t          n;
 	uint32_t          i;
@@ -2160,6 +2695,20 @@ static void draw_tab_assets(void)
 	}
 
 	ImGui::EndTable();
+}
+#endif /* !__EMSCRIPTEN__ — native Assets-tab fallback (#402) */
+
+static void draw_tab_assets(void)
+{
+#ifdef __EMSCRIPTEN__
+	/* Ported to Scheme (tabs/Assets.scm). Fall back only if the image
+	 * can't run at all — an empty panel would read as "no assets". */
+	if (call_scm_panel("kruddboard-draw-assets"))
+		return;
+	ImGui::TextDisabled("(assets unavailable)");
+#else
+	draw_tab_assets_native();
+#endif
 }
 
 /* ------------------------------------------------------------------ */

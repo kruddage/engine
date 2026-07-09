@@ -311,6 +311,9 @@
 		(krudd-embed-file
 		  (string-append srcroot "/modules/kruddboard/kruddboard.scm")
 		  (string-append gen "/kruddboard_scm.h") "KRUDDBOARD_SCM")
+		(krudd-embed-file
+		  (string-append srcroot "/modules/kruddboard/tabs/Assets.scm")
+		  (string-append gen "/assets_scm.h") "ASSETS_SCM")
 		(krudd-embed-scheme-module
 		  mdscm
 		  (string-append gen "/md_parse.h")

@@ -171,26 +171,7 @@ static const char *builtin_paths[] = {
  * renderer lowers the DSL to GLSL ES 3.00 at bind time (see script.h's
  * shader_transpile).  describe()'s decl-fields below advertise the source
  * format and which stages are present.
- */
-static const char *TRIANGLE_SHADER_SRC =
-	"(shader triangle\n"
-	"  (inputs\n"
-	"    (a_pos   vec3 (location 0))\n"
-	"    (a_color vec3 (location 1)))\n"
-	"  (uniforms\n"
-	"    (Globals (block 0) (layout std140)\n"
-	"      (u_tint vec4)))\n"
-	"  (varyings\n"
-	"    (v_color vec3))\n"
-	"  (targets\n"
-	"    (frag_color vec4 (location 0)))\n"
-	"  (vertex\n"
-	"    (set v_color (* a_color (swizzle u_tint rgb)))\n"
-	"    (set position (vec4 a_pos 1.0)))\n"
-	"  (fragment\n"
-	"    (set frag_color (vec4 v_color 1.0))))\n";
-
-/*
+ *
  * Scene shader: the entity-driven pipeline the scene renderer (#172) binds.
  * Consumes the mesh_vertex layout (position/normal/uv0), a std140 Camera
  * block carrying view_proj and per-draw model, and a std140 Material block
@@ -351,7 +332,6 @@ static void seed_builtins(void)
 		e->type      = ASSET_TYPE_MESH;
 	}
 
-	seed_shader("builtin://shader/triangle", TRIANGLE_SHADER_SRC);
 	seed_shader("builtin://shader/scene", SCENE_SHADER_SRC);
 
 	seed_material("builtin://material/default", DEFAULT_MATERIAL_COLOR);
@@ -697,11 +677,6 @@ static const struct asset_decl_field pyramid_decl[] = {
  * renderer lowers the DSL to whatever its backend speaks; a WebGPU/WGSL backend
  * slots in without the asset — or this metadata — changing.
  */
-static const struct asset_decl_field triangle_shader_decl[] = {
-	{ "format", "krudd-shader"     },
-	{ "stages", "vertex, fragment" },
-};
-
 static const struct asset_decl_field scene_shader_decl[] = {
 	{ "format", "krudd-shader"     },
 	{ "stages", "vertex, fragment" },
@@ -750,8 +725,6 @@ static const struct builtin_desc builtin_descs[] = {
 	{ "builtin://sphere",  sphere_decl,  ARRAY_SIZE(sphere_decl)  },
 	{ "builtin://plane",   plane_decl,   ARRAY_SIZE(plane_decl)   },
 	{ "builtin://pyramid", pyramid_decl, ARRAY_SIZE(pyramid_decl) },
-	{ "builtin://shader/triangle", triangle_shader_decl,
-	  ARRAY_SIZE(triangle_shader_decl) },
 	{ "builtin://shader/scene", scene_shader_decl,
 	  ARRAY_SIZE(scene_shader_decl) },
 	{ "builtin://material/default", default_material_decl,

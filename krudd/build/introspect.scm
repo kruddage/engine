@@ -52,6 +52,10 @@
 	(let ((h (krudd-git "rev-parse --short HEAD")))
 		(if (> (string-length h) 0) h "unknown")))
 
+(define (krudd-build-date)
+	(let ((d (krudd-strip (system "date -u +%Y-%m-%d" #t))))
+		(if (> (string-length d) 0) d "unknown")))
+
 (define (krudd-fetch-dir name)
 	(string-append (krudd-repo-root) "/build/_deps/" name))
 
@@ -79,7 +83,8 @@
 		      (cons "PROJECT_VERSION_MINOR" (list-ref parts 1))
 		      (cons "PROJECT_VERSION_PATCH" (list-ref parts 2))
 		      (cons "PROJECT_VERSION_CHORE" (list-ref parts 3))
-		      (cons "GIT_COMMIT_HASH" (krudd-commit-hash)))))
+		      (cons "GIT_COMMIT_HASH" (krudd-commit-hash))
+		      (cons "BUILD_DATE" (krudd-build-date)))))
 
 (define (krudd-replace s old new)
 	(let ((ol (string-length old)))

@@ -50,6 +50,11 @@ export KRUDD_NINJA_OUT="$work/build.ninja"
 # for by modules/math/math_test.c in the native stage below.
 "$s7bin" "$root/krudd/build/modules/math_test.scm"
 
+# Stage 1c: the shader DSL oracle — run shader.scm's transpiler in s7 and check
+# the GLSL it lowers the built-in shaders to, the same transpiler embedded into
+# the runtime image and exercised natively by modules/core/shader_transpile_test.c.
+"$s7bin" "$root/krudd/build/modules/shader_test.scm"
+
 # Stage 2: build + run the native suite through the generated build.ninja.
 if command -v ninja >/dev/null 2>&1; then
 	echo "krudd/build/ninja: building native suite via ninja"

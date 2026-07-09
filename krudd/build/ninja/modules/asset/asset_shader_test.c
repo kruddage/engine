@@ -8,8 +8,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#define VERT_PATH "builtin://shader/triangle.vert"
-#define FRAG_PATH "builtin://shader/triangle.frag"
+#define TRIANGLE_PATH "builtin://shader/triangle"
+#define SCENE_PATH    "builtin://shader/scene"
 
 /* Locate a built-in by path; return its catalog index, or -1 if absent. */
 static int32_t index_of(const char *path)
@@ -45,10 +45,11 @@ static const char *decl_value(uint32_t i, const char *key)
 
 /*
  * A built-in shader asset must exist, be a loaded read-only primitive of type
- * SHADER, deliver NUL-terminated GLSL source through get_data(), and carry the
- * expected dialect/stage metadata via describe().
+ * SHADER, deliver its NUL-terminated DSL source through get_data() (one asset
+ * holding every stage — no .vert/.frag split), and advertise the DSL format
+ * plus the stages it defines via describe().
  */
-static void check_shader(const char *path, const char *stage)
+static void check_shader(const char *path)
 {
 	struct asset_info info;
 	const char       *src;
@@ -65,20 +66,24 @@ static void check_shader(const char *path, const char *stage)
 	assert(info.state     == ASSET_LOADED);
 	assert(info.id        != 0);
 
-	/* Raw source round-trips through the asset system, NUL-terminated. */
+	/* The stored source is the DSL, NUL-terminated — what the editor shows. */
 	size = 0;
 	src  = asset_catalog_get_data(info.id, &size);
 	assert(src != NULL);
 	assert(size > 0);
 	assert(src[size - 1] == '\0');
 	assert(strlen(src) + 1 == size);
-	assert(strstr(src, "#version 300 es") == src);
+	assert(strstr(src, "(shader") == src);
+	assert(strstr(src, "(vertex") != NULL);
+	assert(strstr(src, "(fragment") != NULL);
+	assert(strstr(src, "#version") == NULL);
 
-	/* Dialect + stage metadata rides on the asset. */
-	assert(decl_value((uint32_t)idx, "dialect") != NULL);
-	assert(strcmp(decl_value((uint32_t)idx, "dialect"), "glsl_es_300") == 0);
-	assert(decl_value((uint32_t)idx, "stage") != NULL);
-	assert(strcmp(decl_value((uint32_t)idx, "stage"), stage) == 0);
+	/* Source format + present stages ride on the asset. */
+	assert(decl_value((uint32_t)idx, "format") != NULL);
+	assert(strcmp(decl_value((uint32_t)idx, "format"), "krudd-shader") == 0);
+	assert(decl_value((uint32_t)idx, "stages") != NULL);
+	assert(strcmp(decl_value((uint32_t)idx, "stages"),
+		      "vertex, fragment") == 0);
 }
 
 /*
@@ -106,62 +111,52 @@ static void check_authored_roundtrip(void)
 }
 
 /*
- * Authored shader declarations: with no explicit decl, describe() synthesizes
- * stage from the file extension and a default dialect; set_decl overrides it;
- * and it is rejected on read-only assets, on over-capacity counts, and cleared
- * by n == 0 (which falls back to the synthesized values).
+ * Authored shader declarations: an authored shader carries no decl until one
+ * is set (there is no path-derived stage anymore — stages live inside the DSL);
+ * set_decl publishes editor metadata; n == 0 clears it; and it is rejected on
+ * read-only built-ins, over-capacity counts, and null fields.
  */
 static void check_authored_decl(void)
 {
-	struct asset_decl_field one[1];
+	struct asset_decl_field fields[2];
 	struct asset_decl_field two[2];
 	struct asset_info       info;
-	uint32_t                frag;
-	uint32_t                vert;
+	uint32_t                sh;
 	int32_t                 idx;
 
-	/* No explicit decl: stage derives from the extension. */
-	frag = asset_mut_create("project://shader/ripple.frag",
-				ASSET_TYPE_SHADER, "", 0);
-	vert = asset_mut_create("project://shader/wave.vert",
-				ASSET_TYPE_SHADER, "", 0);
-	assert(frag != 0 && vert != 0);
-
-	idx = index_of("project://shader/ripple.frag");
+	/* No explicit decl: describe() reports nothing for an authored shader. */
+	sh = asset_mut_create("project://shader/ripple", ASSET_TYPE_SHADER,
+			      "", 0);
+	assert(sh != 0);
+	idx = index_of("project://shader/ripple");
 	assert(idx >= 0);
-	assert(strcmp(decl_value((uint32_t)idx, "dialect"), "glsl_es_300") == 0);
-	assert(strcmp(decl_value((uint32_t)idx, "stage"), "fragment") == 0);
+	assert(asset_catalog_describe((uint32_t)idx, fields, 2) == 0);
 
-	idx = index_of("project://shader/wave.vert");
-	assert(idx >= 0);
-	assert(strcmp(decl_value((uint32_t)idx, "stage"), "vertex") == 0);
+	/* set_decl publishes editor-set metadata. */
+	two[0].key = "format"; two[0].value = "krudd-shader";
+	two[1].key = "stages"; two[1].value = "fragment";
+	assert(asset_mut_set_decl(sh, two, 2) == 0);
+	idx = index_of("project://shader/ripple");
+	assert(strcmp(decl_value((uint32_t)idx, "stages"), "fragment") == 0);
 
-	/* set_decl overrides the synthesized values. */
-	two[0].key = "dialect"; two[0].value = "glsl_es_300";
-	two[1].key = "stage";   two[1].value = "vertex";
-	assert(asset_mut_set_decl(frag, two, 2) == 0);
-	idx = index_of("project://shader/ripple.frag");
-	assert(strcmp(decl_value((uint32_t)idx, "stage"), "vertex") == 0);
-
-	/* n == 0 clears the decl; describe() falls back to the extension. */
-	assert(asset_mut_set_decl(frag, NULL, 0) == 0);
-	idx = index_of("project://shader/ripple.frag");
-	assert(strcmp(decl_value((uint32_t)idx, "stage"), "fragment") == 0);
+	/* n == 0 clears the decl; describe() reports nothing again. */
+	assert(asset_mut_set_decl(sh, NULL, 0) == 0);
+	idx = index_of("project://shader/ripple");
+	assert(asset_catalog_describe((uint32_t)idx, fields, 2) == 0);
 
 	/* An over-capacity count is rejected (max is small and internal). */
-	assert(asset_mut_set_decl(frag, one, 1000) == -1);
+	assert(asset_mut_set_decl(sh, two, 1000) == -1);
 
 	/* null fields with n > 0 is rejected. */
-	assert(asset_mut_set_decl(frag, NULL, 1) == -1);
+	assert(asset_mut_set_decl(sh, NULL, 1) == -1);
 
 	/* set_decl on a read-only built-in is rejected. */
 	assert(asset_catalog_info(0, &info) == 0);
 	assert(info.read_only == 1);
-	one[0].key = "stage"; one[0].value = "vertex";
-	assert(asset_mut_set_decl(info.id, one, 1) == -1);
+	two[0].key = "stages"; two[0].value = "vertex";
+	assert(asset_mut_set_decl(info.id, two, 1) == -1);
 
-	assert(asset_mut_destroy(frag) == 0);
-	assert(asset_mut_destroy(vert) == 0);
+	assert(asset_mut_destroy(sh) == 0);
 }
 
 int main(void)
@@ -171,8 +166,8 @@ int main(void)
 
 	asset_init();
 
-	check_shader(VERT_PATH, "vertex");
-	check_shader(FRAG_PATH, "fragment");
+	check_shader(TRIANGLE_PATH);
+	check_shader(SCENE_PATH);
 	check_authored_roundtrip();
 	check_authored_decl();
 

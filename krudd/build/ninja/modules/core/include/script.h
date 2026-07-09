@@ -31,6 +31,15 @@ struct s7_scheme *script_s7(void);
 /* Evaluate a Scheme source string. Returns 0 on success, -1 if not started. */
 int script_eval(const char *src);
 
+/*
+ * Transpile a krudd shader DSL to GLSL for one stage ("vertex"/"fragment").
+ * SRC is the (shader ...) source; the result is GLSL ES 3.00 text valid until
+ * the next call (a rotating internal buffer), or NULL when the interpreter is
+ * down, the shader has no such stage, or the source is too large. The renderer
+ * calls this when it binds a shader; a NULL for a stage it needs is the error.
+ */
+const char *script_shader_transpile(const char *src, const char *stage);
+
 /* Call the Scheme (tick) procedure if the image defines one. */
 void script_tick(void);
 

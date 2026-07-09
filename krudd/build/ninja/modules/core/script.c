@@ -15,7 +15,10 @@
 
 #include "s7.h"
 
+#include "shader_scm.h"
+
 #include <stddef.h>
+#include <string.h>
 
 static s7_scheme *g_s7;
 
@@ -48,6 +51,12 @@ void script_init(void)
 	}
 	s7_define_function(g_s7, "krudd-log", sp_krudd_log, 2, 0, false,
 			   "(krudd-log level text) write text to the engine log");
+	/*
+	 * Load the shader DSL transpiler into the image so shader-transpile is
+	 * defined wherever the interpreter is up — the runtime lowers shader
+	 * assets to GLSL through it at bind time.
+	 */
+	script_eval(SHADER_SCM);
 }
 
 s7_scheme *script_s7(void)
@@ -74,6 +83,41 @@ int script_eval(const char *src)
 		s7_eval(g_s7, form, s7_nil(g_s7));
 	s7_close_input_port(g_s7, port);
 	return 0;
+}
+
+/*
+ * Call the image's (shader-transpile SRC STAGE). The Scheme returns a GLSL
+ * string or #f (no such stage); copy the string into one of two rotating
+ * buffers so a caller can hold a vertex and a fragment result at once, and
+ * return NULL for #f, a down interpreter, or an oversized result.
+ */
+const char *script_shader_transpile(const char *src, const char *stage)
+{
+	static char g_glsl[2][16384];
+	static int  slot;
+	s7_pointer  fn, res;
+	const char *out;
+	size_t      n;
+	char       *buf;
+
+	if (!g_s7 || !src || !stage)
+		return NULL;
+	fn = s7_name_to_value(g_s7, "shader-transpile");
+	if (!s7_is_procedure(fn))
+		return NULL;
+	res = s7_call(g_s7, fn,
+		      s7_list(g_s7, 2, s7_make_string(g_s7, src),
+			      s7_make_string(g_s7, stage)));
+	if (!s7_is_string(res))
+		return NULL;
+	out = s7_string(res);
+	n   = strlen(out);
+	buf = g_glsl[slot];
+	if (n + 1 > sizeof(g_glsl[0]))
+		return NULL;
+	memcpy(buf, out, n + 1);
+	slot = (slot + 1) & 1;
+	return buf;
 }
 
 void script_tick(void)

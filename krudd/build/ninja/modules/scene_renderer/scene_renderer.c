@@ -148,18 +148,20 @@ static struct mesh_gpu *find_mesh(uint32_t render_ref)
 	return NULL;
 }
 
-/* Compile the entity pipeline from the seeded scene shaders. */
+/* Compile the entity pipeline from the seeded scene shader. */
 static void build_pipeline(const struct gpu_api *gpu)
 {
 	struct gpu_pipeline_desc pd;
-	const char              *vsrc;
-	const char              *fsrc;
+	const char              *src;
 
-	vsrc = shader_src_by_path("builtin://shader/scene.vert");
-	fsrc = shader_src_by_path("builtin://shader/scene.frag");
-	if (!vsrc || !fsrc) {
+	/*
+	 * One shader asset holds both stages as DSL source; the backend lowers
+	 * each stage to GLSL at pipeline-create and errors if a stage is absent.
+	 */
+	src = shader_src_by_path("builtin://shader/scene");
+	if (!src) {
 		g_log->write(LOG_LEVEL_WARN,
-			     "scene_renderer: scene shader assets unavailable");
+			     "scene_renderer: scene shader asset unavailable");
 		return;
 	}
 
@@ -182,12 +184,12 @@ static void build_pipeline(const struct gpu_api *gpu)
 		2, (uint32_t)offsetof(struct mesh_vertex, uv0),
 		GPU_FORMAT_RG32_FLOAT };
 
-	pd.vert.src     = vsrc;
+	pd.vert.src     = src;
 	pd.vert.stage   = GPU_SHADER_STAGE_VERTEX;
-	pd.vert.dialect = GPU_SHADER_DIALECT_GLSL_ES_300;
-	pd.frag.src     = fsrc;
+	pd.vert.dialect = GPU_SHADER_DIALECT_KRUDD;
+	pd.frag.src     = src;
 	pd.frag.stage   = GPU_SHADER_STAGE_FRAGMENT;
-	pd.frag.dialect = GPU_SHADER_DIALECT_GLSL_ES_300;
+	pd.frag.dialect = GPU_SHADER_DIALECT_KRUDD;
 
 	g_pso = gpu->pipeline_create(&pd);
 }

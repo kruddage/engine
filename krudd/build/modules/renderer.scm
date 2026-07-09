@@ -77,8 +77,12 @@
 	(gpu-shader-stage-vertex 0)
 	gpu-shader-stage-fragment)
 
+;;! The source language of a gpu-shader-source. glsl-es-300 is handed to the
+;;! GL backend as-is; krudd is the shader DSL, which the backend lowers to its
+;;! own target (GLSL today, WGSL/MSL later) at pipeline-create.
 (c-enum gpu-shader-dialect
-	(gpu-shader-dialect-glsl-es-300 0))
+	(gpu-shader-dialect-glsl-es-300 0)
+	gpu-shader-dialect-krudd)
 
 (c-struct gpu-shader-source
 	(src     (ptr (const char)))

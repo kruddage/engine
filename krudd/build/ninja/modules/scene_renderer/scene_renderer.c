@@ -264,6 +264,7 @@ static void seed_demo_scene(void)
 	};
 	const struct world *w;
 	uint32_t            i;
+	uint32_t            material;
 
 	if (!g_scene || !g_scene->create_entity)
 		return;
@@ -275,8 +276,19 @@ static void seed_demo_scene(void)
 			return; /* scene already has renderables */
 	}
 
+	/*
+	 * Every seeded entity carries the built-in default material, so the
+	 * world scene never rests in the "no material" state — each renderable
+	 * points at a real, inspectable material rather than leaning on the
+	 * renderer's implicit white fallback (which still covers an entity that
+	 * is later unbound). The default is opaque white, so the seeded scene
+	 * looks identical to before.
+	 */
+	material = asset_id_by_path("builtin://material/default");
+
 	for (i = 0; i < (uint32_t)(sizeof(DEMO) / sizeof(DEMO[0])); i++) {
 		struct transform t;
+		int32_t          id;
 		uint32_t         ref = asset_id_by_path(DEMO[i].path);
 
 		if (!ref)
@@ -287,7 +299,9 @@ static void seed_demo_scene(void)
 		t.position[2] = DEMO[i].pos[2];
 		t.rotation[3] = 1.0f;
 		t.scale[0] = t.scale[1] = t.scale[2] = 1.0f;
-		g_scene->create_entity(WORLD_NO_PARENT, &t, 0u, ref);
+		id = g_scene->create_entity(WORLD_NO_PARENT, &t, 0u, ref);
+		if (id >= 0 && material && g_scene->set_material_ref)
+			g_scene->set_material_ref(id, material);
 	}
 }
 

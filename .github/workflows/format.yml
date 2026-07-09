@@ -1,0 +1,90 @@
+name: Format janitor
+
+# Periodic housekeeping, deliberately NOT run per-PR. On a schedule it
+# reformats the C sources with clang-format and opens (or refreshes) a single
+# `chore: automated formatting` PR carrying the diff, so mechanical churn lands
+# in one reviewable place instead of scattered across every contributor's PR.
+# Style issues clang-format can't fix (naming, typedefs, comment style) are
+# reported in the PR body for a human to handle, not applied.
+#
+# The check it runs (clang-format today) is the piece the kruddmake/Scheme
+# tooling is expected to replace later — see the Roadmap in README.md. This
+# workflow is the schedule-and-open-a-PR shell around whatever formatter exists.
+
+on:
+  schedule:
+    # 06:00 UTC every Monday. Change the cadence here — it is the only knob.
+    - cron: "0 6 * * 1"
+  # Lets a maintainer kick a run by hand from the Actions tab.
+  workflow_dispatch:
+
+# One janitor run at a time; a manual dispatch supersedes an in-flight one.
+concurrency:
+  group: format-janitor
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  janitor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install clang-format and checkpatch
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format
+          curl -fsSL \
+            https://raw.githubusercontent.com/torvalds/linux/master/scripts/checkpatch.pl \
+            -o /tmp/checkpatch.pl
+          chmod +x /tmp/checkpatch.pl
+
+      # Reformat every tracked C source except the vendored S7 interpreter.
+      - name: Reformat C with clang-format
+        run: |
+          git ls-files '*.c' '*.h' \
+            | grep -v '^krudd/third_party/' \
+            | xargs --no-run-if-empty clang-format -i
+
+      # Build the PR body: an intro plus the report of issues clang-format
+      # cannot fix. Mirror it into the run summary so the findings are visible
+      # in the Actions tab even when there is no formatting diff to open a PR.
+      - name: Build report
+        run: |
+          {
+            echo "Opened automatically by the **Format janitor** workflow."
+            echo
+            echo "\`clang-format\` reformatted the C sources to the kernel"
+            echo "style defined in \`.clang-format\`. Review the diff and merge"
+            echo "to keep the tree tidy."
+            echo
+            .github/scripts/format-report.sh
+          } | tee /tmp/pr-body.md >> "$GITHUB_STEP_SUMMARY"
+
+      # Opens the PR only when clang-format actually changed something; with no
+      # diff the action is a no-op and no empty PR is created. add-paths keeps
+      # the commit to C sources even though only those are touched.
+      #
+      # token: a personal-access token (JANITOR_PAT secret) is strongly
+      # preferred — a PR opened with the default GITHUB_TOKEN does NOT trigger
+      # the CI / release-label-gate workflows, so its checks would sit empty.
+      # With no PAT set it still opens the PR; you just re-trigger CI by hand.
+      - name: Open or update the janitor PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.JANITOR_PAT || secrets.GITHUB_TOKEN }}
+          branch: chore/format-janitor
+          base: main
+          commit-message: "chore: automated formatting"
+          title: "chore: automated formatting"
+          body-path: /tmp/pr-body.md
+          labels: release:chore
+          delete-branch: true
+          add-paths: |
+            *.c
+            *.h

@@ -101,14 +101,28 @@ engine loop; the test stamps run the suite, so a green build is a green test run
 
 ## CI
 
-| Workflow | What it checks |
-|---|---|
-| **CI** | WASM build via Emscripten; on push to `main`, also publishes to GitHub Pages |
+| Workflow | When | What it does |
+|---|---|---|
+| **CI** | every PR, push to `main` | WASM build via Emscripten; on push to `main`, also publishes to GitHub Pages |
+| **Release label gate** | every PR | requires exactly one `release:*` label so the version can be derived |
+| **Format janitor** | weekly (Mon 06:00 UTC) + manual | reformats C with `clang-format` and opens one `chore: automated formatting` PR; reports the issues it can't auto-fix |
 
-This is intentionally bare-bones: the previous lint/sanitizer/coverage gates, PR previews,
-and changelog/release-label gates were stripped down to this single job to make room for the
-`kruddmake` rewrite (see Roadmap above) — they're expected to return via `kruddmake` rather
-than as separate bolt-on workflows.
+The per-PR checks are intentionally bare-bones: the previous lint/sanitizer/coverage gates
+were stripped down to make room for the `kruddmake` rewrite (see Roadmap above) — they're
+expected to return via `kruddmake` rather than as separate bolt-on workflows.
+
+The **Format janitor** is the exception, and deliberately so. Rather than gate every
+contributor PR on formatting, it runs on a schedule: it applies `clang-format` (kernel style,
+per [`.clang-format`](.clang-format) and [`CODING_STANDARD.md`](CODING_STANDARD.md)) and opens
+a single PR carrying the mechanical diff, so formatting churn stays out of feature PRs and
+lands in one reviewable place. Style issues `clang-format` can't fix — `checkpatch.pl` findings
+and `.scm` comment-lint violations — are listed in that PR's body for a human to handle. The
+formatter is the schedule-and-open-a-PR shell that `kruddmake`'s own tooling is expected to
+plug into later.
+
+> **Note:** set a `JANITOR_PAT` repository secret (a PAT with `contents` + `pull-requests`
+> write) so the janitor's PR triggers CI and the label gate. With the default `GITHUB_TOKEN`
+> the PR still opens, but GitHub won't run those checks on it until you re-trigger them by hand.
 
 ## License
 

@@ -1,0 +1,46 @@
+# Kernel-style formatting for KRUDD's C modules, mirroring CODING_STANDARD.md:
+# 8-column hard tabs, 80-column lines, K&R braces with the function-body brace
+# on its own line, and pointers bound to the name. Based on the Linux kernel's
+# own .clang-format, trimmed to the options this project actually relies on.
+#
+# Applied by the format janitor (.github/workflows/format.yml); the vendored
+# S7 interpreter under krudd/third_party/ is excluded there, not here.
+---
+Language: Cpp
+BasedOnStyle: LLVM
+
+# Indentation — hard tabs, one per level, displayed as 8 columns.
+IndentWidth: 8
+TabWidth: 8
+UseTab: Always
+ContinuationIndentWidth: 8
+IndentCaseLabels: false
+
+# 80-column limit, per the coding standard.
+ColumnLimit: 80
+
+# K&R braces: attached for control flow, on their own line for a function body.
+# The "Linux" preset encodes exactly that distinction.
+BreakBeforeBraces: Linux
+
+# Never fold a branch, loop, or body onto one line — the standard wants the
+# braces and indentation visible even for single statements.
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: None
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Never
+
+# `int *p`, not `int* p`.
+PointerAlignment: Right
+SpaceAfterCStyleCast: false
+SpaceBeforeParens: ControlStatements
+
+AlignAfterOpenBracket: Align
+AlignEscapedNewlines: Left
+MaxEmptyLinesToKeep: 1
+KeepEmptyLinesAtTheStartOfBlocks: false
+
+# Leave include order alone — the standard requires each .c to include its own
+# .h first, which is a semantic rule clang-format must not reshuffle.
+SortIncludes: false

@@ -32,7 +32,7 @@
 
 (define (krudd-version)
 	(let ((v (getenv "KRUDD_VERSION")))
-		(if (and v (> (string-length v) 0)) v "0.0.0.0-dev")))
+		(if (and v (> (string-length v) 0)) v "0.0.0-dev")))
 
 (define (krudd-git args)
 	(krudd-strip
@@ -82,7 +82,6 @@
 		      (cons "PROJECT_VERSION_MAJOR" (list-ref parts 0))
 		      (cons "PROJECT_VERSION_MINOR" (list-ref parts 1))
 		      (cons "PROJECT_VERSION_PATCH" (list-ref parts 2))
-		      (cons "PROJECT_VERSION_CHORE" (list-ref parts 3))
 		      (cons "GIT_COMMIT_HASH" (krudd-commit-hash))
 		      (cons "BUILD_DATE" (krudd-build-date)))))
 

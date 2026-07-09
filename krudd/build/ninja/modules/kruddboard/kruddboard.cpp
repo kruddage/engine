@@ -293,30 +293,34 @@ static const char *asset_type_str(int32_t t)
 
 #ifdef __EMSCRIPTEN__
 /*
- * Shader authoring metadata.  These mirror the decl fields the asset system
- * reports via describe(); index 0 is the default for a freshly created asset.
+ * Shader authoring metadata.  A krudd shader is a single DSL source that
+ * embeds every stage it defines (see shader.scm) — there is no per-asset
+ * stage or dialect to pick, so the editor has nothing to ask for beyond a
+ * name; the source itself is the only thing to author.
  */
-static const char *const SHADER_STAGES[]   = { "fragment", "vertex" };
-static const char *const SHADER_DIALECTS[] = { "glsl_es_300" };
+#define SHADER_FORMAT "krudd-shader"
 
-#define SHADER_STAGE_COUNT \
-	((int)(sizeof(SHADER_STAGES) / sizeof(SHADER_STAGES[0])))
-#define SHADER_DIALECT_COUNT \
-	((int)(sizeof(SHADER_DIALECTS) / sizeof(SHADER_DIALECTS[0])))
-
-static int shader_stage_idx(const char *s)
+/*
+ * Report the stage blocks SRC defines, the same way the built-in shaders
+ * advertise theirs via describe() — a comma-joined "vertex, fragment" list
+ * in declaration order.  Used both to display the (derived, read-only)
+ * declaration and to publish it back on Save.
+ */
+static const char *shader_stages_from_source(const char *src)
 {
-	return (s && strcmp(s, "vertex") == 0) ? 1 : 0;
-}
+	static char buf[32];
+	int         has_vertex   = src && strstr(src, "(vertex")   != NULL;
+	int         has_fragment = src && strstr(src, "(fragment") != NULL;
 
-/* True if path already ends in a recognized shader extension. */
-static int has_shader_ext(const char *s)
-{
-	const char *dot = strrchr(s, '.');
-
-	return dot && (strcmp(dot, ".vert") == 0 ||
-		       strcmp(dot, ".frag") == 0 ||
-		       strcmp(dot, ".glsl") == 0);
+	if (has_vertex && has_fragment)
+		snprintf(buf, sizeof(buf), "vertex, fragment");
+	else if (has_vertex)
+		snprintf(buf, sizeof(buf), "vertex");
+	else if (has_fragment)
+		snprintf(buf, sizeof(buf), "fragment");
+	else
+		buf[0] = '\0';
+	return buf;
 }
 #endif /* __EMSCRIPTEN__ */
 
@@ -358,35 +362,6 @@ static void maybe_reload_edit(uint32_t id)
 	g_nblocks  = md_parse(g_edit, g_blocks, MD_BLOCKS_MAX);
 }
 
-/*
- * Inspector combo state for the selected authored shader.  Loaded from the
- * asset's declaration when the selection changes, then edited in place by the
- * stage/dialect combos and written back on Save via asset_mut.set_decl.
- */
-static uint32_t g_sh_id; /* id whose decl is in the combos; 0 = none */
-static int      g_sh_stage;
-static int      g_sh_dialect;
-
-static void maybe_reload_shader_decl(uint32_t id, uint32_t idx)
-{
-	struct asset_decl_field f[16];
-	uint32_t                n;
-	uint32_t                i;
-
-	if (g_sh_id == id)
-		return;
-	g_sh_id      = id;
-	g_sh_stage   = 0;
-	g_sh_dialect = 0;
-	if (!g_asset_api || !g_asset_api->describe)
-		return;
-	n = g_asset_api->describe(idx, f, 16);
-	for (i = 0; i < n; i++) {
-		if (strcmp(f[i].key, "stage") == 0)
-			g_sh_stage = shader_stage_idx(f[i].value);
-		/* dialect has a single option today; nothing to map. */
-	}
-}
 #endif /* __EMSCRIPTEN__ */
 
 static void draw_asset_inspector(uint32_t id)
@@ -498,46 +473,34 @@ static void draw_asset_inspector(uint32_t id)
 	}
 
 	/*
-	 * Authored shader assets get a plain source editor plus editable
-	 * stage/dialect metadata — no markdown parsing or preview.
+	 * Shader assets — read-only built-ins and authored/project shaders
+	 * alike — get the same screen: a source editor plus its declaration.
+	 * A krudd shader source embeds every stage it defines, so there is no
+	 * per-asset stage/dialect to pick; "Declaration" is a derived, read-
+	 * only summary of what the source contains. The only difference
+	 * between a built-in and an authored shader is whether the source box
+	 * accepts edits and the Save button is live.
 	 */
-	if (info.origin == ASSET_ORIGIN_AUTHORED &&
-	    info.type   == ASSET_TYPE_SHADER) {
-		int      can_persist;
-		size_t   edit_len;
-		uint32_t sh_idx;
-		uint32_t sh_n;
-		uint32_t k;
+	if (info.type == ASSET_TYPE_SHADER) {
+		bool   editable = !info.read_only;
+		int    can_persist;
+		size_t edit_len;
 
-		can_persist = g_backend &&
+		can_persist = editable && g_backend &&
 			(g_backend->get_caps() &
 			 BACKEND_CAP_PROJECT_PERSIST);
 
-		/* Resolve the index describe() is addressed by. */
-		sh_n   = g_asset_api->count();
-		sh_idx = sh_n; /* sentinel: not found */
-		for (k = 0; k < sh_n; k++) {
-			if (g_asset_api->info(k, &tmp) == 0 &&
-			    tmp.id == id) {
-				sh_idx = k;
-				break;
-			}
-		}
-
-		maybe_reload_shader_decl(id, sh_idx);
 		maybe_reload_edit(id);
 
 		ImGui::Separator();
 
-		/* -- Declaration (editable) -- */
+		/* -- Declaration (derived from the source; read-only) -- */
 		if (ImGui::CollapsingHeader("Declaration",
 					    ImGuiTreeNodeFlags_DefaultOpen)) {
-			ImGui::SetNextItemWidth(160.0f);
-			ImGui::Combo("stage", &g_sh_stage, SHADER_STAGES,
-				     SHADER_STAGE_COUNT);
-			ImGui::SetNextItemWidth(160.0f);
-			ImGui::Combo("dialect", &g_sh_dialect, SHADER_DIALECTS,
-				     SHADER_DIALECT_COUNT);
+			const char *stages = shader_stages_from_source(g_edit);
+
+			ImGui::Text("format: %s", SHADER_FORMAT);
+			ImGui::Text("stages: %s", stages[0] ? stages : "(none)");
 		}
 
 		ImGui::Separator();
@@ -547,21 +510,30 @@ static void draw_asset_inspector(uint32_t id)
 					    ImGuiTreeNodeFlags_DefaultOpen)) {
 			ImGui::InputTextMultiline(
 				"##shader", g_edit, (size_t)EDIT_BUF_MAX,
-				ImVec2(-1.0f, 260.0f));
+				ImVec2(-1.0f, 260.0f),
+				editable ? ImGuiInputTextFlags_None
+					 : ImGuiInputTextFlags_ReadOnly);
 		}
 
 		ImGui::Separator();
 
 		/* -- Action buttons -- */
 		edit_len = strlen(g_edit);
-		if (can_persist) {
+		if (!editable) {
+			ImGui::BeginDisabled();
+			ImGui::Button("Save");
+			ImGui::EndDisabled();
+			ImGui::SameLine();
+			ImGui::TextDisabled("read-only");
+		} else if (can_persist) {
 			if (ImGui::Button("Save")) {
 				struct asset_decl_field decl[2];
 
-				decl[0].key   = "dialect";
-				decl[0].value = SHADER_DIALECTS[g_sh_dialect];
-				decl[1].key   = "stage";
-				decl[1].value = SHADER_STAGES[g_sh_stage];
+				decl[0].key   = "format";
+				decl[0].value = SHADER_FORMAT;
+				decl[1].key   = "stages";
+				decl[1].value =
+					shader_stages_from_source(g_edit);
 
 				if (g_asset_mut) {
 					g_asset_mut->set_data(
@@ -585,18 +557,18 @@ static void draw_asset_inspector(uint32_t id)
 				"in-memory only (persistence unavailable)");
 		}
 
-		ImGui::SameLine();
-
-		if (ImGui::Button("Delete")) {
-			if (g_asset_mut)
-				g_asset_mut->destroy(id);
-			if (g_backend && can_persist)
-				g_backend->delete_asset(id);
-			g_edit_id   = 0;
-			g_edit[0]   = '\0';
-			g_nblocks   = 0;
-			g_sh_id     = 0;
-			g_asset_sel = 0;
+		if (editable) {
+			ImGui::SameLine();
+			if (ImGui::Button("Delete")) {
+				if (g_asset_mut)
+					g_asset_mut->destroy(id);
+				if (g_backend && can_persist)
+					g_backend->delete_asset(id);
+				g_edit_id   = 0;
+				g_edit[0]   = '\0';
+				g_nblocks   = 0;
+				g_asset_sel = 0;
+			}
 		}
 
 		return;
@@ -716,15 +688,16 @@ static void draw_tab_assets(void)
 #ifdef __EMSCRIPTEN__
 	/*
 	 * New Asset button — only shown in the list view, not the inspector.
-	 * A small form collects the name, the asset type (Text / Shader), and,
-	 * for shaders, the stage; the stage drives both the decl and a derived
-	 * file extension.
+	 * A small form collects just the name and the asset type (Text /
+	 * Shader); a krudd shader's stages live inside its DSL source, not in
+	 * a per-asset field, so there is nothing else to ask for here — the
+	 * new asset opens straight into the same editor screen used to view
+	 * one, ready for source to be typed in and saved.
 	 */
 	if (g_asset_sel == 0 && g_asset_mut) {
 		static char new_name[256];
-		static int  naming;    /* 1 while the form is visible */
-		static int  new_type;  /* 0 = Text, 1 = Shader */
-		static int  new_stage; /* index into SHADER_STAGES */
+		static int  naming;   /* 1 while the form is visible */
+		static int  new_type; /* 0 = Text, 1 = Shader */
 
 		static const char *const NEW_TYPES[] = { "Text", "Shader" };
 
@@ -733,7 +706,6 @@ static void draw_tab_assets(void)
 				naming      = 1;
 				new_name[0] = '\0';
 				new_type    = 0;
-				new_stage   = 0;
 			}
 		} else {
 			ImGui::SetNextItemWidth(240.0f);
@@ -743,12 +715,6 @@ static void draw_tab_assets(void)
 
 			ImGui::SetNextItemWidth(160.0f);
 			ImGui::Combo("type", &new_type, NEW_TYPES, 2);
-
-			if (new_type == 1) {
-				ImGui::SetNextItemWidth(160.0f);
-				ImGui::Combo("stage", &new_stage,
-					     SHADER_STAGES, SHADER_STAGE_COUNT);
-			}
 
 			confirm |= ImGui::Button("Create");
 			ImGui::SameLine();
@@ -764,30 +730,10 @@ static void draw_tab_assets(void)
 				atype = (new_type == 1) ? ASSET_TYPE_SHADER
 							: ASSET_TYPE_TEXT;
 
-				/* Shaders get a stage-derived extension. */
-				if (atype == ASSET_TYPE_SHADER &&
-				    !has_shader_ext(new_name))
-					snprintf(path, sizeof(path), "%s.%s",
-						 new_name,
-						 new_stage == 1 ? "vert"
-								: "frag");
-				else
-					snprintf(path, sizeof(path), "%s",
-						 new_name);
+				snprintf(path, sizeof(path), "%s", new_name);
 
 				nid = g_asset_mut->create(path, atype, "", 0);
 				if (nid != 0) {
-					if (atype == ASSET_TYPE_SHADER &&
-					    g_asset_mut->set_decl) {
-						struct asset_decl_field d[2];
-
-						d[0].key   = "dialect";
-						d[0].value = "glsl_es_300";
-						d[1].key   = "stage";
-						d[1].value =
-							SHADER_STAGES[new_stage];
-						g_asset_mut->set_decl(nid, d, 2);
-					}
 					can_persist =
 						g_backend &&
 						(g_backend->get_caps() &

@@ -227,6 +227,19 @@ static const char *SCENE_SHADER_SRC =
 	"           (col  (* base (+ 0.35 (* 0.65 diff)))))\n"
 	"      (set frag_color (vec4 (* col (swizzle base_color rgb)) 1.0)))))\n";
 
+/*
+ * Built-in default material — the smallest material there is: a single opaque
+ * white RGBA base_color, which is exactly the multiplicative identity the scene
+ * shader's Material block expects (see SCENE_SHADER_SRC and scene_renderer.c's
+ * resolve_material_color).  This is the material the world scene binds to every
+ * entity by default, so "no material assigned" is never the resting state — an
+ * entity always points at a real, inspectable material rather than relying on
+ * the renderer's implicit white fallback.  It is stored as the same raw 4-float
+ * RGBA an authored material uses, so the renderer and the editor read it with no
+ * special case.
+ */
+static const float DEFAULT_MATERIAL_COLOR[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+
 static int builtins_seeded;
 
 /*
@@ -258,6 +271,34 @@ static void seed_shader(const char *path, const char *src)
 	e->type      = ASSET_TYPE_SHADER;
 }
 
+/*
+ * Seed one built-in material asset from a raw RGBA base_color.  A heap copy of
+ * the 4 floats becomes the asset's bytes — the exact wire form an authored
+ * material stores — so resolve_material_color() and the material editor read it
+ * uniformly and shutdown frees it like any other asset.
+ */
+static void seed_material(const char *path, const float rgba[4])
+{
+	struct asset_entry *e;
+	uint32_t            n;
+
+	e = alloc_entry(path);
+	if (!e)
+		return;
+	n = (uint32_t)(4 * sizeof(float));
+	e->data = g_mem->alloc(n);
+	if (!e->data) {
+		e->state = ASSET_ERROR;
+		return;
+	}
+	memcpy(e->data, rgba, n);
+	e->size      = n;
+	e->state     = ASSET_LOADED;
+	e->kind      = ASSET_KIND_PRIMITIVE;
+	e->read_only = 1;
+	e->type      = ASSET_TYPE_MATERIAL;
+}
+
 static void seed_builtins(void)
 {
 	int32_t            i;
@@ -282,6 +323,8 @@ static void seed_builtins(void)
 
 	seed_shader("builtin://shader/triangle", TRIANGLE_SHADER_SRC);
 	seed_shader("builtin://shader/scene", SCENE_SHADER_SRC);
+
+	seed_material("builtin://material/default", DEFAULT_MATERIAL_COLOR);
 }
 
 #ifdef __EMSCRIPTEN__
@@ -630,6 +673,16 @@ static const struct asset_decl_field scene_shader_decl[] = {
 	{ "stages", "vertex, fragment" },
 };
 
+/*
+ * The built-in default material advertises its single parameter — the opaque
+ * white base_color the scene shader multiplies in — the way the shader
+ * built-ins advertise their format/stages.
+ */
+static const struct asset_decl_field default_material_decl[] = {
+	{ "format",     "krudd-material"      },
+	{ "base_color", "{ 1, 1, 1, 1 }"     },
+};
+
 struct builtin_desc {
 	const char                   *path;
 	const struct asset_decl_field *fields;
@@ -647,6 +700,8 @@ static const struct builtin_desc builtin_descs[] = {
 	  ARRAY_SIZE(triangle_shader_decl) },
 	{ "builtin://shader/scene", scene_shader_decl,
 	  ARRAY_SIZE(scene_shader_decl) },
+	{ "builtin://material/default", default_material_decl,
+	  ARRAY_SIZE(default_material_decl) },
 };
 
 #define BUILTIN_DESC_COUNT ARRAY_SIZE(builtin_descs)

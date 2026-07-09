@@ -31,6 +31,7 @@ int main(void)
 	int32_t           found_sphere = 0;
 	int32_t           found_plane = 0;
 	int32_t           found_pyramid = 0;
+	int32_t           found_default_material = 0;
 	uint32_t          id_a;
 	uint32_t          id_b;
 	uint32_t          id_c;
@@ -58,11 +59,31 @@ int main(void)
 		if (strcmp(info.path, "builtin://sphere")  == 0) found_sphere  = 1;
 		if (strcmp(info.path, "builtin://plane")   == 0) found_plane   = 1;
 		if (strcmp(info.path, "builtin://pyramid") == 0) found_pyramid = 1;
+		if (strcmp(info.path, "builtin://material/default") == 0) {
+			found_default_material = 1;
+			assert(info.type == ASSET_TYPE_MATERIAL);
+		}
 	}
 	assert(found_cube);
 	assert(found_sphere);
 	assert(found_plane);
 	assert(found_pyramid);
+
+	/*
+	 * The built-in default material is a read-only material asset whose bytes
+	 * are the opaque-white base_color the scene binds to every world entity.
+	 */
+	assert(found_default_material);
+	{
+		uint32_t     mat_size = 0;
+		const float *rgba     = (const float *)
+			asset_get("builtin://material/default", &mat_size);
+
+		assert(rgba != NULL);
+		assert(mat_size == 4 * sizeof(float));
+		assert(rgba[0] == 1.0f && rgba[1] == 1.0f &&
+		       rgba[2] == 1.0f && rgba[3] == 1.0f);
+	}
 
 	/* out-of-range index returns -1 */
 	assert(asset_catalog_info(n, &info) == -1);

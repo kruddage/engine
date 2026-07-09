@@ -251,15 +251,30 @@ static s7_pointer sp_imgui_separator(s7_scheme *sc, s7_pointer args)
 /*
  * (imgui-collapsing-header label) -> #t when the section is open. Default-open,
  * matching the C headers that passed ImGuiTreeNodeFlags_DefaultOpen.
+ *
+ * Recolored red (the stock theme's blue Header/HeaderHovered/HeaderActive,
+ * hue-swapped) so a header drawn through this primitive reads as
+ * Scheme-owned at a glance — every native ImGui::CollapsingHeader call
+ * elsewhere in the board stays the default blue. As more of the board is
+ * ported to Scheme, this is the one seam that needs to change for the red
+ * to spread with it.
  */
 static s7_pointer sp_imgui_collapsing_header(s7_scheme *sc, s7_pointer args)
 {
 	s7_pointer label = s7_car(args);
 	bool       open  = false;
 
-	if (s7_is_string(label))
+	if (s7_is_string(label)) {
+		ImGui::PushStyleColor(ImGuiCol_Header,
+				      ImVec4(0.80f, 0.25f, 0.25f, 0.31f));
+		ImGui::PushStyleColor(ImGuiCol_HeaderHovered,
+				      ImVec4(0.80f, 0.25f, 0.25f, 0.80f));
+		ImGui::PushStyleColor(ImGuiCol_HeaderActive,
+				      ImVec4(0.80f, 0.25f, 0.25f, 1.00f));
 		open = ImGui::CollapsingHeader(s7_string(label),
 					      ImGuiTreeNodeFlags_DefaultOpen);
+		ImGui::PopStyleColor(3);
+	}
 	return s7_make_boolean(sc, open);
 }
 
@@ -1563,31 +1578,13 @@ static void draw_tab_krudd(void)
 #ifdef __EMSCRIPTEN__
 	/*
 	 * The whole tab — the three sections and their headers — is composed in
-	 * Scheme (kruddboard-draw-krudd). Fall back to the C composition below
-	 * only if the image can't run at all.
-	 *
-	 * Paint a faint red wash behind whatever renders, so a glance at the
-	 * board tells Scheme-driven content (this tab) apart from the native
-	 * C++ tabs (World, Assets). Drawn after the fact via a draw-list
-	 * channel split — a fixed-size BeginChild would fight the window's
-	 * content-driven auto-sizing (see file header comment).
+	 * Scheme (kruddboard-draw-krudd), whose (imgui-collapsing-header ...)
+	 * calls render red instead of the native blue (see
+	 * sp_imgui_collapsing_header) — that's the tab's Scheme-driven marker.
+	 * Fall back to the C composition below only if the image can't run at
+	 * all.
 	 */
-	ImDrawList *draw_list = ImGui::GetWindowDrawList();
-	ImVec2      p0        = ImGui::GetCursorScreenPos();
-	float       avail_w   = ImGui::GetContentRegionAvail().x;
-	bool        ran;
-
-	draw_list->ChannelsSplit(2);
-	draw_list->ChannelsSetCurrent(1);
-	ran = call_scm_panel("kruddboard-draw-krudd");
-	if (ran) {
-		ImVec2 p1(p0.x + avail_w, ImGui::GetCursorScreenPos().y);
-
-		draw_list->ChannelsSetCurrent(0);
-		draw_list->AddRectFilled(p0, p1, IM_COL32(120, 30, 30, 60));
-	}
-	draw_list->ChannelsMerge();
-	if (ran)
+	if (call_scm_panel("kruddboard-draw-krudd"))
 		return;
 #endif
 	if (ImGui::CollapsingHeader("Frame Stats",

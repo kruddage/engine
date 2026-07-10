@@ -1682,6 +1682,30 @@ static s7_pointer sp_krudd_asset_clone_script(s7_scheme *sc, s7_pointer args)
 }
 
 /*
+ * (krudd-asset-clone-material name r g b a) -> the new id, or 0 on failure
+ * (e.g. a duplicate path) — the built-in material "Clone" flow's whole
+ * commit, mirroring krudd-asset-clone-shader above: create with the
+ * current color, persist.
+ */
+static s7_pointer sp_krudd_asset_clone_material(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer  p    = args;
+	s7_pointer  name = s7_car(p); p = s7_cdr(p);
+	const char *nm   = s7_is_string(name) ? s7_string(name) : "";
+	float       v[4];
+	uint32_t    nid  = 0;
+
+	read_reals(sc, p, v, 4);
+	if (g_asset_mut)
+		nid = g_asset_mut->create(nm, ASSET_TYPE_MATERIAL, v,
+					  (uint32_t)sizeof(v));
+	if (nid != 0)
+		maybe_persist_asset(nid, ASSET_TYPE_MATERIAL, v,
+				     (uint32_t)sizeof(v));
+	return s7_make_integer(sc, (s7_int)nid);
+}
+
+/*
  * (krudd-md-preview text h) -> unspecified. Parses text fresh every call
  * (cheap relative to a 16ms frame budget) and draws it in a bordered,
  * horizontally-scrolling child of height h — folding md_parse.h's block
@@ -1925,6 +1949,9 @@ static s7_scheme *ensure_panel_scm(void)
 	s7_define_function(sc, "krudd-asset-clone-script",
 			   sp_krudd_asset_clone_script, 2, 0, false,
 			   "(krudd-asset-clone-script name text) -> new id or 0");
+	s7_define_function(sc, "krudd-asset-clone-material",
+			   sp_krudd_asset_clone_material, 5, 0, false,
+			   "(krudd-asset-clone-material name r g b a) -> new id or 0");
 	s7_define_function(sc, "krudd-md-preview", sp_krudd_md_preview, 2, 0,
 			   false, "(krudd-md-preview text h) scrolling preview child");
 	script_eval(KRUDDBOARD_SCM);

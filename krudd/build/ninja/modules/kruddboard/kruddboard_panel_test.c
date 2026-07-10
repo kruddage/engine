@@ -1161,6 +1161,24 @@ static s7_pointer st_asset_clone_script(s7_scheme *sc, s7_pointer a)
 	return s7_make_integer(sc, (s7_int)id);
 }
 
+static s7_pointer st_asset_clone_material(s7_scheme *sc, s7_pointer a)
+{
+	s7_pointer  p    = a;
+	const char *name = s7_is_string(s7_car(p)) ? s7_string(s7_car(p)) : "";
+	float       v[4];
+	unsigned    id;
+	int         i;
+
+	p = s7_cdr(p);
+	for (i = 0; i < 4 && s7_is_pair(p); i++) {
+		v[i] = (float)s7_number_to_real(sc, s7_car(p));
+		p    = s7_cdr(p);
+	}
+	rec("clone-material|%s|%.2f,%.2f,%.2f,%.2f", name, v[0], v[1], v[2], v[3]);
+	id = fa_create(name, 3, (const char *)v, (int)sizeof(v), 0, 1);
+	return s7_make_integer(sc, (s7_int)id);
+}
+
 static s7_pointer st_md_preview(s7_scheme *sc, s7_pointer a)
 {
 	const char *txt = s7_is_string(s7_car(a)) ? s7_string(s7_car(a)) : "";
@@ -1331,6 +1349,7 @@ static s7_scheme *setup(void)
 	def(sc, "krudd-asset-save-script", st_asset_save_script, 2);
 	def(sc, "krudd-asset-create-script", st_asset_create_script, 1);
 	def(sc, "krudd-asset-clone-script", st_asset_clone_script, 2);
+	def(sc, "krudd-asset-clone-material", st_asset_clone_material, 5);
 	def(sc, "krudd-md-preview", st_md_preview, 2);
 
 	assert(script_eval(KRUDDBOARD_SCM) == 0);
@@ -2151,19 +2170,43 @@ static void test_assets_material_editor(void)
 	assert(rec_has("save-material|901|"));
 }
 
-/* A read-only material shows a disabled Save and never saves. */
-static void test_assets_material_readonly(void)
+/* A read-only material gets the Clone flow, seeded "<path>_copy", instead
+ * of Save/Delete. */
+static void test_assets_material_clone(void)
 {
 	asset_reset();
 	assets_scheme_reset();
 	g_fa[4].read_only = 1;
 	script_eval("(set! kruddboard-assets-sel 901)");
+	script_eval("(kruddboard-draw-assets)"); /* seed the clone name */
+	g_click = "Clone";
 	rec_reset();
 	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL;
 
-	assert(rec_has("dis-begin|1"));
-	assert(rec_has("disabled|read-only"));
-	assert(!rec_has("save-material|"));
+	assert(rec_has("input-enter|##clonename|red.mat_copy"));
+	assert(rec_has("clone-material|red.mat_copy|"));
+	assert(assets_sel() != 901 && assets_sel() != 0);
+}
+
+/* A duplicate clone name reports the conflict and keeps the built-in
+ * selected instead of navigating to a nonexistent new asset. */
+static void test_assets_material_clone_conflict(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	g_fa[4].read_only = 1;
+	script_eval("(set! kruddboard-assets-sel 901)");
+	script_eval("(kruddboard-draw-assets)");
+	g_create_fail = 1;
+	g_click = "Clone";
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL;
+
+	assert(rec_has("colored|1.00,0.30,0.30,1.00|"
+		       "\"red.mat_copy\" already exists"));
+	assert(assets_sel() == 901);
 }
 
 /* Every other asset type (mesh, texture, font, scene) falls back to the
@@ -2271,7 +2314,8 @@ int main(void)
 	RUN(assets_script_clone_conflict);
 	RUN(assets_create_script);
 	RUN(assets_material_editor);
-	RUN(assets_material_readonly);
+	RUN(assets_material_clone);
+	RUN(assets_material_clone_conflict);
 	RUN(assets_generic_fallback);
 	RUN(assets_inspector_stale);
 	RUN(assets_composition);

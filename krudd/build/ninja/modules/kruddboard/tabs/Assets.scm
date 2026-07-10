@@ -363,6 +363,36 @@
 			    (format #f "\"~A\" already exists"
 				    kruddboard-assets-clone-name))))))
 
+;;! The name field + Clone button for a read-only (built-in) material — the
+;;! old draw_asset_inspector built-in-material branch (new; mirrors the
+;;! shader Clone flow above instead of just disabling Save). path seeds the
+;;! default "<path>_copy" name the first time this built-in is viewed.
+(define (kruddboard-draw-asset-material-clone id path)
+  (unless (= kruddboard-assets-clone-src id)
+    (set! kruddboard-assets-clone-src id)
+    (set! kruddboard-assets-clone-name (string-append path "_copy"))
+    (set! kruddboard-assets-clone-conflict #f))
+  (imgui-set-next-item-width 240.0)
+  (let ((r (imgui-input-text-enter "##clonename" kruddboard-assets-clone-name)))
+    (set! kruddboard-assets-clone-name (car r))
+    (imgui-same-line)
+    (let* ((clone-clicked (imgui-button "Clone"))
+	   (confirm (or (cdr r) clone-clicked)))
+      (when (and confirm (not (string=? kruddboard-assets-clone-name "")))
+	(let ((nid (apply krudd-asset-clone-material
+			  kruddboard-assets-clone-name
+			  kruddboard-assets-color)))
+	  (if (= nid 0)
+	      (set! kruddboard-assets-clone-conflict #t)
+	      (begin
+		(set! kruddboard-assets-clone-conflict #f)
+		(set! kruddboard-assets-sel nid)))))
+      (when kruddboard-assets-clone-conflict
+	(imgui-same-line)
+	(imgui-text-colored 1.0 0.3 0.3 1.0
+			    (format #f "\"~A\" already exists"
+				    kruddboard-assets-clone-name))))))
+
 ;;! Script inspector: derived Declaration (format + live hook list), Source box
 ;;! (editable or not), then either the Save/Delete row or the built-in Clone
 ;;! row — the (script ...) counterpart of kruddboard-draw-asset-shader-editor,
@@ -390,9 +420,10 @@
       (kruddboard-draw-asset-script-clone id path)))
 
 ;;! Material inspector: a color picker (disabled when read-only) plus Save/
-;;! Delete or a disabled Save + "read-only" note — the old draw_asset_
-;;! inspector material branch.
-(define (kruddboard-draw-asset-material-editor id editable)
+;;! Delete, or the built-in Clone row — the old draw_asset_inspector material
+;;! branch, extended to clone built-ins like the shader editor above instead
+;;! of just disabling Save.
+(define (kruddboard-draw-asset-material-editor id path editable)
   (kruddboard-assets-maybe-reload-color id)
   (imgui-separator)
   (when (imgui-collapsing-header "Color")
@@ -401,19 +432,14 @@
       (set! kruddboard-assets-color (car r)))
     (imgui-end-disabled))
   (imgui-separator)
-  (if (not editable)
+  (if editable
       (begin
-	(imgui-begin-disabled #t)
-	(imgui-button "Save")
-	(imgui-end-disabled)
+	(when (imgui-button "Save")
+	  (apply krudd-asset-save-material id kruddboard-assets-color))
 	(imgui-same-line)
-	(imgui-text-disabled "read-only"))
-      (when (imgui-button "Save")
-	(apply krudd-asset-save-material id kruddboard-assets-color)))
-  (when editable
-    (imgui-same-line)
-    (when (imgui-button "Delete")
-      (kruddboard-assets-do-delete id))))
+	(when (imgui-button "Delete")
+	  (kruddboard-assets-do-delete id)))
+      (kruddboard-draw-asset-material-clone id path)))
 
 ;;! Read-only fallback for every asset type without a dedicated editor: the
 ;;! declaration table (from describe()) and the full catalog snapshot — the
@@ -466,7 +492,7 @@
     (cond
      ((and (= origin 1) (= type 7)) (kruddboard-draw-asset-text-editor id))
      ((= type 4) (kruddboard-draw-asset-shader-editor id path (not read-only)))
-     ((= type 3) (kruddboard-draw-asset-material-editor id (not read-only)))
+     ((= type 3) (kruddboard-draw-asset-material-editor id path (not read-only)))
      ((= type 8) (kruddboard-draw-asset-script-editor id path (not read-only)))
      (else (kruddboard-draw-asset-generic id info)))))
 

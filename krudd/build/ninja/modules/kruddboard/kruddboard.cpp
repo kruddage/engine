@@ -749,7 +749,8 @@ static s7_pointer sp_krudd_world_entities(s7_scheme *sc, s7_pointer args)
 /*
  * (krudd-entity-inspect id) -> the inspector bundle for a live entity, else #f:
  *   (name (px py pz) (rx ry rz rw) (sx sy sz) parent
- *    has-name? has-render? has-material? render-ref material-ref)
+ *    has-name? has-render? has-material? render-ref material-ref
+ *    has-script? script-ref)
  * name is a string ("" when unnamed); parent is #f for a root or (pid . pname)
  * where pname is a string or #f; the refs are asset ids (0 = unbound).
  */
@@ -787,7 +788,7 @@ static s7_pointer sp_krudd_entity_inspect(s7_scheme *sc, s7_pointer args)
 				 pn ? s7_make_string(sc, pn) : s7_f(sc));
 	}
 
-	return s7_list(sc, 10,
+	return s7_list(sc, 12,
 		s7_make_string(sc, name ? name : ""),
 		real_list(sc, t->position, 3),
 		real_list(sc, t->rotation, 4),
@@ -799,7 +800,10 @@ static s7_pointer sp_krudd_entity_inspect(s7_scheme *sc, s7_pointer args)
 		s7_make_integer(sc, (s7_int)((w->mask[e] & COMPONENT_RENDER)
 					     ? w->render_ref[e] : 0u)),
 		s7_make_integer(sc, (s7_int)((w->mask[e] & COMPONENT_MATERIAL)
-					     ? w->material_ref[e] : 0u)));
+					     ? w->material_ref[e] : 0u)),
+		s7_make_boolean(sc, (w->mask[e] & COMPONENT_SCRIPT)   != 0),
+		s7_make_integer(sc, (s7_int)((w->mask[e] & COMPONENT_SCRIPT)
+					     ? w->script_ref[e] : 0u)));
 }
 
 /* (id . path) rows for every catalog asset of the given ASSET_TYPE_*. */
@@ -837,6 +841,13 @@ static s7_pointer sp_krudd_material_assets(s7_scheme *sc, s7_pointer args)
 {
 	(void)args;
 	return assets_of_type(sc, ASSET_TYPE_MATERIAL);
+}
+
+/* (krudd-script-assets) -> ((id . path) ...) for the script-binding combo. */
+static s7_pointer sp_krudd_script_assets(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	return assets_of_type(sc, ASSET_TYPE_SCRIPT);
 }
 
 /* (krudd-asset-find ref) -> the asset's path, or #f when ref is 0 / unknown. */
@@ -939,6 +950,17 @@ static s7_pointer sp_krudd_entity_set_material_ref(s7_scheme *sc, s7_pointer arg
 
 	if (g_entity_api && g_entity_api->set_material_ref)
 		g_entity_api->set_material_ref(id, ref);
+	return s7_unspecified(sc);
+}
+
+/* (krudd-entity-set-script-ref id ref) -> unspecified. ref 0 unbinds it. */
+static s7_pointer sp_krudd_entity_set_script_ref(s7_scheme *sc, s7_pointer args)
+{
+	int32_t  id  = (int32_t)s7_integer(s7_car(args));
+	uint32_t ref = (uint32_t)s7_integer(s7_cadr(args));
+
+	if (g_entity_api && g_entity_api->set_script_ref)
+		g_entity_api->set_script_ref(id, ref);
 	return s7_unspecified(sc);
 }
 
@@ -1631,6 +1653,9 @@ static s7_scheme *ensure_panel_scm(void)
 	s7_define_function(sc, "krudd-material-assets", sp_krudd_material_assets,
 			   0, 0, false,
 			   "(krudd-material-assets) -> ((id . path) ...)");
+	s7_define_function(sc, "krudd-script-assets", sp_krudd_script_assets,
+			   0, 0, false,
+			   "(krudd-script-assets) -> ((id . path) ...)");
 	s7_define_function(sc, "krudd-asset-find", sp_krudd_asset_find, 1, 0,
 			   false, "(krudd-asset-find ref) -> path or #f");
 	s7_define_function(sc, "krudd-entity-create", sp_krudd_entity_create, 0,
@@ -1651,6 +1676,9 @@ static s7_scheme *ensure_panel_scm(void)
 	s7_define_function(sc, "krudd-entity-set-material-ref",
 			   sp_krudd_entity_set_material_ref, 2, 0, false,
 			   "(krudd-entity-set-material-ref id ref) bind material");
+	s7_define_function(sc, "krudd-entity-set-script-ref",
+			   sp_krudd_entity_set_script_ref, 2, 0, false,
+			   "(krudd-entity-set-script-ref id ref) bind script");
 	s7_define_function(sc, "imgui-begin-table-plain",
 			   sp_imgui_begin_table_plain, 2, 0, false,
 			   "(imgui-begin-table-plain id ncols) borderless table");

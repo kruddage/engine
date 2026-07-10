@@ -19,39 +19,44 @@
 ;;! The engine's entity-script driver (entity_script.c) calls entity-script-tick
 ;;! once per bound entity per frame, handing it the entity id, the script's
 ;;! source text (the bytes of the bound ASSET_TYPE_SCRIPT), and the clock. The
-;;! source is parsed and registered once per name; results are cached per id.
+;;! source is parsed and registered once per source text; results are cached per
+;;! id.
 
 ;;! Registry and per-entity caches:
-;;!   *entity-scripts*      name -> ((hook . proc) ...)  the registered scripts
-;;!   *entity-script-bound* id   -> (src . hooks)         cached per source text
-;;!   *entity-script-begun* id   -> #t                    set once on-begin runs
+;;!   *entity-scripts*      src -> ((hook . proc) ...)  scripts parsed by source
+;;!   *entity-script-bound* id  -> (src . hooks)        cached per source text
+;;!   *entity-script-begun* id  -> #t                   set once on-begin runs
 (define *entity-scripts*       (make-hash-table))
 (define *entity-script-bound*  (make-hash-table))
 (define *entity-script-begun*  (make-hash-table))
 
-;;! Register a script under its NAME: build an alist mapping each hook symbol to
-;;! a procedure over the clause's parameters. Idempotent — re-registering the
-;;! same name just replaces the entry.
+;;! The (script NAME clause ...) form evaluates to its hook alist — each clause
+;;! becomes a (hook-symbol . procedure) pair over the clause's parameters. NAME
+;;! is kept only as a human-readable label; it is NOT a registry key, so two
+;;! scripts that share a name — a clone and the original it was copied from, say
+;;! — never collide, and an edited clone runs its own hooks rather than silently
+;;! inheriting its name-twin's.
 (define-macro (script name . clauses)
-  `(hash-table-set! *entity-scripts* ',name
-     (list ,@(map (lambda (c)
-                    `(cons ',(car c) (lambda ,(cadr c) ,@(cddr c))))
-                  clauses))))
+  `(list ,@(map (lambda (c)
+                  `(cons ',(car c) (lambda ,(cadr c) ,@(cddr c))))
+                clauses)))
 
 ;;! The procedure a script binds to hook KEY, or #f when it defines no such hook.
 (define (entity-script-clause hooks key)
   (let ((p (assq key hooks)))
     (and p (cdr p))))
 
-;;! Parse (script NAME ...) source text and register it if NAME is new; return
-;;! the name's hook alist. Registration is by name, so many entities sharing a
-;;! script parse it only once.
+;;! Parse (script ...) source text and register it the first time this exact
+;;! source is seen; return its hook alist. Keying on the source text (not the
+;;! form's NAME) means identical sources still parse only once — the shared-
+;;! script fast path — while any change to the text, including a clone the
+;;! author has started editing, resolves to its own fresh hooks.
 (define (entity-script-register-source src)
-  (let* ((form (with-input-from-string src (lambda () (read))))
-         (name (cadr form)))
-    (unless (hash-table-ref *entity-scripts* name)
-      (eval form (rootlet)))
-    (hash-table-ref *entity-scripts* name)))
+  (or (hash-table-ref *entity-scripts* src)
+      (let ((hooks (eval (with-input-from-string src (lambda () (read)))
+                         (rootlet))))
+        (hash-table-set! *entity-scripts* src hooks)
+        hooks)))
 
 ;;! Hooks bound to entity ID, resolving+caching from SRC. A cache hit requires
 ;;! SRC to match what's cached, so rebinding the entity to a different script

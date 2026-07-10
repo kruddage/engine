@@ -62,13 +62,19 @@ static const char *const SHADER_SRC =
 static const char *const SHADER_ALT_SRC =
 	"(shader alt (vertex (set position (vec4 0.0 0.0 0.0 1.0)))"
 	" (fragment (set c (vec4 0.0 0.0 1.0 1.0))))";
-/* A legacy material asset is just its base_color RGBA, raw floats — id 6. */
-static const float MATERIAL_RED[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
-/* A v2 material — base_color followed by the shader-ref it selects — id 8. */
+/*
+ * A v3 material's wire form: a leading shader-ref (asset id) then the shader's
+ * std140 Material block — here one vec4 base_color. Red (id 6) names the scene
+ * shader (id 5); blue (id 8) names shader/alt (id 7).
+ */
 static const struct {
-	float    base_color[4];
 	uint32_t shader_ref;
-} MATERIAL_BLUE = { { 0.0f, 0.0f, 1.0f, 1.0f }, 7u };
+	float    base_color[4];
+} MATERIAL_RED  = { 5u, { 1.0f, 0.0f, 0.0f, 1.0f } };
+static const struct {
+	uint32_t shader_ref;
+	float    base_color[4];
+} MATERIAL_BLUE = { 7u, { 0.0f, 0.0f, 1.0f, 1.0f } };
 
 static uint32_t cat_count(void) { return CAT_COUNT; }
 
@@ -108,7 +114,7 @@ static const void *cat_get_data(uint32_t id, uint32_t *out_size)
 	if (id == 6) {
 		if (out_size)
 			*out_size = (uint32_t)sizeof(MATERIAL_RED);
-		return MATERIAL_RED;
+		return &MATERIAL_RED;
 	}
 	if (id == 7) {
 		if (out_size)

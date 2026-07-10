@@ -2,6 +2,8 @@
 #ifndef SCRIPT_H
 #define SCRIPT_H
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -39,6 +41,35 @@ int script_eval(const char *src);
  * calls this when it binds a shader; a NULL for a stage it needs is the error.
  */
 const char *script_shader_transpile(const char *src, const char *stage);
+
+/*
+ * One editable parameter of a shader's Material uniform block, as reported by
+ * script_shader_material_params. `components` is how many floats the editor
+ * exposes (float=1 .. vec4=4; 0 for a type it does not edit as scalars, e.g. a
+ * matrix). `edit` is the field's authored hint: "none", "color", or "range"
+ * (with edit_min/edit_max meaningful only for "range").
+ */
+struct shader_param {
+	char     name[64];
+	char     type[16];
+	uint32_t offset;      /* std140 byte offset within the block */
+	uint32_t size;        /* std140 bytes the field consumes     */
+	uint32_t components;
+	char     edit[16];
+	float    edit_min;
+	float    edit_max;
+};
+
+/*
+ * Introspect a shader's Material uniform block as editable parameters. Fills
+ * out[] with up to `max` fields (in declaration order), writes the std140-packed
+ * block size to *total_size (may be NULL), and returns the field count (>= 0).
+ * Returns -1 when the interpreter is down, the query proc is missing, or SRC is
+ * not a usable shader form. A shader with no Material block yields 0 fields and
+ * total_size 0 — not an error.
+ */
+int script_shader_material_params(const char *src, struct shader_param *out,
+				  uint32_t max, uint32_t *total_size);
 
 /* Call the Scheme (tick) procedure if the image defines one. */
 void script_tick(void);

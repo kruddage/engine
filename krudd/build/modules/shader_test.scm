@@ -24,7 +24,7 @@
 (define scene "(shader scene
   (inputs (a_pos vec3 (location 0)) (a_normal vec3 (location 1)) (a_uv0 vec2 (location 2)))
   (uniforms (Camera (block 0) (layout std140) (view_proj mat4) (model mat4))
-            (Material (block 1) (layout std140) (base_color vec4)))
+            (Material (block 1) (layout std140) (base_color vec4 (edit color))))
   (varyings (v_normal vec3))
   (targets (frag_color vec4 (location 0)))
   (vertex
@@ -87,6 +87,44 @@
        (has? fs "vec3 col = (base * (0.35 + (0.65 * diff)));"))
 (check "the material base_color tints the final output"
        (has? fs "frag_color = vec4((col * base_color.rgb), 1.0);"))
+
+(display "shader: material params\n")
+(check "an (edit color) hint on base_color never changes the compiled GLSL"
+       (has? fs "layout(std140) uniform Material {\n\thighp vec4 base_color;\n};"))
+
+;;! A richer Material block exercising std140 packing and every edit hint.
+(define param-shader "(shader p
+  (uniforms (Material (block 1) (layout std140)
+    (base_color vec4 (edit color))
+    (roughness  float (edit range 0 1))
+    (tint       vec3 (edit color))
+    (uv_scale   vec2)))
+  (fragment (set c (vec4 (* base_color roughness) 1.0))))")
+(define mp (shader-material-params param-shader))
+(check "material params report the std140 block size (64)"
+       (= (car mp) 64))
+(check "base_color: vec4 color at offset 0, size 16, 4 components"
+       (equal? (list-ref mp 1)
+	       (list "base_color" "vec4" 0 16 4 "color" 0 0)))
+(check "roughness: float range [0 1] at offset 16, size 4, 1 component"
+       (equal? (list-ref mp 2)
+	       (list "roughness" "float" 16 4 1 "range" 0 1)))
+(check "tint: vec3 color aligns to 16 (offset 32), size 12, 3 components"
+       (equal? (list-ref mp 3)
+	       (list "tint" "vec3" 32 12 3 "color" 0 0)))
+(check "uv_scale: unhinted vec2 aligns to 8 (offset 48), size 8, kind none"
+       (equal? (list-ref mp 4)
+	       (list "uv_scale" "vec2" 48 8 2 "none" 0 0)))
+(check "the scene shader's single base_color is one color param, block size 16"
+       (let ((sp (shader-material-params scene)))
+	 (and (= (car sp) 16)
+	      (equal? (list-ref sp 1)
+		      (list "base_color" "vec4" 0 16 4 "color" 0 0)))))
+(check "a shader with no Material block reports size 0 and no params"
+       (equal? (shader-material-params
+		 "(shader n (targets (c vec4 (location 0)))
+		    (fragment (set c (vec4 1.0 1.0 1.0 1.0))))")
+	       (list 0)))
 
 (display "shader: missing-stage shader\n")
 (let ((frag-only "(shader glow (targets (c vec4 (location 0)))

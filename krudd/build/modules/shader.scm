@@ -297,6 +297,89 @@
 	  (map (lambda (tg) (cons (car tg) (cadr tg)))
 	       (shader-section form 'targets))))
 
+;;! --- material parameter introspection ---
+;;!
+;;! (shader-material-params SRC) reports the shader's Material uniform block as
+;;! editable parameters: the std140-packed block size plus, per field, its name,
+;;! type, byte offset, byte size, editable float-component count, and edit hint.
+;;! The editor derives its widgets from this (a material has no fixed schema of
+;;! its own — the shader owns it) and the same offsets pack a material's values.
+;;! GLSL emission ignores the optional (edit ...) clause (it reads only a field's
+;;! name and type), so annotating a field never changes the compiled shader.
+
+;;! std140 base alignment (bytes) of a block member type.
+(define (shader-std140-align t)
+	(case t
+	  ((float int) 4)
+	  ((vec2) 8)
+	  ((vec3 vec4) 16)
+	  ((mat2 mat3 mat4) 16)
+	  (else 16)))
+
+;;! std140 size (bytes) a block member consumes (a vec3 occupies 12 but aligns
+;;! to 16; a matN is N columns each rounded to a vec4).
+(define (shader-std140-size t)
+	(case t
+	  ((float int) 4)
+	  ((vec2) 8)
+	  ((vec3) 12)
+	  ((vec4) 16)
+	  ((mat2) 32)
+	  ((mat3) 48)
+	  ((mat4) 64)
+	  (else 16)))
+
+;;! How many float components the editor exposes for a type (0 = not scalar-
+;;! editable, e.g. a matrix — surfaced read-only rather than as sliders).
+(define (shader-type-components t)
+	(case t
+	  ((float int) 1)
+	  ((vec2) 2) ((vec3) 3) ((vec4) 4)
+	  (else 0)))
+
+;;! Round N up to the next multiple of A (A a power of two here).
+(define (shader-round-up n a) (* a (quotient (+ n a -1) a)))
+
+;;! The edit hint of a field as (KIND MIN MAX): ("none" 0 0), ("color" 0 0), or
+;;! ("range" MIN MAX). A field is (NAME TYPE) or (NAME TYPE (edit ...)).
+(define (shader-field-edit f)
+	(let ((e (assq 'edit (cddr f))))
+	  (cond ((not e) (list "none" 0 0))
+		((eq? (cadr e) 'color) (list "color" 0 0))
+		((eq? (cadr e) 'range) (list "range" (caddr e) (cadddr e)))
+		(else (list "none" 0 0)))))
+
+;;! The Material block form, or #f when the shader declares none.
+(define (shader-material-block form)
+	(assq 'Material (shader-section form 'uniforms)))
+
+;;! Walk the Material block into (TOTAL-SIZE (NAME TYPE OFFSET SIZE COMPONENTS
+;;! EDIT-KIND EDIT-MIN EDIT-MAX) ...), std140-packed. Total is 0 with no block.
+(define (shader-material-params-form form)
+	(let ((blk (shader-material-block form)))
+	  (if (not blk)
+	      (list 0)
+	      (let loop ((fields (shader-block-fields blk)) (off 0) (acc '()))
+		(if (null? fields)
+		    (cons (shader-round-up off 16) (reverse acc))
+		    (let* ((f     (car fields))
+			   (ty    (cadr f))
+			   (foff  (shader-round-up off (shader-std140-align ty)))
+			   (ed    (shader-field-edit f)))
+		      (loop (cdr fields)
+			    (+ foff (shader-std140-size ty))
+			    (cons (list (symbol->string (car f))
+					(symbol->string ty)
+					foff
+					(shader-std140-size ty)
+					(shader-type-components ty)
+					(car ed) (cadr ed) (caddr ed))
+				  acc))))))))
+
+(define (shader-material-params src)
+	(shader-material-params-form
+	  (with-input-from-string src (lambda () (read)))))
+
 ;;! --- stage assembly ---
 
 ;;! GLSL ES 300 for one stage, or #f when the shader declares no such stage.

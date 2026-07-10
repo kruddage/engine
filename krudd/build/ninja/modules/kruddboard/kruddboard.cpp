@@ -3734,6 +3734,28 @@ static void draw_undo_redo(void)
 }
 
 /*
+ * Simulation mode dropdown for the board header: Playing (default) runs
+ * world_tick + entity scripts every frame; Paused freezes the scene while
+ * everything else (rendering, gizmo, undo/redo) keeps running. Nothing is
+ * drawn when the "scene" service doesn't support pausing.
+ */
+static void draw_sim_mode(void)
+{
+	static const char *const modes[] = { "Playing", "Paused" };
+	int                      cur;
+
+	if (!g_entity_api || !g_entity_api->get_paused || !g_entity_api->set_paused)
+		return;
+
+	cur = g_entity_api->get_paused() ? 1 : 0;
+
+	ImGui::SameLine();
+	ImGui::SetNextItemWidth(90.0f);
+	if (ImGui::Combo("##sim_mode", &cur, modes, 2))
+		g_entity_api->set_paused(cur);
+}
+
+/*
  * Spawn a dragged mesh asset as a live entity: identity transform at the
  * origin, render_ref = the asset id (which sets COMPONENT_RENDER), then select
  * it. Placement is fixed for v1; cursor-raycast placement needs camera unproject
@@ -3846,6 +3868,7 @@ static void draw_board(void * /*userdata*/)
 	ImGui::SameLine();
 	ImGui::TextDisabled("KRUDD EDITOR");
 	draw_undo_redo();
+	draw_sim_mode();
 #ifdef __EMSCRIPTEN__
 	if (g_touch_device) {
 		/*

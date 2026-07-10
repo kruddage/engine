@@ -66,6 +66,15 @@ struct entity_api {
 	/* Shared selection: -1 = none. set ignores stale/out-of-range ids. */
 	int32_t (*get_selected)(void);
 	void    (*set_selected)(int32_t id);
+
+	/*
+	 * Simulation mode: paused skips world_tick + entity scripts for the
+	 * frame (the editor's "Paused" state), so the scene holds still while
+	 * everything else — rendering, gizmo, undo/redo — keeps running.
+	 * Defaults to false (playing).
+	 */
+	int32_t (*get_paused)(void);
+	void    (*set_paused)(int32_t paused);
 };
 
 #endif /* ENTITY_API_H */

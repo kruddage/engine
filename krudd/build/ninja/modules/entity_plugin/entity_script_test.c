@@ -160,6 +160,40 @@ static void test_builtin_behavior(void)
 	assert(feq(w.world_xform[cube].rotation[1], 0.707107f));
 }
 
+/*
+ * Rebinding a live, already-ticked entity to a different script asset must
+ * switch its motion on the very next tick, not keep running the old script's
+ * hooks forever. Regression test for a stale per-entity resolve cache that
+ * only ever kept whatever script first bound to the id (see entity_script.scm
+ * entity-script-resolve): kruddboard's World-tab script dropdown surfaced it
+ * by being the first path that rebinds an entity's script at runtime.
+ */
+static void test_runtime_rebind(void)
+{
+	int32_t e;
+	float   by;
+
+	world_reset(&w);
+	e = spawn(0.0f, 1.0f, -1.0f);
+
+	world_set_script_ref(&w, e, 1); /* spinner */
+	world_tick(&w, 16.0f);
+	entity_script_tick(&w, &fake_asset, 0.5f);
+	assert(feq(w.world_xform[e].rotation[1], 0.382683f)); /* spinning */
+	assert(feq(w.world_xform[e].position[1], 1.0f));       /* untouched */
+
+	/* Rebind the live entity to a different script asset (bounce) — the
+	 * next tick must switch to bounce's motion, not keep spinning.
+	 */
+	world_set_script_ref(&w, e, 2);
+	world_tick(&w, 16.0f);
+	entity_script_tick(&w, &fake_asset, 0.5f);
+
+	by = 1.0f + (float)fabs(0.6 * sin(1.5));
+	assert(feq(w.world_xform[e].position[1], by));   /* bounce formula   */
+	assert(feq(w.world_xform[e].rotation[3], 1.0f)); /* rest, not spinning */
+}
+
 int main(void)
 {
 	log_init();
@@ -168,6 +202,7 @@ int main(void)
 
 	test_bind_semantics();
 	test_builtin_behavior();
+	test_runtime_rebind();
 
 	printf("entity_script_test: ok\n");
 	return 0;

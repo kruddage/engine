@@ -453,8 +453,8 @@ struct fw_entity {
 	char     name[64];
 	float    pos[3], rot[4], scl[3];
 	int      parent;
-	int      has_render, has_material;
-	unsigned render_ref, material_ref;
+	int      has_render, has_material, has_script;
+	unsigned render_ref, material_ref, script_ref;
 };
 
 static struct fw_entity g_fw[FW_MAX];
@@ -464,7 +464,9 @@ static int              g_have_entity;
 static int              g_have_asset;
 static int              g_gizmo;
 
-/* type: 1 = ASSET_TYPE_MESH, 3 = ASSET_TYPE_MATERIAL (per asset_api.h). */
+/* type: 1 = ASSET_TYPE_MESH, 3 = ASSET_TYPE_MATERIAL, 8 = ASSET_TYPE_SCRIPT
+ * (per asset_api.h).
+ */
 struct fw_asset {
 	unsigned    id;
 	const char *path;
@@ -505,7 +507,8 @@ static void fw_reset(void)
 	g_assets[0].id = 101; g_assets[0].path = "cube.mesh";   g_assets[0].type = 1;
 	g_assets[1].id = 102; g_assets[1].path = "sphere.mesh"; g_assets[1].type = 1;
 	g_assets[2].id = 201; g_assets[2].path = "red.mat";     g_assets[2].type = 3;
-	g_assets_n = 3;
+	g_assets[3].id = 301; g_assets[3].path = "orbit.kscm";  g_assets[3].type = 8;
+	g_assets_n = 4;
 
 	g_click        = NULL;
 	g_dis_top      = 0;
@@ -578,7 +581,7 @@ static s7_pointer st_entity_inspect(s7_scheme *sc, s7_pointer a)
 				 g_fw[e->parent].has_name
 				 ? s7_make_string(sc, g_fw[e->parent].name)
 				 : s7_f(sc));
-	return s7_list(sc, 10,
+	return s7_list(sc, 12,
 		s7_make_string(sc, e->name),
 		real_vec(sc, e->pos, 3),
 		real_vec(sc, e->rot, 4),
@@ -588,7 +591,9 @@ static s7_pointer st_entity_inspect(s7_scheme *sc, s7_pointer a)
 		s7_make_boolean(sc, e->has_render),
 		s7_make_boolean(sc, e->has_material),
 		s7_make_integer(sc, e->has_render ? (int)e->render_ref : 0),
-		s7_make_integer(sc, e->has_material ? (int)e->material_ref : 0));
+		s7_make_integer(sc, e->has_material ? (int)e->material_ref : 0),
+		s7_make_boolean(sc, e->has_script),
+		s7_make_integer(sc, e->has_script ? (int)e->script_ref : 0));
 }
 
 static s7_pointer assets_by_type(s7_scheme *sc, int type)
@@ -616,6 +621,12 @@ static s7_pointer st_material_assets(s7_scheme *sc, s7_pointer a)
 {
 	(void)a;
 	return assets_by_type(sc, 3);
+}
+
+static s7_pointer st_script_assets(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	return assets_by_type(sc, 8);
 }
 
 static s7_pointer st_asset_find(s7_scheme *sc, s7_pointer a)
@@ -700,6 +711,13 @@ static s7_pointer st_entity_set_render_ref(s7_scheme *sc, s7_pointer a)
 static s7_pointer st_entity_set_material_ref(s7_scheme *sc, s7_pointer a)
 {
 	rec("set-material-ref|%d|%u", (int)s7_integer(s7_car(a)),
+	    (unsigned)s7_integer(s7_cadr(a)));
+	return s7_unspecified(sc);
+}
+
+static s7_pointer st_entity_set_script_ref(s7_scheme *sc, s7_pointer a)
+{
+	rec("set-script-ref|%d|%u", (int)s7_integer(s7_car(a)),
 	    (unsigned)s7_integer(s7_cadr(a)));
 	return s7_unspecified(sc);
 }
@@ -1293,6 +1311,7 @@ static s7_scheme *setup(void)
 	def(sc, "krudd-entity-inspect", st_entity_inspect, 1);
 	def(sc, "krudd-mesh-assets", st_mesh_assets, 0);
 	def(sc, "krudd-material-assets", st_material_assets, 0);
+	def(sc, "krudd-script-assets", st_script_assets, 0);
 	def(sc, "krudd-asset-find", st_asset_find, 1);
 	def(sc, "krudd-entity-create", st_entity_create, 0);
 	def(sc, "krudd-entity-destroy", st_entity_destroy, 1);
@@ -1301,6 +1320,7 @@ static s7_scheme *setup(void)
 	def(sc, "krudd-entity-set-transform", st_entity_set_transform, 4);
 	def(sc, "krudd-entity-set-render-ref", st_entity_set_render_ref, 2);
 	def(sc, "krudd-entity-set-material-ref", st_entity_set_material_ref, 2);
+	def(sc, "krudd-entity-set-script-ref", st_entity_set_script_ref, 2);
 	def(sc, "krudd-gizmo-mode", st_gizmo_mode, 0);
 	def(sc, "krudd-set-gizmo-mode", st_set_gizmo_mode, 1);
 
@@ -1600,6 +1620,7 @@ static void test_world_inspector(void)
 	assert(rec_has("text|Transform, Name, Render")); /* name + render, no mat */
 	assert(rec_has("combo|##meshsel|cube.mesh"));    /* resolved binding      */
 	assert(rec_has("combo|##materialsel|(none)"));   /* unbound material      */
+	assert(rec_has("combo|##scriptsel|(none)"));     /* unbound script        */
 }
 
 /* Nothing selected -> the dimmed placeholder, and no editable widgets. */
@@ -1698,6 +1719,49 @@ static void test_world_bind_disabled(void)
 	g_combo_open = NULL;
 
 	assert(!rec_has("set-render-ref|"));
+}
+
+/* Choosing a script from the open combo rebinds script_ref. */
+static void test_world_script_bind(void)
+{
+	fw_reset();
+	g_combo_open = "##scriptsel";
+	g_click = "orbit.kscm##m301";
+	rec_reset();
+	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	g_click = NULL;
+	g_combo_open = NULL;
+
+	assert(rec_has("set-script-ref|0|301"));
+}
+
+/* The combo's "(none)" entry unbinds the script (script_ref 0). */
+static void test_world_script_unbind(void)
+{
+	fw_reset();
+	g_fw[0].has_script = 1;
+	g_fw[0].script_ref = 301;
+	g_combo_open = "##scriptsel";
+	g_click = "(none)";
+	rec_reset();
+	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	g_click = NULL;
+	g_combo_open = NULL;
+
+	assert(rec_has("set-script-ref|0|0"));
+}
+
+/* A bound script shows its resolved path and the "Script" component tag. */
+static void test_world_script_resolved(void)
+{
+	fw_reset();
+	g_fw[0].has_script = 1;
+	g_fw[0].script_ref = 301;
+	rec_reset();
+	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+
+	assert(rec_has("text|Transform, Name, Render, Script"));
+	assert(rec_has("combo|##scriptsel|orbit.kscm"));
 }
 
 /* The tool chips highlight the active tool and switch it on a click. */
@@ -2220,6 +2284,9 @@ int main(void)
 	RUN(world_mesh_bind);
 	RUN(world_mesh_unbind);
 	RUN(world_bind_disabled);
+	RUN(world_script_bind);
+	RUN(world_script_unbind);
+	RUN(world_script_resolved);
 	RUN(world_gizmo_chips);
 	RUN(world_composition);
 

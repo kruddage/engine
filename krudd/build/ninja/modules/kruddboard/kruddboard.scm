@@ -225,25 +225,28 @@
 	    (format #f "~A (#~D)" pname pid)
 	    (format #f "entity ~D" pid)))))
 
-;;! (kruddboard-components-label ...) is the "Transform, Name, Render, Material"
-;;! summary, listing only the components the entity actually carries.
-(define (kruddboard-components-label has-name has-render has-material)
+;;! (kruddboard-components-label ...) is the "Transform, Name, Render, Material,
+;;! Script" summary, listing only the components the entity actually carries.
+(define (kruddboard-components-label has-name has-render has-material
+				     has-script)
   (string-append "Transform"
 		 (if has-name     ", Name"     "")
 		 (if has-render   ", Render"   "")
-		 (if has-material ", Material" "")))
+		 (if has-material ", Material" "")
+		 (if has-script   ", Script"   "")))
 
 ;;! (kruddboard-draw-inspector-details ...) is the read-only id / parent /
 ;;! components table.
 (define (kruddboard-draw-inspector-details e parent has-name has-render
-					   has-material)
+					   has-material has-script)
   (when (imgui-begin-table-plain "##edetails" 2)
     (imgui-table-setup-column-fixed "" 80.0)
     (imgui-table-setup-column "")
     (kruddboard-draw-detail-row "Entity ID" (format #f "~D" e))
     (kruddboard-draw-detail-row "Parent" (kruddboard-parent-label parent))
     (kruddboard-draw-detail-row "Components"
-	(kruddboard-components-label has-name has-render has-material))
+	(kruddboard-components-label has-name has-render has-material
+				     has-script))
     (imgui-end-table)))
 
 ;;! One transform row: a fixed label cell and a full-width float input. Returns
@@ -322,9 +325,10 @@
 
 ;;! (kruddboard-draw-inspector-body e info caps) draws the editable name field
 ;;! and transform table (both disabled without the scene api), then the read-only
-;;! details and the mesh/material binding rows. info is the krudd-entity-inspect
-;;! bundle; caps is (entity-api? asset-api?). The name commits once on focus loss
-;;! and the transform writes back after the disabled block, as the C did.
+;;! details and the mesh/material/script binding rows. info is the
+;;! krudd-entity-inspect bundle; caps is (entity-api? asset-api?). The name
+;;! commits once on focus loss and the transform writes back after the disabled
+;;! block, as the C did.
 (define (kruddboard-draw-inspector-body e info caps)
   (let ((name         (list-ref info 0))
 	(pos          (list-ref info 1))
@@ -336,6 +340,8 @@
 	(has-material (list-ref info 7))
 	(render-ref   (list-ref info 8))
 	(material-ref (list-ref info 9))
+	(has-script   (list-ref info 10))
+	(script-ref   (list-ref info 11))
 	(has-entity   (car caps))
 	(has-asset    (cadr caps)))
     (imgui-begin-disabled (not has-entity))
@@ -350,14 +356,17 @@
 	(krudd-entity-set-transform e (cadr xf) (caddr xf) (cadddr xf))))
     (imgui-separator)
     (kruddboard-draw-inspector-details e parent has-name has-render
-				       has-material)
+				       has-material has-script)
     (let ((can-bind (and has-entity has-asset)))
       (kruddboard-draw-inspector-binding "Mesh" "##emesh" "##meshsel" e
 	  has-render render-ref (krudd-mesh-assets) can-bind
 	  krudd-entity-set-render-ref)
       (kruddboard-draw-inspector-binding "Material" "##ematerial"
 	  "##materialsel" e has-material material-ref (krudd-material-assets)
-	  can-bind krudd-entity-set-material-ref))))
+	  can-bind krudd-entity-set-material-ref)
+      (kruddboard-draw-inspector-binding "Script" "##escript" "##scriptsel" e
+	  has-script script-ref (krudd-script-assets) can-bind
+	  krudd-entity-set-script-ref))))
 
 ;;! (kruddboard-draw-world-inspector caps) shows the selected entity's inspector,
 ;;! or a dimmed "(nothing selected)" when nothing live is selected.

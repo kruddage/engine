@@ -23,7 +23,7 @@
 
 ;;! Registry and per-entity caches:
 ;;!   *entity-scripts*      name -> ((hook . proc) ...)  the registered scripts
-;;!   *entity-script-bound* id   -> resolved hooks        cached on first tick
+;;!   *entity-script-bound* id   -> (src . hooks)         cached per source text
 ;;!   *entity-script-begun* id   -> #t                    set once on-begin runs
 (define *entity-scripts*       (make-hash-table))
 (define *entity-script-bound*  (make-hash-table))
@@ -53,12 +53,23 @@
       (eval form (rootlet)))
     (hash-table-ref *entity-scripts* name)))
 
-;;! Hooks bound to entity ID, resolving+caching from SRC on first use.
+;;! Hooks bound to entity ID, resolving+caching from SRC. A cache hit requires
+;;! SRC to match what's cached, so rebinding the entity to a different script
+;;! asset at runtime (a different source text) re-resolves instead of silently
+;;! keeping the old hooks: the old script's on-destroy fires, the begun flag
+;;! clears so the new script's on-begin fires on its first tick, and the new
+;;! (src . hooks) pair is cached.
 (define (entity-script-resolve id src)
-  (or (hash-table-ref *entity-script-bound* id)
-      (let ((hooks (entity-script-register-source src)))
-        (hash-table-set! *entity-script-bound* id hooks)
-        hooks)))
+  (let ((cached (hash-table-ref *entity-script-bound* id)))
+    (if (and cached (string=? (car cached) src))
+        (cdr cached)
+        (let ((hooks (entity-script-register-source src)))
+          (when cached
+            (let ((h (entity-script-clause (cdr cached) 'on-destroy)))
+              (when h (h id))))
+          (hash-table-set! *entity-script-bound* id (cons src hooks))
+          (hash-table-set! *entity-script-begun* id #f)
+          hooks))))
 
 ;;! Run one frame for entity ID bound to script source SRC at clock T. Fires
 ;;! on-begin the first frame, then on-tick every frame. A fault in one entity's
@@ -83,9 +94,9 @@
 ;;! Run the on-destroy hook (if any) for entity ID and forget its cached
 ;;! binding, so a later rebind re-resolves and re-fires on-begin.
 (define (entity-script-end id)
-  (let ((hooks (hash-table-ref *entity-script-bound* id)))
-    (when hooks
-      (let ((h (entity-script-clause hooks 'on-destroy)))
+  (let ((cached (hash-table-ref *entity-script-bound* id)))
+    (when cached
+      (let ((h (entity-script-clause (cdr cached) 'on-destroy)))
         (when h (h id)))))
   (hash-table-set! *entity-script-bound* id #f)
   (hash-table-set! *entity-script-begun* id #f))

@@ -55,6 +55,11 @@ export KRUDD_NINJA_OUT="$work/build.ninja"
 # the runtime image and exercised natively by modules/core/shader_transpile_test.c.
 "$s7bin" "$root/krudd/build/modules/shader_test.scm"
 
+# Stage 1d: the visual-DAG reader (#430) — lower the built-in scene shader to a
+# laid-out node graph and check its structure and deterministic layout, the
+# read-only half of the round-trip in initiative #429.
+"$s7bin" "$root/krudd/build/modules/dag_test.scm"
+
 # Stage 2: build + run the native suite through the generated build.ninja.
 if command -v ninja >/dev/null 2>&1; then
 	echo "krudd/build/ninja: building native suite via ninja"

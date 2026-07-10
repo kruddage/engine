@@ -381,16 +381,19 @@
             (when (and can-edit changed)
               (krudd-entity-save-script-params e script-ref new-vals))))))))
 
-;;! (kruddboard-draw-material-params e material-ref can-edit) draws the bound
-;;! material's shader parameters as live per-entity widgets — the per-entity
+;;! (kruddboard-draw-entity-material-params e material-ref can-edit) draws the
+;;! bound material's shader parameters as live per-entity widgets — the per-entity
 ;;! override layer over the shared material asset, the exact twin of the script
 ;;! params menu above. The values shown are the entity's override where set, else
 ;;! the shared material's own values, so the swatch reflects what this one entity
 ;;! draws. Drawn only when the material's shader declares params; any edit is
 ;;! packed and saved immediately through the scene api's undo-recording setter, so
 ;;! the entity recolors on the next frame — no explicit Save, and the shared
-;;! material asset (and every other entity on it) is left untouched.
-(define (kruddboard-draw-material-params e material-ref can-edit)
+;;! material asset (and every other entity on it) is left untouched. Named
+;;! distinctly from the Assets tab's kruddboard-draw-material-params (which edits
+;;! the shared asset and takes just `editable`): both images share one namespace,
+;;! so a same-name clash would silently shadow one with the other.
+(define (kruddboard-draw-entity-material-params e material-ref can-edit)
   (let ((shader-ref (krudd-asset-shader-ref material-ref)))
     (unless (= shader-ref 0)
       (let ((params (krudd-shader-material-params shader-ref)))
@@ -450,7 +453,7 @@
 	  "##materialsel" e has-material material-ref (krudd-material-assets)
 	  can-bind krudd-entity-set-material-ref)
       (when has-material
-	(kruddboard-draw-material-params e material-ref can-bind))
+	(kruddboard-draw-entity-material-params e material-ref can-bind))
       (kruddboard-draw-inspector-binding "Script" "##escript" "##scriptsel" e
 	  has-script script-ref (krudd-script-assets) can-bind
 	  krudd-entity-set-script-ref)

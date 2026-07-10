@@ -51,6 +51,11 @@
 (define kruddboard-assets-clone-name "")
 (define kruddboard-assets-clone-conflict #f)
 
+;;! Whether the browser table's BUILT-IN group is shown. Off by default —
+;;! most sessions only care about project assets, and the read-only builtin://
+;;! rows just add noise to the list.
+(define kruddboard-assets-show-builtin #f)
+
 ;;! Label helpers. The integer codes mirror asset_api.h's ASSET_KIND_* /
 ;;! ASSET_TYPE_* defines and asset_api's state values (0 pending, 1 loaded,
 ;;! else error) — the same raw-int-from-C convention kruddboard-log-colors
@@ -268,13 +273,25 @@
 	((eq? kruddboard-assets-shader-ok #f)
 	 (imgui-text-colored 1.0 0.3 0.3 1.0 "Compile failed"))))
 
+;;! Strip a leading "builtin://" scheme from PATH, if present — the Clone
+;;! form seeds its default name from the source asset's path, and a bare
+;;! "builtin://" prefix reads as noise on what's meant to become a normal
+;;! project-local asset name.
+(define (kruddboard-strip-builtin-prefix path)
+  (let ((prefix "builtin://"))
+    (if (and (>= (string-length path) (string-length prefix))
+	     (string=? (substring path 0 (string-length prefix)) prefix))
+	(substring path (string-length prefix) (string-length path))
+	path)))
+
 ;;! The name field + Clone button for a read-only (built-in) shader — the old
 ;;! draw_asset_inspector built-in-shader branch. path seeds the default
 ;;! "<path>_copy" name the first time this built-in is viewed.
 (define (kruddboard-draw-asset-shader-clone id path)
   (unless (= kruddboard-assets-clone-src id)
     (set! kruddboard-assets-clone-src id)
-    (set! kruddboard-assets-clone-name (string-append path "_copy"))
+    (set! kruddboard-assets-clone-name
+	  (string-append (kruddboard-strip-builtin-prefix path) "_copy"))
     (set! kruddboard-assets-clone-conflict #f))
   (imgui-set-next-item-width 240.0)
   (let ((r (imgui-input-text-enter "##clonename" kruddboard-assets-clone-name)))
@@ -341,7 +358,8 @@
 (define (kruddboard-draw-asset-script-clone id path)
   (unless (= kruddboard-assets-clone-src id)
     (set! kruddboard-assets-clone-src id)
-    (set! kruddboard-assets-clone-name (string-append path "_copy"))
+    (set! kruddboard-assets-clone-name
+	  (string-append (kruddboard-strip-builtin-prefix path) "_copy"))
     (set! kruddboard-assets-clone-conflict #f))
   (imgui-set-next-item-width 240.0)
   (let ((r (imgui-input-text-enter "##clonename" kruddboard-assets-clone-name)))
@@ -370,7 +388,8 @@
 (define (kruddboard-draw-asset-material-clone id path)
   (unless (= kruddboard-assets-clone-src id)
     (set! kruddboard-assets-clone-src id)
-    (set! kruddboard-assets-clone-name (string-append path "_copy"))
+    (set! kruddboard-assets-clone-name
+	  (string-append (kruddboard-strip-builtin-prefix path) "_copy"))
     (set! kruddboard-assets-clone-conflict #f))
   (imgui-set-next-item-width 240.0)
   (let ((r (imgui-input-text-enter "##clonename" kruddboard-assets-clone-name)))
@@ -535,6 +554,13 @@
 	      (when (krudd-asset-mut?)
 		(kruddboard-draw-new-asset-form)
 		(imgui-separator))
-	      (if (and (null? (car groups)) (null? (cadr groups)))
-		  (imgui-text-disabled "(no assets)")
-		  (kruddboard-draw-asset-table groups)))))))
+	      (set! kruddboard-assets-show-builtin
+		    (imgui-checkbox "Show built-in assets"
+				    kruddboard-assets-show-builtin))
+	      (let ((visible (list (if kruddboard-assets-show-builtin
+					(car groups)
+					'())
+				    (cadr groups))))
+		(if (and (null? (car visible)) (null? (cadr visible)))
+		    (imgui-text-disabled "(no assets)")
+		    (kruddboard-draw-asset-table visible))))))))

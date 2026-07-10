@@ -862,6 +862,7 @@ static void assets_scheme_reset(void)
 	script_eval("(set! kruddboard-assets-clone-src 0)");
 	script_eval("(set! kruddboard-assets-clone-name \"\")");
 	script_eval("(set! kruddboard-assets-clone-conflict #f)");
+	script_eval("(set! kruddboard-assets-show-builtin #f)");
 	g_combo_pick    = -1;
 	g_float_id      = NULL;
 	g_float_changed = 0;
@@ -1820,8 +1821,9 @@ static void test_assets_no_assets(void)
 	assert(rec_has("disabled|(no assets)"));
 }
 
-/* The browser table lists built-ins and project assets in two labeled
- * groups; only the mesh row is a drag source. */
+/* The browser table lists project assets by default; the BUILT-IN group is
+ * hidden behind a checkbox that starts unchecked (#420 — builtin:// rows are
+ * just noise in most sessions). */
 static void test_assets_browser_table(void)
 {
 	asset_reset();
@@ -1830,7 +1832,28 @@ static void test_assets_browser_table(void)
 	script_eval("(kruddboard-draw-assets)");
 
 	assert(rec_has("header|Browser"));
+	assert(rec_has("checkbox|Show built-in assets|0"));
 	assert(rec_has("table-begin|##assets|6"));
+	assert(!rec_has("disabled|-- BUILT-IN (read-only) --"));
+	assert(rec_has("disabled|-- PROJECT --"));
+	assert(!rec_has("selectable|builtin://mesh/cube|0"));
+	assert(rec_has("selectable|my.shader|0"));
+	assert(!rec_has("drag-source|501|builtin://mesh/cube"));
+	assert(!rec_has("colored|1.00,0.60,0.20,1.00|RO"));
+}
+
+/* Checking "Show built-in assets" reveals the BUILT-IN group and its rows,
+ * including the mesh row's drag source. */
+static void test_assets_browser_table_show_builtin(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	g_click = "Show built-in assets";
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL;
+
+	assert(rec_has("checkbox|Show built-in assets|0"));
 	assert(rec_has("disabled|-- BUILT-IN (read-only) --"));
 	assert(rec_has("disabled|-- PROJECT --"));
 	assert(rec_has("selectable|builtin://mesh/cube|0"));
@@ -2019,8 +2042,8 @@ static void test_assets_shader_save_fail(void)
 	assert(rec_has("colored|1.00,0.30,0.30,1.00|Compile failed"));
 }
 
-/* A built-in shader gets the Clone flow, seeded "<path>_copy", instead of
- * Save/Delete. */
+/* A built-in shader gets the Clone flow, seeded "<path>_copy" with the
+ * builtin:// scheme stripped, instead of Save/Delete. */
 static void test_assets_shader_clone(void)
 {
 	asset_reset();
@@ -2032,8 +2055,8 @@ static void test_assets_shader_clone(void)
 	script_eval("(kruddboard-draw-assets)");
 	g_click = NULL;
 
-	assert(rec_has("input-enter|##clonename|builtin://shader/scene_copy"));
-	assert(rec_has("clone-shader|builtin://shader/scene_copy|"));
+	assert(rec_has("input-enter|##clonename|shader/scene_copy"));
+	assert(rec_has("clone-shader|shader/scene_copy|"));
 	assert(assets_sel() != 601 && assets_sel() != 0);
 }
 
@@ -2052,7 +2075,7 @@ static void test_assets_shader_clone_conflict(void)
 	g_click = NULL;
 
 	assert(rec_has("colored|1.00,0.30,0.30,1.00|"
-		       "\"builtin://shader/scene_copy\" already exists"));
+		       "\"shader/scene_copy\" already exists"));
 	assert(assets_sel() == 601);
 }
 
@@ -2101,8 +2124,8 @@ static void test_assets_script_save_fail(void)
 	assert(rec_has("colored|1.00,0.30,0.30,1.00|Not a valid script"));
 }
 
-/* A built-in script gets the Clone flow, seeded "<path>_copy", instead of
- * Save/Delete. */
+/* A built-in script gets the Clone flow, seeded "<path>_copy" with the
+ * builtin:// scheme stripped, instead of Save/Delete. */
 static void test_assets_script_clone(void)
 {
 	asset_reset();
@@ -2114,8 +2137,8 @@ static void test_assets_script_clone(void)
 	script_eval("(kruddboard-draw-assets)");
 	g_click = NULL;
 
-	assert(rec_has("input-enter|##clonename|builtin://script/spinner_copy"));
-	assert(rec_has("clone-script|builtin://script/spinner_copy|"));
+	assert(rec_has("input-enter|##clonename|script/spinner_copy"));
+	assert(rec_has("clone-script|script/spinner_copy|"));
 	assert(assets_sel() != 651 && assets_sel() != 0);
 }
 
@@ -2134,7 +2157,7 @@ static void test_assets_script_clone_conflict(void)
 	g_click = NULL;
 
 	assert(rec_has("colored|1.00,0.30,0.30,1.00|"
-		       "\"builtin://script/spinner_copy\" already exists"));
+		       "\"script/spinner_copy\" already exists"));
 	assert(assets_sel() == 651);
 }
 
@@ -2293,6 +2316,7 @@ int main(void)
 	RUN(assets_unavailable);
 	RUN(assets_no_assets);
 	RUN(assets_browser_table);
+	RUN(assets_browser_table_show_builtin);
 	RUN(assets_row_select);
 	RUN(assets_new_asset_button);
 	RUN(assets_new_asset_hidden_without_mut);

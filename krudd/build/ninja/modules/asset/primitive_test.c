@@ -89,6 +89,24 @@ int main(void)
 	/* An out-of-range kind yields no mesh. */
 	assert(primitive_generate((enum primitive_kind)99, &test_mem, NULL) == NULL);
 
+	/*
+	 * Pyramid base sits below the apex (y = -0.5, not +0.5) — regression
+	 * check for a sign bug that placed the base quad flush with the apex,
+	 * rendering as a flat plane instead of a pyramid.
+	 */
+	{
+		uint32_t                  size = 0;
+		const struct mesh_blob   *b = primitive_generate(PRIMITIVE_PYRAMID,
+								  &test_mem, &size);
+		const struct mesh_vertex *v = mesh_blob_vertices(b);
+		uint32_t                  i;
+
+		assert(b != NULL);
+		for (i = 0; i < 4; i++)
+			assert(v[i].position[1] <= -0.5f + EPS);
+		free((void *)b);
+	}
+
 	printf("primitive tests passed\n");
 	return 0;
 }

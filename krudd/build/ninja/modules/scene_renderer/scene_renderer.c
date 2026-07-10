@@ -450,10 +450,11 @@ static void seed_demo_scene(void)
 		const char *path;
 		float       pos[3];
 		const char *script; /* behavior script to bind, or NULL */
+		const char *name;   /* shown in the entity list */
 	} DEMO[] = {
-		{ "builtin://cube",    { -1.5f, 0.0f,  0.0f }, "builtin://script/spinner" },
-		{ "builtin://sphere",  {  0.0f, 0.0f, -1.0f }, "builtin://script/bounce"  },
-		{ "builtin://pyramid", {  1.5f, 0.0f,  0.5f }, "builtin://script/wobble"  },
+		{ "builtin://cube",    { -1.5f, 0.0f,  0.0f }, "builtin://script/spinner", "Cube"    },
+		{ "builtin://sphere",  {  0.0f, 0.0f, -1.0f }, "builtin://script/bounce",  "Sphere"  },
+		{ "builtin://pyramid", {  1.5f, 0.0f,  0.5f }, "builtin://script/wobble",  "Pyramid" },
 	};
 	const struct world *w;
 	uint32_t            i;
@@ -495,6 +496,8 @@ static void seed_demo_scene(void)
 		id = g_scene->create_entity(WORLD_NO_PARENT, &t, 0u, ref);
 		if (id >= 0 && material && g_scene->set_material_ref)
 			g_scene->set_material_ref(id, material);
+		if (id >= 0 && g_scene->set_name)
+			g_scene->set_name(id, DEMO[i].name);
 
 		/*
 		 * Bind a behavior script so the demo scene animates on load — the
@@ -526,8 +529,11 @@ static void seed_demo_scene(void)
 			ct.rotation[3] = 1.0f;
 			ct.scale[0] = ct.scale[1] = ct.scale[2] = 1.0f;
 			cam_id = g_scene->create_entity(WORLD_NO_PARENT, &ct, 0u, 0u);
-			if (cam_id >= 0)
+			if (cam_id >= 0) {
 				g_scene->set_script_ref(cam_id, orbit_script);
+				if (g_scene->set_name)
+					g_scene->set_name(cam_id, "Camera");
+			}
 			g_camera_entity_id = cam_id;
 		}
 	}

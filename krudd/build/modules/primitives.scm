@@ -83,7 +83,7 @@
 
 (define (prim-pyramid)
   (let* ((base-face (list (v3 0.0 -1.0 0.0) (v3 1.0 0.0 0.0) (v3 0.0 0.0 1.0)))
-         (base-verts (prim-quad-verts base-face -0.5))
+         (base-verts (prim-quad-verts base-face 0.5))
          (base-idx   (prim-quad-indices 0)))
     (let loop ((s 0) (verts base-verts) (indices base-idx))
       (if (= s 4)

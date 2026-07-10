@@ -192,7 +192,7 @@ static struct mesh_blob *gen_pyramid(const struct memory_api *mem,
 	idx = blob_indices(b);
 
 	/* Base quad occupies verts 0..3, indices 0..5. */
-	emit_quad(v, idx, 0, 0, &base, -0.5f);
+	emit_quad(v, idx, 0, 0, &base, 0.5f);
 
 	/* Four triangular sides: verts 4.., indices 6.. */
 	for (s = 0; s < 4; s++) {

@@ -62,6 +62,16 @@ struct entity_api {
 	 * it draws or the material that tints it.
 	 */
 	void    (*set_script_ref)(int32_t id, uint32_t script_ref);
+	/*
+	 * Override id's script parameters with `len` tight-packed bytes (the
+	 * layout its bound script's params clause reports); len 0 clears the
+	 * override. The per-entity value layer over a script's declared params —
+	 * the behavior twin of a material instance over a shader's Material
+	 * block. Records an undo step; consecutive edits to one entity coalesce,
+	 * so a slider drag is a single history entry.
+	 */
+	void    (*set_script_params)(int32_t id, const uint8_t *bytes,
+				     uint32_t len);
 
 	/* Shared selection: -1 = none. set ignores stale/out-of-range ids. */
 	int32_t (*get_selected)(void);

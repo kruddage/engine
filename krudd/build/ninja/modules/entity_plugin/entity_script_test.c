@@ -53,6 +53,7 @@ static const void *fake_get_data(uint32_t id, uint32_t *out_size)
 		      " (entity-set-position! self 4 0 0)))"; break;
 	case 5: src = "(script twin (on-tick (self t)"
 		      " (entity-set-position! self 5 0 0)))"; break;
+	case 6: src = PULSE_SCRIPT_SRC; break;   /* the parameterized built-in */
 	default: break;
 	}
 	if (src && out_size)
@@ -226,6 +227,75 @@ static void test_clone_name_clash(void)
 	assert(feq(w.world_xform[b].position[0], 5.0f));
 }
 
+/*
+ * The (params ...) clause introspects into the same shape shader params do,
+ * tight-packed (no std140 gap): pulse declares amp then rate, two scalar floats
+ * at offsets 0 and 4, each an (edit range ...) with its own bounds.
+ */
+static void test_script_params_introspection(void)
+{
+	struct shader_param p[8];
+	uint32_t            total = 99;
+	int                 n;
+
+	n = script_entity_params(PULSE_SCRIPT_SRC, p, 8, &total);
+	assert(n == 2);
+	assert(total == 8);
+
+	assert(strcmp(p[0].name, "amp") == 0);
+	assert(strcmp(p[0].type, "float") == 0);
+	assert(p[0].offset == 0 && p[0].size == 4 && p[0].components == 1);
+	assert(strcmp(p[0].edit, "range") == 0);
+	assert(feq(p[0].edit_min, 0.0f) && feq(p[0].edit_max, 2.0f));
+
+	assert(strcmp(p[1].name, "rate") == 0);
+	assert(p[1].offset == 4 && p[1].size == 4);
+	assert(feq(p[1].edit_max, 10.0f));
+
+	/* A script with no params clause reports zero fields, not an error. */
+	assert(script_entity_params(SPINNER_SCRIPT_SRC, p, 8, &total) == 0);
+	assert(total == 0);
+}
+
+/*
+ * A bound script reads its authored parameters through (param ...): pulse scales
+ * about its rest pose by amp*sin(t*rate). With no per-entity override both
+ * params default to 0 (a still pose); a packed override drives the animation.
+ */
+static void test_param_override(void)
+{
+	int32_t e;
+	float   ov[2];
+	float   expect;
+
+	world_reset(&w);
+	e = spawn(0.0f, 0.0f, 0.0f);            /* unit rest scale */
+	world_set_script_ref(&w, e, 6);         /* pulse */
+
+	/* No override yet: amp defaults to 0, so the scale holds at the base. */
+	world_tick(&w, 16.0f);
+	entity_script_tick(&w, &fake_asset, 0.5f);
+	assert(feq(w.world_xform[e].scale[0], 1.0f));
+	assert(feq(w.world_xform[e].scale[1], 1.0f));
+
+	/* Override amp=0.5, rate=2 (tight-packed floats at offsets 0 and 4). */
+	ov[0] = 0.5f;
+	ov[1] = 2.0f;
+	world_set_script_params(&w, e, (const uint8_t *)ov, sizeof(ov));
+
+	world_tick(&w, 16.0f);
+	entity_script_tick(&w, &fake_asset, 0.5f);
+	expect = 1.0f + 0.5f * (float)sin(1.0);   /* t*rate = 1.0 */
+	assert(feq(w.world_xform[e].scale[0], expect));
+	assert(feq(w.world_xform[e].scale[2], expect));
+
+	/* Clearing the override returns the script to its still default pose. */
+	world_set_script_params(&w, e, NULL, 0);
+	world_tick(&w, 16.0f);
+	entity_script_tick(&w, &fake_asset, 0.5f);
+	assert(feq(w.world_xform[e].scale[0], 1.0f));
+}
+
 int main(void)
 {
 	log_init();
@@ -236,6 +306,8 @@ int main(void)
 	test_builtin_behavior();
 	test_runtime_rebind();
 	test_clone_name_clash();
+	test_script_params_introspection();
+	test_param_override();
 
 	printf("entity_script_test: ok\n");
 	return 0;

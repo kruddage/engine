@@ -348,6 +348,7 @@ static void seed_builtins(void)
 	seed_script("builtin://script/spinner", SPINNER_SCRIPT_SRC);
 	seed_script("builtin://script/bounce",  BOUNCE_SCRIPT_SRC);
 	seed_script("builtin://script/wobble",  WOBBLE_SCRIPT_SRC);
+	seed_script("builtin://script/pulse",   PULSE_SCRIPT_SRC);
 	seed_script("builtin://script/orbit-camera", ORBIT_CAMERA_SCRIPT_SRC);
 }
 
@@ -723,6 +724,14 @@ static const struct asset_decl_field wobble_script_decl[] = {
 	{ "hooks",  "on-tick"      },
 };
 
+/* pulse also advertises its authored parameters, the way the material decl
+ * advertises base_color — a script's params are first-class, like a shader's. */
+static const struct asset_decl_field pulse_script_decl[] = {
+	{ "format", "krudd-script"    },
+	{ "hooks",  "on-tick"         },
+	{ "params", "amp, rate"       },
+};
+
 static const struct asset_decl_field orbit_camera_script_decl[] = {
 	{ "format", "krudd-script" },
 	{ "hooks",  "on-tick"      },
@@ -751,6 +760,8 @@ static const struct builtin_desc builtin_descs[] = {
 	  ARRAY_SIZE(bounce_script_decl) },
 	{ "builtin://script/wobble", wobble_script_decl,
 	  ARRAY_SIZE(wobble_script_decl) },
+	{ "builtin://script/pulse", pulse_script_decl,
+	  ARRAY_SIZE(pulse_script_decl) },
 	{ "builtin://script/orbit-camera", orbit_camera_script_decl,
 	  ARRAY_SIZE(orbit_camera_script_decl) },
 };

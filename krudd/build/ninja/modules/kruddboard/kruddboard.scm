@@ -323,6 +323,60 @@
     (imgui-end-disabled)
     (imgui-end-table)))
 
+;;! One script-parameter widget, chosen by edit hint then component count — the
+;;! entity-menu twin of the material editor's param widget. PARAM is the 8-tuple
+;;! (name type off size comps kind min max); VALUE is its current component list.
+;;! Returns (new-value . changed?): new-value stays a list so the save path packs
+;;! it uniformly. A color drives a swatch, a range a slider, anything else a
+;;! plain float input; a type with no editable components passes through.
+(define (kruddboard-draw-param-widget param value)
+  (let ((comps (list-ref param 4))
+        (kind  (list-ref param 5))
+        (mn    (list-ref param 6))
+        (mx    (list-ref param 7))
+        (wid   (string-append (list-ref param 0) "##sp")))
+    (cond
+     ((and (string=? kind "color") (= comps 4)) (imgui-color-edit4 wid value))
+     ((and (string=? kind "color") (= comps 3)) (imgui-color-edit3 wid value))
+     ((and (string=? kind "range") (= comps 1))
+      (let ((r (imgui-slider-float wid (car value) mn mx)))
+        (cons (list (car r)) (cdr r))))
+     ((= comps 1)
+      (let ((r (imgui-input-float wid (car value))))
+        (cons (list (car r)) (cdr r))))
+     ((= comps 2) (imgui-input-float2 wid value))
+     ((= comps 3) (imgui-input-float3 wid value))
+     ((= comps 4) (imgui-input-float4 wid value))
+     (else (cons value #f)))))
+
+;;! True when any (value . changed?) result in RESULTS is changed. Plain fold —
+;;! every widget already drew once in the map, so this never touches the UI.
+(define (kruddboard-any-param-changed results)
+  (let loop ((r results))
+    (cond ((null? r) #f)
+          ((cdr (car r)) #t)
+          (else (loop (cdr r))))))
+
+;;! (kruddboard-draw-script-params e script-ref can-edit) draws the bound
+;;! script's authored parameters as live entity-menu widgets — the per-entity
+;;! override layer over the script's declared params, mirroring the material
+;;! editor. Drawn only when the script declares params; any edit is packed and
+;;! saved immediately (through the scene api's undo-recording setter), so the
+;;! script picks up the new value on its next tick — no explicit Save.
+(define (kruddboard-draw-script-params e script-ref can-edit)
+  (let ((params (krudd-script-params script-ref)))
+    (unless (null? params)
+      (imgui-separator)
+      (when (imgui-collapsing-header "Script Parameters")
+        (let ((values (krudd-entity-script-values e script-ref)))
+          (imgui-begin-disabled (not can-edit))
+          (let* ((results  (map kruddboard-draw-param-widget params values))
+                 (new-vals (map car results))
+                 (changed  (kruddboard-any-param-changed results)))
+            (imgui-end-disabled)
+            (when (and can-edit changed)
+              (krudd-entity-save-script-params e script-ref new-vals))))))))
+
 ;;! (kruddboard-draw-inspector-body e info caps) draws the editable name field
 ;;! and transform table (both disabled without the scene api), then the read-only
 ;;! details and the mesh/material/script binding rows. info is the
@@ -366,7 +420,9 @@
 	  can-bind krudd-entity-set-material-ref)
       (kruddboard-draw-inspector-binding "Script" "##escript" "##scriptsel" e
 	  has-script script-ref (krudd-script-assets) can-bind
-	  krudd-entity-set-script-ref))))
+	  krudd-entity-set-script-ref)
+      (when has-script
+	(kruddboard-draw-script-params e script-ref can-bind)))))
 
 ;;! (kruddboard-draw-world-inspector caps) shows the selected entity's inspector,
 ;;! or a dimmed "(nothing selected)" when nothing live is selected.

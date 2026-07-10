@@ -30,16 +30,100 @@
 (define *entity-script-bound*  (make-hash-table))
 (define *entity-script-begun*  (make-hash-table))
 
-;;! The (script NAME clause ...) form evaluates to its hook alist — each clause
-;;! becomes a (hook-symbol . procedure) pair over the clause's parameters. NAME
-;;! is kept only as a human-readable label; it is NOT a registry key, so two
+;;! A (params ...) clause declares authored data, not a lifecycle hook; strip it
+;;! out so it never becomes a bogus (params . lambda) pair. script-params reads
+;;! it separately, straight from the source form.
+(define (entity-script-hook-clauses clauses)
+  (cond ((null? clauses) '())
+        ((eq? (caar clauses) 'params)
+         (entity-script-hook-clauses (cdr clauses)))
+        (else (cons (car clauses)
+                    (entity-script-hook-clauses (cdr clauses))))))
+
+;;! The (script NAME clause ...) form evaluates to its hook alist — each hook
+;;! clause becomes a (hook-symbol . procedure) pair over the clause's parameters.
+;;! NAME is kept only as a human-readable label; it is NOT a registry key, so two
 ;;! scripts that share a name — a clone and the original it was copied from, say
 ;;! — never collide, and an edited clone runs its own hooks rather than silently
-;;! inheriting its name-twin's.
+;;! inheriting its name-twin's. A (params ...) clause is data, not a hook, and is
+;;! skipped here (see script-params).
 (define-macro (script name . clauses)
   `(list ,@(map (lambda (c)
                   `(cons ',(car c) (lambda ,(cadr c) ,@(cddr c))))
-                clauses)))
+                (entity-script-hook-clauses clauses))))
+
+;;! --- script parameter introspection ---
+;;!
+;;! A script may carry a (params (NAME TYPE [(edit ...)]) ...) clause — the
+;;! CPU-side twin of a shader's Material uniform block. The host and the editor
+;;! derive a script's authorable parameters from it exactly as they derive a
+;;! material's from the shader. Unlike the shader block this is packed TIGHT (no
+;;! std140 padding): there is no GPU layout to satisfy, so a vec3 is 12 bytes
+;;! flush against its neighbour. (script-params SRC) reports the same shape as
+;;! (shader-material-params SRC) so one C marshaller and one set of editor widgets
+;;! serve both.
+
+;;! Bytes a tight-packed param type occupies (0 = not an editable scalar type).
+(define (script-param-size t)
+  (case t
+    ((float int) 4) ((vec2) 8) ((vec3) 12) ((vec4) 16)
+    (else 0)))
+
+;;! Float components the editor exposes for a type (matches shader-type-components).
+(define (script-param-components t)
+  (case t
+    ((float int) 1) ((vec2) 2) ((vec3) 3) ((vec4) 4)
+    (else 0)))
+
+;;! The edit hint of a field as (KIND MIN MAX): ("none" 0 0), ("color" 0 0) or
+;;! ("range" MIN MAX). A field is (NAME TYPE) or (NAME TYPE (edit ...)).
+(define (script-field-edit f)
+  (let ((e (assq 'edit (cddr f))))
+    (cond ((not e) (list "none" 0 0))
+          ((eq? (cadr e) 'color) (list "color" 0 0))
+          ((eq? (cadr e) 'range) (list "range" (caddr e) (cadddr e)))
+          (else (list "none" 0 0)))))
+
+;;! The (params ...) fields of a (script ...) form, or '() when it declares none.
+(define (script-params-fields form)
+  (let ((p (assq 'params (cddr form))))
+    (if p (cdr p) '())))
+
+;;! Walk the params clause into (TOTAL-SIZE (NAME TYPE OFFSET SIZE COMPONENTS
+;;! EDIT-KIND EDIT-MIN EDIT-MAX) ...), tight-packed. Total is 0 with no params.
+(define (script-params-form form)
+  (let loop ((fields (script-params-fields form)) (off 0) (acc '()))
+    (if (null? fields)
+        (cons off (reverse acc))
+        (let* ((f  (car fields))
+               (ty (cadr f))
+               (sz (script-param-size ty))
+               (ed (script-field-edit f)))
+          (loop (cdr fields)
+                (+ off sz)
+                (cons (list (symbol->string (car f))
+                            (symbol->string ty)
+                            off sz
+                            (script-param-components ty)
+                            (car ed) (cadr ed) (caddr ed))
+                      acc))))))
+
+;;! Entry point mirrored by the C seam (script_entity_params) and the editor.
+(define (script-params src)
+  (script-params-form (with-input-from-string src (lambda () (read)))))
+
+;;! The bound entity's authored parameter values, in scope only for the span of
+;;! its hook calls: an ((name . value) ...) alist (value a number or a list of
+;;! numbers) the host resolves per entity and hands to entity-script-tick.
+(define *entity-params* '())
+
+;;! (param NAME) -> the current entity's value for parameter NAME (a symbol), or
+;;! #f when the bound script declares no such parameter. A clause reads its
+;;! authored inputs through this, keeping the script itself stateless: the pose
+;;! stays a pure function of the clock, the rest pose, and these params.
+(define (param name)
+  (let ((p (assq name *entity-params*)))
+    (and p (cdr p))))
 
 ;;! The procedure a script binds to hook KEY, or #f when it defines no such hook.
 (define (entity-script-clause hooks key)
@@ -80,18 +164,21 @@
 ;;! on-begin the first frame, then on-tick every frame. A fault in one entity's
 ;;! script is caught and logged, never taking the frame down (mirrors the
 ;;! graceful-degradation contract of the krudd-log primitive).
-(define (entity-script-tick id src t)
+(define (entity-script-tick id src t params)
   (catch #t
     (lambda ()
       (let ((hooks (entity-script-resolve id src)))
         (when hooks
+          (set! *entity-params* params)
           (unless (hash-table-ref *entity-script-begun* id)
             (let ((h (entity-script-clause hooks 'on-begin)))
               (when h (h id)))
             (hash-table-set! *entity-script-begun* id #t))
           (let ((h (entity-script-clause hooks 'on-tick)))
-            (when h (h id t))))))
+            (when h (h id t)))
+          (set! *entity-params* '()))))
     (lambda args
+      (set! *entity-params* '())
       (krudd-log 2 (string-append "entity-script: fault on entity "
                                   (number->string id)))
       #f)))

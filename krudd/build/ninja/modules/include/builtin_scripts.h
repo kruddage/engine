@@ -47,6 +47,25 @@
 	"      (* 15 (cos (* t 2.7))))))\n"
 
 /*
+ * pulse — breathe in and out about the rest scale. Unlike the three above it
+ * carries authored parameters: `amp` (how far the scale swings) and `rate` (how
+ * fast), declared in a (params ...) clause and read through (param ...). Both
+ * default to 0 (a neutral, still pose), so the effect is dialed in per entity by
+ * overriding the parameters on the entity — the CPU-side twin of a material
+ * instance overriding a shader's Material block. Still stateless: the pose is a
+ * pure function of the clock, the rest scale, and the authored params.
+ */
+#define PULSE_SCRIPT_SRC                                                      \
+	"(script pulse\n"                                                    \
+	"  (params (amp  float (edit range 0 2))\n"                         \
+	"          (rate float (edit range 0 10)))\n"                       \
+	"  (on-tick (self t)\n"                                             \
+	"    (let ((b (entity-base-scale self))\n"                         \
+	"          (s (+ 1.0 (* (param 'amp) (sin (* t (param 'rate)))))))\n" \
+	"      (entity-set-scale! self\n"                                   \
+	"        (* (car b) s) (* (cadr b) s) (* (caddr b) s)))))\n"
+
+/*
  * orbit-camera — proof-of-life camera behavior: circle the origin at a
  * fixed radius/height, no input. Bound to the world's dedicated camera entity
  * the same way spinner/bounce/wobble bind to a mesh entity; scene_renderer

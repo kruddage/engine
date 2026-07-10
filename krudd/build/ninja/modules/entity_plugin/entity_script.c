@@ -18,8 +18,10 @@
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #define ENTITY_SCRIPT_PI 3.14159265358979323846
+#define ENTITY_SCRIPT_MAX_PARAMS 32
 
 /*
  * The world the primitives act on, valid only for the span of one
@@ -133,6 +135,59 @@ static s7_pointer sp_entity_set_euler(s7_scheme *sc, s7_pointer args)
 	return s7_unspecified(sc);
 }
 
+/* The default of one param component, given its field's edit hint (mirrors the
+ * editor's param_default so an un-overridden script and the UI agree). */
+static float es_param_default(const struct shader_param *p)
+{
+	if (strcmp(p->edit, "color") == 0)
+		return 1.0f;
+	if (strcmp(p->edit, "range") == 0)
+		return p->edit_min;
+	return 0.0f;
+}
+
+/*
+ * Resolve entity SRC's declared params against its override BLOB (blen bytes, or
+ * NULL for none) into an ((name . value) ...) alist — value a real for a scalar
+ * param, a list of reals for a vector. Each field reads from the override where
+ * it is present and long enough, else from its edit-hint default. This is the
+ * override ⊕ defaults the script sees through (param ...).
+ */
+static s7_pointer es_param_values(s7_scheme *sc, const char *src,
+				  const uint8_t *blob, uint32_t blen)
+{
+	struct shader_param p[ENTITY_SCRIPT_MAX_PARAMS];
+	int                 n, i;
+	s7_pointer          out = s7_nil(sc);
+
+	if (!src)
+		return out;
+	n = script_entity_params(src, p, ENTITY_SCRIPT_MAX_PARAMS, NULL);
+	for (i = n - 1; i >= 0; i--) {
+		uint32_t   c = p[i].components > 4 ? 4 : p[i].components;
+		float      v[4];
+		uint32_t   k;
+		s7_pointer val;
+
+		for (k = 0; k < c; k++)
+			v[k] = es_param_default(&p[i]);
+		if (blob && p[i].offset + c * sizeof(float) <= blen)
+			memcpy(v, blob + p[i].offset, c * sizeof(float));
+		if (c == 1) {
+			val = s7_make_real(sc, v[0]);
+		} else {
+			val = s7_nil(sc);
+			for (k = c; k > 0; k--)
+				val = s7_cons(sc, s7_make_real(sc, v[k - 1]),
+					      val);
+		}
+		out = s7_cons(sc,
+			      s7_cons(sc, s7_make_symbol(sc, p[i].name), val),
+			      out);
+	}
+	return out;
+}
+
 void entity_script_init(void)
 {
 	static int registered;
@@ -173,7 +228,9 @@ void entity_script_tick(struct world *w, const struct asset_api *asset, float t)
 
 	g_w = w;
 	for (i = 0; i < w->count; i++) {
-		const char *src;
+		const char    *src;
+		const uint8_t *blob;
+		uint32_t       blen = 0;
 
 		if (!w->alive[i] || !(w->mask[i] & COMPONENT_SCRIPT)
 		    || !w->script_ref[i])
@@ -181,9 +238,11 @@ void entity_script_tick(struct world *w, const struct asset_api *asset, float t)
 		src = (const char *)asset->get_data(w->script_ref[i], NULL);
 		if (!src)
 			continue;
-		s7_call(sc, fn, s7_list(sc, 3, s7_make_integer(sc, (s7_int)i),
+		blob = world_script_params(w, i, &blen);
+		s7_call(sc, fn, s7_list(sc, 4, s7_make_integer(sc, (s7_int)i),
 					s7_make_string(sc, src),
-					s7_make_real(sc, (double)t)));
+					s7_make_real(sc, (double)t),
+					es_param_values(sc, src, blob, blen)));
 	}
 	g_w = NULL;
 }

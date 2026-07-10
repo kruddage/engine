@@ -307,6 +307,7 @@ static const char *g_float_id;      /* id whose input-floatN changed      */
 static int         g_float_changed;
 static const char *g_combo_open;    /* id of the one open combo, or NULL  */
 static int         g_mat_param_mode; /* stubbed shader material schema mode */
+static int         g_script_param_mode; /* stubbed script params schema mode */
 
 static s7_pointer st_begin_disabled(s7_scheme *sc, s7_pointer a)
 {
@@ -546,6 +547,7 @@ static void fw_reset(void)
 	g_float_id     = NULL;
 	g_float_changed = 0;
 	g_combo_open   = NULL;
+	g_script_param_mode = 0;
 }
 
 static s7_pointer real_vec(s7_scheme *sc, const float *v, int n)
@@ -1040,6 +1042,38 @@ static s7_pointer st_material_values(s7_scheme *sc, s7_pointer a)
 		s7_make_real(sc, 1.0), s7_make_real(sc, 1.0)));
 }
 
+/*
+ * The script-declared params schema, stubbed. Mode 0 (default): no params, so
+ * the inspector draws no Script Parameters section. Mode 1: a single (edit range
+ * 0 10) "speed" float, enough to exercise the slider widget + save path.
+ */
+static s7_pointer st_script_params(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	if (g_script_param_mode == 1)
+		return s7_list(sc, 1,
+			mat_param(sc, "speed", "float", 0, 4, 1, "range",
+				  0.0, 10.0));
+	return s7_nil(sc);
+}
+
+static s7_pointer st_entity_script_values(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	if (g_script_param_mode == 1)
+		return s7_list(sc, 1, s7_list(sc, 1, s7_make_real(sc, 3.0)));
+	return s7_nil(sc);
+}
+
+static s7_pointer st_entity_save_script_params(s7_scheme *sc, s7_pointer a)
+{
+	int        id  = (int)s7_integer(s7_car(a));
+	unsigned   ref = (unsigned)s7_integer(s7_cadr(a));
+
+	rec("save-script-params|%d|%u", id, ref);
+	return s7_unspecified(sc);
+}
+
 /* Mirrors the real shader_stages_from_source substring scan exactly, so the
  * Declaration display gets a meaningful test. */
 static s7_pointer st_shader_stages(s7_scheme *sc, s7_pointer a)
@@ -1470,6 +1504,10 @@ static s7_scheme *setup(void)
 	def(sc, "krudd-asset-shader-ref", st_asset_shader_ref, 1);
 	def(sc, "krudd-shader-material-params", st_shader_material_params, 1);
 	def(sc, "krudd-material-values", st_material_values, 2);
+	def(sc, "krudd-script-params", st_script_params, 1);
+	def(sc, "krudd-entity-script-values", st_entity_script_values, 2);
+	def(sc, "krudd-entity-save-script-params",
+	    st_entity_save_script_params, 3);
 	def(sc, "krudd-shader-stages", st_shader_stages, 1);
 	def(sc, "krudd-asset-save-text", st_asset_save_text, 2);
 	def(sc, "krudd-asset-save-shader", st_asset_save_shader, 2);
@@ -1896,6 +1934,46 @@ static void test_world_script_resolved(void)
 
 	assert(rec_has("text|Transform, Name, Render, Script"));
 	assert(rec_has("combo|##scriptsel|orbit.kscm"));
+}
+
+/*
+ * A bound script that declares params surfaces them under the Script row as
+ * editable widgets — here a range-hinted "speed" renders as a slider keyed
+ * "speed##sp". A script with no params (mode 0) draws no such section.
+ */
+static void test_world_script_params_render(void)
+{
+	fw_reset();
+	g_fw[0].has_script  = 1;
+	g_fw[0].script_ref  = 301;
+	g_script_param_mode = 1;
+	rec_reset();
+	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+
+	assert(rec_has("slider|speed##sp"));
+
+	/* No params clause -> no slider drawn. */
+	fw_reset();
+	g_fw[0].has_script = 1;
+	g_fw[0].script_ref = 301;
+	rec_reset();
+	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	assert(!rec_has("slider|speed##sp"));
+}
+
+/* Editing a param writes the whole value set back through the save primitive. */
+static void test_world_script_params_save(void)
+{
+	fw_reset();
+	g_fw[0].has_script  = 1;
+	g_fw[0].script_ref  = 301;
+	g_script_param_mode = 1;
+	g_float_id          = "speed##sp";   /* force this slider to report a change */
+	g_float_changed     = 1;
+	rec_reset();
+	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+
+	assert(rec_has("save-script-params|0|301"));
 }
 
 /* The tool chips highlight the active tool and switch it on a click. */
@@ -2507,6 +2585,8 @@ int main(void)
 	RUN(world_script_bind);
 	RUN(world_script_unbind);
 	RUN(world_script_resolved);
+	RUN(world_script_params_render);
+	RUN(world_script_params_save);
 	RUN(world_gizmo_chips);
 	RUN(world_composition);
 

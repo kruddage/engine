@@ -30,6 +30,16 @@
 #define WORLD_NO_PARENT    (-1)
 #define WORLD_NO_NAME      SCENE_NO_NAME
 
+/*
+ * Per-entity script-parameter override: the tight-packed values a scripted
+ * entity overrides on its bound script's params clause (the CPU-side twin of a
+ * material instance overriding a shader's Material block). Held inline per
+ * entity — small, bounded, and rewritten in place as a slider drags — rather
+ * than in an append-only blob like names. A len of 0 means "no override": the
+ * script runs on its param defaults.
+ */
+#define WORLD_SCRIPT_PARAM_CAP 64
+
 struct transform {
 	float position[3];
 	float rotation[4];   /* quaternion, xyzw */
@@ -49,6 +59,8 @@ struct world {
 	uint32_t         render_ref[WORLD_MAX_ENTITIES];   /* valid iff COMPONENT_RENDER */
 	uint32_t         material_ref[WORLD_MAX_ENTITIES]; /* valid iff COMPONENT_MATERIAL */
 	uint32_t         script_ref[WORLD_MAX_ENTITIES];   /* valid iff COMPONENT_SCRIPT */
+	uint32_t         script_param_len[WORLD_MAX_ENTITIES]; /* 0 = no override */
+	uint8_t          script_params[WORLD_MAX_ENTITIES][WORLD_SCRIPT_PARAM_CAP];
 	char             names[WORLD_NAME_BYTES];          /* NUL-terminated blob */
 };
 
@@ -109,6 +121,25 @@ void world_set_material_ref(struct world *w, int32_t e, uint32_t material_ref);
  * ids are ignored.
  */
 void world_set_script_ref(struct world *w, int32_t e, uint32_t script_ref);
+
+/*
+ * Override entity e's script parameters with `len` tight-packed bytes (the
+ * layout its bound script's params clause reports). A len of 0 clears the
+ * override, so the script falls back to its param defaults. Bytes beyond
+ * WORLD_SCRIPT_PARAM_CAP are dropped. Out-of-range or tombstoned ids are
+ * ignored. Independent of COMPONENT_SCRIPT: an override can be authored before
+ * (or after) a script is bound.
+ */
+void world_set_script_params(struct world *w, int32_t e,
+			     const uint8_t *bytes, uint32_t len);
+
+/*
+ * Entity e's script-parameter override bytes, or NULL when it has none. *len
+ * (may be NULL) receives the byte count. The pointer is into the world and is
+ * valid until the next mutation of e's override.
+ */
+const uint8_t *world_script_params(const struct world *w, uint32_t e,
+				   uint32_t *len);
 
 /*
  * Editor selection model. set accepts -1 (none) or a live entity id; any

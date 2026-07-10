@@ -36,8 +36,22 @@ static const char *const CAT_PATHS[] = {
 	"builtin://pyramid",
 	"builtin://shader/scene",
 	"material/red",
+	"shader/alt",
+	"material/blue",
 };
 #define CAT_COUNT ((uint32_t)(sizeof(CAT_PATHS) / sizeof(CAT_PATHS[0])))
+
+/* Per-index asset type, addressed the same way as the id (id == index + 1). */
+static const int32_t CAT_TYPES[CAT_COUNT] = {
+	ASSET_TYPE_MESH,     /* id 1 cube    */
+	ASSET_TYPE_MESH,     /* id 2 sphere  */
+	ASSET_TYPE_MESH,     /* id 3 plane   */
+	ASSET_TYPE_MESH,     /* id 4 pyramid */
+	ASSET_TYPE_SHADER,   /* id 5 scene shader */
+	ASSET_TYPE_MATERIAL, /* id 6 material/red (legacy 16-byte, no shader) */
+	ASSET_TYPE_SHADER,   /* id 7 shader/alt   */
+	ASSET_TYPE_MATERIAL, /* id 8 material/blue (v2: base_color + shader 7) */
+};
 
 static void    *g_blob[4];       /* cube, sphere, plane, pyramid */
 static uint32_t g_blob_size[4];
@@ -45,8 +59,22 @@ static uint32_t g_blob_size[4];
 static const char *const SHADER_SRC =
 	"(shader scene (vertex (set position (vec4 0.0 0.0 0.0 1.0)))"
 	" (fragment (set c (vec4 1.0 1.0 1.0 1.0))))";
-/* A material asset is just its base_color RGBA, raw floats — id 6. */
-static const float MATERIAL_RED[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
+static const char *const SHADER_ALT_SRC =
+	"(shader alt (vertex (set position (vec4 0.0 0.0 0.0 1.0)))"
+	" (fragment (set c (vec4 0.0 0.0 1.0 1.0))))";
+/*
+ * A v3 material's wire form: a leading shader-ref (asset id) then the shader's
+ * std140 Material block — here one vec4 base_color. Red (id 6) names the scene
+ * shader (id 5); blue (id 8) names shader/alt (id 7).
+ */
+static const struct {
+	uint32_t shader_ref;
+	float    base_color[4];
+} MATERIAL_RED  = { 5u, { 1.0f, 0.0f, 0.0f, 1.0f } };
+static const struct {
+	uint32_t shader_ref;
+	float    base_color[4];
+} MATERIAL_BLUE = { 7u, { 0.0f, 0.0f, 1.0f, 1.0f } };
 
 static uint32_t cat_count(void) { return CAT_COUNT; }
 
@@ -57,10 +85,18 @@ static int32_t cat_info(uint32_t i, struct asset_info *out)
 	memset(out, 0, sizeof(*out));
 	out->path      = CAT_PATHS[i];
 	out->id        = i + 1;
-	out->type      = (i == 5) ? ASSET_TYPE_MATERIAL : ASSET_TYPE_MESH;
+	out->type      = CAT_TYPES[i];
 	out->state     = 1;
 	out->read_only = 1;
 	return 0;
+}
+
+/* Resolve a stable id (index + 1) to its snapshot; id 0 is "none". */
+static int32_t cat_find(uint32_t id, struct asset_info *out)
+{
+	if (id == 0 || id > CAT_COUNT)
+		return -1;
+	return cat_info(id - 1, out);
 }
 
 static const void *cat_get_data(uint32_t id, uint32_t *out_size)
@@ -78,7 +114,17 @@ static const void *cat_get_data(uint32_t id, uint32_t *out_size)
 	if (id == 6) {
 		if (out_size)
 			*out_size = (uint32_t)sizeof(MATERIAL_RED);
-		return MATERIAL_RED;
+		return &MATERIAL_RED;
+	}
+	if (id == 7) {
+		if (out_size)
+			*out_size = (uint32_t)strlen(SHADER_ALT_SRC) + 1;
+		return SHADER_ALT_SRC;
+	}
+	if (id == 8) {
+		if (out_size)
+			*out_size = (uint32_t)sizeof(MATERIAL_BLUE);
+		return &MATERIAL_BLUE;
 	}
 	return NULL;
 }
@@ -86,6 +132,7 @@ static const void *cat_get_data(uint32_t id, uint32_t *out_size)
 static const struct asset_api FAKE_ASSET = {
 	.count    = cat_count,
 	.info     = cat_info,
+	.find     = cat_find,
 	.get_data = cat_get_data,
 };
 
@@ -172,6 +219,40 @@ static uint32_t count_material_binds(void)
 	return binds;
 }
 
+static uint32_t count_calls(enum gpu_call_type type)
+{
+	const struct gpu_call_record *log;
+	uint32_t count, i, hits = 0;
+
+	log = renderer_null_get_log(&count);
+	for (i = 0; i < count; i++)
+		if (log[i].type == type)
+			hits++;
+	return hits;
+}
+
+/*
+ * Entity 0 carries the v2 material (id 8) whose shader-ref selects shader/alt;
+ * entity 1 has no material and must draw with the built-in scene pipeline. So a
+ * frame binds two distinct pipelines, one switch between them.
+ */
+static void build_world_shaders(uint32_t cube_ref)
+{
+	memset(&g_world, 0, sizeof(g_world));
+	g_world.count = 2;
+
+	g_world.alive[0]        = 1;
+	g_world.mask[0]         = COMPONENT_RENDER | COMPONENT_MATERIAL;
+	g_world.render_ref[0]   = cube_ref;
+	g_world.material_ref[0] = 8u;
+	set_identity_xform(&g_world.world_xform[0], -1.0f, 0.0f, 0.0f);
+
+	g_world.alive[1]      = 1;
+	g_world.mask[1]       = COMPONENT_RENDER;
+	g_world.render_ref[1] = cube_ref;
+	set_identity_xform(&g_world.world_xform[1], 1.0f, 0.0f, 0.0f);
+}
+
 int main(void)
 {
 	static const struct subsystem static_table[] = {
@@ -212,6 +293,25 @@ int main(void)
 	renderer_null_reset_log();
 	subsystem_manager_tick(&mgr);
 	assert(count_draws(NULL) == 0);
+
+	/*
+	 * Per-material shader: a material that selects shader/alt gets its own
+	 * pipeline, compiled once and off-frame (from the tick, not the pass).
+	 * Every live entity still draws. (The recording backend returns a 0
+	 * pipeline handle for every create, so a bind can't be attributed to a
+	 * specific pipeline here — the create count is the observable signal.)
+	 */
+	build_world_shaders(1);
+	renderer_null_reset_log();
+	subsystem_manager_tick(&mgr);
+	assert(count_calls(GPU_CALL_PIPELINE_CREATE) == 1); /* just shader/alt */
+	assert(count_draws(NULL) == 2);
+
+	/* The pipeline is cached by shader id: a later frame compiles nothing. */
+	renderer_null_reset_log();
+	subsystem_manager_tick(&mgr);
+	assert(count_calls(GPU_CALL_PIPELINE_CREATE) == 0);
+	assert(count_draws(NULL) == 2);
 
 	subsystem_manager_shutdown(&mgr);
 	for (k = 0; k < 4; k++)

@@ -306,6 +306,7 @@ static int         g_input_commit;  /* did it just commit (focus lost)?   */
 static const char *g_float_id;      /* id whose input-floatN changed      */
 static int         g_float_changed;
 static const char *g_combo_open;    /* id of the one open combo, or NULL  */
+static int         g_mat_param_mode; /* stubbed shader material schema mode */
 
 static s7_pointer st_begin_disabled(s7_scheme *sc, s7_pointer a)
 {
@@ -803,6 +804,7 @@ static void asset_reset(void)
 {
 	memset(g_fa, 0, sizeof(g_fa));
 	g_fa_n = 0;
+	g_mat_param_mode = 0;
 
 	/* id 501: built-in mesh — read-only, a drag source in the browser. */
 	g_fa[0].alive = 1; g_fa[0].id = 501;
@@ -881,8 +883,10 @@ static void assets_scheme_reset(void)
 	script_eval("(set! kruddboard-assets-edit-text \"\")");
 	script_eval("(set! kruddboard-assets-shader-ok 'untried)");
 	script_eval("(set! kruddboard-assets-script-ok 'untried)");
-	script_eval("(set! kruddboard-assets-color-id 0)");
-	script_eval("(set! kruddboard-assets-color (list 1.0 1.0 1.0 1.0))");
+	script_eval("(set! kruddboard-assets-mat-id 0)");
+	script_eval("(set! kruddboard-assets-mat-shader 0)");
+	script_eval("(set! kruddboard-assets-mat-params '())");
+	script_eval("(set! kruddboard-assets-mat-values '())");
 	script_eval("(set! kruddboard-assets-naming #f)");
 	script_eval("(set! kruddboard-assets-new-name \"\")");
 	script_eval("(set! kruddboard-assets-new-type 0)");
@@ -980,15 +984,60 @@ static s7_pointer st_asset_data(s7_scheme *sc, s7_pointer a)
 	return s7_make_string(sc, f ? f->data : "");
 }
 
-static s7_pointer st_asset_color(s7_scheme *sc, s7_pointer a)
+/* A material's leading uint32 is its shader-ref (v3 wire form, offset 0). */
+static s7_pointer st_asset_shader_ref(s7_scheme *sc, s7_pointer a)
 {
-	unsigned         id = (unsigned)s7_integer(s7_car(a));
-	struct fa_asset *f  = fa_find(id);
-	float            v[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+	unsigned         id  = (unsigned)s7_integer(s7_car(a));
+	struct fa_asset *f   = fa_find(id);
+	uint32_t         ref = 0;
 
-	if (f && f->data_len >= (int)sizeof(v))
-		memcpy(v, f->data, sizeof(v));
-	return real_vec(sc, v, 4);
+	if (f && f->data_len >= (int)sizeof(ref))
+		memcpy(&ref, f->data, sizeof(ref));
+	return s7_make_integer(sc, (s7_int)ref);
+}
+
+static s7_pointer st_shader_assets(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	return assets_by_type(sc, 4);
+}
+
+/*
+ * The shader-derived material schema, stubbed. Mode 0 (g_mat_param_mode,
+ * declared with the widget globals above) mimics the scene shader (one
+ * (edit color) vec4 base_color); mode 1 a (edit range 0 1) float roughness —
+ * enough to exercise both the colour-picker and slider widget paths.
+ */
+static s7_pointer mat_param(s7_scheme *sc, const char *name, const char *type,
+			    int off, int size, int comps, const char *kind,
+			    double mn, double mx)
+{
+	return s7_list(sc, 8,
+		s7_make_string(sc, name), s7_make_string(sc, type),
+		s7_make_integer(sc, off), s7_make_integer(sc, size),
+		s7_make_integer(sc, comps), s7_make_string(sc, kind),
+		s7_make_real(sc, mn), s7_make_real(sc, mx));
+}
+
+static s7_pointer st_shader_material_params(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	if (g_mat_param_mode == 1)
+		return s7_list(sc, 1,
+			mat_param(sc, "roughness", "float", 0, 4, 1, "range",
+				  0.0, 1.0));
+	return s7_list(sc, 1,
+		mat_param(sc, "base_color", "vec4", 0, 16, 4, "color", 0.0, 0.0));
+}
+
+static s7_pointer st_material_values(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	if (g_mat_param_mode == 1)
+		return s7_list(sc, 1, s7_list(sc, 1, s7_make_real(sc, 0.5)));
+	return s7_list(sc, 1, s7_list(sc, 4,
+		s7_make_real(sc, 1.0), s7_make_real(sc, 1.0),
+		s7_make_real(sc, 1.0), s7_make_real(sc, 1.0)));
 }
 
 /* Mirrors the real shader_stages_from_source substring scan exactly, so the
@@ -1035,24 +1084,42 @@ static s7_pointer st_asset_save_shader(s7_scheme *sc, s7_pointer a)
 	return s7_t(sc);
 }
 
+/* Flatten (component-list ...) into f->data after the shader-ref header. */
+static int fa_pack_material(s7_scheme *sc, struct fa_asset *f,
+			    uint32_t shader_ref, s7_pointer values)
+{
+	int len = 0;
+
+	if (!f)
+		return 0;
+	memcpy(f->data, &shader_ref, sizeof(shader_ref));
+	len = (int)sizeof(shader_ref);
+	for (; s7_is_pair(values); values = s7_cdr(values)) {
+		s7_pointer comp = s7_car(values);
+
+		for (; s7_is_pair(comp) &&
+		       len + (int)sizeof(float) <= (int)sizeof(f->data);
+		     comp = s7_cdr(comp)) {
+			float v = (float)s7_number_to_real(sc, s7_car(comp));
+
+			memcpy(f->data + len, &v, sizeof(v));
+			len += (int)sizeof(v);
+		}
+	}
+	f->data_len = len;
+	return len;
+}
+
+/* (krudd-asset-save-material id shader-ref values) -> unspecified. */
 static s7_pointer st_asset_save_material(s7_scheme *sc, s7_pointer a)
 {
-	s7_pointer       p  = a;
-	unsigned         id = (unsigned)s7_integer(s7_car(p)); p = s7_cdr(p);
-	float            v[4];
-	struct fa_asset *f;
-	int              i;
+	s7_pointer p          = a;
+	unsigned   id         = (unsigned)s7_integer(s7_car(p)); p = s7_cdr(p);
+	unsigned   shader_ref = (unsigned)s7_integer(s7_car(p)); p = s7_cdr(p);
+	s7_pointer values     = s7_car(p);
 
-	for (i = 0; i < 4 && s7_is_pair(p); i++) {
-		v[i] = (float)s7_number_to_real(sc, s7_car(p));
-		p    = s7_cdr(p);
-	}
-	rec("save-material|%u|%.2f,%.2f,%.2f,%.2f", id, v[0], v[1], v[2], v[3]);
-	f = fa_find(id);
-	if (f) {
-		memcpy(f->data, v, sizeof(v));
-		f->data_len = (int)sizeof(v);
-	}
+	rec("save-material|%u|%u", id, shader_ref);
+	fa_pack_material(sc, fa_find(id), (uint32_t)shader_ref, values);
 	return s7_unspecified(sc);
 }
 
@@ -1189,21 +1256,20 @@ static s7_pointer st_asset_clone_script(s7_scheme *sc, s7_pointer a)
 	return s7_make_integer(sc, (s7_int)id);
 }
 
+/* (krudd-asset-clone-material name shader-ref values) -> new id or 0. */
 static s7_pointer st_asset_clone_material(s7_scheme *sc, s7_pointer a)
 {
-	s7_pointer  p    = a;
-	const char *name = s7_is_string(s7_car(p)) ? s7_string(s7_car(p)) : "";
-	float       v[4];
+	s7_pointer  p          = a;
+	const char *name       = s7_is_string(s7_car(p)) ? s7_string(s7_car(p)) : "";
+	unsigned    shader_ref;
+	uint32_t    sref;
 	unsigned    id;
-	int         i;
 
-	p = s7_cdr(p);
-	for (i = 0; i < 4 && s7_is_pair(p); i++) {
-		v[i] = (float)s7_number_to_real(sc, s7_car(p));
-		p    = s7_cdr(p);
-	}
-	rec("clone-material|%s|%.2f,%.2f,%.2f,%.2f", name, v[0], v[1], v[2], v[3]);
-	id = fa_create(name, 3, (const char *)v, (int)sizeof(v), 0, 1);
+	p          = s7_cdr(p);
+	shader_ref = (unsigned)s7_integer(s7_car(p));
+	sref       = (uint32_t)shader_ref;
+	rec("clone-material|%s|%u", name, shader_ref);
+	id = fa_create(name, 3, (const char *)&sref, (int)sizeof(sref), 0, 1);
 	return s7_make_integer(sc, (s7_int)id);
 }
 
@@ -1273,6 +1339,37 @@ static s7_pointer st_color_edit4(s7_scheme *sc, s7_pointer a)
 	return s7_cons(sc, s7_cadr(a), s7_make_boolean(sc, changed));
 }
 
+static s7_pointer st_color_edit3(s7_scheme *sc, s7_pointer a)
+{
+	const char *id = s7_string(s7_car(a));
+	int         changed = g_float_id && strcmp(g_float_id, id) == 0
+		&& g_float_changed;
+
+	rec("coloredit3|%s", id);
+	return s7_cons(sc, s7_cadr(a), s7_make_boolean(sc, changed));
+}
+
+static s7_pointer st_input_float1(s7_scheme *sc, s7_pointer a)
+{
+	return st_input_float(sc, a, "input-f1");
+}
+
+static s7_pointer st_input_float2(s7_scheme *sc, s7_pointer a)
+{
+	return st_input_float(sc, a, "input-f2");
+}
+
+/* (imgui-slider-float id x lo hi) — echoes x, records the id like a widget. */
+static s7_pointer st_slider_float(s7_scheme *sc, s7_pointer a)
+{
+	const char *id = s7_string(s7_car(a));
+	int         changed = g_float_id && strcmp(g_float_id, id) == 0
+		&& g_float_changed;
+
+	rec("slider|%s", id);
+	return s7_cons(sc, s7_cadr(a), s7_make_boolean(sc, changed));
+}
+
 static s7_pointer st_mesh_drag_source(s7_scheme *sc, s7_pointer a)
 {
 	rec("drag-source|%lld|%s", (long long)s7_integer(s7_car(a)),
@@ -1323,6 +1420,10 @@ static s7_scheme *setup(void)
 	def(sc, "imgui-input-text", st_input_text, 2);
 	def(sc, "imgui-input-float3", st_input_float3, 2);
 	def(sc, "imgui-input-float4", st_input_float4, 2);
+	def(sc, "imgui-input-float", st_input_float1, 2);
+	def(sc, "imgui-input-float2", st_input_float2, 2);
+	def(sc, "imgui-color-edit3", st_color_edit3, 2);
+	def(sc, "imgui-slider-float", st_slider_float, 4);
 	def(sc, "imgui-begin-combo", st_begin_combo, 2);
 	def(sc, "imgui-end-combo", st_end_combo, 0);
 	def(sc, "imgui-selectable", st_selectable, 3);
@@ -1341,6 +1442,7 @@ static s7_scheme *setup(void)
 	def(sc, "krudd-entity-inspect", st_entity_inspect, 1);
 	def(sc, "krudd-mesh-assets", st_mesh_assets, 0);
 	def(sc, "krudd-material-assets", st_material_assets, 0);
+	def(sc, "krudd-shader-assets", st_shader_assets, 0);
 	def(sc, "krudd-script-assets", st_script_assets, 0);
 	def(sc, "krudd-asset-find", st_asset_find, 1);
 	def(sc, "krudd-entity-create", st_entity_create, 0);
@@ -1365,11 +1467,13 @@ static s7_scheme *setup(void)
 	def(sc, "krudd-asset-info", st_asset_info, 1);
 	def(sc, "krudd-asset-describe", st_asset_describe, 1);
 	def(sc, "krudd-asset-data", st_asset_data, 1);
-	def(sc, "krudd-asset-color", st_asset_color, 1);
+	def(sc, "krudd-asset-shader-ref", st_asset_shader_ref, 1);
+	def(sc, "krudd-shader-material-params", st_shader_material_params, 1);
+	def(sc, "krudd-material-values", st_material_values, 2);
 	def(sc, "krudd-shader-stages", st_shader_stages, 1);
 	def(sc, "krudd-asset-save-text", st_asset_save_text, 2);
 	def(sc, "krudd-asset-save-shader", st_asset_save_shader, 2);
-	def(sc, "krudd-asset-save-material", st_asset_save_material, 5);
+	def(sc, "krudd-asset-save-material", st_asset_save_material, 3);
 	def(sc, "krudd-asset-delete", st_asset_delete, 1);
 	def(sc, "krudd-asset-create-text", st_asset_create_text, 1);
 	def(sc, "krudd-asset-create-shader", st_asset_create_shader, 1);
@@ -1379,7 +1483,7 @@ static s7_scheme *setup(void)
 	def(sc, "krudd-asset-save-script", st_asset_save_script, 2);
 	def(sc, "krudd-asset-create-script", st_asset_create_script, 1);
 	def(sc, "krudd-asset-clone-script", st_asset_clone_script, 2);
-	def(sc, "krudd-asset-clone-material", st_asset_clone_material, 5);
+	def(sc, "krudd-asset-clone-material", st_asset_clone_material, 3);
 	def(sc, "krudd-md-preview", st_md_preview, 2);
 
 	assert(script_eval(KRUDDBOARD_SCM) == 0);
@@ -2208,27 +2312,62 @@ static void test_assets_create_script(void)
 	assert(rec_has("create-script|new.script"));
 }
 
+/* Publish shader 808 ("my.shader") and point material 901 at it, so the
+ * editor loads a shader and its (stubbed) parameter schema. */
+static void material_with_shader(unsigned shader_id, const char *path)
+{
+	uint32_t sref = (uint32_t)shader_id;
+
+	g_have_asset   = 1;
+	g_assets[0].id = shader_id; g_assets[0].path = path; g_assets[0].type = 4;
+	g_assets_n     = 1;
+	memcpy(g_fa[4].data, &sref, sizeof(sref));
+	g_fa[4].data_len = (int)sizeof(sref);
+}
+
+/*
+ * The material editor is shader-derived: it previews the material's shader,
+ * draws one widget per the shader's Material param (base_color -> colour
+ * picker), and Save carries the shader-ref.
+ */
 static void test_assets_material_editor(void)
 {
 	asset_reset();
 	assets_scheme_reset();
+	material_with_shader(808, "my.shader");
 	script_eval("(set! kruddboard-assets-sel 901)");
 	g_click = "Save";
-	g_float_id = "##basecolor"; g_float_changed = 1;
 	rec_reset();
 	script_eval("(kruddboard-draw-assets)");
-	g_click = NULL; g_float_id = NULL; g_float_changed = 0;
+	g_click = NULL;
 
-	assert(rec_has("coloredit|##basecolor"));
-	assert(rec_has("save-material|901|"));
+	assert(rec_has("combo|##matshader|my.shader"));
+	assert(rec_has("coloredit|base_color##mp"));
+	assert(rec_has("save-material|901|808"));
 }
 
-/* A read-only material gets the Clone flow, seeded "<path>_copy", instead
- * of Save/Delete. */
+/* A range-hinted float param renders as a slider rather than a colour picker. */
+static void test_assets_material_range_param(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	g_mat_param_mode = 1; /* shader exposes a (edit range 0 1) roughness */
+	material_with_shader(808, "my.shader");
+	script_eval("(set! kruddboard-assets-sel 901)");
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+
+	assert(rec_has("slider|roughness##mp"));
+	assert(!rec_has("coloredit|"));
+}
+
+/* A read-only material gets the Clone flow, seeded "<path>_copy", carrying its
+ * shader-ref and current parameter values. */
 static void test_assets_material_clone(void)
 {
 	asset_reset();
 	assets_scheme_reset();
+	material_with_shader(808, "my.shader");
 	g_fa[4].read_only = 1;
 	script_eval("(set! kruddboard-assets-sel 901)");
 	script_eval("(kruddboard-draw-assets)"); /* seed the clone name */
@@ -2238,7 +2377,7 @@ static void test_assets_material_clone(void)
 	g_click = NULL;
 
 	assert(rec_has("input-enter|##clonename|red.mat_copy"));
-	assert(rec_has("clone-material|red.mat_copy|"));
+	assert(rec_has("clone-material|red.mat_copy|808"));
 	assert(assets_sel() != 901 && assets_sel() != 0);
 }
 
@@ -2248,6 +2387,7 @@ static void test_assets_material_clone_conflict(void)
 {
 	asset_reset();
 	assets_scheme_reset();
+	material_with_shader(808, "my.shader");
 	g_fa[4].read_only = 1;
 	script_eval("(set! kruddboard-assets-sel 901)");
 	script_eval("(kruddboard-draw-assets)");
@@ -2260,6 +2400,33 @@ static void test_assets_material_clone_conflict(void)
 	assert(rec_has("colored|1.00,0.30,0.30,1.00|"
 		       "\"red.mat_copy\" already exists"));
 	assert(assets_sel() == 901);
+}
+
+/* Choosing a different shader in the combo re-targets the material; the next
+ * Save persists that shader-ref. */
+static void test_assets_material_shader_select(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	material_with_shader(808, "my.shader");
+	g_assets[1].id = 809; g_assets[1].path = "other.shader";
+	g_assets[1].type = 4;
+	g_assets_n = 2;
+	script_eval("(set! kruddboard-assets-sel 901)");
+
+	/* Frame 1: open the combo and pick other.shader (809). */
+	g_combo_open = "##matshader";
+	g_click      = "other.shader##s809";
+	script_eval("(kruddboard-draw-assets)");
+	g_combo_open = NULL; g_click = NULL;
+
+	/* Frame 2: Save writes the material against the newly chosen shader. */
+	g_click = "Save";
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL;
+
+	assert(rec_has("save-material|901|809"));
 }
 
 /* Every other asset type (mesh, texture, font, scene) falls back to the
@@ -2368,8 +2535,10 @@ int main(void)
 	RUN(assets_script_clone_conflict);
 	RUN(assets_create_script);
 	RUN(assets_material_editor);
+	RUN(assets_material_range_param);
 	RUN(assets_material_clone);
 	RUN(assets_material_clone_conflict);
+	RUN(assets_material_shader_select);
 	RUN(assets_generic_fallback);
 	RUN(assets_inspector_stale);
 	RUN(assets_composition);

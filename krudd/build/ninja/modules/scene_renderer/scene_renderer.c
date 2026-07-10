@@ -25,10 +25,18 @@ static const struct log_api native_log = { log_write };
  *
  * It resolves "frame_graph", "scene" (entity_api) and "asset", and reads the
  * camera. It does NOT hold a persistent gpu_api pointer: the device is resolved
- * only inside init/shutdown to create and destroy persistent resources (the PSO
- * and the primitive mesh buffers) via the seam documented in fg.h. Per-frame
- * GPU access happens exclusively through the command context the graph lends
- * into the forward pass at execute time.
+ * only outside a frame (init/shutdown, and the tick's pre-pass pipeline warm-up)
+ * to create and destroy persistent resources (the pipelines and the primitive
+ * mesh buffers) via the seam documented in fg.h. Per-frame GPU access happens
+ * exclusively through the command context the graph lends into the forward pass
+ * at execute time.
+ *
+ * A material may select its own shader (the optional trailing shader-ref in its
+ * wire form — see resolve_material_shader). Each distinct selected shader gets
+ * its own pipeline, compiled once and cached by shader asset id; forward_pass
+ * binds the right one per draw. A material with no shader-ref (every legacy
+ * 16-byte material, the built-in default) renders with the built-in scene
+ * pipeline exactly as before.
  */
 
 #ifdef __EMSCRIPTEN__
@@ -43,13 +51,39 @@ static const struct entity_api  *g_scene;
 static const struct asset_api   *g_asset;
 
 /* Persistent resources, created once against the device (never per-frame). */
-static gpu_pipeline_t g_pso;
+static gpu_pipeline_t g_default_pso;  /* the built-in scene pipeline; fallback */
 static gpu_buffer_t   g_ubo;         /* 2 * mat4: { view_proj, model } */
-static gpu_buffer_t   g_material_ubo; /* vec4: { base_color } */
+static gpu_buffer_t   g_material_ubo; /* the active material's std140 params */
 static int            g_ready;
 
 #define SCENE_UBO_FLOATS 32          /* view_proj[16] + model[16] */
-#define MATERIAL_UBO_FLOATS 4        /* base_color[4] */
+
+/*
+ * A material's wire form (v3): a uint32 shader-ref (asset id, first-class — a
+ * material always names its shader) followed by the shader's Material uniform
+ * block, std140-packed. The renderer stays schema-agnostic: it uploads the
+ * param bytes to the Material UBO verbatim (the editor packs them to match the
+ * shader), so what parameters a material has is entirely the shader's business.
+ */
+#define MATERIAL_HEADER_BYTES  sizeof(uint32_t)     /* the leading shader-ref */
+#define MATERIAL_UBO_MAX       256                  /* std140 param bytes cap  */
+#define MATERIAL_FALLBACK_BYTES 16                  /* one white vec4          */
+
+/*
+ * One compiled pipeline per shader a material selects, keyed by the shader's
+ * asset id. Small and fixed: a session rarely uses more than a couple of custom
+ * scene shaders, and an overflow just falls back to the built-in pipeline. The
+ * built-in scene pipeline is pre-cached here under its own asset id, so the
+ * default material (which names that shader) reuses it rather than recompiling.
+ */
+struct shader_pso {
+	uint32_t       shader_ref;
+	gpu_pipeline_t pso;   /* 0 = the shader failed to compile; use default */
+};
+
+#define SCENE_MAX_SHADER_PSOS 8
+static struct shader_pso g_shader_psos[SCENE_MAX_SHADER_PSOS];
+static uint32_t          g_shader_pso_count;
 
 /* One uploaded mesh, selected by an entity's render_ref (== asset id). */
 struct mesh_gpu {
@@ -161,42 +195,75 @@ static struct mesh_gpu *find_mesh(uint32_t render_ref)
 }
 
 /*
- * Resolve a material asset's base_color (its only parameter today — see the
- * Material uniform block in SCENE_SHADER_SRC). A material asset is nothing
- * more than 4 raw floats (RGBA); no material_ref, a missing asset, or a
- * short/malformed one all fall back to opaque white, the multiplicative
- * identity, so an unmaterialed entity renders exactly as it always has.
+ * Resolve a material's shader — the leading uint32 asset id of its wire form.
+ * Returns 0 (meaning "use the built-in scene pipeline") for a missing/short
+ * material, a shader-ref of 0, or one that no longer resolves to a shader asset
+ * (its shader was deleted or retyped) — so a dangling reference degrades to the
+ * default rather than feeding non-shader bytes to pipeline_create.
  */
-static void resolve_material_color(uint32_t material_ref, float out[4])
+static uint32_t resolve_material_shader(uint32_t material_ref)
 {
-	const float *bytes;
-	uint32_t     size = 0;
+	const uint8_t    *bytes;
+	uint32_t          size = 0;
+	uint32_t          shader_ref;
+	struct asset_info info;
 
-	out[0] = out[1] = out[2] = out[3] = 1.0f;
 	if (!material_ref || !g_asset)
-		return;
+		return 0;
 	bytes = g_asset->get_data(material_ref, &size);
-	if (!bytes || size < MATERIAL_UBO_FLOATS * sizeof(float))
-		return;
-	memcpy(out, bytes, MATERIAL_UBO_FLOATS * sizeof(float));
+	if (!bytes || size < MATERIAL_HEADER_BYTES)
+		return 0;
+	memcpy(&shader_ref, bytes, sizeof(shader_ref));
+	if (!shader_ref || !g_asset->find ||
+	    g_asset->find(shader_ref, &info) != 0 ||
+	    info.type != ASSET_TYPE_SHADER)
+		return 0;
+	return shader_ref;
 }
 
-/* Compile the entity pipeline from the seeded scene shader. */
-static void build_pipeline(const struct gpu_api *gpu)
+/*
+ * Borrow a material's std140 param bytes — everything after the shader-ref
+ * header, i.e. the Material uniform block the editor packed to match the
+ * shader. Sets *out_len (0 for a missing or header-only material) and returns
+ * the pointer, or NULL when there are no params. The renderer never interprets
+ * these bytes; it uploads them to the Material UBO as-is.
+ */
+static const uint8_t *material_params(uint32_t material_ref, uint32_t *out_len)
+{
+	const uint8_t *bytes;
+	uint32_t       size = 0;
+
+	*out_len = 0;
+	if (!material_ref || !g_asset)
+		return NULL;
+	bytes = g_asset->get_data(material_ref, &size);
+	if (!bytes || size <= MATERIAL_HEADER_BYTES)
+		return NULL;
+	*out_len = size - (uint32_t)MATERIAL_HEADER_BYTES;
+	return bytes + MATERIAL_HEADER_BYTES;
+}
+
+/* The cache entry for a shader asset id, or NULL if it isn't compiled yet. */
+static struct shader_pso *find_shader_pso(uint32_t shader_ref)
+{
+	uint32_t i;
+
+	for (i = 0; i < g_shader_pso_count; i++) {
+		if (g_shader_psos[i].shader_ref == shader_ref)
+			return &g_shader_psos[i];
+	}
+	return NULL;
+}
+
+/*
+ * Compile a pipeline from one shader asset's DSL source. All scene pipelines
+ * share the same vertex layout and Camera/Material uniform blocks, so a custom
+ * material shader must speak that same IO contract (a_pos/a_normal/a_uv0 in,
+ * Camera at block 0, Material at block 1); only its shading changes.
+ */
+static gpu_pipeline_t create_pso(const struct gpu_api *gpu, const char *src)
 {
 	struct gpu_pipeline_desc pd;
-	const char              *src;
-
-	/*
-	 * One shader asset holds both stages as DSL source; the backend lowers
-	 * each stage to GLSL at pipeline-create and errors if a stage is absent.
-	 */
-	src = shader_src_by_path("builtin://shader/scene");
-	if (!src) {
-		g_log->write(LOG_LEVEL_WARN,
-			     "scene_renderer: scene shader asset unavailable");
-		return;
-	}
 
 	memset(&pd, 0, sizeof(pd));
 	pd.color_formats[0]   = GPU_FORMAT_RGBA8_UNORM;
@@ -217,6 +284,10 @@ static void build_pipeline(const struct gpu_api *gpu)
 		2, (uint32_t)offsetof(struct mesh_vertex, uv0),
 		GPU_FORMAT_RG32_FLOAT };
 
+	/*
+	 * One shader asset holds both stages as DSL source; the backend lowers
+	 * each stage to GLSL at pipeline-create and errors if a stage is absent.
+	 */
 	pd.vert.src     = src;
 	pd.vert.stage   = GPU_SHADER_STAGE_VERTEX;
 	pd.vert.dialect = GPU_SHADER_DIALECT_KRUDD;
@@ -224,7 +295,115 @@ static void build_pipeline(const struct gpu_api *gpu)
 	pd.frag.stage   = GPU_SHADER_STAGE_FRAGMENT;
 	pd.frag.dialect = GPU_SHADER_DIALECT_KRUDD;
 
-	g_pso = gpu->pipeline_create(&pd);
+	return gpu->pipeline_create(&pd);
+}
+
+/* Compile the built-in scene pipeline and pre-cache it under its asset id. */
+static void build_pipeline(const struct gpu_api *gpu)
+{
+	const char *src      = shader_src_by_path("builtin://shader/scene");
+	uint32_t    scene_id = asset_id_by_path("builtin://shader/scene");
+
+	if (!src) {
+		g_log->write(LOG_LEVEL_WARN,
+			     "scene_renderer: scene shader asset unavailable");
+		return;
+	}
+	g_default_pso = create_pso(gpu, src);
+	/*
+	 * Cache the built-in pipeline under the scene shader's id so a material
+	 * that names it (the default) reuses this pipeline instead of compiling
+	 * a second, identical one.
+	 */
+	if (g_default_pso && scene_id &&
+	    g_shader_pso_count < SCENE_MAX_SHADER_PSOS) {
+		g_shader_psos[g_shader_pso_count].shader_ref = scene_id;
+		g_shader_psos[g_shader_pso_count].pso        = g_default_pso;
+		g_shader_pso_count++;
+	}
+}
+
+/*
+ * Compile and cache the pipeline for a material-selected shader. A failed
+ * compile is cached as a null pipeline so the shader is tried only once and
+ * quietly falls back to the built-in scene pipeline rather than being retried
+ * every tick. The cache is keyed by asset id, so binding a different shader
+ * asset to a material switches pipelines live; a later in-place edit of the
+ * same shader's source is not hot-reloaded (a follow-up).
+ */
+static void add_shader_pso(const struct gpu_api *gpu, uint32_t shader_ref)
+{
+	const char    *src;
+	gpu_pipeline_t pso;
+
+	if (g_shader_pso_count >= SCENE_MAX_SHADER_PSOS) {
+		g_log->write(LOG_LEVEL_WARN,
+			     "scene_renderer: shader pipeline cache full; "
+			     "shader %u uses the default", shader_ref);
+		return;
+	}
+	src = (const char *)g_asset->get_data(shader_ref, NULL);
+	pso = src ? create_pso(gpu, src) : 0;
+	if (!pso)
+		g_log->write(LOG_LEVEL_WARN,
+			     "scene_renderer: shader %u failed to compile; "
+			     "using the default", shader_ref);
+
+	g_shader_psos[g_shader_pso_count].shader_ref = shader_ref;
+	g_shader_psos[g_shader_pso_count].pso        = pso;
+	g_shader_pso_count++;
+}
+
+/* The pipeline a material's shader-ref selects, or the built-in default. */
+static gpu_pipeline_t pso_for_shader(uint32_t shader_ref)
+{
+	struct shader_pso *e;
+
+	if (shader_ref) {
+		e = find_shader_pso(shader_ref);
+		if (e && e->pso)
+			return e->pso;
+	}
+	return g_default_pso;
+}
+
+/*
+ * Ensure a compiled pipeline exists for every shader a live material selects,
+ * so forward_pass never creates GPU resources mid-frame. Runs from the tick
+ * (outside any pass), resolving the device through the same init/shutdown seam
+ * without caching it. The per-tick work is bounded: it does at most one
+ * pipeline_create per distinct new shader, and the walk is the same one the
+ * forward pass already makes.
+ */
+static void ensure_shader_pipelines(void)
+{
+	const struct gpu_api *gpu = NULL;
+	const struct world   *w;
+	uint32_t              i;
+
+	if (!g_scene || !g_asset)
+		return;
+	w = g_scene->get_world();
+	if (!w)
+		return;
+	for (i = 0; i < w->count; i++) {
+		uint32_t shader_ref;
+
+		if (!w->alive[i] || !(w->mask[i] & COMPONENT_RENDER) ||
+		    !(w->mask[i] & COMPONENT_MATERIAL))
+			continue;
+		shader_ref = resolve_material_shader(w->material_ref[i]);
+		if (!shader_ref || find_shader_pso(shader_ref))
+			continue;
+		if (!gpu) {
+			gpu = g_mgr ? subsystem_manager_get_api(g_mgr,
+								"renderer")
+				    : NULL;
+			if (!gpu)
+				return;
+		}
+		add_shader_pso(gpu, shader_ref);
+	}
 }
 
 /* Upload one primitive's vertex/index buffers from its mesh blob. */
@@ -383,7 +562,12 @@ static void scene_renderer_init(void)
 		bd.size  = SCENE_UBO_FLOATS * sizeof(float);
 		g_ubo = gpu->buffer_create(&bd);
 
-		bd.size = MATERIAL_UBO_FLOATS * sizeof(float);
+		/*
+		 * Sized to the largest Material block the renderer will upload;
+		 * each draw fills only its material's actual param bytes and
+		 * binds exactly that range.
+		 */
+		bd.size = MATERIAL_UBO_MAX;
 		g_material_ubo = gpu->buffer_create(&bd);
 	}
 
@@ -416,6 +600,8 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 	const struct world   *w;
 	uint32_t              i;
 	float                 ubo[SCENE_UBO_FLOATS];
+	gpu_pipeline_t        cur_pso = 0;
+	int                   have_pso = 0;
 
 	(void)userdata;
 	if (!gpu || !g_scene)
@@ -425,20 +611,40 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 		return;
 
 	memcpy(&ubo[0], g_cam.view_proj.m, 16 * sizeof(float));
-	gpu->cmd_set_pipeline(cmd, g_pso);
 
 	for (i = 0; i < w->count; i++) {
-		struct gpu_draw_indexed_args draw;
-		struct mesh_gpu             *m;
-		struct mat4                  model;
-		float                         material[MATERIAL_UBO_FLOATS];
+		static const float            WHITE[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+		struct gpu_draw_indexed_args  draw;
+		struct mesh_gpu              *m;
+		struct mat4                   model;
+		unsigned char                 params[MATERIAL_UBO_MAX];
+		const uint8_t                *pbytes;
+		uint32_t                      plen;
 		uint32_t                      mat_ref;
+		gpu_pipeline_t                pso;
 
 		if (!w->alive[i] || !(w->mask[i] & COMPONENT_RENDER))
 			continue;
 		m = find_mesh(w->render_ref[i]);
 		if (!m)
 			continue;
+
+		mat_ref = (w->mask[i] & COMPONENT_MATERIAL) ? w->material_ref[i]
+							     : 0u;
+
+		/*
+		 * Select this material's pipeline (its shader, or the built-in
+		 * default) and bind it only when it changes from the last draw,
+		 * so a run of same-shader entities costs one set_pipeline. The
+		 * have_pso flag forces the first bind even when the backend's
+		 * pipeline handle is 0 (a valid value for the recording backend).
+		 */
+		pso = pso_for_shader(resolve_material_shader(mat_ref));
+		if (!have_pso || pso != cur_pso) {
+			gpu->cmd_set_pipeline(cmd, pso);
+			cur_pso  = pso;
+			have_pso = 1;
+		}
 
 		mat4_from_transform(&model, &w->world_xform[i]);
 		memcpy(&ubo[16], model.m, 16 * sizeof(float));
@@ -447,13 +653,24 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 		gpu->cmd_bind_uniform_buffer(cmd, 0, g_ubo, 0,
 					     (uint32_t)sizeof(ubo));
 
-		mat_ref = (w->mask[i] & COMPONENT_MATERIAL) ? w->material_ref[i]
-							     : 0u;
-		resolve_material_color(mat_ref, material);
-		gpu->buffer_update(g_material_ubo, 0, material,
-				   (uint32_t)sizeof(material));
-		gpu->cmd_bind_uniform_buffer(cmd, 1, g_material_ubo, 0,
-					     (uint32_t)sizeof(material));
+		/*
+		 * Upload this material's std140 params verbatim (the shader's
+		 * Material block, packed by the editor), binding exactly their
+		 * length. An unmaterialed or param-less entity falls back to a
+		 * single white vec4 — the identity tint the scene shader expects,
+		 * so it renders as it always has.
+		 */
+		pbytes = material_params(mat_ref, &plen);
+		if (plen > MATERIAL_UBO_MAX)
+			plen = MATERIAL_UBO_MAX;
+		if (!pbytes || plen == 0) {
+			memcpy(params, WHITE, sizeof(WHITE));
+			plen = MATERIAL_FALLBACK_BYTES;
+		} else {
+			memcpy(params, pbytes, plen);
+		}
+		gpu->buffer_update(g_material_ubo, 0, params, plen);
+		gpu->cmd_bind_uniform_buffer(cmd, 1, g_material_ubo, 0, plen);
 
 		gpu->cmd_bind_vertex_buffer(cmd, 0, m->vbo, 0);
 		gpu->cmd_bind_index_buffer(cmd, m->ebo, 0,
@@ -475,6 +692,9 @@ static void scene_renderer_tick(void)
 
 	if (!g_ready || !g_fg_api || !g_scene)
 		return;
+
+	/* Warm pipelines for any newly material-selected shader, off-frame. */
+	ensure_shader_pipelines();
 
 	if (g_camera_entity_id >= 0) {
 		const struct world *w = g_scene->get_world();
@@ -522,11 +742,22 @@ static void scene_renderer_shutdown(void)
 			gpu->buffer_destroy(g_ubo);
 		if (g_material_ubo)
 			gpu->buffer_destroy(g_material_ubo);
-		if (g_pso)
-			gpu->pipeline_destroy(g_pso);
+		/*
+		 * The default pipeline is also cached (under the scene shader's
+		 * id), so destroy the distinct cache entries first, then it once.
+		 */
+		for (i = 0; i < g_shader_pso_count; i++) {
+			if (g_shader_psos[i].pso &&
+			    g_shader_psos[i].pso != g_default_pso)
+				gpu->pipeline_destroy(g_shader_psos[i].pso);
+		}
+		if (g_default_pso)
+			gpu->pipeline_destroy(g_default_pso);
 	}
-	g_mesh_count = 0;
-	g_ready      = 0;
+	g_default_pso      = 0;
+	g_shader_pso_count = 0;
+	g_mesh_count       = 0;
+	g_ready            = 0;
 	g_log->write(LOG_LEVEL_INFO, "scene_renderer: shutdown");
 }
 

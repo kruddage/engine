@@ -128,6 +128,73 @@ const char *script_shader_transpile(const char *src, const char *stage)
 	return buf;
 }
 
+/* Copy a Scheme string field into a fixed C buffer, always NUL-terminated. */
+static void copy_field(char *dst, size_t cap, s7_pointer s)
+{
+	const char *src = s7_is_string(s) ? s7_string(s) : "";
+	size_t      n   = strlen(src);
+
+	if (n >= cap)
+		n = cap - 1;
+	memcpy(dst, src, n);
+	dst[n] = '\0';
+}
+
+static uint32_t field_u32(s7_pointer v)
+{
+	return s7_is_integer(v) ? (uint32_t)s7_integer(v) : 0u;
+}
+
+static float field_real(s7_pointer v)
+{
+	return s7_is_number(v) ? (float)s7_number_to_real(g_s7, v) : 0.0f;
+}
+
+/*
+ * Call the image's (shader-material-params SRC), which returns
+ * (TOTAL-SIZE (NAME TYPE OFFSET SIZE COMPONENTS EDIT-KIND EDIT-MIN EDIT-MAX)
+ * ...), and marshal it into the caller's shader_param array. The layout math
+ * (std140 offsets/sizes) lives in Scheme; this only walks the result.
+ */
+int script_shader_material_params(const char *src, struct shader_param *out,
+				  uint32_t max, uint32_t *total_size)
+{
+	s7_pointer fn, res, rest;
+	uint32_t   count = 0;
+
+	if (total_size)
+		*total_size = 0;
+	if (!g_s7 || !src)
+		return -1;
+	fn = s7_name_to_value(g_s7, "shader-material-params");
+	if (!s7_is_procedure(fn))
+		return -1;
+	res = s7_call(g_s7, fn, s7_list(g_s7, 1, s7_make_string(g_s7, src)));
+	if (!s7_is_pair(res))
+		return -1;
+	if (total_size)
+		*total_size = field_u32(s7_car(res));
+
+	for (rest = s7_cdr(res); s7_is_pair(rest) && (out ? count < max : 0);
+	     rest = s7_cdr(rest)) {
+		s7_pointer           f = s7_car(rest);
+		struct shader_param *p = &out[count];
+
+		if (!s7_is_pair(f))
+			continue;
+		copy_field(p->name, sizeof(p->name), s7_list_ref(g_s7, f, 0));
+		copy_field(p->type, sizeof(p->type), s7_list_ref(g_s7, f, 1));
+		p->offset     = field_u32(s7_list_ref(g_s7, f, 2));
+		p->size       = field_u32(s7_list_ref(g_s7, f, 3));
+		p->components = field_u32(s7_list_ref(g_s7, f, 4));
+		copy_field(p->edit, sizeof(p->edit), s7_list_ref(g_s7, f, 5));
+		p->edit_min   = field_real(s7_list_ref(g_s7, f, 6));
+		p->edit_max   = field_real(s7_list_ref(g_s7, f, 7));
+		count++;
+	}
+	return (int)count;
+}
+
 void script_tick(void)
 {
 	s7_pointer tick;

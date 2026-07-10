@@ -194,7 +194,7 @@ static const char *SCENE_SHADER_SRC =
 	"      (view_proj mat4)\n"
 	"      (model     mat4))\n"
 	"    (Material (block 1) (layout std140)\n"
-	"      (base_color vec4)))\n"
+	"      (base_color vec4 (edit color))))\n"
 	"  (varyings\n"
 	"    (v_normal vec3))\n"
 	"  (targets\n"
@@ -210,15 +210,14 @@ static const char *SCENE_SHADER_SRC =
 	"      (set frag_color (vec4 (* col (swizzle base_color rgb)) 1.0)))))\n";
 
 /*
- * Built-in default material — the smallest material there is: a single opaque
- * white RGBA base_color, which is exactly the multiplicative identity the scene
- * shader's Material block expects (see SCENE_SHADER_SRC and scene_renderer.c's
- * resolve_material_color).  This is the material the world scene binds to every
- * entity by default, so "no material assigned" is never the resting state — an
- * entity always points at a real, inspectable material rather than relying on
- * the renderer's implicit white fallback.  It is stored as the same raw 4-float
- * RGBA an authored material uses, so the renderer and the editor read it with no
- * special case.
+ * Built-in default material — opaque white, the multiplicative identity the
+ * scene shader's base_color expects.  This is the material the world scene binds
+ * to every entity by default, so "no material assigned" is never the resting
+ * state — an entity always points at a real, inspectable material.  It is stored
+ * in the same v3 wire form an authored material uses: a leading shader-ref (the
+ * scene shader — a material always names its shader) followed by the shader's
+ * std140 Material block (here one vec4 base_color).  The renderer and editor read
+ * it with no special case.
  */
 static const float DEFAULT_MATERIAL_COLOR[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
 
@@ -231,19 +230,19 @@ static int builtins_seeded;
  * it uniformly with fetched assets.  size counts the stored bytes (NUL
  * included).
  */
-static void seed_shader(const char *path, const char *src)
+static uint32_t seed_shader(const char *path, const char *src)
 {
 	struct asset_entry *e;
 	uint32_t            n;
 
 	e = alloc_entry(path);
 	if (!e)
-		return;
+		return 0;
 	n = (uint32_t)strlen(src) + 1;
 	e->data = g_mem->alloc(n);
 	if (!e->data) {
 		e->state = ASSET_ERROR;
-		return;
+		return 0;
 	}
 	memcpy(e->data, src, n);
 	e->size      = n;
@@ -251,15 +250,19 @@ static void seed_shader(const char *path, const char *src)
 	e->kind      = ASSET_KIND_PRIMITIVE;
 	e->read_only = 1;
 	e->type      = ASSET_TYPE_SHADER;
+	return e->id;
 }
 
 /*
- * Seed one built-in material asset from a raw RGBA base_color.  A heap copy of
- * the 4 floats becomes the asset's bytes — the exact wire form an authored
- * material stores — so resolve_material_color() and the material editor read it
- * uniformly and shutdown frees it like any other asset.
+ * Seed one built-in material asset in the v3 wire form: a leading uint32
+ * shader-ref (the asset id of the shader that owns its parameters) followed by
+ * the shader's std140 Material block — here the single vec4 base_color.  The
+ * renderer uploads those trailing bytes to the Material UBO as-is and the editor
+ * derives its widgets from the referenced shader, so a material carries no schema
+ * of its own; shutdown frees the bytes like any other asset.
  */
-static void seed_material(const char *path, const float rgba[4])
+static void seed_material(const char *path, uint32_t shader_ref,
+			  const float rgba[4])
 {
 	struct asset_entry *e;
 	uint32_t            n;
@@ -267,13 +270,15 @@ static void seed_material(const char *path, const float rgba[4])
 	e = alloc_entry(path);
 	if (!e)
 		return;
-	n = (uint32_t)(4 * sizeof(float));
+	n = (uint32_t)(sizeof(uint32_t) + 4 * sizeof(float));
 	e->data = g_mem->alloc(n);
 	if (!e->data) {
 		e->state = ASSET_ERROR;
 		return;
 	}
-	memcpy(e->data, rgba, n);
+	memcpy(e->data, &shader_ref, sizeof(shader_ref));
+	memcpy((unsigned char *)e->data + sizeof(shader_ref), rgba,
+	       4 * sizeof(float));
 	e->size      = n;
 	e->state     = ASSET_LOADED;
 	e->kind      = ASSET_KIND_PRIMITIVE;
@@ -332,9 +337,13 @@ static void seed_builtins(void)
 		e->type      = ASSET_TYPE_MESH;
 	}
 
-	seed_shader("builtin://shader/scene", SCENE_SHADER_SRC);
+	{
+		uint32_t scene_shader =
+			seed_shader("builtin://shader/scene", SCENE_SHADER_SRC);
 
-	seed_material("builtin://material/default", DEFAULT_MATERIAL_COLOR);
+		seed_material("builtin://material/default", scene_shader,
+			      DEFAULT_MATERIAL_COLOR);
+	}
 
 	seed_script("builtin://script/spinner", SPINNER_SCRIPT_SRC);
 	seed_script("builtin://script/bounce",  BOUNCE_SCRIPT_SRC);
@@ -689,8 +698,9 @@ static const struct asset_decl_field scene_shader_decl[] = {
  * built-ins advertise their format/stages.
  */
 static const struct asset_decl_field default_material_decl[] = {
-	{ "format",     "krudd-material"      },
-	{ "base_color", "{ 1, 1, 1, 1 }"     },
+	{ "format",     "krudd-material"          },
+	{ "base_color", "{ 1, 1, 1, 1 }"         },
+	{ "shader",     "builtin://shader/scene" },
 };
 
 /*

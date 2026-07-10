@@ -880,6 +880,13 @@ static s7_pointer sp_krudd_material_assets(s7_scheme *sc, s7_pointer args)
 	return assets_of_type(sc, ASSET_TYPE_MATERIAL);
 }
 
+/* (krudd-shader-assets) -> ((id . path) ...) for the material's shader combo. */
+static s7_pointer sp_krudd_shader_assets(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	return assets_of_type(sc, ASSET_TYPE_SHADER);
+}
+
 /* (krudd-script-assets) -> ((id . path) ...) for the script-binding combo. */
 static s7_pointer sp_krudd_script_assets(s7_scheme *sc, s7_pointer args)
 {
@@ -1300,6 +1307,59 @@ static s7_pointer sp_imgui_color_edit4(s7_scheme *sc, s7_pointer args)
 	return s7_cons(sc, real_list(sc, v, 4), s7_make_boolean(sc, changed));
 }
 
+/* (imgui-color-edit3 id (r g b)) -> ((r g b) . changed?). */
+static s7_pointer sp_imgui_color_edit3(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer id      = s7_car(args);
+	float      v[3];
+	bool       changed = false;
+
+	read_reals(sc, s7_cadr(args), v, 3);
+	if (s7_is_string(id))
+		changed = ImGui::ColorEdit3(s7_string(id), v);
+	return s7_cons(sc, real_list(sc, v, 3), s7_make_boolean(sc, changed));
+}
+
+/* (imgui-input-float id x) -> (x . changed?). */
+static s7_pointer sp_imgui_input_float(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer id      = s7_car(args);
+	float      v       = (float)s7_number_to_real(sc, s7_cadr(args));
+	bool       changed = false;
+
+	if (s7_is_string(id))
+		changed = ImGui::InputFloat(s7_string(id), &v);
+	return s7_cons(sc, s7_make_real(sc, v), s7_make_boolean(sc, changed));
+}
+
+/* (imgui-input-float2 id (x y)) -> ((x y) . changed?). */
+static s7_pointer sp_imgui_input_float2(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer id      = s7_car(args);
+	float      v[2];
+	bool       changed = false;
+
+	read_reals(sc, s7_cadr(args), v, 2);
+	if (s7_is_string(id))
+		changed = ImGui::InputFloat2(s7_string(id), v);
+	return s7_cons(sc, real_list(sc, v, 2), s7_make_boolean(sc, changed));
+}
+
+/* (imgui-slider-float id x lo hi) -> (x . changed?). */
+static s7_pointer sp_imgui_slider_float(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer p       = args;
+	s7_pointer id      = s7_car(p); p = s7_cdr(p);
+	float      v       = (float)s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	float      lo      = (float)s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	float      hi      = (float)s7_number_to_real(sc, s7_car(p));
+	bool       changed = false;
+
+	if (s7_is_string(id))
+		changed = ImGui::SliderFloat(s7_string(id), &v, lo, hi);
+	return s7_cons(sc, s7_make_real(sc, v), s7_make_boolean(sc, changed));
+}
+
 /*
  * (imgui-mesh-drag-source id label) -> unspecified. A mesh asset row is a
  * drag source the whole frame it's drawn; the payload is the raw asset id,
@@ -1449,22 +1509,205 @@ static s7_pointer sp_krudd_asset_data(s7_scheme *sc, s7_pointer args)
 }
 
 /*
- * (krudd-asset-color id) -> (r g b a), the material's base_color; white when
- * id has no data yet (pre-Save) — the renderer's own resolve_material_color
- * default.
+ * A material's wire form is a leading uint32 shader-ref (asset id — a material
+ * always names its shader) followed by the shader's std140 Material block. The
+ * schema (which params, their layout) lives entirely in the shader; these
+ * helpers introspect it (via the runtime image's shader-material-params) and
+ * pack/unpack a material's values against it.
  */
-static s7_pointer sp_krudd_asset_color(s7_scheme *sc, s7_pointer args)
+#define MATERIAL_MAX_PARAMS 32
+#define MATERIAL_HEADER_BYTES ((uint32_t)sizeof(uint32_t))
+#define MATERIAL_WIRE_CAP (MATERIAL_HEADER_BYTES + 256u)
+
+/*
+ * Borrow a shader asset's source as a NUL-terminated C string in a static
+ * buffer. Authored shader bytes are stored without a trailing NUL (set_data
+ * takes strlen()), so copy-and-terminate rather than handing get_data() straight
+ * to the parser. Single static buffer — each caller consumes it before the next.
+ */
+static const char *shader_src_cstr(uint32_t shader_ref)
 {
-	uint32_t    id     = (uint32_t)s7_integer(s7_car(args));
-	float       v[4]   = { 1.0f, 1.0f, 1.0f, 1.0f };
-	const void *src;
+	static char buf[8192];
+	const void *d;
 	uint32_t    sz = 0;
+
+	if (!g_asset_api || !g_asset_api->get_data)
+		return NULL;
+	d = g_asset_api->get_data(shader_ref, &sz);
+	if (!d)
+		return NULL;
+	if (sz >= sizeof(buf))
+		sz = sizeof(buf) - 1;
+	memcpy(buf, d, sz);
+	buf[sz] = '\0';
+	return buf;
+}
+
+/* The default value of one editable component, given its field's edit hint. */
+static float param_default(const struct shader_param *p)
+{
+	if (strcmp(p->edit, "color") == 0)
+		return 1.0f;                 /* opaque white / full */
+	if (strcmp(p->edit, "range") == 0)
+		return p->edit_min;
+	return 0.0f;
+}
+
+/* Resolve a catalog path to its stable asset id, or 0 when absent. */
+static uint32_t asset_id_by_path(const char *path)
+{
+	uint32_t i, n;
+
+	if (!g_asset_api)
+		return 0;
+	n = g_asset_api->count();
+	for (i = 0; i < n; i++) {
+		struct asset_info info;
+
+		if (g_asset_api->info(i, &info) == 0 &&
+		    strcmp(info.path, path) == 0)
+			return info.id;
+	}
+	return 0;
+}
+
+/*
+ * Pack a material's wire bytes: the shader-ref header then each field's floats
+ * at its std140 offset, per the shader's layout. Every field is written — from
+ * field_values (a Scheme list of per-field component lists) where supplied, else
+ * from its edit-hint default — so a material created with no values still lands
+ * on sensible defaults (white for a color) rather than zeros. Returns the total
+ * byte length written into out (capped at cap).
+ */
+static uint32_t pack_material(s7_scheme *sc, uint32_t shader_ref,
+			      const char *src, s7_pointer field_values,
+			      unsigned char *out, uint32_t cap)
+{
+	struct shader_param p[MATERIAL_MAX_PARAMS];
+	uint32_t            total = 0, len;
+	int                 n, i;
+	s7_pointer          fv = field_values;
+
+	n = script_shader_material_params(src, p, MATERIAL_MAX_PARAMS, &total);
+	if (n < 0)
+		n = 0;
+	len = MATERIAL_HEADER_BYTES + total;
+	if (len > cap)
+		len = cap;
+	memset(out, 0, len);
+	memcpy(out, &shader_ref, sizeof(shader_ref));
+
+	for (i = 0; i < n; i++) {
+		uint32_t c   = p[i].components > 4 ? 4 : p[i].components;
+		uint32_t off = MATERIAL_HEADER_BYTES + p[i].offset;
+		float    v[4];
+		uint32_t k;
+
+		for (k = 0; k < c; k++)
+			v[k] = param_default(&p[i]);
+		if (s7_is_pair(fv)) {
+			read_reals(sc, s7_car(fv), v, (int)c);
+			fv = s7_cdr(fv);
+		}
+		if (off + c * sizeof(float) <= len)
+			memcpy(out + off, v, c * sizeof(float));
+	}
+	return len;
+}
+
+/*
+ * (krudd-shader-material-params shader-ref) -> ((name type off size components
+ * edit-kind edit-min edit-max) ...), the shader's Material block as editable
+ * parameters. Empty when the shader is gone or declares no Material block.
+ */
+static s7_pointer sp_krudd_shader_material_params(s7_scheme *sc, s7_pointer args)
+{
+	uint32_t            shader_ref = (uint32_t)s7_integer(s7_car(args));
+	const char         *src        = shader_src_cstr(shader_ref);
+	struct shader_param p[MATERIAL_MAX_PARAMS];
+	uint32_t            total = 0;
+	int                 n, i;
+	s7_pointer          out = s7_nil(sc);
+
+	if (!src)
+		return out;
+	n = script_shader_material_params(src, p, MATERIAL_MAX_PARAMS, &total);
+	for (i = n - 1; i >= 0; i--)
+		out = s7_cons(sc,
+			s7_list(sc, 8,
+				s7_make_string(sc, p[i].name),
+				s7_make_string(sc, p[i].type),
+				s7_make_integer(sc, (s7_int)p[i].offset),
+				s7_make_integer(sc, (s7_int)p[i].size),
+				s7_make_integer(sc, (s7_int)p[i].components),
+				s7_make_string(sc, p[i].edit),
+				s7_make_real(sc, p[i].edit_min),
+				s7_make_real(sc, p[i].edit_max)),
+			out);
+	return out;
+}
+
+/*
+ * (krudd-asset-shader-ref id) -> the material's shader asset id (its leading
+ * uint32), or 0 when it has none. The editor reads this to seed the shader
+ * picker with the material's current shader.
+ */
+static s7_pointer sp_krudd_asset_shader_ref(s7_scheme *sc, s7_pointer args)
+{
+	uint32_t     id  = (uint32_t)s7_integer(s7_car(args));
+	uint32_t     ref = 0;
+	const void  *src;
+	uint32_t     sz  = 0;
 
 	if (g_asset_api && g_asset_api->get_data &&
 	    (src = g_asset_api->get_data(id, &sz)) != NULL &&
-	    sz >= sizeof(v))
-		memcpy(v, src, sizeof(v));
-	return real_list(sc, v, 4);
+	    sz >= MATERIAL_HEADER_BYTES)
+		memcpy(&ref, src, sizeof(ref));
+	return s7_make_integer(sc, (s7_int)ref);
+}
+
+/*
+ * (krudd-material-values material-id shader-ref) -> a per-field list of
+ * component lists ((v0 v1 ..) ...), the material's current parameter values
+ * laid out for shader-ref. Values are read from the material's packed bytes only
+ * when it already targets this shader (its leading shader-ref matches); switching
+ * to a different shader yields that shader's per-hint defaults instead.
+ */
+static s7_pointer sp_krudd_material_values(s7_scheme *sc, s7_pointer args)
+{
+	uint32_t             mat_id     = (uint32_t)s7_integer(s7_car(args));
+	uint32_t             shader_ref = (uint32_t)s7_integer(s7_cadr(args));
+	const char          *src        = shader_src_cstr(shader_ref);
+	struct shader_param  p[MATERIAL_MAX_PARAMS];
+	uint32_t             total = 0, msz = 0, stored = 0;
+	const unsigned char *mb = NULL;
+	int                  n, i, use_stored = 0;
+	s7_pointer           out = s7_nil(sc);
+
+	if (!src)
+		return out;
+	n = script_shader_material_params(src, p, MATERIAL_MAX_PARAMS, &total);
+
+	if (g_asset_api && g_asset_api->get_data)
+		mb = (const unsigned char *)g_asset_api->get_data(mat_id, &msz);
+	if (mb && msz >= MATERIAL_HEADER_BYTES) {
+		memcpy(&stored, mb, sizeof(stored));
+		use_stored = (stored == shader_ref);
+	}
+
+	for (i = n - 1; i >= 0; i--) {
+		uint32_t c   = p[i].components > 4 ? 4 : p[i].components;
+		uint32_t off = MATERIAL_HEADER_BYTES + p[i].offset;
+		float    v[4];
+		uint32_t k;
+
+		for (k = 0; k < c; k++)
+			v[k] = param_default(&p[i]);
+		if (use_stored && off + c * sizeof(float) <= msz)
+			memcpy(v, mb + off, c * sizeof(float));
+		out = s7_cons(sc, real_list(sc, v, (int)c), out);
+	}
+	return out;
 }
 
 /* (krudd-shader-stages src) -> the declared stage list, or "" if none. */
@@ -1519,17 +1762,27 @@ static s7_pointer sp_krudd_asset_save_shader(s7_scheme *sc, s7_pointer args)
 	return s7_t(sc);
 }
 
-/* (krudd-asset-save-material id r g b a) -> unspecified. */
+/*
+ * (krudd-asset-save-material id shader-ref field-values) -> unspecified. Packs
+ * the per-field values into the shader-ref's std140 Material layout and stores
+ * the v3 wire form; field-values is a list of per-field component lists.
+ */
 static s7_pointer sp_krudd_asset_save_material(s7_scheme *sc, s7_pointer args)
 {
-	s7_pointer p  = args;
-	uint32_t   id = (uint32_t)s7_integer(s7_car(p)); p = s7_cdr(p);
-	float      v[4];
+	s7_pointer    p          = args;
+	uint32_t      id         = (uint32_t)s7_integer(s7_car(p)); p = s7_cdr(p);
+	uint32_t      shader_ref = (uint32_t)s7_integer(s7_car(p)); p = s7_cdr(p);
+	s7_pointer    values     = s7_car(p);
+	const char   *src        = shader_src_cstr(shader_ref);
+	unsigned char bytes[MATERIAL_WIRE_CAP];
+	uint32_t      len;
 
-	read_reals(sc, p, v, 4);
+	if (!src)
+		return s7_unspecified(sc);
+	len = pack_material(sc, shader_ref, src, values, bytes, sizeof(bytes));
 	if (g_asset_mut)
-		g_asset_mut->set_data(id, v, (uint32_t)sizeof(v));
-	maybe_persist_asset(id, ASSET_TYPE_MATERIAL, v, (uint32_t)sizeof(v));
+		g_asset_mut->set_data(id, bytes, len);
+	maybe_persist_asset(id, ASSET_TYPE_MATERIAL, bytes, len);
 	return s7_unspecified(sc);
 }
 
@@ -1580,20 +1833,31 @@ static s7_pointer sp_krudd_asset_create_shader(s7_scheme *sc, s7_pointer args)
 	return s7_make_integer(sc, (s7_int)nid);
 }
 
-/* (krudd-asset-create-material path) -> the new id, or 0 on failure. White. */
+/*
+ * (krudd-asset-create-material path) -> the new id, or 0 on failure. A new
+ * material names the built-in scene shader and takes that shader's default
+ * parameter values (its base_color defaults to white), packed in the v3 wire
+ * form — a material is never shaderless.
+ */
 static s7_pointer sp_krudd_asset_create_material(s7_scheme *sc, s7_pointer args)
 {
-	s7_pointer          path = s7_car(args);
-	const char         *p    = s7_is_string(path) ? s7_string(path) : "";
-	static const float  white[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-	uint32_t             nid  = 0;
+	const char   *p          = s7_is_string(s7_car(args))
+		? s7_string(s7_car(args)) : "";
+	uint32_t      shader_ref = asset_id_by_path("builtin://shader/scene");
+	const char   *src        = shader_src_cstr(shader_ref);
+	unsigned char bytes[MATERIAL_WIRE_CAP];
+	uint32_t      len        = MATERIAL_HEADER_BYTES;
+	uint32_t      nid        = 0;
 
+	if (src)
+		len = pack_material(sc, shader_ref, src, s7_nil(sc), bytes,
+				    sizeof(bytes));
+	else
+		memcpy(bytes, &shader_ref, sizeof(shader_ref));
 	if (g_asset_mut)
-		nid = g_asset_mut->create(p, ASSET_TYPE_MATERIAL, white,
-					  (uint32_t)sizeof(white));
+		nid = g_asset_mut->create(p, ASSET_TYPE_MATERIAL, bytes, len);
 	if (nid != 0)
-		maybe_persist_asset(nid, ASSET_TYPE_MATERIAL, white,
-				    (uint32_t)sizeof(white));
+		maybe_persist_asset(nid, ASSET_TYPE_MATERIAL, bytes, len);
 	return s7_make_integer(sc, (s7_int)nid);
 }
 
@@ -1719,26 +1983,35 @@ static s7_pointer sp_krudd_asset_clone_script(s7_scheme *sc, s7_pointer args)
 }
 
 /*
- * (krudd-asset-clone-material name r g b a) -> the new id, or 0 on failure
- * (e.g. a duplicate path) — the built-in material "Clone" flow's whole
- * commit, mirroring krudd-asset-clone-shader above: create with the
- * current color, persist.
+ * (krudd-asset-clone-material name shader-ref field-values) -> the new id, or 0
+ * on failure (e.g. a duplicate path) — the built-in material "Clone" flow's
+ * whole commit: pack the current shader + values into the v3 wire form, create,
+ * persist. Mirrors krudd-asset-clone-shader above.
  */
 static s7_pointer sp_krudd_asset_clone_material(s7_scheme *sc, s7_pointer args)
 {
-	s7_pointer  p    = args;
-	s7_pointer  name = s7_car(p); p = s7_cdr(p);
-	const char *nm   = s7_is_string(name) ? s7_string(name) : "";
-	float       v[4];
-	uint32_t    nid  = 0;
+	s7_pointer    p          = args;
+	const char   *nm         = s7_is_string(s7_car(p))
+		? s7_string(s7_car(p)) : "";
+	uint32_t      shader_ref;
+	s7_pointer    values;
+	const char   *src;
+	unsigned char bytes[MATERIAL_WIRE_CAP];
+	uint32_t      len;
+	uint32_t      nid = 0;
 
-	read_reals(sc, p, v, 4);
+	p          = s7_cdr(p);
+	shader_ref = (uint32_t)s7_integer(s7_car(p)); p = s7_cdr(p);
+	values     = s7_car(p);
+	src        = shader_src_cstr(shader_ref);
+	if (!src)
+		return s7_make_integer(sc, 0);
+
+	len = pack_material(sc, shader_ref, src, values, bytes, sizeof(bytes));
 	if (g_asset_mut)
-		nid = g_asset_mut->create(nm, ASSET_TYPE_MATERIAL, v,
-					  (uint32_t)sizeof(v));
+		nid = g_asset_mut->create(nm, ASSET_TYPE_MATERIAL, bytes, len);
 	if (nid != 0)
-		maybe_persist_asset(nid, ASSET_TYPE_MATERIAL, v,
-				     (uint32_t)sizeof(v));
+		maybe_persist_asset(nid, ASSET_TYPE_MATERIAL, bytes, len);
 	return s7_make_integer(sc, (s7_int)nid);
 }
 
@@ -1850,6 +2123,17 @@ static s7_scheme *ensure_panel_scm(void)
 	s7_define_function(sc, "imgui-input-float4", sp_imgui_input_float4, 2, 0,
 			   false,
 			   "(imgui-input-float4 id vec) -> (vec . changed?)");
+	s7_define_function(sc, "imgui-input-float", sp_imgui_input_float, 2, 0,
+			   false, "(imgui-input-float id x) -> (x . changed?)");
+	s7_define_function(sc, "imgui-input-float2", sp_imgui_input_float2, 2, 0,
+			   false,
+			   "(imgui-input-float2 id vec) -> (vec . changed?)");
+	s7_define_function(sc, "imgui-color-edit3", sp_imgui_color_edit3, 2, 0,
+			   false,
+			   "(imgui-color-edit3 id rgb) -> (rgb . changed?)");
+	s7_define_function(sc, "imgui-slider-float", sp_imgui_slider_float, 4, 0,
+			   false,
+			   "(imgui-slider-float id x lo hi) -> (x . changed?)");
 	s7_define_function(sc, "imgui-begin-combo", sp_imgui_begin_combo, 2, 0,
 			   false, "(imgui-begin-combo id preview) -> #t if open");
 	s7_define_function(sc, "imgui-end-combo", sp_imgui_end_combo, 0, 0,
@@ -1893,6 +2177,9 @@ static s7_scheme *ensure_panel_scm(void)
 	s7_define_function(sc, "krudd-material-assets", sp_krudd_material_assets,
 			   0, 0, false,
 			   "(krudd-material-assets) -> ((id . path) ...)");
+	s7_define_function(sc, "krudd-shader-assets", sp_krudd_shader_assets,
+			   0, 0, false,
+			   "(krudd-shader-assets) -> ((id . path) ...)");
 	s7_define_function(sc, "krudd-script-assets", sp_krudd_script_assets,
 			   0, 0, false,
 			   "(krudd-script-assets) -> ((id . path) ...)");
@@ -1954,8 +2241,17 @@ static s7_scheme *ensure_panel_scm(void)
 			   1, 0, false, "(krudd-asset-describe id) -> ((key . value) ...)");
 	s7_define_function(sc, "krudd-asset-data", sp_krudd_asset_data, 1, 0,
 			   false, "(krudd-asset-data id) -> bytes as a string");
-	s7_define_function(sc, "krudd-asset-color", sp_krudd_asset_color, 1, 0,
-			   false, "(krudd-asset-color id) -> (r g b a)");
+	s7_define_function(sc, "krudd-asset-shader-ref",
+			   sp_krudd_asset_shader_ref, 1, 0, false,
+			   "(krudd-asset-shader-ref id) -> shader asset id or 0");
+	s7_define_function(sc, "krudd-shader-material-params",
+			   sp_krudd_shader_material_params, 1, 0, false,
+			   "(krudd-shader-material-params shader-ref) -> "
+			   "((name type off size comps kind min max) ...)");
+	s7_define_function(sc, "krudd-material-values",
+			   sp_krudd_material_values, 2, 0, false,
+			   "(krudd-material-values mat-id shader-ref) -> "
+			   "(component-list ...)");
 	s7_define_function(sc, "krudd-shader-stages", sp_krudd_shader_stages, 1,
 			   0, false, "(krudd-shader-stages src) -> stage list string");
 	s7_define_function(sc, "krudd-asset-save-text", sp_krudd_asset_save_text,
@@ -1964,8 +2260,8 @@ static s7_scheme *ensure_panel_scm(void)
 			   sp_krudd_asset_save_shader, 2, 0, false,
 			   "(krudd-asset-save-shader id text) -> compiled-ok?");
 	s7_define_function(sc, "krudd-asset-save-material",
-			   sp_krudd_asset_save_material, 5, 0, false,
-			   "(krudd-asset-save-material id r g b a)");
+			   sp_krudd_asset_save_material, 3, 0, false,
+			   "(krudd-asset-save-material id shader-ref values)");
 	s7_define_function(sc, "krudd-asset-delete", sp_krudd_asset_delete, 1,
 			   0, false, "(krudd-asset-delete id)");
 	s7_define_function(sc, "krudd-asset-create-text",
@@ -1992,8 +2288,9 @@ static s7_scheme *ensure_panel_scm(void)
 			   sp_krudd_asset_clone_script, 2, 0, false,
 			   "(krudd-asset-clone-script name text) -> new id or 0");
 	s7_define_function(sc, "krudd-asset-clone-material",
-			   sp_krudd_asset_clone_material, 5, 0, false,
-			   "(krudd-asset-clone-material name r g b a) -> new id or 0");
+			   sp_krudd_asset_clone_material, 3, 0, false,
+			   "(krudd-asset-clone-material name shader-ref values)"
+			   " -> new id or 0");
 	s7_define_function(sc, "krudd-md-preview", sp_krudd_md_preview, 2, 0,
 			   false, "(krudd-md-preview text h) scrolling preview child");
 	script_eval(KRUDDBOARD_SCM);

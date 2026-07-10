@@ -35,9 +35,14 @@
 ;;! #t (saved) or #f (rejected as not a well-formed (script ...) form).
 (define kruddboard-assets-script-ok 'untried)
 
-;;! Material color editor buffer and the id whose bytes it holds.
-(define kruddboard-assets-color-id 0)
-(define kruddboard-assets-color (list 1.0 1.0 1.0 1.0))
+;;! Material editor model, keyed by the material id it was loaded for. A material
+;;! carries no schema of its own: it names a shader, and the shader's Material
+;;! block (via krudd-shader-material-params) is what the editor draws. -params is
+;;! that descriptor list; -values holds the current value per field, in order.
+(define kruddboard-assets-mat-id 0)
+(define kruddboard-assets-mat-shader 0)
+(define kruddboard-assets-mat-params '())
+(define kruddboard-assets-mat-values '())
 
 ;;! New Asset form state: visible?, the name field, and the type combo index
 ;;! (0 Text, 1 Shader, 2 Material, 3 Script).
@@ -92,12 +97,24 @@
     (set! kruddboard-assets-shader-ok 'untried)
     (set! kruddboard-assets-script-ok 'untried)))
 
-;;! (kruddboard-assets-maybe-reload-color id) mirrors the above for the
-;;! material color editor — the old maybe_reload_material_color.
-(define (kruddboard-assets-maybe-reload-color id)
-  (unless (= kruddboard-assets-color-id id)
-    (set! kruddboard-assets-color-id id)
-    (set! kruddboard-assets-color (krudd-asset-color id))))
+;;! (kruddboard-assets-refresh-material) re-derives the parameter descriptors
+;;! and current values for the loaded material against its selected shader —
+;;! run on load and whenever the shader changes (krudd-material-values returns
+;;! the shader's defaults when the material doesn't yet target it).
+(define (kruddboard-assets-refresh-material)
+  (set! kruddboard-assets-mat-params
+	(krudd-shader-material-params kruddboard-assets-mat-shader))
+  (set! kruddboard-assets-mat-values
+	(krudd-material-values kruddboard-assets-mat-id
+			       kruddboard-assets-mat-shader)))
+
+;;! (kruddboard-assets-maybe-reload-material id) loads the material model when
+;;! the selection changes: its stored shader-ref, then the derived params/values.
+(define (kruddboard-assets-maybe-reload-material id)
+  (unless (= kruddboard-assets-mat-id id)
+    (set! kruddboard-assets-mat-id id)
+    (set! kruddboard-assets-mat-shader (krudd-asset-shader-ref id))
+    (kruddboard-assets-refresh-material)))
 
 ;;! (kruddboard-assets-do-delete id) deletes the selected asset and clears
 ;;! every buffer that might still be keyed to it, then returns to the browser.
@@ -105,7 +122,7 @@
   (krudd-asset-delete id)
   (set! kruddboard-assets-edit-id 0)
   (set! kruddboard-assets-edit-text "")
-  (set! kruddboard-assets-color-id 0)
+  (set! kruddboard-assets-mat-id 0)
   (set! kruddboard-assets-sel 0))
 
 ;;! One "Label: value" row in a bordered two-column table.
@@ -514,10 +531,9 @@
 			    (format #f "\"~A\" already exists"
 				    kruddboard-assets-clone-name))))))
 
-;;! The name field + Clone button for a read-only (built-in) material — the
-;;! old draw_asset_inspector built-in-material branch (new; mirrors the
-;;! shader Clone flow above instead of just disabling Save). path seeds the
-;;! default "<path>_copy" name the first time this built-in is viewed.
+;;! The name field + Clone button for a read-only (built-in) material — mirrors
+;;! the shader Clone flow. Clones the current shader + parameter values into a new
+;;! authored material. path seeds the default "<path>_copy" name.
 (define (kruddboard-draw-asset-material-clone id path)
   (unless (= kruddboard-assets-clone-src id)
     (set! kruddboard-assets-clone-src id)
@@ -531,9 +547,10 @@
     (let* ((clone-clicked (imgui-button "Clone"))
 	   (confirm (or (cdr r) clone-clicked)))
       (when (and confirm (not (string=? kruddboard-assets-clone-name "")))
-	(let ((nid (apply krudd-asset-clone-material
-			  kruddboard-assets-clone-name
-			  kruddboard-assets-color)))
+	(let ((nid (krudd-asset-clone-material
+		    kruddboard-assets-clone-name
+		    kruddboard-assets-mat-shader
+		    kruddboard-assets-mat-values)))
 	  (if (= nid 0)
 	      (set! kruddboard-assets-clone-conflict #t)
 	      (begin
@@ -571,23 +588,94 @@
 	  (kruddboard-assets-do-delete id)))
       (kruddboard-draw-asset-script-clone id path)))
 
-;;! Material inspector: a color picker (disabled when read-only) plus Save/
-;;! Delete, or the built-in Clone row — the old draw_asset_inspector material
-;;! branch, extended to clone built-ins like the shader editor above instead
-;;! of just disabling Save.
+;;! The combo preview label for a material's shader: the shader asset's path, or
+;;! "(missing #ref)" when it no longer resolves (a material always names one).
+(define (kruddboard-assets-shader-label ref)
+  (if (= ref 0)
+      "(none)"
+      (let ((path (krudd-asset-find ref)))
+	(if (string? path) path (format #f "(missing #~D)" ref)))))
+
+;;! The material's shader picker: one selectable per shader asset, the current
+;;! one focused. Picking a different shader re-derives the parameter set (its
+;;! values reset to the new shader's defaults), so the editor always reflects the
+;;! selected shader. Disabled built-ins still draw every widget (see the note up
+;;! top).
+(define (kruddboard-draw-material-shader-combo editable)
+  (imgui-begin-disabled (not editable))
+  (imgui-set-next-item-width -1.0)
+  (when (imgui-begin-combo "##matshader"
+			   (kruddboard-assets-shader-label
+			    kruddboard-assets-mat-shader))
+    (for-each
+     (lambda (a)
+       (let ((aid (car a))
+	     (cur (= (car a) kruddboard-assets-mat-shader)))
+	 (when (and (imgui-selectable (format #f "~A##s~D" (cdr a) aid) cur #f)
+		    editable (not (= aid kruddboard-assets-mat-shader)))
+	   (set! kruddboard-assets-mat-shader aid)
+	   (kruddboard-assets-refresh-material))
+	 (when cur (imgui-set-item-default-focus))))
+     (krudd-shader-assets))
+    (imgui-end-combo))
+  (imgui-end-disabled))
+
+;;! Draw one shader-derived parameter widget and return its (possibly edited)
+;;! component list. The widget follows the field's edit hint then its component
+;;! count: a color hint -> colour picker; a range hint -> slider; otherwise plain
+;;! numeric input(s). An unsupported field (e.g. a matrix, 0 components) is left
+;;! untouched. param is (name type off size comps kind min max); value the list.
+(define (kruddboard-draw-material-param param value)
+  (let ((name  (list-ref param 0))
+	(comps (list-ref param 4))
+	(kind  (list-ref param 5))
+	(mn    (list-ref param 6))
+	(mx    (list-ref param 7))
+	(wid   (string-append (list-ref param 0) "##mp")))
+    (cond
+     ((and (string=? kind "color") (= comps 4))
+      (car (imgui-color-edit4 wid value)))
+     ((and (string=? kind "color") (= comps 3))
+      (car (imgui-color-edit3 wid value)))
+     ((and (string=? kind "range") (= comps 1))
+      (list (car (imgui-slider-float wid (car value) mn mx))))
+     ((= comps 1) (list (car (imgui-input-float wid (car value)))))
+     ((= comps 2) (car (imgui-input-float2 wid value)))
+     ((= comps 3) (car (imgui-input-float3 wid value)))
+     ((= comps 4) (car (imgui-input-float4 wid value)))
+     (else value))))
+
+;;! Draw every parameter widget in order and write the edited values back. map
+;;! draws each widget exactly once per frame (the invariant this file relies on).
+(define (kruddboard-draw-material-params editable)
+  (imgui-begin-disabled (not editable))
+  (set! kruddboard-assets-mat-values
+	(map kruddboard-draw-material-param
+	     kruddboard-assets-mat-params
+	     kruddboard-assets-mat-values))
+  (imgui-end-disabled))
+
+;;! Material inspector: a Shader picker and the shader-derived Parameters (both
+;;! disabled when read-only) plus Save/Delete, or the built-in Clone row. A
+;;! material has no fixed fields of its own — the selected shader's Material block
+;;! is the schema, so base_color is just the scene shader's one (edit color) vec4.
 (define (kruddboard-draw-asset-material-editor id path editable)
-  (kruddboard-assets-maybe-reload-color id)
+  (kruddboard-assets-maybe-reload-material id)
   (imgui-separator)
-  (when (imgui-collapsing-header "Color")
-    (imgui-begin-disabled (not editable))
-    (let ((r (imgui-color-edit4 "##basecolor" kruddboard-assets-color)))
-      (set! kruddboard-assets-color (car r)))
-    (imgui-end-disabled))
+  (when (imgui-collapsing-header "Shader")
+    (kruddboard-draw-material-shader-combo editable))
+  (imgui-separator)
+  (when (imgui-collapsing-header "Parameters")
+    (if (null? kruddboard-assets-mat-params)
+	(imgui-text-disabled "(this shader has no material parameters)")
+	(kruddboard-draw-material-params editable)))
   (imgui-separator)
   (if editable
       (begin
 	(when (imgui-button "Save")
-	  (apply krudd-asset-save-material id kruddboard-assets-color))
+	  (krudd-asset-save-material id
+				    kruddboard-assets-mat-shader
+				    kruddboard-assets-mat-values))
 	(imgui-same-line)
 	(when (imgui-button "Delete")
 	  (kruddboard-assets-do-delete id)))

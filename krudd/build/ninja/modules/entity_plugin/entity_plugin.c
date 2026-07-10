@@ -29,6 +29,9 @@ static const struct edit_api        *g_edit;   /* NULL = undo unavailable */
 /* Seconds since the scene subsystem started, the clock entity scripts read. */
 static float                         g_clock;
 
+/* True skips world_tick + entity scripts for the frame (editor "Paused"). */
+static int32_t                       g_paused;
+
 /* True when id names a live entity — the precondition for a recordable edit. */
 static int32_t entity_is_live(int32_t id)
 {
@@ -177,6 +180,16 @@ static void scene_set_selected(int32_t id)
 	world_set_selected(&g_world, id);
 }
 
+static int32_t scene_get_paused(void)
+{
+	return g_paused;
+}
+
+static void scene_set_paused(int32_t paused)
+{
+	g_paused = paused ? 1 : 0;
+}
+
 static const struct entity_api g_entity_api = {
 	.get_world      = scene_get_world,
 	.load_scene     = scene_load,
@@ -189,6 +202,8 @@ static const struct entity_api g_entity_api = {
 	.set_script_ref = scene_set_script_ref,
 	.get_selected   = scene_get_selected,
 	.set_selected   = scene_set_selected,
+	.get_paused     = scene_get_paused,
+	.set_paused     = scene_set_paused,
 };
 
 /*
@@ -200,7 +215,8 @@ static const struct entity_api g_entity_api = {
 static void scene_init(void)
 {
 	world_reset(&g_world);
-	g_clock = 0.0f;
+	g_clock  = 0.0f;
+	g_paused = 0;
 	/* Register the entity-* primitives so bound scripts can drive entities. */
 	entity_script_init();
 }
@@ -209,6 +225,9 @@ static void scene_tick(void)
 {
 	/* tick() takes no args; read the frame delta from the "stats" api. */
 	float dt = g_stats ? g_stats->last_frame_ms : 0.0f;
+
+	if (g_paused)
+		return;
 
 	world_tick(&g_world, dt);
 

@@ -19,32 +19,50 @@
  * entity_script oracle test compile the exact same script text.
  */
 
-/* spinner — spin steadily about the Y axis, one full turn every 4 seconds. */
+/*
+ * spinner — spin steadily about the Y axis. `speed` (degrees per second)
+ * defaults to 90 — one full turn every 4 seconds, the rate it always spun at —
+ * so an un-tuned spinner is unchanged; drop it to 0 to stop or up to whirl.
+ */
 #define SPINNER_SCRIPT_SRC                                                    \
 	"(script spinner\n"                                                   \
+	"  (params (speed float (default 90) (edit range 0 720)))\n"         \
 	"  (on-begin (self)\n"                                               \
 	"    (krudd-log 1 \"spinner: awake\"))\n"                            \
 	"  (on-tick (self t)\n"                                              \
-	"    (entity-set-euler! self 0 (* t 90) 0)))\n"
+	"    (entity-set-euler! self 0 (* t (param 'speed)) 0)))\n"
 
-/* bounce — hop along Y above the rest position, a rectified sine. */
+/*
+ * bounce — hop along Y above the rest position, a rectified sine. `height` (how
+ * high) and `rate` (how fast) default to the values it always hopped at, so an
+ * un-tuned bounce looks exactly as before yet slides down to a still 0 or up.
+ */
 #define BOUNCE_SCRIPT_SRC                                                     \
 	"(script bounce\n"                                                    \
+	"  (params (height float (default 0.6) (edit range 0 3))\n"          \
+	"          (rate   float (default 3)   (edit range 0 10)))\n"        \
 	"  (on-tick (self t)\n"                                              \
 	"    (let ((b (entity-base-position self)))\n"                       \
 	"      (entity-set-position! self\n"                                 \
 	"        (car b)\n"                                                  \
-	"        (+ (cadr b) (abs (* 0.6 (sin (* t 3.0)))))\n"              \
+	"        (+ (cadr b) (abs (* (param 'height) (sin (* t (param 'rate))))))\n" \
 	"        (caddr b)))))\n"
 
-/* wobble — rock gently on the X and Z axes, like a top losing balance. */
+/*
+ * wobble — rock gently on the X and Z axes, like a top losing balance. `amp`
+ * (tilt in degrees) and `rate` (a speed multiplier over the fixed 2.0:2.7 axis
+ * ratio) default to the tilt/speed it always rocked at, so an un-tuned wobble is
+ * unchanged; drop amp to 0 to still it or up to lean harder.
+ */
 #define WOBBLE_SCRIPT_SRC                                                     \
 	"(script wobble\n"                                                    \
+	"  (params (amp  float (default 15) (edit range 0 45))\n"           \
+	"          (rate float (default 1)  (edit range 0 3)))\n"           \
 	"  (on-tick (self t)\n"                                              \
 	"    (entity-set-euler! self\n"                                      \
-	"      (* 15 (sin (* t 2.0)))\n"                                     \
+	"      (* (param 'amp) (sin (* t 2.0 (param 'rate))))\n"            \
 	"      0\n"                                                          \
-	"      (* 15 (cos (* t 2.7))))))\n"
+	"      (* (param 'amp) (cos (* t 2.7 (param 'rate)))))))\n"
 
 /*
  * pulse — breathe in and out about the rest scale. Unlike the three above it

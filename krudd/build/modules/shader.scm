@@ -349,12 +349,22 @@
 		((eq? (cadr e) 'range) (list "range" (caddr e) (cadddr e)))
 		(else (list "none" 0 0)))))
 
+;;! The authored default of a field as a list of component values, or '() when it
+;;! declares none. A field may carry (default V ...) alongside its (edit ...) to
+;;! seed its un-overridden value independently of the edit hint. GLSL emission
+;;! ignores it (like (edit ...)); only the editor/host default resolver reads it.
+(define (shader-field-default f)
+	(let ((d (assq 'default (cddr f))))
+	  (if d (cdr d) '())))
+
 ;;! The Material block form, or #f when the shader declares none.
 (define (shader-material-block form)
 	(assq 'Material (shader-section form 'uniforms)))
 
 ;;! Walk the Material block into (TOTAL-SIZE (NAME TYPE OFFSET SIZE COMPONENTS
-;;! EDIT-KIND EDIT-MIN EDIT-MAX) ...), std140-packed. Total is 0 with no block.
+;;! EDIT-KIND EDIT-MIN EDIT-MAX DEFAULT) ...), std140-packed. DEFAULT is the
+;;! field's authored (default V ...) values or '() for none. Total is 0 with no
+;;! block.
 (define (shader-material-params-form form)
 	(let ((blk (shader-material-block form)))
 	  (if (not blk)
@@ -373,7 +383,8 @@
 					foff
 					(shader-std140-size ty)
 					(shader-type-components ty)
-					(car ed) (cadr ed) (caddr ed))
+					(car ed) (cadr ed) (caddr ed)
+					(shader-field-default f))
 				  acc))))))))
 
 (define (shader-material-params src)

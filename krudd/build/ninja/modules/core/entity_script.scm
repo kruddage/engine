@@ -84,13 +84,24 @@
           ((eq? (cadr e) 'range) (list "range" (caddr e) (cadddr e)))
           (else (list "none" 0 0)))))
 
+;;! The authored default of a field as a list of component values, or '() when it
+;;! declares none. A field may carry (default V ...) alongside its (edit ...) to
+;;! seed its un-overridden value independently of the edit hint — so a range
+;;! param can rest at an interior value (a wobble that ships at 15°) yet still
+;;! slide down to its min. '() means "fall back to the edit-hint default".
+(define (script-field-default f)
+  (let ((d (assq 'default (cddr f))))
+    (if d (cdr d) '())))
+
 ;;! The (params ...) fields of a (script ...) form, or '() when it declares none.
 (define (script-params-fields form)
   (let ((p (assq 'params (cddr form))))
     (if p (cdr p) '())))
 
 ;;! Walk the params clause into (TOTAL-SIZE (NAME TYPE OFFSET SIZE COMPONENTS
-;;! EDIT-KIND EDIT-MIN EDIT-MAX) ...), tight-packed. Total is 0 with no params.
+;;! EDIT-KIND EDIT-MIN EDIT-MAX DEFAULT) ...), tight-packed. DEFAULT is the
+;;! field's authored (default V ...) values or '() for none. Total is 0 with no
+;;! params.
 (define (script-params-form form)
   (let loop ((fields (script-params-fields form)) (off 0) (acc '()))
     (if (null? fields)
@@ -105,7 +116,8 @@
                             (symbol->string ty)
                             off sz
                             (script-param-components ty)
-                            (car ed) (cadr ed) (caddr ed))
+                            (car ed) (cadr ed) (caddr ed)
+                            (script-field-default f))
                       acc))))))
 
 ;;! Entry point mirrored by the C seam (script_entity_params) and the editor.

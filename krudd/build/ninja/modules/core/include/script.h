@@ -51,6 +51,11 @@ const char *script_shader_transpile(const char *src, const char *stage);
  * "none", "color", or "range" (with edit_min/edit_max meaningful only for
  * "range"). `offset`/`size` are bytes within the block; the packing is the
  * source's — std140 for a shader, tight for a script.
+ *
+ * `edit_default[]`/`default_count` carry an optional authored default: a field
+ * may declare `(default V ...)` to seed its un-overridden value independently of
+ * its edit hint. default_count is how many leading components it supplies (0 =
+ * none, falling back to the edit-hint default); components past it fall back too.
  */
 struct shader_param {
 	char     name[64];
@@ -61,6 +66,8 @@ struct shader_param {
 	char     edit[16];
 	float    edit_min;
 	float    edit_max;
+	float    edit_default[4];
+	uint32_t default_count;
 };
 
 /*

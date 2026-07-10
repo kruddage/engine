@@ -712,16 +712,19 @@ static const struct asset_decl_field default_material_decl[] = {
 static const struct asset_decl_field spinner_script_decl[] = {
 	{ "format", "krudd-script"      },
 	{ "hooks",  "on-begin, on-tick" },
+	{ "params", "speed"             },
 };
 
 static const struct asset_decl_field bounce_script_decl[] = {
 	{ "format", "krudd-script" },
 	{ "hooks",  "on-tick"      },
+	{ "params", "height, rate" },
 };
 
 static const struct asset_decl_field wobble_script_decl[] = {
 	{ "format", "krudd-script" },
 	{ "hooks",  "on-tick"      },
+	{ "params", "amp, rate"    },
 };
 
 /* pulse also advertises its authored parameters, the way the material decl

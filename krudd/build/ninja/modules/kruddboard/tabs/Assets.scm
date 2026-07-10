@@ -254,7 +254,10 @@
     (krudd-asset-save-text id kruddboard-assets-edit-text))
   (imgui-same-line)
   (when (imgui-button "Delete")
-    (kruddboard-assets-do-delete id)))
+    (kruddboard-assets-do-delete id))
+  (imgui-same-line)
+  (when (imgui-button "Copy")
+    (imgui-set-clipboard-text kruddboard-assets-edit-text)))
 
 ;;! The Save button + compile-result text for an editable shader — the old
 ;;! draw_asset_inspector editable-shader branch.
@@ -319,7 +322,10 @@
 	(imgui-same-line)
 	(when (imgui-button "Delete")
 	  (kruddboard-assets-do-delete id)))
-      (kruddboard-draw-asset-shader-clone id path)))
+      (kruddboard-draw-asset-shader-clone id path))
+  (imgui-same-line)
+  (when (imgui-button "Copy")
+    (imgui-set-clipboard-text kruddboard-assets-edit-text)))
 
 ;;! The Save button + save-result text for an editable script — the script
 ;;! analogue of kruddboard-draw-asset-shader-save. A rejected save (not a
@@ -417,7 +423,10 @@
 	(imgui-same-line)
 	(when (imgui-button "Delete")
 	  (kruddboard-assets-do-delete id)))
-      (kruddboard-draw-asset-script-clone id path)))
+      (kruddboard-draw-asset-script-clone id path))
+  (imgui-same-line)
+  (when (imgui-button "Copy")
+    (imgui-set-clipboard-text kruddboard-assets-edit-text)))
 
 ;;! Material inspector: a color picker (disabled when read-only) plus Save/
 ;;! Delete, or the built-in Clone row — the old draw_asset_inspector material

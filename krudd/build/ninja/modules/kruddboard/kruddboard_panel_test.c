@@ -1195,6 +1195,14 @@ static s7_pointer st_button(s7_scheme *sc, s7_pointer a)
 	return s7_make_boolean(sc, clicked(l) && !disabled_now());
 }
 
+static s7_pointer st_set_clipboard_text(s7_scheme *sc, s7_pointer a)
+{
+	const char *txt = s7_is_string(s7_car(a)) ? s7_string(s7_car(a)) : "";
+
+	rec("clipboard|%s", txt);
+	return s7_unspecified(sc);
+}
+
 static s7_pointer st_input_text_enter(s7_scheme *sc, s7_pointer a)
 {
 	const char *id  = s7_string(s7_car(a));
@@ -1325,6 +1333,7 @@ static s7_scheme *setup(void)
 	def(sc, "krudd-set-gizmo-mode", st_set_gizmo_mode, 1);
 
 	def(sc, "imgui-button", st_button, 1);
+	def(sc, "imgui-set-clipboard-text", st_set_clipboard_text, 1);
 	def(sc, "imgui-input-text-enter", st_input_text_enter, 2);
 	def(sc, "imgui-input-text-multiline", st_input_text_multiline, 4);
 	def(sc, "imgui-combo", st_combo, 3);
@@ -1975,6 +1984,26 @@ static void test_assets_text_delete(void)
 	assert(assets_sel() == 0);
 }
 
+/* The Copy button copies the edit buffer verbatim, unsaved edits included. */
+static void test_assets_text_copy(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	script_eval("(set! kruddboard-assets-sel 701)");
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	assert(rec_has("btn|Copy"));
+	assert(!rec_has("clipboard|"));
+
+	g_click = "Copy";
+	g_input_id = "##md"; g_input_text = "# Edited"; g_input_commit = 0;
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL; g_input_id = NULL;
+
+	assert(rec_has("clipboard|# Edited"));
+}
+
 /* An editable shader's Declaration is derived live from the edit buffer. */
 static void test_assets_shader_declaration(void)
 {
@@ -2136,6 +2165,35 @@ static void test_assets_script_clone_conflict(void)
 	assert(rec_has("colored|1.00,0.30,0.30,1.00|"
 		       "\"builtin://script/spinner_copy\" already exists"));
 	assert(assets_sel() == 651);
+}
+
+/* Copy sits next to Save/Delete on an editable script and copies the buffer
+ * verbatim. */
+static void test_assets_script_copy(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	script_eval("(set! kruddboard-assets-sel 851)");
+	g_click = "Copy";
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL;
+
+	assert(rec_has("clipboard|(script mine (on-tick (self t) 0))"));
+}
+
+/* Copy is available even on a read-only built-in, next to the Clone row. */
+static void test_assets_script_copy_builtin(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	script_eval("(set! kruddboard-assets-sel 651)");
+	g_click = "Copy";
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL;
+
+	assert(rec_has("clipboard|(script spinner (on-tick (self t) 0))"));
 }
 
 /* Picking "Script" from the type combo dispatches to the script creator. */
@@ -2302,6 +2360,7 @@ int main(void)
 	RUN(assets_text_editor);
 	RUN(assets_text_save);
 	RUN(assets_text_delete);
+	RUN(assets_text_copy);
 	RUN(assets_shader_declaration);
 	RUN(assets_shader_save_ok);
 	RUN(assets_shader_save_fail);
@@ -2312,6 +2371,8 @@ int main(void)
 	RUN(assets_script_save_fail);
 	RUN(assets_script_clone);
 	RUN(assets_script_clone_conflict);
+	RUN(assets_script_copy);
+	RUN(assets_script_copy_builtin);
 	RUN(assets_create_script);
 	RUN(assets_material_editor);
 	RUN(assets_material_clone);

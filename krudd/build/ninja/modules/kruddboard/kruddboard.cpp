@@ -1162,6 +1162,16 @@ static s7_pointer sp_imgui_button(s7_scheme *sc, s7_pointer args)
 	return s7_make_boolean(sc, hit);
 }
 
+/* (imgui-set-clipboard-text text) copies text to the system clipboard. */
+static s7_pointer sp_imgui_set_clipboard_text(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer text = s7_car(args);
+
+	if (s7_is_string(text))
+		ImGui::SetClipboardText(s7_string(text));
+	return s7_unspecified(sc);
+}
+
 /*
  * (imgui-input-text-enter id text) -> (text . entered?). Like imgui-input-
  * text, but entered? is #t the instant Enter is pressed inside the field
@@ -1875,6 +1885,9 @@ static s7_scheme *ensure_panel_scm(void)
 			   1, 0, false, "(krudd-set-gizmo-mode m) set the tool");
 	s7_define_function(sc, "imgui-button", sp_imgui_button, 1, 0, false,
 			   "(imgui-button label) -> #t when clicked");
+	s7_define_function(sc, "imgui-set-clipboard-text",
+			   sp_imgui_set_clipboard_text, 1, 0, false,
+			   "(imgui-set-clipboard-text text) copy to clipboard");
 	s7_define_function(sc, "imgui-input-text-enter",
 			   sp_imgui_input_text_enter, 2, 0, false,
 			   "(imgui-input-text-enter id text) -> (text . entered?)");

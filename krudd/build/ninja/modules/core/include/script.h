@@ -43,17 +43,20 @@ int script_eval(const char *src);
 const char *script_shader_transpile(const char *src, const char *stage);
 
 /*
- * One editable parameter of a shader's Material uniform block, as reported by
- * script_shader_material_params. `components` is how many floats the editor
- * exposes (float=1 .. vec4=4; 0 for a type it does not edit as scalars, e.g. a
- * matrix). `edit` is the field's authored hint: "none", "color", or "range"
- * (with edit_min/edit_max meaningful only for "range").
+ * One editable parameter of a source-declared parameter block — a shader's
+ * Material uniform block (script_shader_material_params) or a script's params
+ * clause (script_entity_params); both report this same shape. `components` is
+ * how many floats the editor exposes (float=1 .. vec4=4; 0 for a type it does
+ * not edit as scalars, e.g. a matrix). `edit` is the field's authored hint:
+ * "none", "color", or "range" (with edit_min/edit_max meaningful only for
+ * "range"). `offset`/`size` are bytes within the block; the packing is the
+ * source's — std140 for a shader, tight for a script.
  */
 struct shader_param {
 	char     name[64];
 	char     type[16];
-	uint32_t offset;      /* std140 byte offset within the block */
-	uint32_t size;        /* std140 bytes the field consumes     */
+	uint32_t offset;      /* byte offset within the block (packing per source) */
+	uint32_t size;        /* bytes the field consumes                          */
 	uint32_t components;
 	char     edit[16];
 	float    edit_min;
@@ -70,6 +73,17 @@ struct shader_param {
  */
 int script_shader_material_params(const char *src, struct shader_param *out,
 				  uint32_t max, uint32_t *total_size);
+
+/*
+ * Introspect an entity script's (params ...) clause as editable parameters, the
+ * CPU-side twin of script_shader_material_params. Fills out[] with up to `max`
+ * fields (in declaration order), writes the tight-packed block size to
+ * *total_size (may be NULL), and returns the field count (>= 0), or -1 on the
+ * same failure conditions. A script with no params yields 0 fields — not an
+ * error. SRC is the (script ...) source.
+ */
+int script_entity_params(const char *src, struct shader_param *out,
+			 uint32_t max, uint32_t *total_size);
 
 /* Call the Scheme (tick) procedure if the image defines one. */
 void script_tick(void);

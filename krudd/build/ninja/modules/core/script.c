@@ -151,13 +151,15 @@ static float field_real(s7_pointer v)
 }
 
 /*
- * Call the image's (shader-material-params SRC), which returns
- * (TOTAL-SIZE (NAME TYPE OFFSET SIZE COMPONENTS EDIT-KIND EDIT-MIN EDIT-MAX)
- * ...), and marshal it into the caller's shader_param array. The layout math
- * (std140 offsets/sizes) lives in Scheme; this only walks the result.
+ * Call the image's parameter-introspection procedure PROC (given SRC), which
+ * returns (TOTAL-SIZE (NAME TYPE OFFSET SIZE COMPONENTS EDIT-KIND EDIT-MIN
+ * EDIT-MAX) ...), and marshal it into the caller's shader_param array. The
+ * layout math lives in Scheme; this only walks the result. Backs both the
+ * shader (std140) and script (tight) params — one shape, two packings.
  */
-int script_shader_material_params(const char *src, struct shader_param *out,
-				  uint32_t max, uint32_t *total_size)
+static int query_params(const char *proc, const char *src,
+			struct shader_param *out, uint32_t max,
+			uint32_t *total_size)
 {
 	s7_pointer fn, res, rest;
 	uint32_t   count = 0;
@@ -166,7 +168,7 @@ int script_shader_material_params(const char *src, struct shader_param *out,
 		*total_size = 0;
 	if (!g_s7 || !src)
 		return -1;
-	fn = s7_name_to_value(g_s7, "shader-material-params");
+	fn = s7_name_to_value(g_s7, proc);
 	if (!s7_is_procedure(fn))
 		return -1;
 	res = s7_call(g_s7, fn, s7_list(g_s7, 1, s7_make_string(g_s7, src)));
@@ -193,6 +195,18 @@ int script_shader_material_params(const char *src, struct shader_param *out,
 		count++;
 	}
 	return (int)count;
+}
+
+int script_shader_material_params(const char *src, struct shader_param *out,
+				  uint32_t max, uint32_t *total_size)
+{
+	return query_params("shader-material-params", src, out, max, total_size);
+}
+
+int script_entity_params(const char *src, struct shader_param *out,
+			 uint32_t max, uint32_t *total_size)
+{
+	return query_params("script-params", src, out, max, total_size);
 }
 
 void script_tick(void)

@@ -426,6 +426,48 @@ static void test_export_ingest_roundtrip(void)
 	test_mem.free(s);
 }
 
+/*
+ * A per-entity script-parameter override is stored inline and survives an undo
+ * snapshot round-trip: capture, clobber, restore, and the exact bytes return.
+ * The getter reports "no override" as NULL / len 0.
+ */
+static void test_script_params_snapshot(void)
+{
+	struct world_snapshot *snap;
+	struct transform       t;
+	uint8_t                ov[8];
+	const uint8_t         *got;
+	uint32_t               len = 99;
+	int32_t                e;
+
+	memset(&t, 0, sizeof(t));
+	t.rotation[3] = 1.0f;
+	t.scale[0] = t.scale[1] = t.scale[2] = 1.0f;
+	world_reset(&w);
+	e = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+	assert(e >= 0);
+
+	assert(world_script_params(&w, e, &len) == NULL && len == 0);
+
+	memset(ov, 0xAB, sizeof(ov));
+	world_set_script_params(&w, e, ov, sizeof(ov));
+	got = world_script_params(&w, e, &len);
+	assert(got != NULL && len == sizeof(ov));
+
+	snap = world_snapshot_capture(&w, &test_mem);
+	assert(snap != NULL);
+
+	world_set_script_params(&w, e, NULL, 0);           /* clobber */
+	assert(world_script_params(&w, e, &len) == NULL);
+
+	world_snapshot_restore(&w, snap);                  /* undo */
+	got = world_script_params(&w, e, &len);
+	assert(got != NULL && len == sizeof(ov));
+	assert(memcmp(got, ov, sizeof(ov)) == 0);
+
+	world_snapshot_free(snap, &test_mem);
+}
+
 int main(void)
 {
 	mem_init();
@@ -443,6 +485,7 @@ int main(void)
 	test_selection();
 	test_export_compaction();
 	test_export_ingest_roundtrip();
+	test_script_params_snapshot();
 
 	mem_shutdown();
 	printf("entity tests passed\n");

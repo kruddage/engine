@@ -249,8 +249,10 @@ static s7_pointer sp_imgui_separator(s7_scheme *sc, s7_pointer args)
 }
 
 /*
- * (imgui-collapsing-header label) -> #t when the section is open. Default-open,
- * matching the C headers that passed ImGuiTreeNodeFlags_DefaultOpen.
+ * (imgui-collapsing-header label [default-open]) -> #t when the section is
+ * open. default-open is optional and defaults to #t, matching the C headers
+ * that passed ImGuiTreeNodeFlags_DefaultOpen; pass #f to start the section
+ * collapsed instead (used by the Subsystems section, which starts rolled up).
  *
  * Recolored red (the stock theme's blue Header/HeaderHovered/HeaderActive,
  * hue-swapped) so a header drawn through this primitive reads as
@@ -261,8 +263,11 @@ static s7_pointer sp_imgui_separator(s7_scheme *sc, s7_pointer args)
  */
 static s7_pointer sp_imgui_collapsing_header(s7_scheme *sc, s7_pointer args)
 {
-	s7_pointer label = s7_car(args);
-	bool       open  = false;
+	s7_pointer label        = s7_car(args);
+	s7_pointer rest         = s7_cdr(args);
+	bool       default_open = s7_is_pair(rest) ?
+				   s7_boolean(sc, s7_car(rest)) : true;
+	bool       open         = false;
 
 	if (s7_is_string(label)) {
 		ImGui::PushStyleColor(ImGuiCol_Header,
@@ -272,7 +277,8 @@ static s7_pointer sp_imgui_collapsing_header(s7_scheme *sc, s7_pointer args)
 		ImGui::PushStyleColor(ImGuiCol_HeaderActive,
 				      ImVec4(0.80f, 0.25f, 0.25f, 1.00f));
 		open = ImGui::CollapsingHeader(s7_string(label),
-					      ImGuiTreeNodeFlags_DefaultOpen);
+					      default_open ?
+					      ImGuiTreeNodeFlags_DefaultOpen : 0);
 		ImGui::PopStyleColor(3);
 	}
 	return s7_make_boolean(sc, open);
@@ -970,6 +976,14 @@ static s7_pointer sp_krudd_set_gizmo_mode(s7_scheme *sc, s7_pointer args)
 #define SHADER_FORMAT "krudd-shader"
 
 /*
+ * Script authoring metadata.  A krudd script is a single (script NAME ...) form
+ * carrying its lifecycle hooks (see core/entity_script.scm) — like a shader,
+ * the source itself is the only thing to author, so the editor asks only for a
+ * name and derives everything else from the text.
+ */
+#define SCRIPT_FORMAT "krudd-script"
+
+/*
  * Report the stage blocks SRC defines, the same way the built-in shaders
  * advertise theirs via describe() — a comma-joined "vertex, fragment" list
  * in declaration order.  Used both to display the (derived, read-only)
@@ -1028,6 +1042,81 @@ static const char *default_shader_src(void)
 		    info.type != ASSET_TYPE_SHADER)
 			continue;
 		if (strcmp(info.path, "builtin://shader/scene") == 0) {
+			const void *data = g_asset_api->get_data(info.id, NULL);
+			return data ? (const char *)data : "";
+		}
+	}
+	return "";
+}
+
+/*
+ * Report the lifecycle hooks SRC defines, the same comma-joined form the
+ * built-in scripts advertise via describe() ("on-begin, on-tick"), in the
+ * canonical begin/tick/destroy order.  Used both to display the (derived,
+ * read-only) declaration and to publish it back on Save.  The buffer holds the
+ * longest possible list ("on-begin, on-tick, on-destroy") with room to spare.
+ */
+static const char *script_hooks_from_source(const char *src)
+{
+	static char buf[64];
+	int         has_begin   = src && strstr(src, "(on-begin")   != NULL;
+	int         has_tick    = src && strstr(src, "(on-tick")    != NULL;
+	int         has_destroy = src && strstr(src, "(on-destroy") != NULL;
+	int         n           = 0;
+
+	buf[0] = '\0';
+	if (has_begin) {
+		strcpy(buf, "on-begin");
+		n++;
+	}
+	if (has_tick) {
+		if (n)
+			strcat(buf, ", ");
+		strcat(buf, "on-tick");
+		n++;
+	}
+	if (has_destroy) {
+		if (n)
+			strcat(buf, ", ");
+		strcat(buf, "on-destroy");
+	}
+	return buf;
+}
+
+/*
+ * A script is well-formed enough to commit when it is a (script ...) form that
+ * declares at least one lifecycle hook — the script analogue of the shader
+ * save's compile gate, kept to a cheap substring test (matching shader_stages_
+ * from_source's style) so a Save never has to eval untrusted source.  Blank or
+ * hookless text is rejected, so a broken edit never reaches the live asset.
+ */
+static bool script_form_ok(const char *src)
+{
+	if (!src || !strstr(src, "(script"))
+		return false;
+	return strstr(src, "(on-begin") != NULL
+	    || strstr(src, "(on-tick") != NULL
+	    || strstr(src, "(on-destroy") != NULL;
+}
+
+/*
+ * The engine's built-in spinner script — always present, read-only — used to
+ * seed new script assets so they start from a working (script ...) form
+ * instead of blank, the way default_shader_src seeds new shaders.
+ */
+static const char *default_script_src(void)
+{
+	uint32_t          n, i;
+	struct asset_info info;
+
+	if (!g_asset_api)
+		return "";
+	n = g_asset_api->count();
+	for (i = 0; i < n; i++) {
+		if (g_asset_api->info(i, &info) != 0 || !info.read_only ||
+		    info.type != ASSET_TYPE_SCRIPT)
+			continue;
+		if (strcmp(info.path, "builtin://script/spinner") == 0) {
 			const void *data = g_asset_api->get_data(info.id, NULL);
 			return data ? (const char *)data : "";
 		}
@@ -1479,6 +1568,97 @@ static s7_pointer sp_krudd_asset_clone_shader(s7_scheme *sc, s7_pointer args)
 	return s7_make_integer(sc, (s7_int)nid);
 }
 
+/* (krudd-script-hooks src) -> the declared hook list, or "" if none. */
+static s7_pointer sp_krudd_script_hooks(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer src = s7_car(args);
+
+	return s7_make_string(sc,
+		script_hooks_from_source(s7_is_string(src) ? s7_string(src) : ""));
+}
+
+/*
+ * (krudd-asset-save-script id text) -> #t on a well-formed save, #f when the
+ * source is not a (script ...) form with at least one hook (nothing is
+ * committed, so a broken edit never reaches the live asset) — the script
+ * analogue of krudd-asset-save-shader's compile gate.
+ */
+static s7_pointer sp_krudd_asset_save_script(s7_scheme *sc, s7_pointer args)
+{
+	uint32_t                 id  = (uint32_t)s7_integer(s7_car(args));
+	const char               *txt = s7_is_string(s7_cadr(args))
+		? s7_string(s7_cadr(args)) : "";
+	uint32_t                 len = (uint32_t)strlen(txt);
+	struct asset_decl_field  decl[2];
+
+	if (!script_form_ok(txt))
+		return s7_f(sc);
+
+	decl[0].key   = "format";
+	decl[0].value = SCRIPT_FORMAT;
+	decl[1].key   = "hooks";
+	decl[1].value = script_hooks_from_source(txt);
+
+	if (g_asset_mut) {
+		g_asset_mut->set_data(id, txt, len);
+		if (g_asset_mut->set_decl)
+			g_asset_mut->set_decl(id, decl, 2);
+	}
+	maybe_persist_asset(id, ASSET_TYPE_SCRIPT, txt, len);
+	return s7_t(sc);
+}
+
+/*
+ * (krudd-asset-create-script path) -> the new id, or 0 on failure. Seeds from
+ * the built-in spinner script so authoring starts from a working (script ...)
+ * form; no declaration is set yet — the first successful Save publishes it,
+ * mirroring krudd-asset-create-shader.
+ */
+static s7_pointer sp_krudd_asset_create_script(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer  path = s7_car(args);
+	const char *p    = s7_is_string(path) ? s7_string(path) : "";
+	const char *seed = default_script_src();
+	uint32_t    len  = (uint32_t)strlen(seed);
+	uint32_t    nid  = 0;
+
+	if (g_asset_mut)
+		nid = g_asset_mut->create(p, ASSET_TYPE_SCRIPT, seed, len);
+	if (nid != 0)
+		maybe_persist_asset(nid, ASSET_TYPE_SCRIPT, seed, len);
+	return s7_make_integer(sc, (s7_int)nid);
+}
+
+/*
+ * (krudd-asset-clone-script name text) -> the new id, or 0 on failure (e.g. a
+ * duplicate path) — the built-in script "Clone" flow's whole commit: create,
+ * publish the derived declaration, persist. Mirrors krudd-asset-clone-shader.
+ */
+static s7_pointer sp_krudd_asset_clone_script(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer               name = s7_car(args);
+	s7_pointer               text = s7_cadr(args);
+	const char              *nm   = s7_is_string(name) ? s7_string(name) : "";
+	const char              *txt  = s7_is_string(text) ? s7_string(text) : "";
+	uint32_t                 len  = (uint32_t)strlen(txt);
+	uint32_t                 nid  = 0;
+	struct asset_decl_field  decl[2];
+
+	if (g_asset_mut)
+		nid = g_asset_mut->create(nm, ASSET_TYPE_SCRIPT, txt, len);
+	if (nid == 0)
+		return s7_make_integer(sc, 0);
+
+	decl[0].key   = "format";
+	decl[0].value = SCRIPT_FORMAT;
+	decl[1].key   = "hooks";
+	decl[1].value = script_hooks_from_source(txt);
+	if (g_asset_mut->set_decl)
+		g_asset_mut->set_decl(nid, decl, 2);
+	maybe_persist_asset(nid, ASSET_TYPE_SCRIPT, txt, len);
+	return s7_make_integer(sc, (s7_int)nid);
+}
+
 /*
  * (krudd-md-preview text h) -> unspecified. Parses text fresh every call
  * (cheap relative to a 16ms frame budget) and draws it in a bordered,
@@ -1537,8 +1717,8 @@ static s7_scheme *ensure_panel_scm(void)
 	s7_define_function(sc, "imgui-separator", sp_imgui_separator, 0, 0,
 			   false, "(imgui-separator) horizontal rule");
 	s7_define_function(sc, "imgui-collapsing-header",
-			   sp_imgui_collapsing_header, 1, 0, false,
-			   "(imgui-collapsing-header label) -> #t when open");
+			   sp_imgui_collapsing_header, 1, 1, false,
+			   "(imgui-collapsing-header label [default-open]) -> #t when open");
 	s7_define_function(sc, "imgui-begin-table", sp_imgui_begin_table, 2, 0,
 			   false, "(imgui-begin-table id ncols) -> #t if opened");
 	s7_define_function(sc, "imgui-table-setup-column",
@@ -1706,6 +1886,17 @@ static s7_scheme *ensure_panel_scm(void)
 	s7_define_function(sc, "krudd-asset-clone-shader",
 			   sp_krudd_asset_clone_shader, 2, 0, false,
 			   "(krudd-asset-clone-shader name text) -> new id or 0");
+	s7_define_function(sc, "krudd-script-hooks", sp_krudd_script_hooks, 1,
+			   0, false, "(krudd-script-hooks src) -> hook list string");
+	s7_define_function(sc, "krudd-asset-save-script",
+			   sp_krudd_asset_save_script, 2, 0, false,
+			   "(krudd-asset-save-script id text) -> saved-ok?");
+	s7_define_function(sc, "krudd-asset-create-script",
+			   sp_krudd_asset_create_script, 1, 0, false,
+			   "(krudd-asset-create-script path) -> new id or 0");
+	s7_define_function(sc, "krudd-asset-clone-script",
+			   sp_krudd_asset_clone_script, 2, 0, false,
+			   "(krudd-asset-clone-script name text) -> new id or 0");
 	s7_define_function(sc, "krudd-md-preview", sp_krudd_md_preview, 2, 0,
 			   false, "(krudd-md-preview text h) scrolling preview child");
 	script_eval(KRUDDBOARD_SCM);
@@ -1840,21 +2031,19 @@ static void draw_tab_subsystems(void)
 	ImGui::TextDisabled("(subsystem manager unavailable)");
 #else
 	int i;
-	char size_buf[32];
 
 	if (!g_mgr) {
 		ImGui::TextDisabled("(subsystem manager unavailable)");
 		return;
 	}
 
-	if (ImGui::BeginTable("##subsys", 4,
+	if (ImGui::BeginTable("##subsys", 3,
 			      ImGuiTableFlags_Borders        |
 			      ImGuiTableFlags_RowBg          |
 			      ImGuiTableFlags_SizingStretchProp)) {
 		ImGui::TableSetupColumn("Name");
 		ImGui::TableSetupColumn("API");
 		ImGui::TableSetupColumn("Tick");
-		ImGui::TableSetupColumn("WASM Size");
 		ImGui::TableHeadersRow();
 
 		for (i = 0; g_mgr->static_table[i].name; i++) {
@@ -1867,14 +2056,6 @@ static void draw_tab_subsystems(void)
 			ImGui::TableSetColumnIndex(2);
 			ImGui::TextUnformatted(
 				g_mgr->static_table[i].tick ? "yes" : "-");
-			ImGui::TableSetColumnIndex(3);
-			if (g_mgr->static_table[i].wasm_size) {
-				snprintf(size_buf, sizeof(size_buf), "%u",
-					g_mgr->static_table[i].wasm_size);
-				ImGui::TextUnformatted(size_buf);
-			} else {
-				ImGui::TextDisabled("-");
-			}
 		}
 
 		for (i = 0; i < g_mgr->dynamic_count; i++) {
@@ -1887,14 +2068,6 @@ static void draw_tab_subsystems(void)
 			ImGui::TableSetColumnIndex(2);
 			ImGui::TextUnformatted(
 				g_mgr->dynamic[i].tick ? "yes" : "-");
-			ImGui::TableSetColumnIndex(3);
-			if (g_mgr->dynamic[i].wasm_size) {
-				snprintf(size_buf, sizeof(size_buf), "%u",
-					g_mgr->dynamic[i].wasm_size);
-				ImGui::TextUnformatted(size_buf);
-			} else {
-				ImGui::TextDisabled("-");
-			}
 		}
 
 		ImGui::EndTable();
@@ -2733,8 +2906,7 @@ static void draw_tab_krudd(void)
 				    ImGuiTreeNodeFlags_DefaultOpen))
 		draw_tab_stats();
 
-	if (ImGui::CollapsingHeader("Subsystems",
-				    ImGuiTreeNodeFlags_DefaultOpen))
+	if (ImGui::CollapsingHeader("Subsystems"))
 		draw_tab_subsystems();
 
 	if (ImGui::CollapsingHeader("Log",

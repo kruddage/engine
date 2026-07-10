@@ -178,7 +178,11 @@ static s7_pointer st_separator(s7_scheme *sc, s7_pointer a)
 
 static s7_pointer st_collapsing_header(s7_scheme *sc, s7_pointer a)
 {
-	rec("header|%s", s7_string(s7_car(a)));
+	s7_pointer rest         = s7_cdr(a);
+	int        default_open = s7_is_pair(rest) ?
+				   s7_boolean(sc, s7_car(rest)) : 1;
+
+	rec("header|%s|%d", s7_string(s7_car(a)), default_open);
 	return s7_make_boolean(sc, 1);
 }
 
@@ -722,7 +726,7 @@ static s7_pointer st_set_gizmo_mode(s7_scheme *sc, s7_pointer a)
 /* Fake authored asset catalog, driven by the mutating primitives. Mirrors
  * struct asset_info's shape closely enough for the Scheme logic under test:
  * type/kind/state/read_only/origin codes match asset_api.h. */
-#define FA_MAX 8
+#define FA_MAX 10
 
 struct fa_asset {
 	int         alive;
@@ -743,6 +747,7 @@ static int              g_have_asset_api;
 static int              g_have_asset_mut;
 static int              g_create_fail;      /* next create()/clone() -> 0 */
 static int              g_shader_save_ok = 1; /* krudd-asset-save-shader ret */
+static int              g_script_save_ok = 1; /* krudd-asset-save-script ret */
 static int              g_combo_pick = -1;  /* next imgui-combo result, or -1 */
 
 /* Same id-keyed "what's being typed / just changed" simulation the World-tab
@@ -790,11 +795,28 @@ static void asset_reset(void)
 	g_fa[4].type = 3; g_fa[4].kind = 0; g_fa[4].state = 1;
 	g_fa[4].read_only = 0; g_fa[4].origin = 1;
 
-	g_fa_n = 5;
+	/* id 651: built-in script — read-only, gets the Clone flow. */
+	g_fa[5].alive = 1; g_fa[5].id = 651;
+	strcpy(g_fa[5].path, "builtin://script/spinner");
+	g_fa[5].type = 8; g_fa[5].kind = 1; g_fa[5].state = 1;
+	g_fa[5].read_only = 1; g_fa[5].origin = 0;
+	strcpy(g_fa[5].data, "(script spinner (on-tick (self t) 0))");
+	g_fa[5].data_len = (int)strlen(g_fa[5].data);
+
+	/* id 851: authored script — mutable, gets Save/Delete. */
+	g_fa[6].alive = 1; g_fa[6].id = 851;
+	strcpy(g_fa[6].path, "my.script");
+	g_fa[6].type = 8; g_fa[6].kind = 0; g_fa[6].state = 1;
+	g_fa[6].read_only = 0; g_fa[6].origin = 1;
+	strcpy(g_fa[6].data, "(script mine (on-tick (self t) 0))");
+	g_fa[6].data_len = (int)strlen(g_fa[6].data);
+
+	g_fa_n = 7;
 	g_have_asset_api = 1;
 	g_have_asset_mut = 1;
 	g_create_fail    = 0;
 	g_shader_save_ok = 1;
+	g_script_save_ok = 1;
 
 	g_click        = NULL;
 	g_dis_top      = 0;
@@ -813,6 +835,7 @@ static void assets_scheme_reset(void)
 	script_eval("(set! kruddboard-assets-edit-id 0)");
 	script_eval("(set! kruddboard-assets-edit-text \"\")");
 	script_eval("(set! kruddboard-assets-shader-ok 'untried)");
+	script_eval("(set! kruddboard-assets-script-ok 'untried)");
 	script_eval("(set! kruddboard-assets-color-id 0)");
 	script_eval("(set! kruddboard-assets-color (list 1.0 1.0 1.0 1.0))");
 	script_eval("(set! kruddboard-assets-naming #f)");
@@ -1063,6 +1086,63 @@ static s7_pointer st_asset_clone_shader(s7_scheme *sc, s7_pointer a)
 	return s7_make_integer(sc, (s7_int)id);
 }
 
+/* Mirrors the real script_hooks_from_source substring scan, so the script
+ * Declaration display gets a meaningful test. */
+static s7_pointer st_script_hooks(s7_scheme *sc, s7_pointer a)
+{
+	const char *src = s7_is_string(s7_car(a)) ? s7_string(s7_car(a)) : "";
+	int         hb  = strstr(src, "(on-begin")   != NULL;
+	int         ht  = strstr(src, "(on-tick")    != NULL;
+	int         hd  = strstr(src, "(on-destroy") != NULL;
+	char        buf[64];
+	int         n   = 0;
+
+	buf[0] = '\0';
+	if (hb) { strcpy(buf, "on-begin"); n++; }
+	if (ht) { if (n) strcat(buf, ", "); strcat(buf, "on-tick"); n++; }
+	if (hd) { if (n) strcat(buf, ", "); strcat(buf, "on-destroy"); }
+	return s7_make_string(sc, buf);
+}
+
+static s7_pointer st_asset_save_script(s7_scheme *sc, s7_pointer a)
+{
+	unsigned         id  = (unsigned)s7_integer(s7_car(a));
+	const char      *txt = s7_is_string(s7_cadr(a)) ? s7_string(s7_cadr(a)) : "";
+	struct fa_asset *f   = fa_find(id);
+
+	rec("save-script|%u|%s", id, txt);
+	if (!g_script_save_ok)
+		return s7_f(sc);
+	if (f) {
+		strncpy(f->data, txt, sizeof(f->data) - 1);
+		f->data_len = (int)strlen(f->data);
+	}
+	return s7_t(sc);
+}
+
+#define SCRIPT_SEED "(script seed (on-tick (self t) 0))"
+
+static s7_pointer st_asset_create_script(s7_scheme *sc, s7_pointer a)
+{
+	const char *path = s7_is_string(s7_car(a)) ? s7_string(s7_car(a)) : "";
+	unsigned    id;
+
+	rec("create-script|%s", path);
+	id = fa_create(path, 8, SCRIPT_SEED, (int)strlen(SCRIPT_SEED), 0, 1);
+	return s7_make_integer(sc, (s7_int)id);
+}
+
+static s7_pointer st_asset_clone_script(s7_scheme *sc, s7_pointer a)
+{
+	const char *name = s7_is_string(s7_car(a)) ? s7_string(s7_car(a)) : "";
+	const char *txt  = s7_is_string(s7_cadr(a)) ? s7_string(s7_cadr(a)) : "";
+	unsigned    id;
+
+	rec("clone-script|%s|%s", name, txt);
+	id = fa_create(name, 8, txt, (int)strlen(txt), 0, 1);
+	return s7_make_integer(sc, (s7_int)id);
+}
+
 static s7_pointer st_md_preview(s7_scheme *sc, s7_pointer a)
 {
 	const char *txt = s7_is_string(s7_car(a)) ? s7_string(s7_car(a)) : "";
@@ -1157,7 +1237,8 @@ static s7_scheme *setup(void)
 	def(sc, "imgui-same-line", st_same_line, 0);
 	def(sc, "imgui-checkbox", st_checkbox, 2);
 	def(sc, "imgui-separator", st_separator, 0);
-	def(sc, "imgui-collapsing-header", st_collapsing_header, 1);
+	s7_define_function(sc, "imgui-collapsing-header",
+			   st_collapsing_header, 1, 1, false, "stub");
 	def(sc, "imgui-begin-table", st_begin_table, 2);
 	def(sc, "imgui-table-setup-column", st_setup_column, 1);
 	def(sc, "imgui-table-headers-row", st_headers_row, 0);
@@ -1226,6 +1307,10 @@ static s7_scheme *setup(void)
 	def(sc, "krudd-asset-create-shader", st_asset_create_shader, 1);
 	def(sc, "krudd-asset-create-material", st_asset_create_material, 1);
 	def(sc, "krudd-asset-clone-shader", st_asset_clone_shader, 2);
+	def(sc, "krudd-script-hooks", st_script_hooks, 1);
+	def(sc, "krudd-asset-save-script", st_asset_save_script, 2);
+	def(sc, "krudd-asset-create-script", st_asset_create_script, 1);
+	def(sc, "krudd-asset-clone-script", st_asset_clone_script, 2);
 	def(sc, "krudd-md-preview", st_md_preview, 2);
 
 	assert(script_eval(KRUDDBOARD_SCM) == 0);
@@ -1276,8 +1361,8 @@ static void test_subsystems_table(void)
 	rec_reset();
 	draw("kruddboard-draw-subsystems");
 
-	assert(rec_has("table-begin|##subsys|4"));
-	assert(rec_has("col|Name") && rec_has("col|WASM Size"));
+	assert(rec_has("table-begin|##subsys|3"));
+	assert(rec_has("col|Name") && !rec_has("col|WASM Size"));
 	assert(rec_has("headers"));
 	assert(rec_count("row") == 3);
 	assert(rec_has("text|log"));
@@ -1286,7 +1371,7 @@ static void test_subsystems_table(void)
 	assert(rec_has("table-end"));
 }
 
-/* yes/- for API and Tick; the numeric size when set, a dimmed "-" when zero. */
+/* yes/- for API and Tick; no WASM size column is drawn. */
 static void test_subsystems_cells(void)
 {
 	reset_state();
@@ -1295,8 +1380,8 @@ static void test_subsystems_cells(void)
 
 	assert(rec_has("text|yes"));      /* an API/Tick that is present */
 	assert(rec_has("text|-"));        /* an API/Tick that is absent   */
-	assert(rec_has("text|1024"));     /* a known WASM size            */
-	assert(rec_count("disabled|-") == 2); /* two zero sizes, dimmed   */
+	assert(!rec_has("text|1024"));    /* WASM size no longer drawn    */
+	assert(rec_count("disabled|-") == 0); /* no dimmed size cells     */
 }
 
 /* No manager -> the dimmed unavailable line, and no table. */
@@ -1377,7 +1462,10 @@ static void test_krudd_composition(void)
 	assert(rec_index("header|Frame Stats") >= 0);
 	assert(rec_index("header|Frame Stats") < rec_index("header|Subsystems"));
 	assert(rec_index("header|Subsystems") < rec_index("header|Log"));
-	assert(rec_has("table-begin|##subsys|4")); /* subsystems drawn */
+	assert(rec_has("header|Frame Stats|1")); /* defaults open   */
+	assert(rec_has("header|Subsystems|0"));  /* starts rolled up */
+	assert(rec_has("header|Log|1"));         /* defaults open   */
+	assert(rec_has("table-begin|##subsys|3")); /* subsystems drawn */
 	assert(rec_has("child-begin|##logscroll")); /* log drawn */
 }
 
@@ -1885,6 +1973,105 @@ static void test_assets_shader_clone_conflict(void)
 	assert(assets_sel() == 601);
 }
 
+/* An editable script's Declaration is derived live from the edit buffer. */
+static void test_assets_script_declaration(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	script_eval("(set! kruddboard-assets-sel 851)");
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+
+	assert(rec_has("text|format: krudd-script"));
+	assert(rec_has("text|hooks: on-tick"));
+	assert(rec_has("input-ml|##script|(script mine (on-tick (self t) 0))"));
+}
+
+static void test_assets_script_save_ok(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	script_eval("(set! kruddboard-assets-sel 851)");
+	g_script_save_ok = 1;
+	g_click = "Save";
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL;
+
+	assert(rec_has("save-script|851|"));
+	assert(rec_has("colored|0.30,0.90,0.30,1.00|Saved"));
+}
+
+/* A rejected save (not a well-formed script) shows the failure text and leaves
+ * the last-committed source live. */
+static void test_assets_script_save_fail(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	script_eval("(set! kruddboard-assets-sel 851)");
+	g_script_save_ok = 0;
+	g_click = "Save";
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL;
+
+	assert(rec_has("colored|1.00,0.30,0.30,1.00|Not a valid script"));
+}
+
+/* A built-in script gets the Clone flow, seeded "<path>_copy", instead of
+ * Save/Delete. */
+static void test_assets_script_clone(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	script_eval("(set! kruddboard-assets-sel 651)");
+	script_eval("(kruddboard-draw-assets)"); /* seed the clone name */
+	g_click = "Clone";
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL;
+
+	assert(rec_has("input-enter|##clonename|builtin://script/spinner_copy"));
+	assert(rec_has("clone-script|builtin://script/spinner_copy|"));
+	assert(assets_sel() != 651 && assets_sel() != 0);
+}
+
+/* A duplicate clone name reports the conflict and keeps the built-in
+ * selected. */
+static void test_assets_script_clone_conflict(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	script_eval("(set! kruddboard-assets-sel 651)");
+	script_eval("(kruddboard-draw-assets)");
+	g_create_fail = 1;
+	g_click = "Clone";
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL;
+
+	assert(rec_has("colored|1.00,0.30,0.30,1.00|"
+		       "\"builtin://script/spinner_copy\" already exists"));
+	assert(assets_sel() == 651);
+}
+
+/* Picking "Script" from the type combo dispatches to the script creator. */
+static void test_assets_create_script(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	g_click = "New Asset";
+	script_eval("(kruddboard-draw-assets)");
+	g_click = "Create";
+	g_input_id = "name"; g_input_text = "new.script"; g_input_commit = 0;
+	g_combo_pick = 3; /* Script */
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL; g_input_id = NULL; g_combo_pick = -1;
+
+	assert(rec_has("create-script|new.script"));
+}
+
 static void test_assets_material_editor(void)
 {
 	asset_reset();
@@ -2010,6 +2197,12 @@ int main(void)
 	RUN(assets_shader_save_fail);
 	RUN(assets_shader_clone);
 	RUN(assets_shader_clone_conflict);
+	RUN(assets_script_declaration);
+	RUN(assets_script_save_ok);
+	RUN(assets_script_save_fail);
+	RUN(assets_script_clone);
+	RUN(assets_script_clone_conflict);
+	RUN(assets_create_script);
 	RUN(assets_material_editor);
 	RUN(assets_material_readonly);
 	RUN(assets_generic_fallback);

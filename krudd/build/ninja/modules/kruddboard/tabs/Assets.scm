@@ -31,12 +31,16 @@
 ;;! old g_shader_compile_ok's three states.
 (define kruddboard-assets-shader-ok 'untried)
 
+;;! Last script Save result, the same three states as shader-ok: 'untried,
+;;! #t (saved) or #f (rejected as not a well-formed (script ...) form).
+(define kruddboard-assets-script-ok 'untried)
+
 ;;! Material color editor buffer and the id whose bytes it holds.
 (define kruddboard-assets-color-id 0)
 (define kruddboard-assets-color (list 1.0 1.0 1.0 1.0))
 
 ;;! New Asset form state: visible?, the name field, and the type combo index
-;;! (0 Text, 1 Shader, 2 Material).
+;;! (0 Text, 1 Shader, 2 Material, 3 Script).
 (define kruddboard-assets-naming #f)
 (define kruddboard-assets-new-name "")
 (define kruddboard-assets-new-type 0)
@@ -80,7 +84,8 @@
   (unless (= kruddboard-assets-edit-id id)
     (set! kruddboard-assets-edit-id id)
     (set! kruddboard-assets-edit-text (krudd-asset-data id))
-    (set! kruddboard-assets-shader-ok 'untried)))
+    (set! kruddboard-assets-shader-ok 'untried)
+    (set! kruddboard-assets-script-ok 'untried)))
 
 ;;! (kruddboard-assets-maybe-reload-color id) mirrors the above for the
 ;;! material color editor — the old maybe_reload_material_color.
@@ -115,6 +120,7 @@
 (define (kruddboard-assets-create-of-type type name)
   (cond ((= type 1) (krudd-asset-create-shader name))
 	((= type 2) (krudd-asset-create-material name))
+	((= type 3) (krudd-asset-create-script name))
 	(else (krudd-asset-create-text name))))
 
 ;;! (kruddboard-draw-new-asset-form) is the "New Asset" button, or (once
@@ -131,7 +137,8 @@
 	(let ((r (imgui-input-text-enter "name" kruddboard-assets-new-name)))
 	  (set! kruddboard-assets-new-name (car r))
 	  (imgui-set-next-item-width 160.0)
-	  (let* ((new-type (imgui-combo "type" (list "Text" "Shader" "Material")
+	  (let* ((new-type (imgui-combo "type"
+					(list "Text" "Shader" "Material" "Script")
 					kruddboard-assets-new-type))
 		 (create-clicked (imgui-button "Create")))
 	    (set! kruddboard-assets-new-type new-type)
@@ -314,6 +321,74 @@
 	  (kruddboard-assets-do-delete id)))
       (kruddboard-draw-asset-shader-clone id path)))
 
+;;! The Save button + save-result text for an editable script — the script
+;;! analogue of kruddboard-draw-asset-shader-save. A rejected save (not a
+;;! well-formed (script ...) form) leaves the last-committed source live.
+(define (kruddboard-draw-asset-script-save id)
+  (when (imgui-button "Save")
+    (set! kruddboard-assets-script-ok
+	  (krudd-asset-save-script id kruddboard-assets-edit-text)))
+  (imgui-same-line)
+  (cond ((eq? kruddboard-assets-script-ok #t)
+	 (imgui-text-colored 0.3 0.9 0.3 1.0 "Saved"))
+	((eq? kruddboard-assets-script-ok #f)
+	 (imgui-text-colored 1.0 0.3 0.3 1.0 "Not a valid script"))))
+
+;;! The name field + Clone button for a read-only (built-in) script — the
+;;! script analogue of kruddboard-draw-asset-shader-clone. It shares the same
+;;! clone-src/name/conflict state (only one inspector is open at a time) and
+;;! commits through krudd-asset-clone-script.
+(define (kruddboard-draw-asset-script-clone id path)
+  (unless (= kruddboard-assets-clone-src id)
+    (set! kruddboard-assets-clone-src id)
+    (set! kruddboard-assets-clone-name (string-append path "_copy"))
+    (set! kruddboard-assets-clone-conflict #f))
+  (imgui-set-next-item-width 240.0)
+  (let ((r (imgui-input-text-enter "##clonename" kruddboard-assets-clone-name)))
+    (set! kruddboard-assets-clone-name (car r))
+    (imgui-same-line)
+    (let* ((clone-clicked (imgui-button "Clone"))
+	   (confirm (or (cdr r) clone-clicked)))
+      (when (and confirm (not (string=? kruddboard-assets-clone-name "")))
+	(let ((nid (krudd-asset-clone-script kruddboard-assets-clone-name
+					     kruddboard-assets-edit-text)))
+	  (if (= nid 0)
+	      (set! kruddboard-assets-clone-conflict #t)
+	      (begin
+		(set! kruddboard-assets-clone-conflict #f)
+		(set! kruddboard-assets-sel nid)))))
+      (when kruddboard-assets-clone-conflict
+	(imgui-same-line)
+	(imgui-text-colored 1.0 0.3 0.3 1.0
+			    (format #f "\"~A\" already exists"
+				    kruddboard-assets-clone-name))))))
+
+;;! Script inspector: derived Declaration (format + live hook list), Source box
+;;! (editable or not), then either the Save/Delete row or the built-in Clone
+;;! row — the (script ...) counterpart of kruddboard-draw-asset-shader-editor,
+;;! so authoring an entity script feels exactly like authoring a shader.
+(define (kruddboard-draw-asset-script-editor id path editable)
+  (kruddboard-assets-maybe-reload-edit id)
+  (imgui-separator)
+  (when (imgui-collapsing-header "Declaration")
+    (let ((hooks (krudd-script-hooks kruddboard-assets-edit-text)))
+      (imgui-text "format: krudd-script")
+      (imgui-text (format #f "hooks: ~A"
+			  (if (string=? hooks "") "(none)" hooks)))))
+  (imgui-separator)
+  (when (imgui-collapsing-header "Source")
+    (let ((r (imgui-input-text-multiline "##script" kruddboard-assets-edit-text
+					 260.0 (not editable))))
+      (set! kruddboard-assets-edit-text (car r))))
+  (imgui-separator)
+  (if editable
+      (begin
+	(kruddboard-draw-asset-script-save id)
+	(imgui-same-line)
+	(when (imgui-button "Delete")
+	  (kruddboard-assets-do-delete id)))
+      (kruddboard-draw-asset-script-clone id path)))
+
 ;;! Material inspector: a color picker (disabled when read-only) plus Save/
 ;;! Delete or a disabled Save + "read-only" note — the old draw_asset_
 ;;! inspector material branch.
@@ -381,8 +456,8 @@
 
 ;;! (kruddboard-draw-asset-body id info) dispatches to the right editor by
 ;;! type/origin — ASSET_ORIGIN_AUTHORED=1 and ASSET_TYPE_TEXT=7/SHADER=4/
-;;! MATERIAL=3, mirroring asset_api.h, the same convention the label helpers
-;;! above use.
+;;! MATERIAL=3/SCRIPT=8, mirroring asset_api.h, the same convention the label
+;;! helpers above use.
 (define (kruddboard-draw-asset-body id info)
   (let ((path (list-ref info 0))
 	(type (list-ref info 1))
@@ -392,6 +467,7 @@
      ((and (= origin 1) (= type 7)) (kruddboard-draw-asset-text-editor id))
      ((= type 4) (kruddboard-draw-asset-shader-editor id path (not read-only)))
      ((= type 3) (kruddboard-draw-asset-material-editor id (not read-only)))
+     ((= type 8) (kruddboard-draw-asset-script-editor id path (not read-only)))
      (else (kruddboard-draw-asset-generic id info)))))
 
 ;;! (kruddboard-draw-asset-inspector id) is the whole inspector screen: the

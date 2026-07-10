@@ -184,6 +184,20 @@ static void scene_set_script_params(int32_t id, const uint8_t *bytes,
 	}
 }
 
+static void scene_set_material_params(int32_t id, const uint8_t *bytes,
+				      uint32_t len)
+{
+	int32_t                live   = entity_is_live(id);
+	struct world_snapshot *before = live ? edit_before() : NULL;
+
+	world_set_material_params(&g_world, id, bytes, len);
+	if (live) {
+		scene_edit_record(g_edit, g_mem, &g_world, before,
+				  "Edit Material Params",
+				  scene_edit_key(id, SCENE_EDIT_MATERIAL_PARAMS));
+	}
+}
+
 static int32_t scene_get_selected(void)
 {
 	return world_get_selected(&g_world);
@@ -215,6 +229,7 @@ static const struct entity_api g_entity_api = {
 	.set_material_ref = scene_set_material_ref,
 	.set_script_ref = scene_set_script_ref,
 	.set_script_params = scene_set_script_params,
+	.set_material_params = scene_set_material_params,
 	.get_selected   = scene_get_selected,
 	.set_selected   = scene_set_selected,
 	.get_paused     = scene_get_paused,

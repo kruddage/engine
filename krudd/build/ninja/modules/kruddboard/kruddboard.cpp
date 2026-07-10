@@ -1847,6 +1847,127 @@ static s7_pointer sp_krudd_entity_save_script_params(s7_scheme *sc,
 	return s7_unspecified(sc);
 }
 
+/*
+ * (krudd-entity-material-values entity-id material-id shader-ref) -> a per-field
+ * list of component lists, entity-id's current values for the material's params:
+ * its per-entity override where present, else the shared material asset's stored
+ * values, else the shader's per-hint defaults. This is the override ⊕ material ⊕
+ * defaults the entity inspector edits (and the renderer draws with). Mirrors
+ * krudd-material-values, but overlaid with the entity's override so the swatch
+ * shows what this one entity draws, not what the shared material stores.
+ */
+static s7_pointer sp_krudd_entity_material_values(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer           a          = args;
+	int32_t              eid        = (int32_t)s7_integer(s7_car(a));
+	uint32_t             mat_id;
+	uint32_t             shader_ref;
+	const char          *src;
+	struct shader_param  p[MATERIAL_MAX_PARAMS];
+	uint32_t             total = 0, msz = 0, stored = 0, blen = 0;
+	const unsigned char *mb   = NULL;
+	const uint8_t       *blob = NULL;
+	const struct world  *w    = NULL;
+	int                  n, i, use_stored = 0;
+	s7_pointer           out = s7_nil(sc);
+
+	a          = s7_cdr(a);
+	mat_id     = (uint32_t)s7_integer(s7_car(a));
+	a          = s7_cdr(a);
+	shader_ref = (uint32_t)s7_integer(s7_car(a));
+	src        = shader_src_cstr(shader_ref);
+	if (!src)
+		return out;
+	n = script_shader_material_params(src, p, MATERIAL_MAX_PARAMS, &total);
+
+	if (g_asset_api && g_asset_api->get_data)
+		mb = (const unsigned char *)g_asset_api->get_data(mat_id, &msz);
+	if (mb && msz >= MATERIAL_HEADER_BYTES) {
+		memcpy(&stored, mb, sizeof(stored));
+		use_stored = (stored == shader_ref);
+	}
+	if (g_entity_api && g_entity_api->get_world)
+		w = g_entity_api->get_world();
+	if (w && eid >= 0 && (uint32_t)eid < w->count)
+		blob = world_material_params(w, (uint32_t)eid, &blen);
+
+	for (i = n - 1; i >= 0; i--) {
+		uint32_t c   = p[i].components > 4 ? 4 : p[i].components;
+		uint32_t off = MATERIAL_HEADER_BYTES + p[i].offset;
+		float    v[4];
+		uint32_t k;
+
+		for (k = 0; k < c; k++)
+			v[k] = param_default(&p[i], k);
+		/* Shared material's stored value, then the entity override on top
+		 * (offsets: the material carries the shader-ref header, the
+		 * override is header-less std140 like the UBO the renderer binds). */
+		if (use_stored && off + c * sizeof(float) <= msz)
+			memcpy(v, mb + off, c * sizeof(float));
+		if (blob && p[i].offset + c * sizeof(float) <= blen)
+			memcpy(v, blob + p[i].offset, c * sizeof(float));
+		out = s7_cons(sc, real_list(sc, v, (int)c), out);
+	}
+	return out;
+}
+
+/*
+ * (krudd-entity-save-material-params entity-id shader-ref field-values) ->
+ * unspecified. Packs the per-field values into shader-ref's std140 Material
+ * layout — header-less, exactly the bytes the renderer uploads to the Material
+ * UBO — and stores them as entity-id's per-entity override (through the scene
+ * api, so it records an undo step). The mirror of krudd-entity-save-script-params
+ * for materials; field-values is a list of per-field component lists.
+ */
+static s7_pointer sp_krudd_entity_save_material_params(s7_scheme *sc,
+						       s7_pointer args)
+{
+	s7_pointer          a          = args;
+	int32_t             eid        = (int32_t)s7_integer(s7_car(a));
+	uint32_t            shader_ref;
+	s7_pointer          values;
+	const char         *src;
+	struct shader_param p[MATERIAL_MAX_PARAMS];
+	uint8_t             bytes[WORLD_MATERIAL_PARAM_CAP];
+	uint32_t            total = 0, len;
+	int                 n, i;
+	s7_pointer          fv;
+
+	a          = s7_cdr(a);
+	shader_ref = (uint32_t)s7_integer(s7_car(a));
+	a          = s7_cdr(a);
+	values     = s7_car(a);
+	fv         = values;
+	src        = shader_src_cstr(shader_ref);
+	if (!src)
+		return s7_unspecified(sc);
+
+	n = script_shader_material_params(src, p, MATERIAL_MAX_PARAMS, &total);
+	if (n < 0)
+		n = 0;
+	len = total > sizeof(bytes) ? (uint32_t)sizeof(bytes) : total;
+	memset(bytes, 0, len);
+
+	for (i = 0; i < n; i++) {
+		uint32_t c   = p[i].components > 4 ? 4 : p[i].components;
+		uint32_t off = p[i].offset;
+		float    v[4];
+		uint32_t k;
+
+		for (k = 0; k < c; k++)
+			v[k] = param_default(&p[i], k);
+		if (s7_is_pair(fv)) {
+			read_reals(sc, s7_car(fv), v, (int)c);
+			fv = s7_cdr(fv);
+		}
+		if (off + c * sizeof(float) <= len)
+			memcpy(bytes + off, v, c * sizeof(float));
+	}
+	if (g_entity_api && g_entity_api->set_material_params)
+		g_entity_api->set_material_params(eid, bytes, len);
+	return s7_unspecified(sc);
+}
+
 /* (krudd-shader-stages src) -> the declared stage list, or "" if none. */
 static s7_pointer sp_krudd_shader_stages(s7_scheme *sc, s7_pointer args)
 {
@@ -2400,6 +2521,13 @@ static s7_scheme *ensure_panel_scm(void)
 	s7_define_function(sc, "krudd-entity-save-script-params",
 			   sp_krudd_entity_save_script_params, 3, 0, false,
 			   "(krudd-entity-save-script-params id script-ref values)");
+	s7_define_function(sc, "krudd-entity-material-values",
+			   sp_krudd_entity_material_values, 3, 0, false,
+			   "(krudd-entity-material-values id mat-id shader-ref) -> "
+			   "(component-list ...)");
+	s7_define_function(sc, "krudd-entity-save-material-params",
+			   sp_krudd_entity_save_material_params, 3, 0, false,
+			   "(krudd-entity-save-material-params id shader-ref values)");
 	s7_define_function(sc, "krudd-shader-stages", sp_krudd_shader_stages, 1,
 			   0, false, "(krudd-shader-stages src) -> stage list string");
 	s7_define_function(sc, "krudd-asset-save-text", sp_krudd_asset_save_text,

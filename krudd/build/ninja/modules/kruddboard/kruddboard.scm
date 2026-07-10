@@ -323,18 +323,20 @@
     (imgui-end-disabled)
     (imgui-end-table)))
 
-;;! One script-parameter widget, chosen by edit hint then component count — the
-;;! entity-menu twin of the material editor's param widget. PARAM is the 8-tuple
-;;! (name type off size comps kind min max); VALUE is its current component list.
-;;! Returns (new-value . changed?): new-value stays a list so the save path packs
-;;! it uniformly. A color drives a swatch, a range a slider, anything else a
-;;! plain float input; a type with no editable components passes through.
-(define (kruddboard-draw-param-widget param value)
+;;! One parameter widget, chosen by edit hint then component count — shared by
+;;! the script-param and per-entity material-param menus. PARAM is the 8-tuple
+;;! (name type off size comps kind min max); VALUE is its current component list;
+;;! SUFFIX is an ImGui id tail ("##sp" / "##mp") that keeps identically-named
+;;! params in different groups from colliding on one id. Returns (new-value .
+;;! changed?): new-value stays a list so the save path packs it uniformly. A
+;;! color drives a swatch, a range a slider, anything else a plain float input; a
+;;! type with no editable components passes through.
+(define (kruddboard-draw-param-widget param value suffix)
   (let ((comps (list-ref param 4))
         (kind  (list-ref param 5))
         (mn    (list-ref param 6))
         (mx    (list-ref param 7))
-        (wid   (string-append (list-ref param 0) "##sp")))
+        (wid   (string-append (list-ref param 0) suffix)))
     (cond
      ((and (string=? kind "color") (= comps 4)) (imgui-color-edit4 wid value))
      ((and (string=? kind "color") (= comps 3)) (imgui-color-edit3 wid value))
@@ -370,12 +372,41 @@
       (when (imgui-collapsing-header "Script Parameters")
         (let ((values (krudd-entity-script-values e script-ref)))
           (imgui-begin-disabled (not can-edit))
-          (let* ((results  (map kruddboard-draw-param-widget params values))
+          (let* ((results  (map (lambda (p v)
+                                  (kruddboard-draw-param-widget p v "##sp"))
+                                params values))
                  (new-vals (map car results))
                  (changed  (kruddboard-any-param-changed results)))
             (imgui-end-disabled)
             (when (and can-edit changed)
               (krudd-entity-save-script-params e script-ref new-vals))))))))
+
+;;! (kruddboard-draw-material-params e material-ref can-edit) draws the bound
+;;! material's shader parameters as live per-entity widgets — the per-entity
+;;! override layer over the shared material asset, the exact twin of the script
+;;! params menu above. The values shown are the entity's override where set, else
+;;! the shared material's own values, so the swatch reflects what this one entity
+;;! draws. Drawn only when the material's shader declares params; any edit is
+;;! packed and saved immediately through the scene api's undo-recording setter, so
+;;! the entity recolors on the next frame — no explicit Save, and the shared
+;;! material asset (and every other entity on it) is left untouched.
+(define (kruddboard-draw-material-params e material-ref can-edit)
+  (let ((shader-ref (krudd-asset-shader-ref material-ref)))
+    (unless (= shader-ref 0)
+      (let ((params (krudd-shader-material-params shader-ref)))
+        (unless (null? params)
+          (imgui-separator)
+          (when (imgui-collapsing-header "Material Parameters")
+            (let ((values (krudd-entity-material-values e material-ref shader-ref)))
+              (imgui-begin-disabled (not can-edit))
+              (let* ((results  (map (lambda (p v)
+                                      (kruddboard-draw-param-widget p v "##mp"))
+                                    params values))
+                     (new-vals (map car results))
+                     (changed  (kruddboard-any-param-changed results)))
+                (imgui-end-disabled)
+                (when (and can-edit changed)
+                  (krudd-entity-save-material-params e shader-ref new-vals))))))))))
 
 ;;! (kruddboard-draw-inspector-body e info caps) draws the editable name field
 ;;! and transform table (both disabled without the scene api), then the read-only
@@ -418,6 +449,8 @@
       (kruddboard-draw-inspector-binding "Material" "##ematerial"
 	  "##materialsel" e has-material material-ref (krudd-material-assets)
 	  can-bind krudd-entity-set-material-ref)
+      (when has-material
+	(kruddboard-draw-material-params e material-ref can-bind))
       (kruddboard-draw-inspector-binding "Script" "##escript" "##scriptsel" e
 	  has-script script-ref (krudd-script-assets) can-bind
 	  krudd-entity-set-script-ref)

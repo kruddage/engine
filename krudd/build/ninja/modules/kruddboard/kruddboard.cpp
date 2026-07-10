@@ -253,13 +253,6 @@ static s7_pointer sp_imgui_separator(s7_scheme *sc, s7_pointer args)
  * open. default-open is optional and defaults to #t, matching the C headers
  * that passed ImGuiTreeNodeFlags_DefaultOpen; pass #f to start the section
  * collapsed instead (used by the Subsystems section, which starts rolled up).
- *
- * Recolored red (the stock theme's blue Header/HeaderHovered/HeaderActive,
- * hue-swapped) so a header drawn through this primitive reads as
- * Scheme-owned at a glance — every native ImGui::CollapsingHeader call
- * elsewhere in the board stays the default blue. As more of the board is
- * ported to Scheme, this is the one seam that needs to change for the red
- * to spread with it.
  */
 static s7_pointer sp_imgui_collapsing_header(s7_scheme *sc, s7_pointer args)
 {
@@ -270,16 +263,9 @@ static s7_pointer sp_imgui_collapsing_header(s7_scheme *sc, s7_pointer args)
 	bool       open         = false;
 
 	if (s7_is_string(label)) {
-		ImGui::PushStyleColor(ImGuiCol_Header,
-				      ImVec4(0.80f, 0.25f, 0.25f, 0.31f));
-		ImGui::PushStyleColor(ImGuiCol_HeaderHovered,
-				      ImVec4(0.80f, 0.25f, 0.25f, 0.80f));
-		ImGui::PushStyleColor(ImGuiCol_HeaderActive,
-				      ImVec4(0.80f, 0.25f, 0.25f, 1.00f));
 		open = ImGui::CollapsingHeader(s7_string(label),
 					      default_open ?
 					      ImGuiTreeNodeFlags_DefaultOpen : 0);
-		ImGui::PopStyleColor(3);
 	}
 	return s7_make_boolean(sc, open);
 }
@@ -3881,19 +3867,6 @@ static void draw_board(void * /*userdata*/)
 	if (!g_collapsed) {
 		if (ImGui::BeginTabBar("##tabs",
 				       ImGuiTabBarFlags_FittingPolicyScroll)) {
-			/*
-			 * KRUDD, World, and Assets are all fully Scheme-driven now
-			 * (draw_tab_krudd / draw_tab_world / draw_tab_assets hand the
-			 * whole tab to kruddboard.scm); tint their tab chrome the same
-			 * red as sp_imgui_collapsing_header so the strangler-fig
-			 * progress reads at the tab bar too, not only inside each tab.
-			 */
-			ImGui::PushStyleColor(ImGuiCol_Tab,
-					      ImVec4(0.80f, 0.25f, 0.25f, 0.60f));
-			ImGui::PushStyleColor(ImGuiCol_TabHovered,
-					      ImVec4(0.80f, 0.25f, 0.25f, 0.90f));
-			ImGui::PushStyleColor(ImGuiCol_TabActive,
-					      ImVec4(0.80f, 0.25f, 0.25f, 1.00f));
 			if (ImGui::BeginTabItem("KRUDD")) {
 				draw_tab_krudd();
 				ImGui::EndTabItem();
@@ -3906,7 +3879,6 @@ static void draw_board(void * /*userdata*/)
 				draw_tab_assets();
 				ImGui::EndTabItem();
 			}
-			ImGui::PopStyleColor(3);
 			ImGui::EndTabBar();
 		}
 	}

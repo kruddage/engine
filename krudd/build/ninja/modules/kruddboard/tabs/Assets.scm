@@ -160,15 +160,113 @@
 		(set! kruddboard-assets-naming #f))))))))
 
 ;;! ------------------------------------------------------------------
+;;! Asset browser table — path tree helpers
+;;! ------------------------------------------------------------------
+;;!
+;;! The browser groups rows into a tree by splitting each asset's path on
+;;! "/", the same de facto virtual-filesystem convention builtin:// paths
+;;! already use ("builtin://shader/scene" -> folder "shader", leaf "scene")
+;;! and that authored names are free to opt into by including a "/". Rows
+;;! that don't use it just come out as a single top-level leaf, so nothing
+;;! about existing flat-named assets changes.
+;;!
+;;! This build's s7 doesn't carry a core `filter`, so the handful of list
+;;! operations the tree builder needs are spelled out by hand below rather
+;;! than assumed to exist.
+
+;;! (kruddboard-string-split str ch) splits STR at each occurrence of the
+;;! character CH, dropping empty pieces — so a leading "/" or a doubled "//"
+;;! doesn't produce a blank path segment.
+(define (kruddboard-string-split str ch)
+  (let loop ((start 0) (acc '()))
+    (let ((pos (char-position ch str start)))
+      (if pos
+	  (loop (+ pos 1)
+		(let ((seg (substring str start pos)))
+		  (if (string=? seg "") acc (cons seg acc))))
+	  (let ((seg (substring str start (string-length str))))
+	    (reverse (if (string=? seg "") acc (cons seg acc))))))))
+
+;;! (kruddboard-assets-path-segments path) splits an asset path into the
+;;! folder segments the tree groups by: a builtin:// scheme prefix is
+;;! dropped first (kruddboard-strip-builtin-prefix) so "shader"/"material"
+;;! read as folders instead of URI noise, then the rest splits on "/". A
+;;! path with no "/" (or that strips down to nothing) comes back as its own
+;;! single-element list, i.e. a top-level leaf.
+(define (kruddboard-assets-path-segments path)
+  (let ((segs (kruddboard-string-split
+	       (kruddboard-strip-builtin-prefix path) #\/)))
+    (if (null? segs) (list path) segs)))
+
+;;! (kruddboard-assets-rows->entries rows) turns a flat ROWS list (one group
+;;! as krudd-assets returns it) into (segments row) entries, the shape
+;;! kruddboard-draw-asset-tree groups and recurses on.
+(define (kruddboard-assets-rows->entries rows)
+  (map (lambda (row)
+	 (list (kruddboard-assets-path-segments (list-ref row 1)) row))
+       rows))
+
+;;! (kruddboard-assets-entries-at-depth entries want-folders?) splits
+;;! ENTRIES by whether their remaining segment list still has more than one
+;;! element (nested under a folder) or has bottomed out at exactly one (a
+;;! leaf asset); WANT-FOLDERS? selects which half comes back. Written as
+;;! explicit recursion since this s7 has no core `filter`.
+(define (kruddboard-assets-entries-at-depth entries want-folders?)
+  (cond ((null? entries) '())
+	(else
+	 (let* ((e (car entries))
+		(segs (list-ref e 0))
+		(is-folder (pair? (cdr segs)))
+		(rest (kruddboard-assets-entries-at-depth
+		       (cdr entries) want-folders?)))
+	   (if (eq? is-folder want-folders?) (cons e rest) rest)))))
+
+;;! (kruddboard-assets-entries-with-head entries head) is the ENTRIES whose
+;;! next path segment is HEAD, the by-hand `filter` kruddboard-assets-
+;;! group-by-head needs.
+(define (kruddboard-assets-entries-with-head entries head)
+  (cond ((null? entries) '())
+	(else
+	 (let* ((e (car entries))
+		(segs (list-ref e 0))
+		(rest (kruddboard-assets-entries-with-head (cdr entries) head)))
+	   (if (string=? (car segs) head) (cons e rest) rest)))))
+
+;;! (kruddboard-uniq lst) is LST's elements in first-appearance order with
+;;! later duplicates dropped (compared with equal?, via member).
+(define (kruddboard-uniq lst)
+  (let loop ((lst lst) (seen '()))
+    (cond ((null? lst) (reverse seen))
+	  ((member (car lst) seen) (loop (cdr lst) seen))
+	  (else (loop (cdr lst) (cons (car lst) seen))))))
+
+;;! (kruddboard-assets-group-by-head entries) partitions ENTRIES — all of
+;;! whose segment lists have length > 1 — into one bucket per distinct first
+;;! segment, in first-appearance order. Each bucket is (head . child-
+;;! entries), child-entries being the same (segments row) shape with the
+;;! head segment stripped off, ready to recurse one level deeper.
+(define (kruddboard-assets-group-by-head entries)
+  (map (lambda (head)
+	 (cons head
+	       (map (lambda (e) (list (cdr (list-ref e 0)) (list-ref e 1)))
+		    (kruddboard-assets-entries-with-head entries head))))
+       (kruddboard-uniq (map (lambda (e) (car (list-ref e 0))) entries))))
+
+;;! ------------------------------------------------------------------
 ;;! Asset browser table
 ;;! ------------------------------------------------------------------
 
-;;! (kruddboard-draw-asset-row row ro?) draws one browser row: a span-all
-;;! selectable that opens the inspector, a drag source for mesh rows
-;;! (drag-to-spawn, #176), and the Type/Kind/State/Size/Flags cells. row is
-;;! an (id path type kind state size refs) list; ro? is #t for the built-in
-;;! group (draws "RO"), #f for the project group (draws "-").
-(define (kruddboard-draw-asset-row row ro?)
+;;! (kruddboard-draw-asset-row row name ro?) draws one leaf row: a tree-node
+;;! bullet (opens the inspector on click, like the old span-all selectable
+;;! did) showing NAME — the asset's path with every ancestor folder segment
+;;! already peeled off, since those are drawn as the tree's parent nodes — a
+;;! drag source for mesh rows (drag-to-spawn, #176), and the Type/Kind/
+;;! State/Size/Flags cells. row is an (id path type kind state size refs)
+;;! list; ro? is #t for the built-in group (draws "RO"), #f for the project
+;;! group (draws "-"). selected? is always #f: this table only ever draws
+;;! while kruddboard-assets-sel is 0 (the inspector takes over the instant
+;;! it isn't), so there is never a live selection to highlight here.
+(define (kruddboard-draw-asset-row row name ro?)
   (let ((id   (list-ref row 0))
 	(path (list-ref row 1))
 	(type (list-ref row 2))
@@ -177,8 +275,9 @@
 	(size (list-ref row 5)))
     (imgui-table-next-row)
     (imgui-table-next-column)
-    (when (imgui-selectable path #f #t)
-      (set! kruddboard-assets-sel id))
+    (let ((r (imgui-tree-node path name #t #f)))
+      (when (cdr r)
+	(set! kruddboard-assets-sel id)))
     ;;! type 1 = ASSET_TYPE_MESH.
     (when (= type 1)
       (imgui-mesh-drag-source id path))
@@ -197,9 +296,41 @@
 	(imgui-text-colored 1.0 0.6 0.2 1.0 "RO")
 	(imgui-text-disabled "-"))))
 
+;;! (kruddboard-draw-asset-tree entries prefix ro?) draws one tree level:
+;;! a folder tree-node per distinct first path segment among ENTRIES,
+;;! recursing into it when expanded, then a leaf row (kruddboard-draw-
+;;! asset-row) for every entry that has already bottomed out to a single
+;;! segment. Folders draw before leaves, VS-Code-Explorer-style. PREFIX is
+;;! the accumulated id of already-drawn ancestor folders — folder names
+;;! alone can repeat under different parents, so it's threaded through to
+;;! keep every imgui-tree-node id unique; leaf rows use their own asset path
+;;! as the id instead, which the catalog already guarantees is unique. RO?
+;;! is threaded straight through to kruddboard-draw-asset-row.
+(define (kruddboard-draw-asset-tree entries prefix ro?)
+  (let ((folders (kruddboard-assets-group-by-head
+		  (kruddboard-assets-entries-at-depth entries #t)))
+	(leaves (kruddboard-assets-entries-at-depth entries #f)))
+    (for-each
+     (lambda (bucket)
+       (let* ((name (car bucket))
+	      (children (cdr bucket))
+	      (id (string-append prefix "/" name)))
+	 (imgui-table-next-row)
+	 (imgui-table-next-column)
+	 (let ((r (imgui-tree-node id name #f #f)))
+	   (when (car r)
+	     (kruddboard-draw-asset-tree children id ro?)
+	     (imgui-tree-pop)))))
+     folders)
+    (for-each
+     (lambda (e)
+       (kruddboard-draw-asset-row (list-ref e 1) (car (list-ref e 0)) ro?))
+     leaves)))
+
 ;;! (kruddboard-draw-asset-table groups) is the six-column Path / Type /
-;;! Kind / State / Size / Flags table, in two labeled groups — the old
-;;! draw_tab_assets table body. groups is (builtin-rows project-rows), as
+;;! Kind / State / Size / Flags tree table, in two labeled groups — the old
+;;! draw_tab_assets table body, with the flat Path column turned into an
+;;! expandable folder tree. groups is (builtin-rows project-rows), as
 ;;! krudd-assets returns.
 (define (kruddboard-draw-asset-table groups)
   (let ((builtin (car groups))
@@ -216,12 +347,14 @@
 	(imgui-table-next-row)
 	(imgui-table-next-column)
 	(imgui-text-disabled "-- BUILT-IN (read-only) --")
-	(for-each (lambda (r) (kruddboard-draw-asset-row r #t)) builtin))
+	(kruddboard-draw-asset-tree
+	 (kruddboard-assets-rows->entries builtin) "builtin" #t))
       (unless (null? project)
 	(imgui-table-next-row)
 	(imgui-table-next-column)
 	(imgui-text-disabled "-- PROJECT --")
-	(for-each (lambda (r) (kruddboard-draw-asset-row r #f)) project))
+	(kruddboard-draw-asset-tree
+	 (kruddboard-assets-rows->entries project) "project" #f))
       (imgui-end-table))))
 
 ;;! ------------------------------------------------------------------

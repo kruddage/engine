@@ -614,6 +614,57 @@ static s7_pointer sp_imgui_selectable(s7_scheme *sc, s7_pointer args)
 	return s7_make_boolean(sc, hit);
 }
 
+/*
+ * (imgui-tree-node id label leaf? selected?) -> (open? . clicked?). Draws a
+ * tree node in the table's current cell. id is the ImGui identifier and must
+ * be unique across the whole tree (an asset's own path, or an accumulated
+ * folder prefix, both satisfy this); label is the text actually shown. A
+ * non-leaf node only toggles open on its arrow or a double-click, so a plain
+ * click on the label is unambiguously a select, mirroring imgui-selectable's
+ * contract; a leaf node draws a bullet instead of an arrow, never carries
+ * children, and always reports open? as #f. When open? is #t for a non-leaf
+ * node the caller must draw its children and then call imgui-tree-pop.
+ */
+static s7_pointer sp_imgui_tree_node(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer id       = s7_car(args);
+	s7_pointer label    = s7_cadr(args);
+	bool       leaf     = s7_boolean(sc, s7_caddr(args));
+	bool       selected = s7_boolean(sc, s7_cadddr(args));
+	bool       open     = false;
+	bool       clicked  = false;
+
+	if (s7_is_string(id) && s7_is_string(label)) {
+		ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth;
+
+		if (selected)
+			flags |= ImGuiTreeNodeFlags_Selected;
+		if (leaf)
+			flags |= ImGuiTreeNodeFlags_Leaf |
+				 ImGuiTreeNodeFlags_Bullet |
+				 ImGuiTreeNodeFlags_NoTreePushOnOpen;
+		else
+			flags |= ImGuiTreeNodeFlags_OpenOnArrow |
+				 ImGuiTreeNodeFlags_OpenOnDoubleClick;
+		open    = ImGui::TreeNodeEx(s7_string(id), flags, "%s",
+					    s7_string(label));
+		clicked = ImGui::IsItemClicked();
+	}
+	return s7_cons(sc, s7_make_boolean(sc, open),
+		       s7_make_boolean(sc, clicked));
+}
+
+/*
+ * (imgui-tree-pop) -> unspecified. Pairs with a non-leaf imgui-tree-node
+ * call whose open? came back #t.
+ */
+static s7_pointer sp_imgui_tree_pop(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	ImGui::TreePop();
+	return s7_unspecified(sc);
+}
+
 /* (imgui-set-item-default-focus) -> unspecified. Focus the last item on open. */
 static s7_pointer sp_imgui_set_item_default_focus(s7_scheme *sc, s7_pointer args)
 {
@@ -1806,6 +1857,11 @@ static s7_scheme *ensure_panel_scm(void)
 	s7_define_function(sc, "imgui-selectable", sp_imgui_selectable, 3, 0,
 			   false,
 			   "(imgui-selectable label sel? span?) -> #t if clicked");
+	s7_define_function(sc, "imgui-tree-node", sp_imgui_tree_node, 4, 0,
+			   false,
+			   "(imgui-tree-node id label leaf? sel?) -> (open? . clicked?)");
+	s7_define_function(sc, "imgui-tree-pop", sp_imgui_tree_pop, 0, 0, false,
+			   "(imgui-tree-pop) close a tree-node opened as non-leaf");
 	s7_define_function(sc, "imgui-set-item-default-focus",
 			   sp_imgui_set_item_default_focus, 0, 0, false,
 			   "(imgui-set-item-default-focus) focus the last item");

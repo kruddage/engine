@@ -2042,8 +2042,8 @@ static void test_assets_shader_save_fail(void)
 	assert(rec_has("colored|1.00,0.30,0.30,1.00|Compile failed"));
 }
 
-/* A built-in shader gets the Clone flow, seeded "<path>_copy", instead of
- * Save/Delete. */
+/* A built-in shader gets the Clone flow, seeded "<path>_copy" with the
+ * builtin:// scheme stripped, instead of Save/Delete. */
 static void test_assets_shader_clone(void)
 {
 	asset_reset();
@@ -2055,8 +2055,8 @@ static void test_assets_shader_clone(void)
 	script_eval("(kruddboard-draw-assets)");
 	g_click = NULL;
 
-	assert(rec_has("input-enter|##clonename|builtin://shader/scene_copy"));
-	assert(rec_has("clone-shader|builtin://shader/scene_copy|"));
+	assert(rec_has("input-enter|##clonename|shader/scene_copy"));
+	assert(rec_has("clone-shader|shader/scene_copy|"));
 	assert(assets_sel() != 601 && assets_sel() != 0);
 }
 
@@ -2075,7 +2075,7 @@ static void test_assets_shader_clone_conflict(void)
 	g_click = NULL;
 
 	assert(rec_has("colored|1.00,0.30,0.30,1.00|"
-		       "\"builtin://shader/scene_copy\" already exists"));
+		       "\"shader/scene_copy\" already exists"));
 	assert(assets_sel() == 601);
 }
 
@@ -2124,8 +2124,8 @@ static void test_assets_script_save_fail(void)
 	assert(rec_has("colored|1.00,0.30,0.30,1.00|Not a valid script"));
 }
 
-/* A built-in script gets the Clone flow, seeded "<path>_copy", instead of
- * Save/Delete. */
+/* A built-in script gets the Clone flow, seeded "<path>_copy" with the
+ * builtin:// scheme stripped, instead of Save/Delete. */
 static void test_assets_script_clone(void)
 {
 	asset_reset();
@@ -2137,8 +2137,8 @@ static void test_assets_script_clone(void)
 	script_eval("(kruddboard-draw-assets)");
 	g_click = NULL;
 
-	assert(rec_has("input-enter|##clonename|builtin://script/spinner_copy"));
-	assert(rec_has("clone-script|builtin://script/spinner_copy|"));
+	assert(rec_has("input-enter|##clonename|script/spinner_copy"));
+	assert(rec_has("clone-script|script/spinner_copy|"));
 	assert(assets_sel() != 651 && assets_sel() != 0);
 }
 
@@ -2157,7 +2157,7 @@ static void test_assets_script_clone_conflict(void)
 	g_click = NULL;
 
 	assert(rec_has("colored|1.00,0.30,0.30,1.00|"
-		       "\"builtin://script/spinner_copy\" already exists"));
+		       "\"script/spinner_copy\" already exists"));
 	assert(assets_sel() == 651);
 }
 

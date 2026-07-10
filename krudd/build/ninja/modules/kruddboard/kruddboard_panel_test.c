@@ -394,6 +394,33 @@ static s7_pointer st_selectable(s7_scheme *sc, s7_pointer a)
 	return s7_make_boolean(sc, clicked(l) && !disabled_now());
 }
 
+/*
+ * Tree nodes: non-leaf (folder) nodes always report open, so a single frame
+ * exercises the whole tree without needing to simulate per-node expand
+ * state; a click is simulated by matching g_click against ID, since that's
+ * always unique (an asset path or an accumulated folder prefix) where the
+ * display LABEL alone is not — the same click-simulation convention the rest
+ * of the harness uses, just keyed on the field that's actually unique here.
+ */
+static s7_pointer st_tree_node(s7_scheme *sc, s7_pointer a)
+{
+	const char *id    = s7_string(s7_car(a));
+	const char *label = s7_string(s7_cadr(a));
+	int         leaf  = s7_boolean(sc, s7_caddr(a));
+	int         sel   = s7_boolean(sc, s7_cadddr(a));
+
+	rec("tree-node|%s|%s|%s|%d", id, label, leaf ? "leaf" : "folder", sel);
+	return s7_cons(sc, s7_make_boolean(sc, !leaf),
+		       s7_make_boolean(sc, clicked(id) && !disabled_now()));
+}
+
+static s7_pointer st_tree_pop(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	rec("tree-pop");
+	return s7_unspecified(sc);
+}
+
 static s7_pointer st_default_focus(s7_scheme *sc, s7_pointer a)
 {
 	(void)a;
@@ -1332,6 +1359,8 @@ static s7_scheme *setup(void)
 	def(sc, "imgui-begin-combo", st_begin_combo, 2);
 	def(sc, "imgui-end-combo", st_end_combo, 0);
 	def(sc, "imgui-selectable", st_selectable, 3);
+	def(sc, "imgui-tree-node", st_tree_node, 4);
+	def(sc, "imgui-tree-pop", st_tree_pop, 0);
 	def(sc, "imgui-set-item-default-focus", st_default_focus, 0);
 	def(sc, "imgui-calc-text-width", st_calc_text_width, 1);
 	def(sc, "imgui-same-line-right", st_same_line_right, 1);
@@ -1871,8 +1900,8 @@ static void test_assets_browser_table(void)
 	assert(rec_has("table-begin|##assets|6"));
 	assert(!rec_has("disabled|-- BUILT-IN (read-only) --"));
 	assert(rec_has("disabled|-- PROJECT --"));
-	assert(!rec_has("selectable|builtin://mesh/cube|0"));
-	assert(rec_has("selectable|my.shader|0"));
+	assert(!rec_has("tree-node|builtin://mesh/cube|"));
+	assert(rec_has("tree-node|my.shader|my.shader|leaf|0"));
 	assert(!rec_has("drag-source|501|builtin://mesh/cube"));
 	assert(!rec_has("colored|1.00,0.60,0.20,1.00|RO"));
 }
@@ -1891,14 +1920,15 @@ static void test_assets_browser_table_show_builtin(void)
 	assert(rec_has("checkbox|Show built-in assets|0"));
 	assert(rec_has("disabled|-- BUILT-IN (read-only) --"));
 	assert(rec_has("disabled|-- PROJECT --"));
-	assert(rec_has("selectable|builtin://mesh/cube|0"));
-	assert(rec_has("selectable|my.shader|0"));
+	assert(rec_has("tree-node|builtin/mesh|mesh|folder|0"));
+	assert(rec_has("tree-node|builtin://mesh/cube|cube|leaf|0"));
+	assert(rec_has("tree-node|my.shader|my.shader|leaf|0"));
 	assert(rec_has("drag-source|501|builtin://mesh/cube"));
 	assert(!rec_has("drag-source|601|"));
 	assert(rec_has("colored|1.00,0.60,0.20,1.00|RO"));
 }
 
-/* Clicking a row's selectable opens that asset in the inspector next draw. */
+/* Clicking a row's tree-node opens that asset in the inspector next draw. */
 static void test_assets_row_select(void)
 {
 	asset_reset();

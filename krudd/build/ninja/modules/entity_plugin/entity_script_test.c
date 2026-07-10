@@ -36,8 +36,9 @@ static int feq(float a, float b)
 
 /*
  * A stand-in asset catalog: script_ref 1/2/3 resolve to the spinner/bounce/
- * wobble source, mirroring what the real asset plugin seeds. Only get_data is
- * exercised by the driver.
+ * wobble source, mirroring what the real asset plugin seeds. Refs 4/5 are two
+ * scripts that share a NAME but differ in body — a clone the author has begun
+ * editing before renaming it. Only get_data is exercised by the driver.
  */
 static const void *fake_get_data(uint32_t id, uint32_t *out_size)
 {
@@ -47,6 +48,11 @@ static const void *fake_get_data(uint32_t id, uint32_t *out_size)
 	case 1: src = SPINNER_SCRIPT_SRC; break;
 	case 2: src = BOUNCE_SCRIPT_SRC;  break;
 	case 3: src = WOBBLE_SCRIPT_SRC;  break;
+	/* Same name, distinct bodies — each parks its entity at its own x. */
+	case 4: src = "(script twin (on-tick (self t)"
+		      " (entity-set-position! self 4 0 0)))"; break;
+	case 5: src = "(script twin (on-tick (self t)"
+		      " (entity-set-position! self 5 0 0)))"; break;
 	default: break;
 	}
 	if (src && out_size)
@@ -194,6 +200,32 @@ static void test_runtime_rebind(void)
 	assert(feq(w.world_xform[e].rotation[3], 1.0f)); /* rest, not spinning */
 }
 
+/*
+ * Two script assets whose (script NAME ...) forms share a NAME but differ in
+ * body must each run their own hooks. Regression test for a name-keyed script
+ * registry (see entity_script.scm *entity-scripts*): registration was idempotent
+ * by NAME, so a clone kept its original's name and — once edited — silently ran
+ * the original's hooks. kruddboard's asset "Clone" flow surfaced it: the clone
+ * broke until its inner name was changed by hand.
+ */
+static void test_clone_name_clash(void)
+{
+	int32_t a, b;
+
+	world_reset(&w);
+	a = spawn(0.0f, 0.0f, 0.0f);
+	b = spawn(0.0f, 0.0f, 0.0f);
+
+	world_set_script_ref(&w, a, 4); /* (script twin ...) -> x = 4 */
+	world_set_script_ref(&w, b, 5); /* (script twin ...) -> x = 5 */
+	world_tick(&w, 16.0f);
+	entity_script_tick(&w, &fake_asset, 0.5f);
+
+	/* Each entity animates to its OWN script's x, not its name-twin's. */
+	assert(feq(w.world_xform[a].position[0], 4.0f));
+	assert(feq(w.world_xform[b].position[0], 5.0f));
+}
+
 int main(void)
 {
 	log_init();
@@ -203,6 +235,7 @@ int main(void)
 	test_bind_semantics();
 	test_builtin_behavior();
 	test_runtime_rebind();
+	test_clone_name_clash();
 
 	printf("entity_script_test: ok\n");
 	return 0;

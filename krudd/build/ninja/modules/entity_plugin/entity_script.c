@@ -135,10 +135,13 @@ static s7_pointer sp_entity_set_euler(s7_scheme *sc, s7_pointer args)
 	return s7_unspecified(sc);
 }
 
-/* The default of one param component, given its field's edit hint (mirrors the
- * editor's param_default so an un-overridden script and the UI agree). */
-static float es_param_default(const struct shader_param *p)
+/* The default of param component K, honouring an authored (default V ...) first
+ * and otherwise the field's edit hint (mirrors the editor's param_default so an
+ * un-overridden script and the UI agree). */
+static float es_param_default(const struct shader_param *p, uint32_t k)
 {
+	if (k < p->default_count)
+		return p->edit_default[k];
 	if (strcmp(p->edit, "color") == 0)
 		return 1.0f;
 	if (strcmp(p->edit, "range") == 0)
@@ -170,7 +173,7 @@ static s7_pointer es_param_values(s7_scheme *sc, const char *src,
 		s7_pointer val;
 
 		for (k = 0; k < c; k++)
-			v[k] = es_param_default(&p[i]);
+			v[k] = es_param_default(&p[i], k);
 		if (blob && p[i].offset + c * sizeof(float) <= blen)
 			memcpy(v, blob + p[i].offset, c * sizeof(float));
 		if (c == 1) {

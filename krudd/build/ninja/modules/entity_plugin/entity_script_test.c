@@ -252,8 +252,25 @@ static void test_script_params_introspection(void)
 	assert(p[1].offset == 4 && p[1].size == 4);
 	assert(feq(p[1].edit_max, 10.0f));
 
+	/*
+	 * spinner declares one range param with an authored (default 90): its
+	 * un-overridden value is that default, NOT the range's min, which is what
+	 * lets a parameterized built-in keep the motion it always had.
+	 */
+	n = script_entity_params(SPINNER_SCRIPT_SRC, p, 8, &total);
+	assert(n == 1 && total == 4);
+	assert(strcmp(p[0].name, "speed") == 0);
+	assert(strcmp(p[0].edit, "range") == 0 && feq(p[0].edit_min, 0.0f));
+	assert(p[0].default_count == 1 && feq(p[0].edit_default[0], 90.0f));
+
+	/* A param with no (default ...) reports default_count 0 and falls back to
+	 * its edit hint — pulse's amp, unchanged, still defaults to its range min. */
+	n = script_entity_params(PULSE_SCRIPT_SRC, p, 8, &total);
+	assert(n == 2 && p[0].default_count == 0);
+
 	/* A script with no params clause reports zero fields, not an error. */
-	assert(script_entity_params(SPINNER_SCRIPT_SRC, p, 8, &total) == 0);
+	assert(script_entity_params("(script bare (on-tick (self t) #f))",
+				    p, 8, &total) == 0);
 	assert(total == 0);
 }
 

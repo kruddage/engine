@@ -105,21 +105,21 @@
        (= (car mp) 64))
 (check "base_color: vec4 color at offset 0, size 16, 4 components"
        (equal? (list-ref mp 1)
-	       (list "base_color" "vec4" 0 16 4 "color" 0 0)))
+	       (list "base_color" "vec4" 0 16 4 "color" 0 0 '())))
 (check "roughness: float range [0 1] at offset 16, size 4, 1 component"
        (equal? (list-ref mp 2)
-	       (list "roughness" "float" 16 4 1 "range" 0 1)))
+	       (list "roughness" "float" 16 4 1 "range" 0 1 '())))
 (check "tint: vec3 color aligns to 16 (offset 32), size 12, 3 components"
        (equal? (list-ref mp 3)
-	       (list "tint" "vec3" 32 12 3 "color" 0 0)))
+	       (list "tint" "vec3" 32 12 3 "color" 0 0 '())))
 (check "uv_scale: unhinted vec2 aligns to 8 (offset 48), size 8, kind none"
        (equal? (list-ref mp 4)
-	       (list "uv_scale" "vec2" 48 8 2 "none" 0 0)))
+	       (list "uv_scale" "vec2" 48 8 2 "none" 0 0 '())))
 (check "the scene shader's single base_color is one color param, block size 16"
        (let ((sp (shader-material-params scene)))
 	 (and (= (car sp) 16)
 	      (equal? (list-ref sp 1)
-		      (list "base_color" "vec4" 0 16 4 "color" 0 0)))))
+		      (list "base_color" "vec4" 0 16 4 "color" 0 0 '())))))
 (check "a shader with no Material block reports size 0 and no params"
        (equal? (shader-material-params
 		 "(shader n (targets (c vec4 (location 0)))

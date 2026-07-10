@@ -151,6 +151,23 @@ static float field_real(s7_pointer v)
 }
 
 /*
+ * Marshal a field's optional (default V ...) list — the 9th tuple element — into
+ * p->edit_default[]/default_count. A non-list (the '() an undeclared default
+ * emits) leaves default_count 0, so the field falls back to its edit-hint
+ * default exactly as before this field existed.
+ */
+static void copy_default(struct shader_param *p, s7_pointer d)
+{
+	uint32_t count = 0;
+
+	while (s7_is_pair(d) && count < 4) {
+		p->edit_default[count++] = field_real(s7_car(d));
+		d = s7_cdr(d);
+	}
+	p->default_count = count;
+}
+
+/*
  * Call the image's parameter-introspection procedure PROC (given SRC), which
  * returns (TOTAL-SIZE (NAME TYPE OFFSET SIZE COMPONENTS EDIT-KIND EDIT-MIN
  * EDIT-MAX) ...), and marshal it into the caller's shader_param array. The
@@ -192,6 +209,7 @@ static int query_params(const char *proc, const char *src,
 		copy_field(p->edit, sizeof(p->edit), s7_list_ref(g_s7, f, 5));
 		p->edit_min   = field_real(s7_list_ref(g_s7, f, 6));
 		p->edit_max   = field_real(s7_list_ref(g_s7, f, 7));
+		copy_default(p, s7_list_ref(g_s7, f, 8));
 		count++;
 	}
 	return (int)count;

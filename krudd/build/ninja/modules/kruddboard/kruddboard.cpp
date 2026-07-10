@@ -1543,9 +1543,12 @@ static const char *shader_src_cstr(uint32_t shader_ref)
 	return buf;
 }
 
-/* The default value of one editable component, given its field's edit hint. */
-static float param_default(const struct shader_param *p)
+/* The default value of editable component k: an authored (default V ...) if the
+ * field declares one, else the value implied by its edit hint. */
+static float param_default(const struct shader_param *p, uint32_t k)
 {
+	if (k < p->default_count)
+		return p->edit_default[k];
 	if (strcmp(p->edit, "color") == 0)
 		return 1.0f;                 /* opaque white / full */
 	if (strcmp(p->edit, "range") == 0)
@@ -1604,7 +1607,7 @@ static uint32_t pack_material(s7_scheme *sc, uint32_t shader_ref,
 		uint32_t k;
 
 		for (k = 0; k < c; k++)
-			v[k] = param_default(&p[i]);
+			v[k] = param_default(&p[i], k);
 		if (s7_is_pair(fv)) {
 			read_reals(sc, s7_car(fv), v, (int)c);
 			fv = s7_cdr(fv);
@@ -1702,7 +1705,7 @@ static s7_pointer sp_krudd_material_values(s7_scheme *sc, s7_pointer args)
 		uint32_t k;
 
 		for (k = 0; k < c; k++)
-			v[k] = param_default(&p[i]);
+			v[k] = param_default(&p[i], k);
 		if (use_stored && off + c * sizeof(float) <= msz)
 			memcpy(v, mb + off, c * sizeof(float));
 		out = s7_cons(sc, real_list(sc, v, (int)c), out);
@@ -1781,7 +1784,7 @@ static s7_pointer sp_krudd_entity_script_values(s7_scheme *sc, s7_pointer args)
 		uint32_t k;
 
 		for (k = 0; k < c; k++)
-			v[k] = param_default(&p[i]);
+			v[k] = param_default(&p[i], k);
 		if (blob && p[i].offset + c * sizeof(float) <= blen)
 			memcpy(v, blob + p[i].offset, c * sizeof(float));
 		out = s7_cons(sc, real_list(sc, v, (int)c), out);
@@ -1831,7 +1834,7 @@ static s7_pointer sp_krudd_entity_save_script_params(s7_scheme *sc,
 		uint32_t k;
 
 		for (k = 0; k < c; k++)
-			v[k] = param_default(&p[i]);
+			v[k] = param_default(&p[i], k);
 		if (s7_is_pair(fv)) {
 			read_reals(sc, s7_car(fv), v, (int)c);
 			fv = s7_cdr(fv);

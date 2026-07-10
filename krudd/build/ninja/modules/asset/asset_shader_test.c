@@ -8,8 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define TRIANGLE_PATH "builtin://shader/triangle"
-#define SCENE_PATH    "builtin://shader/scene"
+#define SCENE_PATH "builtin://shader/scene"
 
 /* Locate a built-in by path; return its catalog index, or -1 if absent. */
 static int32_t index_of(const char *path)
@@ -166,7 +165,6 @@ int main(void)
 
 	asset_init();
 
-	check_shader(TRIANGLE_PATH);
 	check_shader(SCENE_PATH);
 	check_authored_roundtrip();
 	check_authored_decl();

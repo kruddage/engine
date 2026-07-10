@@ -3720,25 +3720,31 @@ static void draw_undo_redo(void)
 }
 
 /*
- * Simulation mode dropdown for the board header: Playing (default) runs
+ * Simulation mode toggle for the board header: Playing (default) runs
  * world_tick + entity scripts every frame; Paused freezes the scene while
- * everything else (rendering, gizmo, undo/redo) keeps running. Nothing is
- * drawn when the "scene" service doesn't support pausing.
+ * everything else (rendering, gizmo, undo/redo) keeps running. Color-tinted
+ * (green while playing, amber while paused) so the state reads at a glance;
+ * the label names the action a click takes, not the current state. Nothing
+ * is drawn when the "scene" service doesn't support pausing.
  */
 static void draw_sim_mode(void)
 {
-	static const char *const modes[] = { "Playing", "Paused" };
-	int                      cur;
+	bool paused;
 
 	if (!g_entity_api || !g_entity_api->get_paused || !g_entity_api->set_paused)
 		return;
 
-	cur = g_entity_api->get_paused() ? 1 : 0;
+	paused = g_entity_api->get_paused();
 
 	ImGui::SameLine();
-	ImGui::SetNextItemWidth(90.0f);
-	if (ImGui::Combo("##sim_mode", &cur, modes, 2))
-		g_entity_api->set_paused(cur);
+	ImGui::PushStyleColor(ImGuiCol_Button,
+			      paused ? IM_COL32(170, 120, 40, 255)
+				     : IM_COL32(60, 150, 60, 255));
+	if (ImGui::SmallButton(paused ? "> Play" : "|| Pause"))
+		g_entity_api->set_paused(!paused);
+	ImGui::PopStyleColor();
+	if (ImGui::IsItemHovered())
+		ImGui::SetTooltip(paused ? "Resume simulation" : "Pause simulation");
 }
 
 /*

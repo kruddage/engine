@@ -736,8 +736,9 @@ static const struct asset_decl_field pulse_script_decl[] = {
 };
 
 static const struct asset_decl_field orbit_camera_script_decl[] = {
-	{ "format", "krudd-script" },
-	{ "hooks",  "on-tick"      },
+	{ "format", "krudd-script"          },
+	{ "hooks",  "on-tick"               },
+	{ "params", "radius, height, speed" },
 };
 
 struct builtin_desc {

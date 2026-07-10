@@ -54,6 +54,7 @@ static const void *fake_get_data(uint32_t id, uint32_t *out_size)
 	case 5: src = "(script twin (on-tick (self t)"
 		      " (entity-set-position! self 5 0 0)))"; break;
 	case 6: src = PULSE_SCRIPT_SRC; break;   /* the parameterized built-in */
+	case 7: src = ORBIT_CAMERA_SCRIPT_SRC; break;
 	default: break;
 	}
 	if (src && out_size)
@@ -272,6 +273,29 @@ static void test_script_params_introspection(void)
 	assert(script_entity_params("(script bare (on-tick (self t) #f))",
 				    p, 8, &total) == 0);
 	assert(total == 0);
+
+	/*
+	 * orbit-camera declares three range params, each with an authored
+	 * default matching the fixed radius/height/speed it always orbited
+	 * at, so an un-tuned camera keeps its original motion.
+	 */
+	n = script_entity_params(ORBIT_CAMERA_SCRIPT_SRC, p, 8, &total);
+	assert(n == 3 && total == 12);
+
+	assert(strcmp(p[0].name, "radius") == 0);
+	assert(p[0].offset == 0 && p[0].default_count == 1);
+	assert(feq(p[0].edit_default[0], 5.0f));
+	assert(feq(p[0].edit_min, 0.0f) && feq(p[0].edit_max, 20.0f));
+
+	assert(strcmp(p[1].name, "height") == 0);
+	assert(p[1].offset == 4 && p[1].default_count == 1);
+	assert(feq(p[1].edit_default[0], 2.5f));
+	assert(feq(p[1].edit_max, 10.0f));
+
+	assert(strcmp(p[2].name, "speed") == 0);
+	assert(p[2].offset == 8 && p[2].default_count == 1);
+	assert(feq(p[2].edit_default[0], 0.4f));
+	assert(feq(p[2].edit_max, 3.0f));
 }
 
 /*
@@ -313,6 +337,41 @@ static void test_param_override(void)
 	assert(feq(w.world_xform[e].scale[0], 1.0f));
 }
 
+/*
+ * orbit-camera circles the origin at (param 'radius) about the origin, held
+ * at (param 'height), sweeping at (param 'speed) radians per second. With no
+ * override the defaults reproduce the fixed orbit it always flew; a packed
+ * override re-tunes radius/height/speed per the authored order.
+ */
+static void test_orbit_camera_params(void)
+{
+	int32_t e;
+	float   ov[3];
+
+	world_reset(&w);
+	e = spawn(0.0f, 0.0f, 0.0f);
+	world_set_script_ref(&w, e, 7);          /* orbit-camera */
+
+	/* Defaults: radius=5, height=2.5, speed=0.4 -> the original fixed orbit. */
+	world_tick(&w, 16.0f);
+	entity_script_tick(&w, &fake_asset, 0.5f);
+	assert(feq(w.world_xform[e].position[0], 5.0f * (float)cos(0.5 * 0.4)));
+	assert(feq(w.world_xform[e].position[1], 2.5f));
+	assert(feq(w.world_xform[e].position[2], 5.0f * (float)sin(0.5 * 0.4)));
+
+	/* Override radius=10, height=1, speed=1 (tight-packed at offsets 0/4/8). */
+	ov[0] = 10.0f;
+	ov[1] = 1.0f;
+	ov[2] = 1.0f;
+	world_set_script_params(&w, e, (const uint8_t *)ov, sizeof(ov));
+
+	world_tick(&w, 16.0f);
+	entity_script_tick(&w, &fake_asset, 0.5f);
+	assert(feq(w.world_xform[e].position[0], 10.0f * (float)cos(0.5)));
+	assert(feq(w.world_xform[e].position[1], 1.0f));
+	assert(feq(w.world_xform[e].position[2], 10.0f * (float)sin(0.5)));
+}
+
 int main(void)
 {
 	log_init();
@@ -325,6 +384,7 @@ int main(void)
 	test_clone_name_clash();
 	test_script_params_introspection();
 	test_param_override();
+	test_orbit_camera_params();
 
 	printf("entity_script_test: ok\n");
 	return 0;

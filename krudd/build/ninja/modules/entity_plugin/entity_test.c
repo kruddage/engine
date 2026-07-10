@@ -468,6 +468,56 @@ static void test_script_params_snapshot(void)
 	world_snapshot_free(snap, &test_mem);
 }
 
+/*
+ * A per-entity material-parameter override is stored inline, independent of the
+ * script override, and survives an undo snapshot round-trip. Two entities can
+ * carry distinct overrides at once; the getter reports "no override" as NULL.
+ */
+static void test_material_params_snapshot(void)
+{
+	struct world_snapshot *snap;
+	struct transform       t;
+	uint8_t                ov[16];    /* one std140 vec4 (a base_color) */
+	const uint8_t         *got;
+	uint32_t               len = 99;
+	int32_t                a, b;
+
+	memset(&t, 0, sizeof(t));
+	t.rotation[3] = 1.0f;
+	t.scale[0] = t.scale[1] = t.scale[2] = 1.0f;
+	world_reset(&w);
+	a = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+	b = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+	assert(a >= 0 && b >= 0);
+
+	assert(world_material_params(&w, a, &len) == NULL && len == 0);
+
+	memset(ov, 0xCD, sizeof(ov));
+	world_set_material_params(&w, a, ov, sizeof(ov));
+	got = world_material_params(&w, a, &len);
+	assert(got != NULL && len == sizeof(ov));
+	assert(memcmp(got, ov, sizeof(ov)) == 0);
+
+	/* The two entities' overrides are independent (b stays unset). */
+	assert(world_material_params(&w, b, &len) == NULL && len == 0);
+
+	/* Material and script overrides live in separate columns. */
+	assert(world_script_params(&w, a, &len) == NULL && len == 0);
+
+	snap = world_snapshot_capture(&w, &test_mem);
+	assert(snap != NULL);
+
+	world_set_material_params(&w, a, NULL, 0);         /* clobber */
+	assert(world_material_params(&w, a, &len) == NULL);
+
+	world_snapshot_restore(&w, snap);                  /* undo */
+	got = world_material_params(&w, a, &len);
+	assert(got != NULL && len == sizeof(ov));
+	assert(memcmp(got, ov, sizeof(ov)) == 0);
+
+	world_snapshot_free(snap, &test_mem);
+}
+
 int main(void)
 {
 	mem_init();
@@ -486,6 +536,7 @@ int main(void)
 	test_export_compaction();
 	test_export_ingest_roundtrip();
 	test_script_params_snapshot();
+	test_material_params_snapshot();
 
 	mem_shutdown();
 	printf("entity tests passed\n");

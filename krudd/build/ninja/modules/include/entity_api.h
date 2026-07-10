@@ -72,6 +72,18 @@ struct entity_api {
 	 */
 	void    (*set_script_params)(int32_t id, const uint8_t *bytes,
 				     uint32_t len);
+	/*
+	 * Override id's material parameters with `len` std140 Material-block
+	 * bytes (the layout after a material's shader-ref header); len 0 clears
+	 * the override. The per-entity value layer over a material's shared
+	 * params — what makes two entities on one material asset draw with
+	 * different colors. Only the params are per-entity; the shader still
+	 * comes from the bound material. Records an undo step; consecutive edits
+	 * to one entity coalesce, so a color-swatch drag is a single history
+	 * entry.
+	 */
+	void    (*set_material_params)(int32_t id, const uint8_t *bytes,
+				       uint32_t len);
 
 	/* Shared selection: -1 = none. set ignores stale/out-of-range ids. */
 	int32_t (*get_selected)(void);

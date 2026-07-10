@@ -1074,6 +1074,28 @@ static s7_pointer st_entity_save_script_params(s7_scheme *sc, s7_pointer a)
 	return s7_unspecified(sc);
 }
 
+/* Per-entity material override values: (entity-id material-id shader-ref) ->
+ * the same shape st_material_values yields, so the inspector's Material
+ * Parameters group renders the shader's editable params for the entity. */
+static s7_pointer st_entity_material_values(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	if (g_mat_param_mode == 1)
+		return s7_list(sc, 1, s7_list(sc, 1, s7_make_real(sc, 0.5)));
+	return s7_list(sc, 1, s7_list(sc, 4,
+		s7_make_real(sc, 1.0), s7_make_real(sc, 1.0),
+		s7_make_real(sc, 1.0), s7_make_real(sc, 1.0)));
+}
+
+static s7_pointer st_entity_save_material_params(s7_scheme *sc, s7_pointer a)
+{
+	int        id  = (int)s7_integer(s7_car(a));
+	unsigned   ref = (unsigned)s7_integer(s7_cadr(a));
+
+	rec("save-material-params|%d|%u", id, ref);
+	return s7_unspecified(sc);
+}
+
 /* Mirrors the real shader_stages_from_source substring scan exactly, so the
  * Declaration display gets a meaningful test. */
 static s7_pointer st_shader_stages(s7_scheme *sc, s7_pointer a)
@@ -1508,6 +1530,9 @@ static s7_scheme *setup(void)
 	def(sc, "krudd-entity-script-values", st_entity_script_values, 2);
 	def(sc, "krudd-entity-save-script-params",
 	    st_entity_save_script_params, 3);
+	def(sc, "krudd-entity-material-values", st_entity_material_values, 3);
+	def(sc, "krudd-entity-save-material-params",
+	    st_entity_save_material_params, 3);
 	def(sc, "krudd-shader-stages", st_shader_stages, 1);
 	def(sc, "krudd-asset-save-text", st_asset_save_text, 2);
 	def(sc, "krudd-asset-save-shader", st_asset_save_shader, 2);
@@ -1974,6 +1999,61 @@ static void test_world_script_params_save(void)
 	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
 
 	assert(rec_has("save-script-params|0|301"));
+}
+
+/*
+ * A bound material whose shader declares params surfaces them under the Material
+ * row as per-entity override widgets — a color-hinted base_color renders as a
+ * swatch keyed "base_color##mp". Crucially, the rows AFTER the material params
+ * (the Script binding) must still render: a throw here would abort the whole
+ * inspector body, which is exactly the live bug this guards against.
+ */
+/* Bind entity 0 to material 901 and give 901 a v3 wire blob whose leading
+ * shader-ref names shader 601, so krudd-asset-shader-ref resolves a shader and
+ * the per-entity Material Parameters group has a schema to draw. asset_reset()
+ * populates the fa store (901 = red.mat); fw_reset() sets up the entity/picker
+ * store — the two are independent, so a world-tab test needs both. */
+static void material_bound_entity(void)
+{
+	uint32_t shref = 601;   /* builtin://shader/scene, present in the fa store */
+	int      i;
+
+	fw_reset();
+	asset_reset();
+	g_fw[0].has_material = 1;
+	g_fw[0].material_ref = 901;
+	for (i = 0; i < g_fa_n; i++) {
+		if (g_fa[i].id == 901) {
+			memcpy(g_fa[i].data, &shref, sizeof(shref));
+			g_fa[i].data_len = (int)sizeof(shref);
+			break;
+		}
+	}
+}
+
+static void test_world_material_params_render(void)
+{
+	material_bound_entity();
+	rec_reset();
+	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+
+	assert(rec_has("coloredit|base_color##mp"));
+	assert(rec_has("combo|##scriptsel|(none)")); /* inspector did not abort */
+}
+
+/* Editing a per-entity material param writes the whole set back through the
+ * material-override save primitive (not the shared material asset). */
+static void test_world_material_params_save(void)
+{
+	material_bound_entity();
+	g_float_id      = "base_color##mp";  /* force this swatch to report a change */
+	g_float_changed = 1;
+	rec_reset();
+	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	g_float_id      = NULL;
+	g_float_changed = 0;
+
+	assert(rec_has("save-material-params|0|601"));
 }
 
 /* The tool chips highlight the active tool and switch it on a click. */
@@ -2587,6 +2667,8 @@ int main(void)
 	RUN(world_script_resolved);
 	RUN(world_script_params_render);
 	RUN(world_script_params_save);
+	RUN(world_material_params_render);
+	RUN(world_material_params_save);
 	RUN(world_gizmo_chips);
 	RUN(world_composition);
 

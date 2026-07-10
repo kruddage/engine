@@ -656,11 +656,19 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 		/*
 		 * Upload this material's std140 params verbatim (the shader's
 		 * Material block, packed by the editor), binding exactly their
-		 * length. An unmaterialed or param-less entity falls back to a
-		 * single white vec4 — the identity tint the scene shader expects,
-		 * so it renders as it always has.
+		 * length. A per-entity material-param override wins when present,
+		 * so two entities sharing one material asset can draw with
+		 * different colors; otherwise the shared material asset's own
+		 * params are used. An unmaterialed or param-less entity falls back
+		 * to a single white vec4 — the identity tint the scene shader
+		 * expects, so it renders as it always has.
 		 */
-		pbytes = material_params(mat_ref, &plen);
+		if (w->material_param_len[i] > 0) {
+			pbytes = w->material_params[i];
+			plen   = w->material_param_len[i];
+		} else {
+			pbytes = material_params(mat_ref, &plen);
+		}
 		if (plen > MATERIAL_UBO_MAX)
 			plen = MATERIAL_UBO_MAX;
 		if (!pbytes || plen == 0) {

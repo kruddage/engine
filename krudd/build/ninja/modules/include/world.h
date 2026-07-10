@@ -40,6 +40,18 @@
  */
 #define WORLD_SCRIPT_PARAM_CAP 64
 
+/*
+ * Per-entity material-parameter override: the material instance the script
+ * comment above only alludes to, now real. These are the std140 Material block
+ * bytes (everything after a material's shader-ref header — the same layout the
+ * renderer uploads to the Material UBO) that this entity substitutes for its
+ * bound material asset's, letting two entities share one material asset yet draw
+ * with different colors. Held inline like the script override; a len of 0 means
+ * "no override": the entity draws with its material asset's own params. Sized to
+ * the renderer's Material UBO cap so any valid block fits without truncation.
+ */
+#define WORLD_MATERIAL_PARAM_CAP 256
+
 struct transform {
 	float position[3];
 	float rotation[4];   /* quaternion, xyzw */
@@ -61,6 +73,8 @@ struct world {
 	uint32_t         script_ref[WORLD_MAX_ENTITIES];   /* valid iff COMPONENT_SCRIPT */
 	uint32_t         script_param_len[WORLD_MAX_ENTITIES]; /* 0 = no override */
 	uint8_t          script_params[WORLD_MAX_ENTITIES][WORLD_SCRIPT_PARAM_CAP];
+	uint32_t         material_param_len[WORLD_MAX_ENTITIES]; /* 0 = no override */
+	uint8_t          material_params[WORLD_MAX_ENTITIES][WORLD_MATERIAL_PARAM_CAP];
 	char             names[WORLD_NAME_BYTES];          /* NUL-terminated blob */
 };
 
@@ -140,6 +154,27 @@ void world_set_script_params(struct world *w, int32_t e,
  */
 const uint8_t *world_script_params(const struct world *w, uint32_t e,
 				   uint32_t *len);
+
+/*
+ * Override entity e's material parameters with `len` std140 Material-block bytes
+ * (the layout after a material's shader-ref header — what the renderer uploads
+ * to the Material UBO). A len of 0 clears the override, so the entity falls back
+ * to its bound material asset's own params. Bytes beyond WORLD_MATERIAL_PARAM_CAP
+ * are dropped. Out-of-range or tombstoned ids are ignored. Independent of
+ * COMPONENT_MATERIAL: an override can be authored before (or after) a material
+ * is bound, and it only replaces the params — the shader/pipeline still comes
+ * from the bound material asset.
+ */
+void world_set_material_params(struct world *w, int32_t e,
+			       const uint8_t *bytes, uint32_t len);
+
+/*
+ * Entity e's material-parameter override bytes, or NULL when it has none. *len
+ * (may be NULL) receives the byte count. The pointer is into the world and is
+ * valid until the next mutation of e's override.
+ */
+const uint8_t *world_material_params(const struct world *w, uint32_t e,
+				     uint32_t *len);
 
 /*
  * Editor selection model. set accepts -1 (none) or a live entity id; any

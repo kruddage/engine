@@ -464,6 +464,32 @@ static s7_pointer real_list(s7_scheme *sc, const float *v, int n)
 }
 
 /*
+ * A material's wire form: its 4-float base_color followed by a uint32 shader-ref
+ * (asset id; 0 = the default scene shader) that selects the material's shader.
+ * This trailing id is what the scene renderer's resolve_material_shader reads to
+ * pick the pipeline; a legacy 16-byte material (no trailing id) is unaffected.
+ */
+#define MATERIAL_WIRE_BYTES (4 * sizeof(float) + sizeof(uint32_t))
+
+static uint32_t material_pack(const float rgba[4], uint32_t shader_ref,
+			      unsigned char out[MATERIAL_WIRE_BYTES])
+{
+	memcpy(out, rgba, 4 * sizeof(float));
+	memcpy(out + 4 * sizeof(float), &shader_ref, sizeof(shader_ref));
+	return (uint32_t)MATERIAL_WIRE_BYTES;
+}
+
+/* The trailing shader-ref of a flat (... r g b a shader-ref) arg list, or 0. */
+static uint32_t read_shader_ref_after_reals(s7_pointer p, int n)
+{
+	int i;
+
+	for (i = 0; i < n && s7_is_pair(p); i++)
+		p = s7_cdr(p);
+	return s7_is_pair(p) ? (uint32_t)s7_integer(s7_car(p)) : 0u;
+}
+
+/*
  * (imgui-begin-table-plain id ncols) -> #t when the table opened. Proportional-
  * stretch but borderless and unstriped — the layout-only tables the inspector
  * used (transform, details, bindings), distinct from the bordered
@@ -827,6 +853,13 @@ static s7_pointer sp_krudd_material_assets(s7_scheme *sc, s7_pointer args)
 {
 	(void)args;
 	return assets_of_type(sc, ASSET_TYPE_MATERIAL);
+}
+
+/* (krudd-shader-assets) -> ((id . path) ...) for the material's shader combo. */
+static s7_pointer sp_krudd_shader_assets(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	return assets_of_type(sc, ASSET_TYPE_SHADER);
 }
 
 /* (krudd-script-assets) -> ((id . path) ...) for the script-binding combo. */
@@ -1416,6 +1449,26 @@ static s7_pointer sp_krudd_asset_color(s7_scheme *sc, s7_pointer args)
 	return real_list(sc, v, 4);
 }
 
+/*
+ * (krudd-asset-shader-ref id) -> the material's selected shader asset id, or 0
+ * (the default scene shader) for a legacy material with no trailing shader-ref.
+ * Reads the same wire form material_pack writes / resolve_material_shader reads.
+ */
+static s7_pointer sp_krudd_asset_shader_ref(s7_scheme *sc, s7_pointer args)
+{
+	uint32_t     id  = (uint32_t)s7_integer(s7_car(args));
+	uint32_t     ref = 0;
+	const void  *src;
+	uint32_t     sz  = 0;
+
+	if (g_asset_api && g_asset_api->get_data &&
+	    (src = g_asset_api->get_data(id, &sz)) != NULL &&
+	    sz >= MATERIAL_WIRE_BYTES)
+		memcpy(&ref, (const unsigned char *)src + 4 * sizeof(float),
+		       sizeof(ref));
+	return s7_make_integer(sc, (s7_int)ref);
+}
+
 /* (krudd-shader-stages src) -> the declared stage list, or "" if none. */
 static s7_pointer sp_krudd_shader_stages(s7_scheme *sc, s7_pointer args)
 {
@@ -1468,17 +1521,22 @@ static s7_pointer sp_krudd_asset_save_shader(s7_scheme *sc, s7_pointer args)
 	return s7_t(sc);
 }
 
-/* (krudd-asset-save-material id r g b a) -> unspecified. */
+/* (krudd-asset-save-material id r g b a shader-ref) -> unspecified. */
 static s7_pointer sp_krudd_asset_save_material(s7_scheme *sc, s7_pointer args)
 {
-	s7_pointer p  = args;
-	uint32_t   id = (uint32_t)s7_integer(s7_car(p)); p = s7_cdr(p);
-	float      v[4];
+	s7_pointer    p  = args;
+	uint32_t      id = (uint32_t)s7_integer(s7_car(p)); p = s7_cdr(p);
+	float         v[4];
+	uint32_t      shader_ref;
+	unsigned char bytes[MATERIAL_WIRE_BYTES];
+	uint32_t      len;
 
 	read_reals(sc, p, v, 4);
+	shader_ref = read_shader_ref_after_reals(p, 4);
+	len = material_pack(v, shader_ref, bytes);
 	if (g_asset_mut)
-		g_asset_mut->set_data(id, v, (uint32_t)sizeof(v));
-	maybe_persist_asset(id, ASSET_TYPE_MATERIAL, v, (uint32_t)sizeof(v));
+		g_asset_mut->set_data(id, bytes, len);
+	maybe_persist_asset(id, ASSET_TYPE_MATERIAL, bytes, len);
 	return s7_unspecified(sc);
 }
 
@@ -1668,26 +1726,29 @@ static s7_pointer sp_krudd_asset_clone_script(s7_scheme *sc, s7_pointer args)
 }
 
 /*
- * (krudd-asset-clone-material name r g b a) -> the new id, or 0 on failure
- * (e.g. a duplicate path) — the built-in material "Clone" flow's whole
- * commit, mirroring krudd-asset-clone-shader above: create with the
- * current color, persist.
+ * (krudd-asset-clone-material name r g b a shader-ref) -> the new id, or 0 on
+ * failure (e.g. a duplicate path) — the built-in material "Clone" flow's whole
+ * commit, mirroring krudd-asset-clone-shader above: create with the current
+ * color and selected shader, persist.
  */
 static s7_pointer sp_krudd_asset_clone_material(s7_scheme *sc, s7_pointer args)
 {
-	s7_pointer  p    = args;
-	s7_pointer  name = s7_car(p); p = s7_cdr(p);
-	const char *nm   = s7_is_string(name) ? s7_string(name) : "";
-	float       v[4];
-	uint32_t    nid  = 0;
+	s7_pointer    p    = args;
+	s7_pointer    name = s7_car(p); p = s7_cdr(p);
+	const char   *nm   = s7_is_string(name) ? s7_string(name) : "";
+	float         v[4];
+	uint32_t      shader_ref;
+	unsigned char bytes[MATERIAL_WIRE_BYTES];
+	uint32_t      len;
+	uint32_t      nid  = 0;
 
 	read_reals(sc, p, v, 4);
+	shader_ref = read_shader_ref_after_reals(p, 4);
+	len = material_pack(v, shader_ref, bytes);
 	if (g_asset_mut)
-		nid = g_asset_mut->create(nm, ASSET_TYPE_MATERIAL, v,
-					  (uint32_t)sizeof(v));
+		nid = g_asset_mut->create(nm, ASSET_TYPE_MATERIAL, bytes, len);
 	if (nid != 0)
-		maybe_persist_asset(nid, ASSET_TYPE_MATERIAL, v,
-				     (uint32_t)sizeof(v));
+		maybe_persist_asset(nid, ASSET_TYPE_MATERIAL, bytes, len);
 	return s7_make_integer(sc, (s7_int)nid);
 }
 
@@ -1837,6 +1898,9 @@ static s7_scheme *ensure_panel_scm(void)
 	s7_define_function(sc, "krudd-material-assets", sp_krudd_material_assets,
 			   0, 0, false,
 			   "(krudd-material-assets) -> ((id . path) ...)");
+	s7_define_function(sc, "krudd-shader-assets", sp_krudd_shader_assets,
+			   0, 0, false,
+			   "(krudd-shader-assets) -> ((id . path) ...)");
 	s7_define_function(sc, "krudd-script-assets", sp_krudd_script_assets,
 			   0, 0, false,
 			   "(krudd-script-assets) -> ((id . path) ...)");
@@ -1900,6 +1964,9 @@ static s7_scheme *ensure_panel_scm(void)
 			   false, "(krudd-asset-data id) -> bytes as a string");
 	s7_define_function(sc, "krudd-asset-color", sp_krudd_asset_color, 1, 0,
 			   false, "(krudd-asset-color id) -> (r g b a)");
+	s7_define_function(sc, "krudd-asset-shader-ref",
+			   sp_krudd_asset_shader_ref, 1, 0, false,
+			   "(krudd-asset-shader-ref id) -> shader asset id or 0");
 	s7_define_function(sc, "krudd-shader-stages", sp_krudd_shader_stages, 1,
 			   0, false, "(krudd-shader-stages src) -> stage list string");
 	s7_define_function(sc, "krudd-asset-save-text", sp_krudd_asset_save_text,
@@ -1908,8 +1975,8 @@ static s7_scheme *ensure_panel_scm(void)
 			   sp_krudd_asset_save_shader, 2, 0, false,
 			   "(krudd-asset-save-shader id text) -> compiled-ok?");
 	s7_define_function(sc, "krudd-asset-save-material",
-			   sp_krudd_asset_save_material, 5, 0, false,
-			   "(krudd-asset-save-material id r g b a)");
+			   sp_krudd_asset_save_material, 6, 0, false,
+			   "(krudd-asset-save-material id r g b a shader-ref)");
 	s7_define_function(sc, "krudd-asset-delete", sp_krudd_asset_delete, 1,
 			   0, false, "(krudd-asset-delete id)");
 	s7_define_function(sc, "krudd-asset-create-text",
@@ -1936,8 +2003,9 @@ static s7_scheme *ensure_panel_scm(void)
 			   sp_krudd_asset_clone_script, 2, 0, false,
 			   "(krudd-asset-clone-script name text) -> new id or 0");
 	s7_define_function(sc, "krudd-asset-clone-material",
-			   sp_krudd_asset_clone_material, 5, 0, false,
-			   "(krudd-asset-clone-material name r g b a) -> new id or 0");
+			   sp_krudd_asset_clone_material, 6, 0, false,
+			   "(krudd-asset-clone-material name r g b a shader-ref)"
+			   " -> new id or 0");
 	s7_define_function(sc, "krudd-md-preview", sp_krudd_md_preview, 2, 0,
 			   false, "(krudd-md-preview text h) scrolling preview child");
 	script_eval(KRUDDBOARD_SCM);

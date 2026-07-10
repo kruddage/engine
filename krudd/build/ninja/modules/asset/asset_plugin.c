@@ -255,9 +255,13 @@ static void seed_shader(const char *path, const char *src)
 
 /*
  * Seed one built-in material asset from a raw RGBA base_color.  A heap copy of
- * the 4 floats becomes the asset's bytes — the exact wire form an authored
+ * the 4 floats becomes the asset's bytes — the base of the wire form an authored
  * material stores — so resolve_material_color() and the material editor read it
- * uniformly and shutdown frees it like any other asset.
+ * uniformly and shutdown frees it like any other asset.  An authored material
+ * may append a trailing uint32 shader-ref (asset id) after the 4 floats to
+ * select its own shader; the built-ins carry only the 4 floats, so they render
+ * with the default scene shader (a 0 / absent shader-ref — see the scene
+ * renderer's resolve_material_shader).
  */
 static void seed_material(const char *path, const float rgba[4])
 {
@@ -689,8 +693,9 @@ static const struct asset_decl_field scene_shader_decl[] = {
  * built-ins advertise their format/stages.
  */
 static const struct asset_decl_field default_material_decl[] = {
-	{ "format",     "krudd-material"      },
-	{ "base_color", "{ 1, 1, 1, 1 }"     },
+	{ "format",     "krudd-material"          },
+	{ "base_color", "{ 1, 1, 1, 1 }"         },
+	{ "shader",     "builtin://shader/scene" },
 };
 
 /*

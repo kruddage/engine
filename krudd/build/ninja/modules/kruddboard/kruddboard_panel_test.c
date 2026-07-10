@@ -856,6 +856,8 @@ static void assets_scheme_reset(void)
 	script_eval("(set! kruddboard-assets-script-ok 'untried)");
 	script_eval("(set! kruddboard-assets-color-id 0)");
 	script_eval("(set! kruddboard-assets-color (list 1.0 1.0 1.0 1.0))");
+	script_eval("(set! kruddboard-assets-shader-ref-id 0)");
+	script_eval("(set! kruddboard-assets-shader-ref 0)");
 	script_eval("(set! kruddboard-assets-naming #f)");
 	script_eval("(set! kruddboard-assets-new-name \"\")");
 	script_eval("(set! kruddboard-assets-new-type 0)");
@@ -964,6 +966,23 @@ static s7_pointer st_asset_color(s7_scheme *sc, s7_pointer a)
 	return real_vec(sc, v, 4);
 }
 
+static s7_pointer st_asset_shader_ref(s7_scheme *sc, s7_pointer a)
+{
+	unsigned         id  = (unsigned)s7_integer(s7_car(a));
+	struct fa_asset *f   = fa_find(id);
+	uint32_t         ref = 0;
+
+	if (f && f->data_len >= (int)(4 * sizeof(float) + sizeof(ref)))
+		memcpy(&ref, f->data + 4 * sizeof(float), sizeof(ref));
+	return s7_make_integer(sc, (s7_int)ref);
+}
+
+static s7_pointer st_shader_assets(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	return assets_by_type(sc, 4);
+}
+
 /* Mirrors the real shader_stages_from_source substring scan exactly, so the
  * Declaration display gets a meaningful test. */
 static s7_pointer st_shader_stages(s7_scheme *sc, s7_pointer a)
@@ -1013,6 +1032,7 @@ static s7_pointer st_asset_save_material(s7_scheme *sc, s7_pointer a)
 	s7_pointer       p  = a;
 	unsigned         id = (unsigned)s7_integer(s7_car(p)); p = s7_cdr(p);
 	float            v[4];
+	unsigned         shader_ref;
 	struct fa_asset *f;
 	int              i;
 
@@ -1020,11 +1040,16 @@ static s7_pointer st_asset_save_material(s7_scheme *sc, s7_pointer a)
 		v[i] = (float)s7_number_to_real(sc, s7_car(p));
 		p    = s7_cdr(p);
 	}
-	rec("save-material|%u|%.2f,%.2f,%.2f,%.2f", id, v[0], v[1], v[2], v[3]);
+	shader_ref = s7_is_pair(p) ? (unsigned)s7_integer(s7_car(p)) : 0u;
+	rec("save-material|%u|%.2f,%.2f,%.2f,%.2f|%u", id,
+	    v[0], v[1], v[2], v[3], shader_ref);
 	f = fa_find(id);
 	if (f) {
+		uint32_t sref = (uint32_t)shader_ref;
+
 		memcpy(f->data, v, sizeof(v));
-		f->data_len = (int)sizeof(v);
+		memcpy(f->data + sizeof(v), &sref, sizeof(sref));
+		f->data_len = (int)(sizeof(v) + sizeof(sref));
 	}
 	return s7_unspecified(sc);
 }
@@ -1167,6 +1192,9 @@ static s7_pointer st_asset_clone_material(s7_scheme *sc, s7_pointer a)
 	s7_pointer  p    = a;
 	const char *name = s7_is_string(s7_car(p)) ? s7_string(s7_car(p)) : "";
 	float       v[4];
+	unsigned    shader_ref;
+	uint32_t    sref;
+	char        bytes[sizeof(v) + sizeof(uint32_t)];
 	unsigned    id;
 	int         i;
 
@@ -1175,8 +1203,13 @@ static s7_pointer st_asset_clone_material(s7_scheme *sc, s7_pointer a)
 		v[i] = (float)s7_number_to_real(sc, s7_car(p));
 		p    = s7_cdr(p);
 	}
-	rec("clone-material|%s|%.2f,%.2f,%.2f,%.2f", name, v[0], v[1], v[2], v[3]);
-	id = fa_create(name, 3, (const char *)v, (int)sizeof(v), 0, 1);
+	shader_ref = s7_is_pair(p) ? (unsigned)s7_integer(s7_car(p)) : 0u;
+	rec("clone-material|%s|%.2f,%.2f,%.2f,%.2f|%u", name,
+	    v[0], v[1], v[2], v[3], shader_ref);
+	sref = (uint32_t)shader_ref;
+	memcpy(bytes, v, sizeof(v));
+	memcpy(bytes + sizeof(v), &sref, sizeof(sref));
+	id = fa_create(name, 3, bytes, (int)sizeof(bytes), 0, 1);
 	return s7_make_integer(sc, (s7_int)id);
 }
 
@@ -1312,6 +1345,7 @@ static s7_scheme *setup(void)
 	def(sc, "krudd-entity-inspect", st_entity_inspect, 1);
 	def(sc, "krudd-mesh-assets", st_mesh_assets, 0);
 	def(sc, "krudd-material-assets", st_material_assets, 0);
+	def(sc, "krudd-shader-assets", st_shader_assets, 0);
 	def(sc, "krudd-script-assets", st_script_assets, 0);
 	def(sc, "krudd-asset-find", st_asset_find, 1);
 	def(sc, "krudd-entity-create", st_entity_create, 0);
@@ -1337,10 +1371,11 @@ static s7_scheme *setup(void)
 	def(sc, "krudd-asset-describe", st_asset_describe, 1);
 	def(sc, "krudd-asset-data", st_asset_data, 1);
 	def(sc, "krudd-asset-color", st_asset_color, 1);
+	def(sc, "krudd-asset-shader-ref", st_asset_shader_ref, 1);
 	def(sc, "krudd-shader-stages", st_shader_stages, 1);
 	def(sc, "krudd-asset-save-text", st_asset_save_text, 2);
 	def(sc, "krudd-asset-save-shader", st_asset_save_shader, 2);
-	def(sc, "krudd-asset-save-material", st_asset_save_material, 5);
+	def(sc, "krudd-asset-save-material", st_asset_save_material, 6);
 	def(sc, "krudd-asset-delete", st_asset_delete, 1);
 	def(sc, "krudd-asset-create-text", st_asset_create_text, 1);
 	def(sc, "krudd-asset-create-shader", st_asset_create_shader, 1);
@@ -1350,7 +1385,7 @@ static s7_scheme *setup(void)
 	def(sc, "krudd-asset-save-script", st_asset_save_script, 2);
 	def(sc, "krudd-asset-create-script", st_asset_create_script, 1);
 	def(sc, "krudd-asset-clone-script", st_asset_clone_script, 2);
-	def(sc, "krudd-asset-clone-material", st_asset_clone_material, 5);
+	def(sc, "krudd-asset-clone-material", st_asset_clone_material, 6);
 	def(sc, "krudd-md-preview", st_md_preview, 2);
 
 	assert(script_eval(KRUDDBOARD_SCM) == 0);
@@ -2232,6 +2267,64 @@ static void test_assets_material_clone_conflict(void)
 	assert(assets_sel() == 901);
 }
 
+/* A v2 material advertises its selected shader: the combo previews the shader
+ * asset's path, and Save round-trips the shader-ref alongside the color. */
+static void test_assets_material_shader(void)
+{
+	uint32_t sref = 808u;
+	float    color[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
+
+	asset_reset();
+	assets_scheme_reset();
+
+	/* Publish a shader into the picker's source and give material 901 a v2
+	 * wire form: base_color followed by that shader-ref. */
+	g_have_asset   = 1;
+	g_assets[0].id = 808; g_assets[0].path = "my.shader"; g_assets[0].type = 4;
+	g_assets_n     = 1;
+	memcpy(g_fa[4].data, color, sizeof(color));
+	memcpy(g_fa[4].data + sizeof(color), &sref, sizeof(sref));
+	g_fa[4].data_len = (int)(sizeof(color) + sizeof(sref));
+
+	script_eval("(set! kruddboard-assets-sel 901)");
+	g_click = "Save";
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL;
+
+	/* The Shader combo previews the resolved shader path... */
+	assert(rec_has("combo|##matshader|my.shader"));
+	/* ...and Save carries the shader-ref after the base_color. */
+	assert(rec_has("save-material|901|1.00,0.00,0.00,1.00|808"));
+}
+
+/* Choosing a shader from the material's combo updates the material's selected
+ * shader, and the next Save persists that shader-ref (white material). */
+static void test_assets_material_shader_select(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	g_have_asset   = 1;
+	g_assets[0].id = 808; g_assets[0].path = "my.shader"; g_assets[0].type = 4;
+	g_assets_n     = 1;
+
+	script_eval("(set! kruddboard-assets-sel 901)");
+
+	/* Frame 1: open the combo and pick my.shader (updates editor state). */
+	g_combo_open = "##matshader";
+	g_click      = "my.shader##s808";
+	script_eval("(kruddboard-draw-assets)");
+	g_combo_open = NULL; g_click = NULL;
+
+	/* Frame 2: Save writes the material with the chosen shader-ref. */
+	g_click = "Save";
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL;
+
+	assert(rec_has("save-material|901|1.00,1.00,1.00,1.00|808"));
+}
+
 /* Every other asset type (mesh, texture, font, scene) falls back to the
  * read-only Declaration + Catalog tables. */
 static void test_assets_generic_fallback(void)
@@ -2340,6 +2433,8 @@ int main(void)
 	RUN(assets_material_editor);
 	RUN(assets_material_clone);
 	RUN(assets_material_clone_conflict);
+	RUN(assets_material_shader);
+	RUN(assets_material_shader_select);
 	RUN(assets_generic_fallback);
 	RUN(assets_inspector_stale);
 	RUN(assets_composition);

@@ -5,21 +5,24 @@
 			(root "math/math.c")
 			(root "math/camera.c")
 			(raw "${generated}/math_gen.c")
-			(root "asset/primitives.c"))
+			(root "asset/primitives.c")
+			(root "asset/mesh_script.c"))
 		(private "." (raw "${generated}")
 			(root "render/null")
 			(root "render/frame_graph") (root "asset")
-			(root "abi"))
+			(root "abi") (raw "../third_party"))
 		(link "frame_graph" "renderer_null" "log" "memory"
-			"subsystem_manager" "m"))
+			"subsystem_manager" "script" "m"))
 	(test "scene_renderer" "scene_renderer_test"))
  (wasm-only
 	(library "scene_renderer"
 		(sources "scene_renderer.c"
 			(root "math/math.c")
 			(root "math/camera.c")
-			(raw "${generated}/math_gen.c"))
+			(raw "${generated}/math_gen.c")
+			(root "asset/mesh_script.c"))
 		(private "." (raw "${generated}") (root "render/frame_graph")
-			(root "core/include") (root "abi"))
+			(root "core/include") (root "abi") (root "asset")
+			(raw "../third_party"))
 		(link "frame_graph" "log" "memory" "subsystem"
-			"subsystem_manager" "m"))))
+			"subsystem_manager" "script" "m"))))

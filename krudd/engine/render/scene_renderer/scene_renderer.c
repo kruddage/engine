@@ -6,7 +6,9 @@
 #include "camera_api.h"
 #include "math_types.h"
 #include "mesh.h"
+#include "mesh_script.h"
 #include "asset_api.h"
+#include "memory_api.h"
 #include "subsystem.h"
 #include "subsystem_manager.h"
 #include "log_api.h"
@@ -17,7 +19,12 @@
 
 #ifndef __EMSCRIPTEN__
 #include "log.h"
-static const struct log_api native_log = { log_write };
+#include "memory.h"
+static const struct log_api    native_log = { log_write };
+static const struct memory_api native_mem = {
+	mem_alloc, mem_alloc_zero, mem_free,
+	mem_pool_create, mem_pool_alloc, mem_pool_free, mem_pool_destroy,
+};
 #endif
 
 /*
@@ -40,9 +47,11 @@ static const struct log_api native_log = { log_write };
  */
 
 #ifdef __EMSCRIPTEN__
-static const struct log_api *g_log;
+static const struct log_api    *g_log;
+static const struct memory_api *g_mem;
 #else
-static const struct log_api *g_log = &native_log;
+static const struct log_api    *g_log = &native_log;
+static const struct memory_api *g_mem = &native_mem;
 #endif
 
 static struct subsystem_manager *g_mgr;
@@ -144,12 +153,18 @@ static const struct camera_api g_camera_api = {
 	camera_set_viewport,
 };
 
-/* The built-in primitives that have uploadable geometry today. */
+/*
+ * The built-in primitives and mesh scripts that have uploadable geometry
+ * today — every path here is either a stored mesh_blob or, for a mesh
+ * script, source resolve_mesh_blob() compiles on the spot; either way
+ * upload_mesh() below GPU-uploads it once at init.
+ */
 static const char *const PRIMITIVE_PATHS[] = {
 	"builtin://cube",
 	"builtin://sphere",
 	"builtin://plane",
 	"builtin://pyramid",
+	"builtin://mesh-script/grid",
 };
 
 #define PRIMITIVE_COUNT \
@@ -406,18 +421,50 @@ static void ensure_shader_pipelines(void)
 	}
 }
 
+/*
+ * Resolve RENDER_REF to a mesh_blob, transparently compiling an
+ * ASSET_TYPE_MESH_SCRIPT asset's Scheme source through mesh_script_generate()
+ * when that's what it is. Returns the blob to use for this upload and sets
+ * *out_owned to whether the caller must free it (a script-generated blob is a
+ * transient local the catalog does not hold; a stored mesh_blob is a borrow
+ * like any other asset). NULL means "no mesh" either way.
+ */
+static const struct mesh_blob *resolve_mesh_blob(uint32_t render_ref,
+						  int *out_owned)
+{
+	struct asset_info info;
+	const void        *bytes;
+	uint32_t           size = 0;
+
+	*out_owned = 0;
+	if (g_asset->find && g_asset->find(render_ref, &info) == 0
+	    && info.type == ASSET_TYPE_MESH_SCRIPT) {
+		bytes = g_asset->get_data(render_ref, NULL);
+		if (!bytes)
+			return NULL;
+		*out_owned = 1;
+		return mesh_script_generate((const char *)bytes, g_mem, NULL);
+	}
+
+	bytes = g_asset->get_data(render_ref, &size);
+	if (!bytes || size < sizeof(struct mesh_blob)
+	    || ((const struct mesh_blob *)bytes)->magic != MESH_BLOB_MAGIC)
+		return NULL;
+	return (const struct mesh_blob *)bytes;
+}
+
 /* Upload one primitive's vertex/index buffers from its mesh blob. */
 static void upload_mesh(const struct gpu_api *gpu, uint32_t render_ref)
 {
 	const struct mesh_blob *blob;
 	struct gpu_buffer_desc  bd;
 	struct mesh_gpu        *m;
-	uint32_t                size = 0;
+	int                     owned;
 
 	if (g_mesh_count >= SCENE_MAX_MESHES)
 		return;
-	blob = g_asset->get_data(render_ref, &size);
-	if (!blob || size < sizeof(*blob) || blob->magic != MESH_BLOB_MAGIC)
+	blob = resolve_mesh_blob(render_ref, &owned);
+	if (!blob)
 		return;
 
 	m = &g_meshes[g_mesh_count];
@@ -436,6 +483,9 @@ static void upload_mesh(const struct gpu_api *gpu, uint32_t render_ref)
 	m->ebo = gpu->buffer_create(&bd);
 
 	g_mesh_count++;
+
+	if (owned)
+		g_mem->free((void *)blob);
 }
 
 /*
@@ -455,6 +505,7 @@ static void seed_demo_scene(void)
 		{ "builtin://cube",    { -1.5f, 0.0f,  0.0f }, "builtin://script/spinner", "Cube"    },
 		{ "builtin://sphere",  {  0.0f, 0.0f, -1.0f }, "builtin://script/bounce",  "Sphere"  },
 		{ "builtin://pyramid", {  1.5f, 0.0f,  0.5f }, "builtin://script/wobble",  "Pyramid" },
+		{ "builtin://mesh-script/grid", { 0.0f, -0.5f, 1.5f }, NULL, "Grid" },
 	};
 	const struct world *w;
 	uint32_t            i;
@@ -797,6 +848,7 @@ void scene_renderer_plugin_entry(struct subsystem_manager *mgr)
 	g_mgr = mgr;
 #ifdef __EMSCRIPTEN__
 	g_log = subsystem_manager_get_api(mgr, "log");
+	g_mem = subsystem_manager_get_api(mgr, "memory");
 #endif
 	g_fg_api = subsystem_manager_get_api(mgr, "frame_graph");
 	g_scene  = subsystem_manager_get_api(mgr, "scene");

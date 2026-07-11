@@ -30,6 +30,12 @@
 		(link "asset_plugin" "log" "memory"))
 	(test "asset_mesh" "asset_mesh_test")
 
+	(executable "mesh_script_test"
+		(sources "mesh_script_test.c" "mesh_script.c")
+		(private "." (root "abi") (raw "../third_party"))
+		(link "script" "memory" "log"))
+	(test "mesh_script" "mesh_script_test")
+
 	(library "primitives_ref"
 		(sources "primitives.c")
 		(public "." (root "abi")))

@@ -3,6 +3,7 @@
 #include "asset_api.h"
 #include "asset_codec_api.h"
 #include "builtin_scripts.h"
+#include "builtin_mesh_scripts.h"
 #include "asset_edit.h"
 #include "edit_api.h"
 #include "primitives.h"
@@ -315,6 +316,36 @@ static void seed_script(const char *path, const char *src)
 	e->type      = ASSET_TYPE_SCRIPT;
 }
 
+/*
+ * Seed one built-in mesh script from NUL-terminated Scheme source, the same
+ * shape as seed_script: the (mesh NAME (generate () ...)) text becomes the
+ * asset's bytes, so a consumer resolves it to a real mesh_blob on demand via
+ * mesh_script_generate() (asset/mesh_script.c) rather than at seed time —
+ * mirroring how a shader asset stores DSL source, not compiled GLSL.
+ * ASSET_TYPE_MESH_SCRIPT tags it for the mesh-script-only picker.
+ */
+static void seed_mesh_script(const char *path, const char *src)
+{
+	struct asset_entry *e;
+	uint32_t            n;
+
+	e = alloc_entry(path);
+	if (!e)
+		return;
+	n = (uint32_t)strlen(src) + 1;
+	e->data = g_mem->alloc(n);
+	if (!e->data) {
+		e->state = ASSET_ERROR;
+		return;
+	}
+	memcpy(e->data, src, n);
+	e->size      = n;
+	e->state     = ASSET_LOADED;
+	e->kind      = ASSET_KIND_PRIMITIVE;
+	e->read_only = 1;
+	e->type      = ASSET_TYPE_MESH_SCRIPT;
+}
+
 static void seed_builtins(void)
 {
 	int32_t            i;
@@ -350,6 +381,8 @@ static void seed_builtins(void)
 	seed_script("builtin://script/wobble",  WOBBLE_SCRIPT_SRC);
 	seed_script("builtin://script/pulse",   PULSE_SCRIPT_SRC);
 	seed_script("builtin://script/orbit-camera", ORBIT_CAMERA_SCRIPT_SRC);
+
+	seed_mesh_script("builtin://mesh-script/grid", GRID_MESH_SCRIPT_SRC);
 }
 
 #ifdef __EMSCRIPTEN__
@@ -741,6 +774,16 @@ static const struct asset_decl_field orbit_camera_script_decl[] = {
 	{ "params", "radius, height, speed" },
 };
 
+/*
+ * A mesh script asset is one (mesh NAME (generate () ...)) Scheme form. It
+ * advertises its source format, the way a shader/script advertises theirs;
+ * unlike a script there is no hook set to enumerate — a mesh script always
+ * carries exactly one generate clause.
+ */
+static const struct asset_decl_field grid_mesh_script_decl[] = {
+	{ "format", "krudd-mesh-script" },
+};
+
 struct builtin_desc {
 	const char                   *path;
 	const struct asset_decl_field *fields;
@@ -768,6 +811,8 @@ static const struct builtin_desc builtin_descs[] = {
 	  ARRAY_SIZE(pulse_script_decl) },
 	{ "builtin://script/orbit-camera", orbit_camera_script_decl,
 	  ARRAY_SIZE(orbit_camera_script_decl) },
+	{ "builtin://mesh-script/grid", grid_mesh_script_decl,
+	  ARRAY_SIZE(grid_mesh_script_decl) },
 };
 
 #define BUILTIN_DESC_COUNT ARRAY_SIZE(builtin_descs)

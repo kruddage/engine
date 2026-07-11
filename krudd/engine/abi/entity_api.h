@@ -86,6 +86,17 @@ struct entity_api {
 	 */
 	void    (*set_material_params)(int32_t id, const uint8_t *bytes,
 				       uint32_t len);
+	/*
+	 * Override id's mesh parameters with `len` tight-packed bytes (the
+	 * layout its bound mesh's params clause reports); len 0 clears the
+	 * override. The per-entity value layer over a mesh's declared params —
+	 * what makes two entities on one mesh asset draw at different sizes.
+	 * Only the params are per-entity; the mesh asset still comes from the
+	 * bound render_ref. Records an undo step; consecutive edits to one entity
+	 * coalesce, so a slider drag is a single history entry.
+	 */
+	void    (*set_mesh_params)(int32_t id, const uint8_t *bytes,
+				   uint32_t len);
 
 	/* Shared selection: -1 = none. set ignores stale/out-of-range ids. */
 	int32_t (*get_selected)(void);

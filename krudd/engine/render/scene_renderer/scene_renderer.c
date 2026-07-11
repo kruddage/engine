@@ -94,15 +94,34 @@ struct shader_pso {
 static struct shader_pso g_shader_psos[SCENE_MAX_SHADER_PSOS];
 static uint32_t          g_shader_pso_count;
 
-/* One uploaded mesh, selected by an entity's render_ref (== asset id). */
+/*
+ * One uploaded mesh, keyed by (render_ref, param bytes). A param-less mesh keys
+ * on its asset id alone (param_len 0), exactly as before; a parameterized mesh
+ * keys on its asset id AND the entity's override bytes, so two entities sharing
+ * one mesh asset but overriding it differently each get their own geometry — the
+ * geometry analogue of the per-draw material UBO. `used` is the per-frame
+ * mark-and-sweep flag ensure_meshes drives to evict combos no live entity needs
+ * anymore (a slider settling on a new size frees the old one's buffers).
+ */
 struct mesh_gpu {
 	gpu_buffer_t vbo;
 	gpu_buffer_t ebo;
 	uint32_t     render_ref;
 	uint32_t     index_count;
+	uint32_t     param_len;               /* 0 = param-less (asset-id key only) */
+	uint8_t      params[WORLD_MESH_PARAM_CAP];
+	int          used;                    /* mark/sweep: needed this frame */
 };
 
-#define SCENE_MAX_MESHES 8
+/*
+ * Cache capacity across all live (render_ref, params) combos, not just distinct
+ * mesh assets — a handful of parameterized meshes at a few sizes each still fits.
+ * ensure_meshes evicts combos no live entity references, so the cache tracks what
+ * the scene actually draws rather than growing without bound; an overflow just
+ * leaves the newest combo un-cached (it falls back to not drawing that entity)
+ * rather than corrupting anything.
+ */
+#define SCENE_MAX_MESHES 32
 static struct mesh_gpu g_meshes[SCENE_MAX_MESHES];
 static uint32_t        g_mesh_count;
 
@@ -154,22 +173,14 @@ static const struct camera_api g_camera_api = {
 };
 
 /*
- * The built-in meshes uploaded once at init. Every ASSET_TYPE_MESH asset's
- * bytes are (mesh NAME (generate () ...)) Scheme source — there is no
- * hardcoded C mesh generator and no separate "compiled blob" asset shape —
- * so upload_mesh() below always compiles through mesh_script_generate()
+ * Meshes are uploaded lazily, not from a fixed built-in list: ensure_meshes()
+ * (run each tick, off-frame) resolves whatever (render_ref, params) combos the
+ * live world actually references and evicts the rest. Every ASSET_TYPE_MESH
+ * asset's bytes are (mesh NAME [(params ...)] (generate () ...)) Scheme source —
+ * there is no hardcoded C mesh generator and no separate "compiled blob" asset
+ * shape — so upload_mesh() below always compiles through mesh_script_generate()
  * before GPU-uploading the result.
  */
-static const char *const PRIMITIVE_PATHS[] = {
-	"builtin://mesh/cube",
-	"builtin://mesh/sphere",
-	"builtin://mesh/plane",
-	"builtin://mesh/pyramid",
-	"builtin://mesh/grid",
-};
-
-#define PRIMITIVE_COUNT \
-	((uint32_t)(sizeof(PRIMITIVE_PATHS) / sizeof(PRIMITIVE_PATHS[0])))
 
 /* Resolve a catalog path to its stable asset id, or 0 if absent. */
 static uint32_t asset_id_by_path(const char *path)
@@ -199,14 +210,39 @@ static const char *shader_src_by_path(const char *path)
 	return (const char *)g_asset->get_data(id, NULL);
 }
 
-static struct mesh_gpu *find_mesh(uint32_t render_ref)
+/*
+ * The cached mesh for (render_ref, params), or NULL when that exact combo is not
+ * resident. A match needs the same asset id and the same override bytes, so a
+ * shared mesh at two different param sets resolves to two distinct entries.
+ */
+static struct mesh_gpu *find_mesh(uint32_t render_ref,
+				  const uint8_t *params, uint32_t plen)
 {
 	uint32_t i;
 
+	if (plen > WORLD_MESH_PARAM_CAP)
+		plen = WORLD_MESH_PARAM_CAP;
 	for (i = 0; i < g_mesh_count; i++) {
-		if (g_meshes[i].render_ref == render_ref)
-			return &g_meshes[i];
+		struct mesh_gpu *m = &g_meshes[i];
+
+		if (m->render_ref != render_ref || m->param_len != plen)
+			continue;
+		if (plen == 0 || memcmp(m->params, params, plen) == 0)
+			return m;
 	}
+	return NULL;
+}
+
+/* The entity's mesh-param override bytes for the cache key, or NULL/0 when it
+ * has none (the mesh then generates on its declared defaults). */
+static const uint8_t *entity_mesh_params(const struct world *w, uint32_t i,
+					 uint32_t *plen)
+{
+	if (w->mesh_param_len[i] > 0) {
+		*plen = w->mesh_param_len[i];
+		return w->mesh_params[i];
+	}
+	*plen = 0;
 	return NULL;
 }
 
@@ -423,12 +459,17 @@ static void ensure_shader_pipelines(void)
 }
 
 /*
- * Upload one mesh's vertex/index buffers. Every ASSET_TYPE_MESH asset's bytes
- * are (mesh NAME (generate () ...)) Scheme source, so this always compiles
- * through mesh_script_generate() into a transient local blob before GPU-
- * uploading it — there is no stored "compiled blob" shape to borrow instead.
+ * Upload the (render_ref, params) combo's vertex/index buffers into a fresh
+ * cache slot and return it (NULL when the cache is full, the asset has no
+ * source, or the generator yields nothing). Every ASSET_TYPE_MESH asset's bytes
+ * are (mesh NAME [(params ...)] (generate () ...)) Scheme source, so this always
+ * compiles through mesh_script_generate() — now with the entity's param override
+ * — into a transient local blob before GPU-uploading it. There is no stored
+ * "compiled blob" shape to borrow instead.
  */
-static void upload_mesh(const struct gpu_api *gpu, uint32_t render_ref)
+static struct mesh_gpu *upload_mesh(const struct gpu_api *gpu,
+				    uint32_t render_ref,
+				    const uint8_t *params, uint32_t plen)
 {
 	const struct mesh_blob *blob;
 	struct gpu_buffer_desc  bd;
@@ -436,17 +477,22 @@ static void upload_mesh(const struct gpu_api *gpu, uint32_t render_ref)
 	const char             *src;
 
 	if (g_mesh_count >= SCENE_MAX_MESHES)
-		return;
+		return NULL;
 	src = (const char *)g_asset->get_data(render_ref, NULL);
 	if (!src)
-		return;
-	blob = mesh_script_generate(src, g_mem, NULL);
+		return NULL;
+	blob = mesh_script_generate(src, params, plen, g_mem, NULL);
 	if (!blob)
-		return;
+		return NULL;
 
+	if (plen > WORLD_MESH_PARAM_CAP)
+		plen = WORLD_MESH_PARAM_CAP;
 	m = &g_meshes[g_mesh_count];
 	m->render_ref  = render_ref;
 	m->index_count = blob->index_count;
+	m->param_len   = plen;
+	if (plen)
+		memcpy(m->params, params, plen);
 
 	memset(&bd, 0, sizeof(bd));
 	bd.usage        = GPU_BUFFER_USAGE_VERTEX;
@@ -462,6 +508,73 @@ static void upload_mesh(const struct gpu_api *gpu, uint32_t render_ref)
 	g_mesh_count++;
 
 	g_mem->free((void *)blob);
+	return m;
+}
+
+/*
+ * Reconcile the mesh cache with the world, off-frame (from the tick, like
+ * ensure_shader_pipelines) so forward_pass never creates or destroys GPU
+ * resources mid-pass. Mark every cached combo unused, then walk each renderable
+ * entity: ensure its (render_ref, params) combo is resident (uploading on a
+ * miss) and mark it used. Finally sweep — destroy and compact out every combo no
+ * live entity touched this frame, so a param edit that lands on a new size frees
+ * the buffers the old size held. Bounded work: at most one upload per new combo,
+ * over the same walk the forward pass already makes.
+ */
+static void ensure_meshes(void)
+{
+	const struct gpu_api *gpu = NULL;
+	const struct world   *w;
+	uint32_t              i;
+
+	if (!g_scene || !g_asset)
+		return;
+	w = g_scene->get_world();
+	if (!w)
+		return;
+
+	for (i = 0; i < g_mesh_count; i++)
+		g_meshes[i].used = 0;
+
+	for (i = 0; i < w->count; i++) {
+		const uint8_t   *pbytes;
+		uint32_t         plen;
+		struct mesh_gpu *m;
+
+		if (!w->alive[i] || !(w->mask[i] & COMPONENT_RENDER)
+		    || !w->render_ref[i])
+			continue;
+		pbytes = entity_mesh_params(w, i, &plen);
+		m = find_mesh(w->render_ref[i], pbytes, plen);
+		if (!m) {
+			if (!gpu) {
+				gpu = g_mgr ? subsystem_manager_get_api(g_mgr,
+									"renderer")
+					    : NULL;
+				if (!gpu)
+					return;
+			}
+			m = upload_mesh(gpu, w->render_ref[i], pbytes, plen);
+		}
+		if (m)
+			m->used = 1;
+	}
+
+	for (i = 0; i < g_mesh_count;) {
+		if (g_meshes[i].used) {
+			i++;
+			continue;
+		}
+		if (!gpu)
+			gpu = g_mgr ? subsystem_manager_get_api(g_mgr,
+								"renderer")
+				    : NULL;
+		if (gpu) {
+			gpu->buffer_destroy(g_meshes[i].vbo);
+			gpu->buffer_destroy(g_meshes[i].ebo);
+		}
+		g_meshes[i] = g_meshes[--g_mesh_count];
+	}
 }
 
 /*
@@ -477,11 +590,21 @@ static void seed_demo_scene(void)
 		float       pos[3];
 		const char *script; /* behavior script to bind, or NULL */
 		const char *name;   /* shown in the entity list */
+		int         has_mesh_params; /* seed a mesh-param override? */
+		float       whd[3];          /* box width/height/depth when it does */
 	} DEMO[] = {
-		{ "builtin://mesh/cube",    { -1.5f, 0.0f,  0.0f }, "builtin://script/spinner", "Cube"    },
-		{ "builtin://mesh/sphere",  {  0.0f, 0.0f, -1.0f }, "builtin://script/bounce",  "Sphere"  },
-		{ "builtin://mesh/pyramid", {  1.5f, 0.0f,  0.5f }, "builtin://script/wobble",  "Pyramid" },
-		{ "builtin://mesh/grid",    { 0.0f, -0.5f, 1.5f }, NULL, "Grid" },
+		{ "builtin://mesh/cube",    { -1.5f, 0.0f,  0.0f }, "builtin://script/spinner", "Cube",    0, { 0.0f, 0.0f, 0.0f } },
+		{ "builtin://mesh/sphere",  {  0.0f, 0.0f, -1.0f }, "builtin://script/bounce",  "Sphere",  0, { 0.0f, 0.0f, 0.0f } },
+		{ "builtin://mesh/pyramid", {  1.5f, 0.0f,  0.5f }, "builtin://script/wobble",  "Pyramid", 0, { 0.0f, 0.0f, 0.0f } },
+		{ "builtin://mesh/grid",    { 0.0f, -0.5f, 1.5f }, NULL, "Grid",                0, { 0.0f, 0.0f, 0.0f } },
+		/*
+		 * Two entities on ONE mesh asset (builtin://mesh/box), drawing at
+		 * different sizes purely from their per-entity mesh-param overrides —
+		 * the geometry twin of the two same-material entities that draw in
+		 * different colors. This is the whole point made visible on load.
+		 */
+		{ "builtin://mesh/box",     { -3.2f, 0.0f,  0.0f }, NULL, "Tall Box",            1, { 0.6f, 2.0f, 0.6f } },
+		{ "builtin://mesh/box",     {  3.2f, 0.0f,  0.0f }, NULL, "Wide Box",            1, { 2.2f, 0.5f, 1.0f } },
 	};
 	const struct world *w;
 	uint32_t            i;
@@ -528,6 +651,15 @@ static void seed_demo_scene(void)
 			g_scene->set_name(id, DEMO[i].name);
 
 		/*
+		 * Seed a mesh-param override so the two box entities, sharing one
+		 * mesh asset, generate distinct geometry (a tall box and a wide
+		 * one). Skipped cleanly on a build without the set_mesh_params entry.
+		 */
+		if (id >= 0 && DEMO[i].has_mesh_params && g_scene->set_mesh_params)
+			g_scene->set_mesh_params(id, (const uint8_t *)DEMO[i].whd,
+						 sizeof(DEMO[i].whd));
+
+		/*
 		 * Bind a behavior script so the demo scene animates on load — the
 		 * cube spins, the sphere bounces, the pyramid wobbles. Each is a
 		 * built-in ASSET_TYPE_SCRIPT; skipped cleanly on an engine build
@@ -570,7 +702,6 @@ static void seed_demo_scene(void)
 static void scene_renderer_init(void)
 {
 	const struct gpu_api *gpu;
-	uint32_t              i;
 
 	/* Persistent-creation seam: resolve the device directly, outside a frame. */
 	gpu = g_mgr ? subsystem_manager_get_api(g_mgr, "renderer") : NULL;
@@ -581,12 +712,8 @@ static void scene_renderer_init(void)
 	}
 
 	build_pipeline(gpu);
-	for (i = 0; i < PRIMITIVE_COUNT; i++) {
-		uint32_t ref = asset_id_by_path(PRIMITIVE_PATHS[i]);
-
-		if (ref)
-			upload_mesh(gpu, ref);
-	}
+	/* Mesh buffers are created lazily by ensure_meshes() on the first tick,
+	 * once the seeded/loaded world exists — not from a fixed list here. */
 
 	{
 		struct gpu_buffer_desc bd;
@@ -618,7 +745,7 @@ static void scene_renderer_init(void)
 
 	g_ready = 1;
 	g_log->write(LOG_LEVEL_INFO,
-		     "scene_renderer: ready (%u primitive meshes)", g_mesh_count);
+		     "scene_renderer: ready (meshes uploaded lazily per tick)");
 }
 
 /*
@@ -661,7 +788,13 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 			continue;
 		if (!(w->mask[i] & COMPONENT_MATERIAL))
 			continue; /* mesh stays pickable/collidable; just not drawn */
-		m = find_mesh(w->render_ref[i]);
+		{
+			const uint8_t *mp;
+			uint32_t       mplen;
+
+			mp = entity_mesh_params(w, i, &mplen);
+			m  = find_mesh(w->render_ref[i], mp, mplen);
+		}
 		if (!m)
 			continue;
 
@@ -736,8 +869,10 @@ static void scene_renderer_tick(void)
 	if (!g_ready || !g_fg_api || !g_scene)
 		return;
 
-	/* Warm pipelines for any newly material-selected shader, off-frame. */
+	/* Warm pipelines and mesh buffers for the live world, off-frame, so the
+	 * forward pass never creates or destroys a GPU resource mid-pass. */
 	ensure_shader_pipelines();
+	ensure_meshes();
 
 	if (g_camera_entity_id >= 0) {
 		const struct world *w = g_scene->get_world();

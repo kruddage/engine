@@ -38,6 +38,44 @@
 	"                    (append indices (mesh-quad-indices (* f 4))))))))))\n"
 
 /*
+ * box — a cube parameterized by full width/height/depth. Same 6-quad topology
+ * as cube (24 verts / 36 indices), but its generate body reads (param 'width)
+ * etc. and scales the unit-cube positions, so two entities sharing this one mesh
+ * asset draw at different sizes purely from their per-entity param overrides.
+ * The first built-in to carry a (params ...) clause — the geometry twin of a
+ * material's shader uniforms. Defaults to the unit cube (1x1x1).
+ */
+#define BOX_MESH_SCRIPT_SRC \
+	"(mesh box\n" \
+	"  (params\n" \
+	"    (width  float (edit range 0.1 3.0) (default 1.0))\n" \
+	"    (height float (edit range 0.1 3.0) (default 1.0))\n" \
+	"    (depth  float (edit range 0.1 3.0) (default 1.0)))\n" \
+	"  (generate ()\n" \
+	"    (let* ((w (or (param 'width) 1.0))\n" \
+	"           (h (or (param 'height) 1.0))\n" \
+	"           (d (or (param 'depth) 1.0))\n" \
+	"           (faces (list\n" \
+	"                    (list (list 1.0 0.0 0.0) (list 0.0 0.0 1.0) (list 0.0 1.0 0.0))\n" \
+	"                    (list (list -1.0 0.0 0.0) (list 0.0 0.0 1.0) (list 0.0 1.0 0.0))\n" \
+	"                    (list (list 0.0 1.0 0.0) (list 1.0 0.0 0.0) (list 0.0 0.0 1.0))\n" \
+	"                    (list (list 0.0 -1.0 0.0) (list 1.0 0.0 0.0) (list 0.0 0.0 1.0))\n" \
+	"                    (list (list 0.0 0.0 1.0) (list 1.0 0.0 0.0) (list 0.0 1.0 0.0))\n" \
+	"                    (list (list 0.0 0.0 -1.0) (list 1.0 0.0 0.0) (list 0.0 1.0 0.0)))))\n" \
+	"      (let loop ((f 0) (verts '()) (indices '()))\n" \
+	"        (if (= f 6)\n" \
+	"            (cons (map (lambda (vx)\n" \
+	"                         (list (* (list-ref vx 0) w) (* (list-ref vx 1) h) (* (list-ref vx 2) d)\n" \
+	"                               (list-ref vx 3) (list-ref vx 4) (list-ref vx 5)\n" \
+	"                               (list-ref vx 6) (list-ref vx 7)))\n" \
+	"                       verts)\n" \
+	"                  indices)\n" \
+	"            (let ((face (list-ref faces f)))\n" \
+	"              (loop (+ f 1)\n" \
+	"                    (append verts (mesh-quad-verts (car face) (cadr face) (caddr face) 0.5))\n" \
+	"                    (append indices (mesh-quad-indices (* f 4))))))))))\n"
+
+/*
  * sphere — a UV sphere via mesh-sphere-verts/-indices (16 rings, 32
  * sectors), 561 verts / 2880 indices. Radius 0.5, centred on the origin.
  */

@@ -124,17 +124,21 @@
 (define (script-params src)
   (script-params-form (with-input-from-string src (lambda () (read)))))
 
-;;! The bound entity's authored parameter values, in scope only for the span of
-;;! its hook calls: an ((name . value) ...) alist (value a number or a list of
-;;! numbers) the host resolves per entity and hands to entity-script-tick.
-(define *entity-params* '())
+;;! The authored parameter values in scope only for the span of a scripted
+;;! entity's hook calls — or a mesh script's generate call: an ((name . value)
+;;! ...) alist (value a number or a list of numbers) the host resolves and binds
+;;! around the call. Shared between the entity-script and mesh-script drivers so
+;;! (param NAME) means the same thing in both — they never run concurrently
+;;! (both are synchronous s7 calls), so one slot serves both.
+(define *params* '())
 
-;;! (param NAME) -> the current entity's value for parameter NAME (a symbol), or
-;;! #f when the bound script declares no such parameter. A clause reads its
-;;! authored inputs through this, keeping the script itself stateless: the pose
-;;! stays a pure function of the clock, the rest pose, and these params.
+;;! (param NAME) -> the current script/mesh's value for parameter NAME (a
+;;! symbol), or #f when nothing in scope declares it. A clause or generator reads
+;;! its authored inputs through this, staying stateless: an entity pose is a pure
+;;! function of the clock, the rest pose, and these params; a mesh's geometry a
+;;! pure function of these params.
 (define (param name)
-  (let ((p (assq name *entity-params*)))
+  (let ((p (assq name *params*)))
     (and p (cdr p))))
 
 ;;! The procedure a script binds to hook KEY, or #f when it defines no such hook.
@@ -181,16 +185,16 @@
     (lambda ()
       (let ((hooks (entity-script-resolve id src)))
         (when hooks
-          (set! *entity-params* params)
+          (set! *params* params)
           (unless (hash-table-ref *entity-script-begun* id)
             (let ((h (entity-script-clause hooks 'on-begin)))
               (when h (h id)))
             (hash-table-set! *entity-script-begun* id #t))
           (let ((h (entity-script-clause hooks 'on-tick)))
             (when h (h id t)))
-          (set! *entity-params* '()))))
+          (set! *params* '()))))
     (lambda args
-      (set! *entity-params* '())
+      (set! *params* '())
       (krudd-log 2 (string-append "entity-script: fault on entity "
                                   (number->string id)))
       #f)))

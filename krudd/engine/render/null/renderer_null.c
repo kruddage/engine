@@ -265,13 +265,29 @@ null_texture_create(const struct gpu_texture_desc *desc)
 		.type = GPU_CALL_TEXTURE_CREATE,
 		.args = {
 			.texture_create = {
-				.format = (uint32_t)desc->format,
-				.width  = desc->width,
-				.height = desc->height,
+				.format            = (uint32_t)desc->format,
+				.width             = desc->width,
+				.height            = desc->height,
+				.mip_levels        = desc->mip_levels,
+				.has_initial_data  = desc->initial_data != NULL,
+				.generate_mips     = desc->generate_mips,
 			},
 		},
 	});
 	return NULL;
+}
+
+static void null_cmd_bind_texture(gpu_cmd_buf_t cmd, uint32_t unit,
+				  gpu_texture_t texture)
+{
+	(void)cmd;
+	g_log->write(LOG_LEVEL_INFO,
+		     "renderer_null: cmd_bind_texture unit=%u texture=%p",
+		     unit, (void *)texture);
+	log_append((struct gpu_call_record){
+		.type = GPU_CALL_CMD_BIND_TEXTURE,
+		.args = { .cmd_bind_texture = { .unit = unit } },
+	});
 }
 
 static void null_texture_destroy(gpu_texture_t texture)
@@ -306,6 +322,7 @@ static const struct gpu_api null_api = {
 	.gpu_host_to_device_ptr = NULL,
 	.texture_create         = null_texture_create,
 	.texture_destroy        = null_texture_destroy,
+	.cmd_bind_texture       = null_cmd_bind_texture,
 };
 
 static void renderer_null_init(void)

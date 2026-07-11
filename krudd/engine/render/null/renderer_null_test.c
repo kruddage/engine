@@ -64,6 +64,7 @@ static void test_vtable_fully_populated(void)
 	assert(gpu->gpu_host_to_device_ptr == NULL);
 	assert(gpu->texture_create != NULL);
 	assert(gpu->texture_destroy != NULL);
+	assert(gpu->cmd_bind_texture != NULL);
 }
 
 static void test_cmd_buf_begin_returns_null(void)
@@ -255,12 +256,15 @@ static void test_texture_ops_logged(void)
 {
 	const struct gpu_call_record *log;
 	const struct gpu_api *gpu;
+	static const uint8_t pixels[2 * 2 * 4] = { 0 };
 	struct gpu_texture_desc desc = {
-		.format       = GPU_FORMAT_RGBA8_UNORM,
-		.width        = 512,
-		.height       = 256,
-		.mip_levels   = 1,
-		.sample_count = 1,
+		.format        = GPU_FORMAT_RGBA8_UNORM,
+		.width         = 512,
+		.height        = 256,
+		.mip_levels    = 1,
+		.sample_count  = 1,
+		.initial_data  = pixels,
+		.generate_mips = 1,
 	};
 	uint32_t count;
 
@@ -268,15 +272,21 @@ static void test_texture_ops_logged(void)
 	gpu = (const struct gpu_api *)subsystem_manager_get_api(&mgr, "renderer");
 
 	gpu->texture_create(&desc);
+	gpu->cmd_bind_texture(NULL, 2, NULL);
 	gpu->texture_destroy(NULL);
 
 	log = renderer_null_get_log(&count);
-	assert(count == 2);
+	assert(count == 3);
 	assert(log[0].type == GPU_CALL_TEXTURE_CREATE);
 	assert(log[0].args.texture_create.format == (uint32_t)GPU_FORMAT_RGBA8_UNORM);
 	assert(log[0].args.texture_create.width  == 512);
 	assert(log[0].args.texture_create.height == 256);
-	assert(log[1].type == GPU_CALL_TEXTURE_DESTROY);
+	/* The baked-pixel + mip path is recorded so the seam is under test. */
+	assert(log[0].args.texture_create.has_initial_data == 1);
+	assert(log[0].args.texture_create.generate_mips == 1);
+	assert(log[1].type == GPU_CALL_CMD_BIND_TEXTURE);
+	assert(log[1].args.cmd_bind_texture.unit == 2);
+	assert(log[2].type == GPU_CALL_TEXTURE_DESTROY);
 }
 
 static void test_buffer_create_destroy_logged(void)

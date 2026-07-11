@@ -559,17 +559,48 @@ webgl_texture_create(const struct gpu_texture_desc *desc)
 #ifdef __EMSCRIPTEN__
 	glGenTextures(1, &tex_id);
 	glBindTexture(GL_TEXTURE_2D, tex_id);
+	/*
+	 * Upload level 0 from desc->initial_data when present (a baked procedural
+	 * texture), or allocate empty storage (a render target). RGBA8 is the only
+	 * sampled format today, matching texture_blob's wire format.
+	 */
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8,
 		     (GLsizei)desc->width, (GLsizei)desc->height, 0,
-		     GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		     GL_RGBA, GL_UNSIGNED_BYTE, desc->initial_data);
+	if (desc->generate_mips) {
+		/* Build the full chain from level 0; trilinear minification. */
+		glGenerateMipmap(GL_TEXTURE_2D);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+				GL_LINEAR_MIPMAP_LINEAR);
+	} else {
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	}
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	/* Tile procedural textures — a scaled checker/noise repeats across uv. */
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 	glBindTexture(GL_TEXTURE_2D, 0);
 	t->gl_tex = (unsigned int)tex_id;
 #else
 	(void)desc;
 #endif
 	return t;
+}
+
+static void webgl_cmd_bind_texture(gpu_cmd_buf_t cmd, uint32_t unit,
+				   gpu_texture_t texture)
+{
+	struct gpu_texture *t = (struct gpu_texture *)texture;
+
+	(void)cmd;
+#ifdef __EMSCRIPTEN__
+	glActiveTexture(GL_TEXTURE0 + unit);
+	glBindTexture(GL_TEXTURE_2D, t ? (GLuint)t->gl_tex : 0);
+	glActiveTexture(GL_TEXTURE0); /* leave unit 0 active for the next binder */
+#else
+	(void)unit;
+	(void)t;
+#endif
 }
 
 static void webgl_texture_destroy(gpu_texture_t texture)
@@ -615,6 +646,7 @@ static const struct gpu_api webgl_api = {
 	.gpu_host_to_device_ptr = NULL,
 	.texture_create         = webgl_texture_create,
 	.texture_destroy        = webgl_texture_destroy,
+	.cmd_bind_texture       = webgl_cmd_bind_texture,
 };
 
 static void renderer_webgl_init(void)

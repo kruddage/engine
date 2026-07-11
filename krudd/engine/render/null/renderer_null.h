@@ -32,6 +32,7 @@ enum gpu_call_type {
 	GPU_CALL_GPU_HOST_TO_DEVICE_PTR,
 	GPU_CALL_TEXTURE_CREATE,
 	GPU_CALL_TEXTURE_DESTROY,
+	GPU_CALL_CMD_BIND_TEXTURE,
 };
 
 struct gpu_call_record {
@@ -71,7 +72,11 @@ struct gpu_call_record {
 			uint32_t format; /* gpu_format, stored as uint32_t */
 			uint32_t width;
 			uint32_t height;
+			uint32_t mip_levels;
+			int      has_initial_data; /* 1 if desc->initial_data != NULL */
+			uint32_t generate_mips;
 		} texture_create;
+		struct { uint32_t unit; } cmd_bind_texture;
 	} args;
 };
 

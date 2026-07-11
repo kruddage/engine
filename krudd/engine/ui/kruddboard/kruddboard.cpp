@@ -11,7 +11,7 @@
  *
  * Tabs:
  *   KRUDD      — frame stats, subsystems, log (collapsible sections)
- *   World      — entity list, create/delete, inspector
+ *   Scene      — entity list, create/delete, inspector
  *   Assets     — asset browser and markdown editor
  */
 
@@ -5377,7 +5377,7 @@ static void draw_board(void * /*userdata*/)
 				draw_tab_krudd();
 				ImGui::EndTabItem();
 			}
-			if (ImGui::BeginTabItem("World")) {
+			if (ImGui::BeginTabItem("Scene")) {
 				draw_tab_world();
 				ImGui::EndTabItem();
 			}

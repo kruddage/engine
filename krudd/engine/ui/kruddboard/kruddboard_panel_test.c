@@ -1953,7 +1953,7 @@ static void test_krudd_composition(void)
 	assert(rec_has("child-begin|##logscroll")); /* log drawn */
 }
 
-/* The scene header draws the title and a right-aligned, disabled "Save As...". */
+/* The scene header draws just the title; no Save As... placeholder. */
 static void test_world_header(void)
 {
 	fw_reset();
@@ -1961,9 +1961,7 @@ static void test_world_header(void)
 	script_eval("(kruddboard-draw-world-header)");
 
 	assert(rec_has("text|Untitled Scene"));
-	assert(rec_has("sameline-right|"));
-	assert(rec_index("dis-begin|1") < rec_index("button|Save As..."));
-	assert(rec_index("button|Save As...") < rec_index("dis-end"));
+	assert(!rec_has("button|Save As..."));
 }
 
 /* The entity tree: a node per live entity (selected one flagged), + delete. */

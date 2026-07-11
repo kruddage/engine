@@ -63,7 +63,7 @@ static const struct stats_api         *g_stats;
 static const struct asset_api         *g_asset_api;
 static const struct subsystem_manager *g_mgr;
 static int                             g_visible = 1;
-static int                             g_collapsed;
+static int                             g_collapsed = 1;
 #ifdef __EMSCRIPTEN__
 static bool                            g_touch_device;
 static bool                            g_kbd_shown;

@@ -309,6 +309,7 @@ static const char *g_combo_open;    /* id of the one open combo, or NULL  */
 static int         g_mat_param_mode; /* stubbed shader material schema mode */
 static int         g_script_param_mode; /* stubbed script params schema mode */
 static int         g_mesh_param_mode; /* stubbed mesh params schema mode */
+static int         g_texture_param_mode; /* stubbed texture slot + params mode */
 
 static s7_pointer st_begin_disabled(s7_scheme *sc, s7_pointer a)
 {
@@ -550,6 +551,7 @@ static void fw_reset(void)
 	g_combo_open   = NULL;
 	g_script_param_mode = 0;
 	g_mesh_param_mode = 0;
+	g_texture_param_mode = 0;
 }
 
 static s7_pointer real_vec(s7_scheme *sc, const float *v, int n)
@@ -1041,6 +1043,12 @@ static s7_pointer st_texture_assets(s7_scheme *sc, s7_pointer a)
 static s7_pointer st_material_texture(s7_scheme *sc, s7_pointer a)
 {
 	(void)a;
+	/* In texture mode the material binds texture 707 at 256x256, so the entity
+	 * inspector surfaces its per-entity Texture Parameters; otherwise unbound. */
+	if (g_texture_param_mode == 1)
+		return s7_list(sc, 3, s7_make_integer(sc, 707),
+			       s7_make_integer(sc, 256),
+			       s7_make_integer(sc, 256));
 	return s7_nil(sc);
 }
 
@@ -1144,6 +1152,39 @@ static s7_pointer st_entity_save_mesh_params(s7_scheme *sc, s7_pointer a)
 	unsigned   ref = (unsigned)s7_integer(s7_cadr(a));
 
 	rec("save-mesh-params|%d|%u", id, ref);
+	return s7_unspecified(sc);
+}
+
+/*
+ * The texture-declared params schema, stubbed. Mode 1: a single (edit range 1
+ * 64) "scale" float, enough to exercise the slider + save path — the pixel twin
+ * of the mesh params stubs. Mode 0: no params (and st_material_texture reports no
+ * bound texture, so the section never draws).
+ */
+static s7_pointer st_texture_params(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	if (g_texture_param_mode == 1)
+		return s7_list(sc, 1,
+			mat_param(sc, "scale", "float", 0, 4, 1, "range",
+				  1.0, 64.0));
+	return s7_nil(sc);
+}
+
+static s7_pointer st_entity_texture_values(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	if (g_texture_param_mode == 1)
+		return s7_list(sc, 1, s7_list(sc, 1, s7_make_real(sc, 8.0)));
+	return s7_nil(sc);
+}
+
+static s7_pointer st_entity_save_texture_params(s7_scheme *sc, s7_pointer a)
+{
+	int        id  = (int)s7_integer(s7_car(a));
+	unsigned   ref = (unsigned)s7_integer(s7_cadr(a));
+
+	rec("save-texture-params|%d|%u", id, ref);
 	return s7_unspecified(sc);
 }
 
@@ -1662,6 +1703,10 @@ static s7_scheme *setup(void)
 	def(sc, "krudd-mesh-params", st_mesh_params, 1);
 	def(sc, "krudd-entity-mesh-values", st_entity_mesh_values, 2);
 	def(sc, "krudd-entity-save-mesh-params", st_entity_save_mesh_params, 3);
+	def(sc, "krudd-texture-params", st_texture_params, 1);
+	def(sc, "krudd-entity-texture-values", st_entity_texture_values, 2);
+	def(sc, "krudd-entity-save-texture-params",
+	    st_entity_save_texture_params, 3);
 	def(sc, "krudd-shader-stages", st_shader_stages, 1);
 	def(sc, "krudd-asset-save-text", st_asset_save_text, 2);
 	def(sc, "krudd-asset-save-shader", st_asset_save_shader, 2);
@@ -2222,6 +2267,44 @@ static void test_world_material_params_save(void)
 	g_float_changed = 0;
 
 	assert(rec_has("save-material-params|0|601"));
+}
+
+/*
+ * When the entity's material binds a texture, its params surface under the
+ * Material row as per-entity override widgets — a range-hinted "scale" renders as
+ * a slider keyed "scale##texp". A material with no bound texture draws none. This
+ * is the authoring gesture that makes two entities on one material bake the
+ * texture at different scales.
+ */
+static void test_world_texture_params_render(void)
+{
+	material_bound_entity();
+	g_texture_param_mode = 1;
+	rec_reset();
+	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	assert(rec_has("slider|scale##texp"));
+
+	/* No bound texture -> no Texture Parameters section. */
+	material_bound_entity();
+	rec_reset();
+	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	assert(!rec_has("slider|scale##texp"));
+}
+
+/* Editing a texture param writes the whole value set back through the save
+ * primitive, keyed on the entity's texture (from the material's texture slot). */
+static void test_world_texture_params_save(void)
+{
+	material_bound_entity();
+	g_texture_param_mode = 1;
+	g_float_id      = "scale##texp";   /* force this slider to report a change */
+	g_float_changed = 1;
+	rec_reset();
+	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	g_float_id      = NULL;
+	g_float_changed = 0;
+
+	assert(rec_has("save-texture-params|0|707"));
 }
 
 /* The tool chips highlight the active tool and switch it on a click. */
@@ -2975,6 +3058,8 @@ int main(void)
 	RUN(world_mesh_params_save);
 	RUN(world_material_params_render);
 	RUN(world_material_params_save);
+	RUN(world_texture_params_render);
+	RUN(world_texture_params_save);
 	RUN(world_gizmo_chips);
 	RUN(world_composition);
 

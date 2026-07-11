@@ -97,6 +97,18 @@ struct entity_api {
 	 */
 	void    (*set_mesh_params)(int32_t id, const uint8_t *bytes,
 				   uint32_t len);
+	/*
+	 * Override id's texture parameters with `len` tight-packed bytes (the
+	 * layout its material's bound texture's params clause reports); len 0
+	 * clears the override. The per-entity value layer over a texture's declared
+	 * params — what makes two entities on one material bake its texture with
+	 * different generation params (a checker at scale 8 vs 16). Only the params
+	 * are per-entity; which texture and at what resolution still come from the
+	 * material's texture slot. Records an undo step; consecutive edits to one
+	 * entity coalesce, so a slider drag is a single history entry.
+	 */
+	void    (*set_texture_params)(int32_t id, const uint8_t *bytes,
+				      uint32_t len);
 
 	/* Shared selection: -1 = none. set ignores stale/out-of-range ids. */
 	int32_t (*get_selected)(void);

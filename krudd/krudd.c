@@ -2,7 +2,7 @@
 /*
  * krudd — the one command you run everything off.
  *
- * `krudd build` loads krudd/build/build.scm and lets s7 drive: C provides the `run`
+ * `krudd build` loads krudd/kruddmake/build.scm and lets s7 drive: C provides the `run`
  * primitive, Scheme renders build.ninja from the directory specs and drives
  * ninja(1) directly (no CMake). The no-arg dispatch resolves how many
  * "<name>.krudd-project" files live in the current directory and picks a mode
@@ -65,7 +65,7 @@ static int cmd_build(void)
 	FILE       *probe;
 	int         failed;
 
-	snprintf(path, sizeof path, "%s/krudd/build/build.scm",
+	snprintf(path, sizeof path, "%s/krudd/kruddmake/build.scm",
 		 getenv_or("KRUDD_ROOT", "."));
 	probe = fopen(path, "r");
 	if (!probe) {

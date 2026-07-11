@@ -84,18 +84,23 @@
 	"        (* (car b) s) (* (cadr b) s) (* (caddr b) s)))))\n"
 
 /*
- * orbit-camera — proof-of-life camera behavior: circle the origin at a
- * fixed radius/height, no input. Bound to the world's dedicated camera entity
- * the same way spinner/bounce/wobble bind to a mesh entity; scene_renderer
- * reads this entity's animated world_xform each tick and feeds it into the
- * camera's eye, so "camera behavior" is just another entity script.
+ * orbit-camera — circle the origin at an authored radius/height/speed, no
+ * input. Bound to the world's dedicated camera entity the same way
+ * spinner/bounce/wobble bind to a mesh entity; scene_renderer reads this
+ * entity's animated world_xform each tick and feeds it into the camera's eye,
+ * so "camera behavior" is just another entity script. `radius`, `height`, and
+ * `speed` default to the values it always orbited at, so an un-tuned camera
+ * is unchanged.
  */
 #define ORBIT_CAMERA_SCRIPT_SRC                                              \
 	"(script orbit-camera\n"                                             \
+	"  (params (radius float (default 5)   (edit range 0 20))\n"        \
+	"          (height float (default 2.5) (edit range 0 10))\n"        \
+	"          (speed  float (default 0.4) (edit range 0 3)))\n"        \
 	"  (on-tick (self t)\n"                                              \
 	"    (entity-set-position! self\n"                                   \
-	"      (* 5.0 (cos (* t 0.4)))\n"                                    \
-	"      2.5\n"                                                        \
-	"      (* 5.0 (sin (* t 0.4))))))\n"
+	"      (* (param 'radius) (cos (* t (param 'speed))))\n"             \
+	"      (param 'height)\n"                                            \
+	"      (* (param 'radius) (sin (* t (param 'speed)))))))\n"
 
 #endif /* BUILTIN_SCRIPTS_H */

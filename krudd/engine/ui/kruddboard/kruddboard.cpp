@@ -1052,12 +1052,12 @@ static s7_pointer sp_krudd_set_gizmo_mode(s7_scheme *sc, s7_pointer args)
 #define SCRIPT_FORMAT "krudd-script"
 
 /*
- * Mesh script authoring metadata. A krudd mesh script is a single
+ * Mesh authoring metadata. A krudd mesh is a single
  * (mesh NAME (generate () ...)) form carrying its generator (see
- * core/mesh_script.scm) — like a script, the source itself is the only thing
- * to author.
+ * core/mesh_script.scm) — there is no other kind of mesh asset, so the
+ * source itself is the only thing to author, the same as a script.
  */
-#define MESH_SCRIPT_FORMAT "krudd-mesh-script"
+#define MESH_FORMAT "krudd-mesh"
 
 /*
  * Report the stage blocks SRC defines, the same way the built-in shaders
@@ -1201,13 +1201,13 @@ static const char *default_script_src(void)
 }
 
 /*
- * A mesh script is well-formed enough to commit when it is a (mesh ...) form
- * declaring a (generate ...) clause — the mesh-script analogue of
- * script_form_ok's cheap substring gate, so a Save never has to eval
- * untrusted source. Blank or generate-less text is rejected, so a broken edit
- * never reaches the live asset.
+ * A mesh is well-formed enough to commit when it is a (mesh ...) form
+ * declaring a (generate ...) clause — the mesh analogue of script_form_ok's
+ * cheap substring gate, so a Save never has to eval untrusted source. Blank
+ * or generate-less text is rejected, so a broken edit never reaches the live
+ * asset.
  */
-static bool mesh_script_form_ok(const char *src)
+static bool mesh_form_ok(const char *src)
 {
 	if (!src || !strstr(src, "(mesh"))
 		return false;
@@ -1215,11 +1215,11 @@ static bool mesh_script_form_ok(const char *src)
 }
 
 /*
- * The engine's built-in grid mesh script — always present, read-only — used
- * to seed new mesh script assets so they start from working source instead
- * of blank, the way default_script_src seeds new entity scripts.
+ * The engine's built-in grid mesh — always present, read-only — used to seed
+ * new mesh assets so they start from working source instead of blank, the
+ * way default_script_src seeds new entity scripts.
  */
-static const char *default_mesh_script_src(void)
+static const char *default_mesh_src(void)
 {
 	uint32_t          n, i;
 	struct asset_info info;
@@ -1229,9 +1229,9 @@ static const char *default_mesh_script_src(void)
 	n = g_asset_api->count();
 	for (i = 0; i < n; i++) {
 		if (g_asset_api->info(i, &info) != 0 || !info.read_only ||
-		    info.type != ASSET_TYPE_MESH_SCRIPT)
+		    info.type != ASSET_TYPE_MESH)
 			continue;
-		if (strcmp(info.path, "builtin://mesh-script/grid") == 0) {
+		if (strcmp(info.path, "builtin://mesh/grid") == 0) {
 			const void *data = g_asset_api->get_data(info.id, NULL);
 			return data ? (const char *)data : "";
 		}
@@ -2323,12 +2323,12 @@ static s7_pointer sp_krudd_asset_clone_material(s7_scheme *sc, s7_pointer args)
 }
 
 /*
- * (krudd-asset-save-mesh-script id text) -> #t on a well-formed save, #f when
+ * (krudd-asset-save-mesh id text) -> #t on a well-formed save, #f when
  * the source is not a (mesh ...) form with a (generate ...) clause (nothing
- * is committed, so a broken edit never reaches the live asset) — the mesh-
- * script analogue of krudd-asset-save-script.
+ * is committed, so a broken edit never reaches the live asset) — the mesh
+ * analogue of krudd-asset-save-script.
  */
-static s7_pointer sp_krudd_asset_save_mesh_script(s7_scheme *sc, s7_pointer args)
+static s7_pointer sp_krudd_asset_save_mesh(s7_scheme *sc, s7_pointer args)
 {
 	uint32_t                 id  = (uint32_t)s7_integer(s7_car(args));
 	const char               *txt = s7_is_string(s7_cadr(args))
@@ -2336,49 +2336,49 @@ static s7_pointer sp_krudd_asset_save_mesh_script(s7_scheme *sc, s7_pointer args
 	uint32_t                 len = (uint32_t)strlen(txt);
 	struct asset_decl_field  decl[1];
 
-	if (!mesh_script_form_ok(txt))
+	if (!mesh_form_ok(txt))
 		return s7_f(sc);
 
 	decl[0].key   = "format";
-	decl[0].value = MESH_SCRIPT_FORMAT;
+	decl[0].value = MESH_FORMAT;
 
 	if (g_asset_mut) {
 		g_asset_mut->set_data(id, txt, len);
 		if (g_asset_mut->set_decl)
 			g_asset_mut->set_decl(id, decl, 1);
 	}
-	maybe_persist_asset(id, ASSET_TYPE_MESH_SCRIPT, txt, len);
+	maybe_persist_asset(id, ASSET_TYPE_MESH, txt, len);
 	return s7_t(sc);
 }
 
 /*
- * (krudd-asset-create-mesh-script path) -> the new id, or 0 on failure. Seeds
- * from the built-in grid mesh script so authoring starts from a working
- * (mesh ...) form; no declaration is set yet — the first successful Save
- * publishes it, mirroring krudd-asset-create-script.
+ * (krudd-asset-create-mesh path) -> the new id, or 0 on failure. Seeds
+ * from the built-in grid mesh so authoring starts from a working (mesh ...)
+ * form; no declaration is set yet — the first successful Save publishes it,
+ * mirroring krudd-asset-create-script.
  */
-static s7_pointer sp_krudd_asset_create_mesh_script(s7_scheme *sc, s7_pointer args)
+static s7_pointer sp_krudd_asset_create_mesh(s7_scheme *sc, s7_pointer args)
 {
 	s7_pointer  path = s7_car(args);
 	const char *p    = s7_is_string(path) ? s7_string(path) : "";
-	const char *seed = default_mesh_script_src();
+	const char *seed = default_mesh_src();
 	uint32_t    len  = (uint32_t)strlen(seed);
 	uint32_t    nid  = 0;
 
 	if (g_asset_mut)
-		nid = g_asset_mut->create(p, ASSET_TYPE_MESH_SCRIPT, seed, len);
+		nid = g_asset_mut->create(p, ASSET_TYPE_MESH, seed, len);
 	if (nid != 0)
-		maybe_persist_asset(nid, ASSET_TYPE_MESH_SCRIPT, seed, len);
+		maybe_persist_asset(nid, ASSET_TYPE_MESH, seed, len);
 	return s7_make_integer(sc, (s7_int)nid);
 }
 
 /*
- * (krudd-asset-clone-mesh-script name text) -> the new id, or 0 on failure
- * (e.g. a duplicate path) — the built-in mesh script "Clone" flow's whole
- * commit: create, publish the derived declaration, persist. Mirrors
+ * (krudd-asset-clone-mesh name text) -> the new id, or 0 on failure
+ * (e.g. a duplicate path) — the built-in mesh "Clone" flow's whole commit:
+ * create, publish the derived declaration, persist. Mirrors
  * krudd-asset-clone-script.
  */
-static s7_pointer sp_krudd_asset_clone_mesh_script(s7_scheme *sc, s7_pointer args)
+static s7_pointer sp_krudd_asset_clone_mesh(s7_scheme *sc, s7_pointer args)
 {
 	s7_pointer               name = s7_car(args);
 	s7_pointer               text = s7_cadr(args);
@@ -2389,15 +2389,15 @@ static s7_pointer sp_krudd_asset_clone_mesh_script(s7_scheme *sc, s7_pointer arg
 	struct asset_decl_field  decl[1];
 
 	if (g_asset_mut)
-		nid = g_asset_mut->create(nm, ASSET_TYPE_MESH_SCRIPT, txt, len);
+		nid = g_asset_mut->create(nm, ASSET_TYPE_MESH, txt, len);
 	if (nid == 0)
 		return s7_make_integer(sc, 0);
 
 	decl[0].key   = "format";
-	decl[0].value = MESH_SCRIPT_FORMAT;
+	decl[0].value = MESH_FORMAT;
 	if (g_asset_mut->set_decl)
 		g_asset_mut->set_decl(nid, decl, 1);
-	maybe_persist_asset(nid, ASSET_TYPE_MESH_SCRIPT, txt, len);
+	maybe_persist_asset(nid, ASSET_TYPE_MESH, txt, len);
 	return s7_make_integer(sc, (s7_int)nid);
 }
 
@@ -2691,15 +2691,15 @@ static s7_scheme *ensure_panel_scm(void)
 	s7_define_function(sc, "krudd-asset-clone-script",
 			   sp_krudd_asset_clone_script, 2, 0, false,
 			   "(krudd-asset-clone-script name text) -> new id or 0");
-	s7_define_function(sc, "krudd-asset-save-mesh-script",
-			   sp_krudd_asset_save_mesh_script, 2, 0, false,
-			   "(krudd-asset-save-mesh-script id text) -> #t/#f");
-	s7_define_function(sc, "krudd-asset-create-mesh-script",
-			   sp_krudd_asset_create_mesh_script, 1, 0, false,
-			   "(krudd-asset-create-mesh-script path) -> new id or 0");
-	s7_define_function(sc, "krudd-asset-clone-mesh-script",
-			   sp_krudd_asset_clone_mesh_script, 2, 0, false,
-			   "(krudd-asset-clone-mesh-script name text) -> new id or 0");
+	s7_define_function(sc, "krudd-asset-save-mesh",
+			   sp_krudd_asset_save_mesh, 2, 0, false,
+			   "(krudd-asset-save-mesh id text) -> #t/#f");
+	s7_define_function(sc, "krudd-asset-create-mesh",
+			   sp_krudd_asset_create_mesh, 1, 0, false,
+			   "(krudd-asset-create-mesh path) -> new id or 0");
+	s7_define_function(sc, "krudd-asset-clone-mesh",
+			   sp_krudd_asset_clone_mesh, 2, 0, false,
+			   "(krudd-asset-clone-mesh name text) -> new id or 0");
 	s7_define_function(sc, "krudd-asset-clone-material",
 			   sp_krudd_asset_clone_material, 3, 0, false,
 			   "(krudd-asset-clone-material name shader-ref values)"
@@ -3842,9 +3842,7 @@ static void draw_inspector_mesh(const struct world *w, uint32_t e)
 			bool              is_cur;
 
 			if (g_asset_api->info(k, &mi) != 0 ||
-			    (mi.type != ASSET_TYPE_MESH &&
-			     mi.type != ASSET_TYPE_MESH_SCRIPT) ||
-			    mi.id == 0)
+			    mi.type != ASSET_TYPE_MESH || mi.id == 0)
 				continue;
 			snprintf(row, sizeof(row), "%s##m%u", mi.path, mi.id);
 			is_cur = has_render && mi.id == cur_ref;

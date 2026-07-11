@@ -306,14 +306,15 @@ static void seed_script(const char *path, const char *src)
 }
 
 /*
- * Seed one built-in mesh script from NUL-terminated Scheme source, the same
- * shape as seed_script: the (mesh NAME (generate () ...)) text becomes the
- * asset's bytes, so a consumer resolves it to a real mesh_blob on demand via
+ * Seed one built-in mesh from NUL-terminated Scheme source, the same shape as
+ * seed_script: the (mesh NAME (generate () ...)) text becomes the asset's
+ * bytes, so a consumer resolves it to a real mesh_blob on demand via
  * mesh_script_generate() (asset/mesh_script.c) rather than at seed time —
- * mirroring how a shader asset stores DSL source, not compiled GLSL.
- * ASSET_TYPE_MESH_SCRIPT tags it for the mesh-script-only picker.
+ * mirroring how a shader asset stores DSL source, not compiled GLSL. There is
+ * no separate "mesh script" type: every ASSET_TYPE_MESH asset is one of
+ * these, full stop.
  */
-static void seed_mesh_script(const char *path, const char *src)
+static void seed_mesh(const char *path, const char *src)
 {
 	struct asset_entry *e;
 	uint32_t            n;
@@ -332,7 +333,7 @@ static void seed_mesh_script(const char *path, const char *src)
 	e->state     = ASSET_LOADED;
 	e->kind      = ASSET_KIND_PRIMITIVE;
 	e->read_only = 1;
-	e->type      = ASSET_TYPE_MESH_SCRIPT;
+	e->type      = ASSET_TYPE_MESH;
 }
 
 static void seed_builtins(void)
@@ -342,17 +343,17 @@ static void seed_builtins(void)
 	builtins_seeded = 1;
 
 	/*
-	 * Every built-in mesh, the four classic primitives included, is a mesh
-	 * script — there is no hardcoded C mesh generator. seed_mesh_script
-	 * stores each (mesh NAME (generate () ...)) source verbatim; a
-	 * consumer resolves it to a real mesh_blob on demand via
+	 * Every built-in mesh, the four classic primitives included, is
+	 * authored the same way — there is no hardcoded C mesh generator.
+	 * seed_mesh stores each (mesh NAME (generate () ...)) source
+	 * verbatim; a consumer resolves it to a real mesh_blob on demand via
 	 * mesh_script_generate().
 	 */
-	seed_mesh_script("builtin://cube",    CUBE_MESH_SCRIPT_SRC);
-	seed_mesh_script("builtin://sphere",  SPHERE_MESH_SCRIPT_SRC);
-	seed_mesh_script("builtin://plane",   PLANE_MESH_SCRIPT_SRC);
-	seed_mesh_script("builtin://pyramid", PYRAMID_MESH_SCRIPT_SRC);
-	seed_mesh_script("builtin://mesh-script/grid", GRID_MESH_SCRIPT_SRC);
+	seed_mesh("builtin://mesh/cube",    CUBE_MESH_SCRIPT_SRC);
+	seed_mesh("builtin://mesh/sphere",  SPHERE_MESH_SCRIPT_SRC);
+	seed_mesh("builtin://mesh/plane",   PLANE_MESH_SCRIPT_SRC);
+	seed_mesh("builtin://mesh/pyramid", PYRAMID_MESH_SCRIPT_SRC);
+	seed_mesh("builtin://mesh/grid",    GRID_MESH_SCRIPT_SRC);
 
 	{
 		uint32_t scene_shader =
@@ -667,7 +668,7 @@ const void *asset_catalog_get_data(uint32_t id, uint32_t *out_size)
 /* ------------------------------------------------------------------ */
 
 static const struct asset_decl_field cube_decl[] = {
-	{ "format",     "krudd-mesh-script"     },
+	{ "format",     "krudd-mesh"            },
 	{ "topology",   "triangles"             },
 	{ "vertices",   "24"                    },
 	{ "indices",    "36"                    },
@@ -677,7 +678,7 @@ static const struct asset_decl_field cube_decl[] = {
 };
 
 static const struct asset_decl_field sphere_decl[] = {
-	{ "format",        "krudd-mesh-script"     },
+	{ "format",        "krudd-mesh"            },
 	{ "topology",      "triangles"             },
 	{ "segments",      "rings 16, sectors 32"  },
 	{ "vertices",      "561"                   },
@@ -687,7 +688,7 @@ static const struct asset_decl_field sphere_decl[] = {
 };
 
 static const struct asset_decl_field plane_decl[] = {
-	{ "format",     "krudd-mesh-script"     },
+	{ "format",     "krudd-mesh"            },
 	{ "topology",   "triangles"             },
 	{ "vertices",   "4"                     },
 	{ "indices",    "6"                     },
@@ -696,7 +697,7 @@ static const struct asset_decl_field plane_decl[] = {
 };
 
 static const struct asset_decl_field pyramid_decl[] = {
-	{ "format",     "krudd-mesh-script"     },
+	{ "format",     "krudd-mesh"            },
 	{ "topology",   "triangles"             },
 	{ "vertices",   "16"                    },
 	{ "indices",    "18"                    },
@@ -763,16 +764,16 @@ static const struct asset_decl_field orbit_camera_script_decl[] = {
 };
 
 /*
- * A mesh script asset is one (mesh NAME (generate () ...)) Scheme form. It
+ * A mesh asset is one (mesh NAME (generate () ...)) Scheme form. It
  * advertises its source format, the way a shader/script advertises theirs;
- * unlike a script there is no hook set to enumerate — a mesh script always
- * carries exactly one generate clause.
+ * unlike a script there is no hook set to enumerate — a mesh always carries
+ * exactly one generate clause.
  */
-static const struct asset_decl_field grid_mesh_script_decl[] = {
-	{ "format",   "krudd-mesh-script" },
-	{ "topology", "triangles"         },
-	{ "vertices", "25"                },
-	{ "indices",  "96"                },
+static const struct asset_decl_field grid_mesh_decl[] = {
+	{ "format",   "krudd-mesh" },
+	{ "topology", "triangles"  },
+	{ "vertices", "25"         },
+	{ "indices",  "96"         },
 };
 
 struct builtin_desc {
@@ -784,10 +785,10 @@ struct builtin_desc {
 #define ARRAY_SIZE(a) ((uint32_t)(sizeof(a) / sizeof((a)[0])))
 
 static const struct builtin_desc builtin_descs[] = {
-	{ "builtin://cube",    cube_decl,    ARRAY_SIZE(cube_decl)    },
-	{ "builtin://sphere",  sphere_decl,  ARRAY_SIZE(sphere_decl)  },
-	{ "builtin://plane",   plane_decl,   ARRAY_SIZE(plane_decl)   },
-	{ "builtin://pyramid", pyramid_decl, ARRAY_SIZE(pyramid_decl) },
+	{ "builtin://mesh/cube",    cube_decl,    ARRAY_SIZE(cube_decl)    },
+	{ "builtin://mesh/sphere",  sphere_decl,  ARRAY_SIZE(sphere_decl)  },
+	{ "builtin://mesh/plane",   plane_decl,   ARRAY_SIZE(plane_decl)   },
+	{ "builtin://mesh/pyramid", pyramid_decl, ARRAY_SIZE(pyramid_decl) },
 	{ "builtin://shader/scene", scene_shader_decl,
 	  ARRAY_SIZE(scene_shader_decl) },
 	{ "builtin://material/default", default_material_decl,
@@ -802,8 +803,8 @@ static const struct builtin_desc builtin_descs[] = {
 	  ARRAY_SIZE(pulse_script_decl) },
 	{ "builtin://script/orbit-camera", orbit_camera_script_decl,
 	  ARRAY_SIZE(orbit_camera_script_decl) },
-	{ "builtin://mesh-script/grid", grid_mesh_script_decl,
-	  ARRAY_SIZE(grid_mesh_script_decl) },
+	{ "builtin://mesh/grid", grid_mesh_decl,
+	  ARRAY_SIZE(grid_mesh_decl) },
 };
 
 #define BUILTIN_DESC_COUNT ARRAY_SIZE(builtin_descs)

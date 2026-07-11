@@ -154,17 +154,18 @@ static const struct camera_api g_camera_api = {
 };
 
 /*
- * The built-in meshes uploaded once at init. Every one is a mesh script —
- * there is no hardcoded C mesh generator — so resolve_mesh_blob() below
- * compiles each from its Scheme source through the shared s7 image before
- * upload_mesh() GPU-uploads it.
+ * The built-in meshes uploaded once at init. Every ASSET_TYPE_MESH asset's
+ * bytes are (mesh NAME (generate () ...)) Scheme source — there is no
+ * hardcoded C mesh generator and no separate "compiled blob" asset shape —
+ * so upload_mesh() below always compiles through mesh_script_generate()
+ * before GPU-uploading the result.
  */
 static const char *const PRIMITIVE_PATHS[] = {
-	"builtin://cube",
-	"builtin://sphere",
-	"builtin://plane",
-	"builtin://pyramid",
-	"builtin://mesh-script/grid",
+	"builtin://mesh/cube",
+	"builtin://mesh/sphere",
+	"builtin://mesh/plane",
+	"builtin://mesh/pyramid",
+	"builtin://mesh/grid",
 };
 
 #define PRIMITIVE_COUNT \
@@ -422,48 +423,24 @@ static void ensure_shader_pipelines(void)
 }
 
 /*
- * Resolve RENDER_REF to a mesh_blob, transparently compiling an
- * ASSET_TYPE_MESH_SCRIPT asset's Scheme source through mesh_script_generate()
- * when that's what it is. Returns the blob to use for this upload and sets
- * *out_owned to whether the caller must free it (a script-generated blob is a
- * transient local the catalog does not hold; a stored mesh_blob is a borrow
- * like any other asset). NULL means "no mesh" either way.
+ * Upload one mesh's vertex/index buffers. Every ASSET_TYPE_MESH asset's bytes
+ * are (mesh NAME (generate () ...)) Scheme source, so this always compiles
+ * through mesh_script_generate() into a transient local blob before GPU-
+ * uploading it — there is no stored "compiled blob" shape to borrow instead.
  */
-static const struct mesh_blob *resolve_mesh_blob(uint32_t render_ref,
-						  int *out_owned)
-{
-	struct asset_info info;
-	const void        *bytes;
-	uint32_t           size = 0;
-
-	*out_owned = 0;
-	if (g_asset->find && g_asset->find(render_ref, &info) == 0
-	    && info.type == ASSET_TYPE_MESH_SCRIPT) {
-		bytes = g_asset->get_data(render_ref, NULL);
-		if (!bytes)
-			return NULL;
-		*out_owned = 1;
-		return mesh_script_generate((const char *)bytes, g_mem, NULL);
-	}
-
-	bytes = g_asset->get_data(render_ref, &size);
-	if (!bytes || size < sizeof(struct mesh_blob)
-	    || ((const struct mesh_blob *)bytes)->magic != MESH_BLOB_MAGIC)
-		return NULL;
-	return (const struct mesh_blob *)bytes;
-}
-
-/* Upload one primitive's vertex/index buffers from its mesh blob. */
 static void upload_mesh(const struct gpu_api *gpu, uint32_t render_ref)
 {
 	const struct mesh_blob *blob;
 	struct gpu_buffer_desc  bd;
 	struct mesh_gpu        *m;
-	int                     owned;
+	const char             *src;
 
 	if (g_mesh_count >= SCENE_MAX_MESHES)
 		return;
-	blob = resolve_mesh_blob(render_ref, &owned);
+	src = (const char *)g_asset->get_data(render_ref, NULL);
+	if (!src)
+		return;
+	blob = mesh_script_generate(src, g_mem, NULL);
 	if (!blob)
 		return;
 
@@ -484,8 +461,7 @@ static void upload_mesh(const struct gpu_api *gpu, uint32_t render_ref)
 
 	g_mesh_count++;
 
-	if (owned)
-		g_mem->free((void *)blob);
+	g_mem->free((void *)blob);
 }
 
 /*
@@ -502,10 +478,10 @@ static void seed_demo_scene(void)
 		const char *script; /* behavior script to bind, or NULL */
 		const char *name;   /* shown in the entity list */
 	} DEMO[] = {
-		{ "builtin://cube",    { -1.5f, 0.0f,  0.0f }, "builtin://script/spinner", "Cube"    },
-		{ "builtin://sphere",  {  0.0f, 0.0f, -1.0f }, "builtin://script/bounce",  "Sphere"  },
-		{ "builtin://pyramid", {  1.5f, 0.0f,  0.5f }, "builtin://script/wobble",  "Pyramid" },
-		{ "builtin://mesh-script/grid", { 0.0f, -0.5f, 1.5f }, NULL, "Grid" },
+		{ "builtin://mesh/cube",    { -1.5f, 0.0f,  0.0f }, "builtin://script/spinner", "Cube"    },
+		{ "builtin://mesh/sphere",  {  0.0f, 0.0f, -1.0f }, "builtin://script/bounce",  "Sphere"  },
+		{ "builtin://mesh/pyramid", {  1.5f, 0.0f,  0.5f }, "builtin://script/wobble",  "Pyramid" },
+		{ "builtin://mesh/grid",    { 0.0f, -0.5f, 1.5f }, NULL, "Grid" },
 	};
 	const struct world *w;
 	uint32_t            i;

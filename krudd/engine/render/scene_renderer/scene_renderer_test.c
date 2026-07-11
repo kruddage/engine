@@ -20,15 +20,15 @@ void fg_plugin_entry(struct subsystem_manager *mgr);
 void scene_renderer_plugin_entry(struct subsystem_manager *mgr);
 
 /* ------------------------------------------------------------------ */
-/* A minimal fake asset catalog: the built-in mesh scripts and the     */
-/* one scene shader (DSL, both stages), addressed by stable id (i + 1). */
+/* A minimal fake asset catalog: the built-in meshes and the one scene */
+/* shader (DSL, both stages), addressed by stable id (i + 1).          */
 /* ------------------------------------------------------------------ */
 
 static const char *const CAT_PATHS[] = {
-	"builtin://cube",
-	"builtin://sphere",
-	"builtin://plane",
-	"builtin://pyramid",
+	"builtin://mesh/cube",
+	"builtin://mesh/sphere",
+	"builtin://mesh/plane",
+	"builtin://mesh/pyramid",
 	"builtin://shader/scene",
 	"material/red",
 	"shader/alt",
@@ -38,19 +38,19 @@ static const char *const CAT_PATHS[] = {
 
 /* Per-index asset type, addressed the same way as the id (id == index + 1). */
 static const int32_t CAT_TYPES[CAT_COUNT] = {
-	ASSET_TYPE_MESH_SCRIPT, /* id 1 cube    */
-	ASSET_TYPE_MESH_SCRIPT, /* id 2 sphere  */
-	ASSET_TYPE_MESH_SCRIPT, /* id 3 plane   */
-	ASSET_TYPE_MESH_SCRIPT, /* id 4 pyramid */
-	ASSET_TYPE_SHADER,      /* id 5 scene shader */
-	ASSET_TYPE_MATERIAL,    /* id 6 material/red (legacy 16-byte, no shader) */
-	ASSET_TYPE_SHADER,      /* id 7 shader/alt   */
-	ASSET_TYPE_MATERIAL,    /* id 8 material/blue (v2: base_color + shader 7) */
+	ASSET_TYPE_MESH,     /* id 1 cube    */
+	ASSET_TYPE_MESH,     /* id 2 sphere  */
+	ASSET_TYPE_MESH,     /* id 3 plane   */
+	ASSET_TYPE_MESH,     /* id 4 pyramid */
+	ASSET_TYPE_SHADER,   /* id 5 scene shader */
+	ASSET_TYPE_MATERIAL, /* id 6 material/red (legacy 16-byte, no shader) */
+	ASSET_TYPE_SHADER,   /* id 7 shader/alt   */
+	ASSET_TYPE_MATERIAL, /* id 8 material/blue (v2: base_color + shader 7) */
 };
 
-/* ids 1-4 serve (mesh ...) source text — upload_mesh's resolve_mesh_blob
- * compiles it through the real s7 image, exactly as the shipped asset plugin
- * seeds these same four built-ins (see asset_plugin.c). */
+/* ids 1-4 serve (mesh ...) source text — upload_mesh compiles it through the
+ * real s7 image, exactly as the shipped asset plugin seeds these same four
+ * built-ins (see asset_plugin.c). */
 static const char *const CAT_MESH_SCRIPTS[4] = {
 	CUBE_MESH_SCRIPT_SRC, SPHERE_MESH_SCRIPT_SRC,
 	PLANE_MESH_SCRIPT_SRC, PYRAMID_MESH_SCRIPT_SRC,

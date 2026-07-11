@@ -6,9 +6,10 @@
 #include "memory_api.h"
 
 /*
- * mesh_script — the bridge between an ASSET_TYPE_MESH_SCRIPT asset's Scheme
- * source and a real mesh_blob, the same shape primitive_generate() (see
- * primitives.h) hands back for the four built-in primitives.
+ * mesh_script — the bridge between an ASSET_TYPE_MESH asset's Scheme source
+ * and a real mesh_blob. There is no other kind of mesh asset: every built-in
+ * or authored mesh is a (mesh NAME (generate () ...)) form, and this is what
+ * turns one into GPU-uploadable geometry.
  *
  * Evaluate SRC — a (mesh NAME (generate () ...)) form, see
  * core/mesh_script.scm — against the shared s7 image and marshal its result

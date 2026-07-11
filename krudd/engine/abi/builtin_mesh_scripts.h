@@ -3,8 +3,8 @@
 #define BUILTIN_MESH_SCRIPTS_H
 
 /*
- * Built-in mesh scripts, seeded as read-only ASSET_TYPE_MESH_SCRIPT assets
- * (see asset_plugin.c). Each is a single (mesh NAME (generate () ...)) form
+ * Built-in meshes, seeded as read-only ASSET_TYPE_MESH assets (see
+ * asset_plugin.c). Each is a single (mesh NAME (generate () ...)) form
  * in the same S7 Scheme the shader and entity-script DSLs use — the runtime
  * image's (mesh ...) macro registers it and asset/mesh_script.c marshals its
  * result into a mesh_blob on demand (see core/mesh_script.scm). There is no

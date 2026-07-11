@@ -13,7 +13,7 @@
 ;;! triangle per triple).
 ;;!
 ;;! The engine's mesh-script driver (asset/mesh_script.c) calls
-;;! mesh-script-generate with the source text of a bound ASSET_TYPE_MESH_SCRIPT
+;;! mesh-script-generate with the source text of a bound ASSET_TYPE_MESH
 ;;! asset and marshals the (VERTS . INDICES) result into a mesh_blob. Unlike
 ;;! an entity script (re-run every tick, cheap pose math) a mesh script is a
 ;;! pure function of nothing — no clock, no entity — so its result is parsed

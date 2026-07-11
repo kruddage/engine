@@ -26,13 +26,12 @@ static int32_t index_of(const char *path)
 }
 
 /*
- * A built-in mesh script must be a loaded read-only ASSET_TYPE_MESH_SCRIPT
- * asset whose get_data() returns the (mesh ...) source text verbatim — the
- * asset stores Scheme source, not a compiled mesh_blob (see seed_mesh_script
- * in asset_plugin.c); a consumer resolves it to a blob on demand through
- * mesh_script_generate().
+ * A built-in mesh must be a loaded read-only ASSET_TYPE_MESH asset whose
+ * get_data() returns the (mesh ...) source text verbatim — the asset stores
+ * Scheme source, not a compiled mesh_blob (see seed_mesh in asset_plugin.c);
+ * a consumer resolves it to a blob on demand through mesh_script_generate().
  */
-static void check_mesh_script(const char *path)
+static void check_mesh(const char *path)
 {
 	struct asset_info info;
 	const char        *src;
@@ -43,7 +42,7 @@ static void check_mesh_script(const char *path)
 	assert(idx >= 0);
 
 	assert(asset_catalog_info((uint32_t)idx, &info) == 0);
-	assert(info.type      == ASSET_TYPE_MESH_SCRIPT);
+	assert(info.type      == ASSET_TYPE_MESH);
 	assert(info.kind      == ASSET_KIND_PRIMITIVE);
 	assert(info.read_only == 1);
 	assert(info.state     == ASSET_LOADED);
@@ -63,11 +62,11 @@ int main(void)
 
 	asset_init();
 
-	check_mesh_script("builtin://cube");
-	check_mesh_script("builtin://sphere");
-	check_mesh_script("builtin://plane");
-	check_mesh_script("builtin://pyramid");
-	check_mesh_script("builtin://mesh-script/grid");
+	check_mesh("builtin://mesh/cube");
+	check_mesh("builtin://mesh/sphere");
+	check_mesh("builtin://mesh/plane");
+	check_mesh("builtin://mesh/pyramid");
+	check_mesh("builtin://mesh/grid");
 
 	log_shutdown();
 	mem_shutdown();

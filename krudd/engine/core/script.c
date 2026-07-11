@@ -69,9 +69,8 @@ void script_init(void)
 	/*
 	 * Load the mesh-script dispatcher: the (mesh ...) form and
 	 * mesh-script-generate. The asset plugin's mesh_script.c calls it to
-	 * marshal a bound ASSET_TYPE_MESH_SCRIPT asset's source into a
-	 * mesh_blob, the runtime-authored counterpart to primitives.scm's
-	 * build-time-codegen'd built-ins.
+	 * marshal a bound ASSET_TYPE_MESH asset's source into a mesh_blob —
+	 * every mesh in the engine, built-in or authored, is one of these.
 	 */
 	script_eval(MESH_SCRIPT_SCM);
 }

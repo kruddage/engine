@@ -2052,16 +2052,22 @@ static void test_world_inspector(void)
 	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
 
 	assert(rec_has("input-text|##ename|Cube"));
+	assert(rec_has("header|Transform|1")); /* transform folds, defaults open  */
 	assert(rec_has("table-plain|##xform"));
 	assert(rec_has("input-f3|##pos"));
 	assert(rec_has("input-f4|##rot"));
 	assert(rec_has("input-f3|##scl"));
+	assert(rec_has("header|Info|0"));      /* read-only details start folded  */
 	assert(rec_has("text|Entity ID"));
 	assert(rec_has("text|(root)"));
 	assert(rec_has("text|Transform, Name, Render")); /* name + render, no mat */
+	assert(rec_has("header|Bindings|1")); /* mesh/material/script fold, open  */
 	assert(rec_has("combo|##meshsel|cube.mesh"));    /* resolved binding      */
 	assert(rec_has("combo|##materialsel|(none)"));   /* unbound material      */
 	assert(rec_has("combo|##scriptsel|(none)"));     /* unbound script        */
+	/* the three inspector sections render in order: transform, info, bindings */
+	assert(rec_index("header|Transform|1") < rec_index("header|Info|0"));
+	assert(rec_index("header|Info|0") < rec_index("header|Bindings|1"));
 }
 
 /* A node whose entity has gone stale (inspect returns #f) shows a dimmed

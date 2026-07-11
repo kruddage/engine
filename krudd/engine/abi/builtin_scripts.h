@@ -90,17 +90,21 @@
  * entity's animated world_xform each tick and feeds it into the camera's eye,
  * so "camera behavior" is just another entity script. `radius`, `height`, and
  * `speed` default to the values it always orbited at, so an un-tuned camera
- * is unchanged.
+ * is unchanged. `angle-offset` is the starting angle (radians) added to
+ * t*speed, letting an author park the camera wherever they stopped it
+ * instead of always starting at angle 0.
  */
 #define ORBIT_CAMERA_SCRIPT_SRC                                              \
 	"(script orbit-camera\n"                                             \
-	"  (params (radius float (default 5)   (edit range 0 20))\n"        \
-	"          (height float (default 2.5) (edit range 0 10))\n"        \
-	"          (speed  float (default 0.4) (edit range 0 3)))\n"        \
+	"  (params (radius       float (default 5)   (edit range 0 20))\n"  \
+	"          (height       float (default 2.5) (edit range 0 10))\n"  \
+	"          (speed        float (default 0.4) (edit range 0 3))\n"   \
+	"          (angle-offset float (default 0)    (edit range -3.14159265 3.14159265)))\n" \
 	"  (on-tick (self t)\n"                                              \
-	"    (entity-set-position! self\n"                                   \
-	"      (* (param 'radius) (cos (* t (param 'speed))))\n"             \
-	"      (param 'height)\n"                                            \
-	"      (* (param 'radius) (sin (* t (param 'speed)))))))\n"
+	"    (let ((a (+ (* t (param 'speed)) (param 'angle-offset))))\n"    \
+	"      (entity-set-position! self\n"                                 \
+	"        (* (param 'radius) (cos a))\n"                              \
+	"        (param 'height)\n"                                          \
+	"        (* (param 'radius) (sin a))))))\n"
 
 #endif /* BUILTIN_SCRIPTS_H */

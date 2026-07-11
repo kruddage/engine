@@ -12,6 +12,15 @@
 	(public "." (root "abi"))
 	(private (root "core/include") (raw "../third_party"))
 	(link "script"))
+ ;;! The texture-script bridge (source -> texture_blob) as a shared library, the
+ ;;! pixel twin of mesh_script: the renderer bakes an ASSET_TYPE_TEXTURE asset
+ ;;! through one copy of texture_script_generate rather than each consumer
+ ;;! compiling the source into the single WASM module.
+ (library "texture_script"
+	(sources "texture_script.c")
+	(public "." (root "abi"))
+	(private (root "core/include") (raw "../third_party"))
+	(link "script"))
  (native-only
 	(executable "asset_test" (sources "asset_test.c")
 		(link "asset_plugin" "log" "memory"))
@@ -41,4 +50,10 @@
 		(sources "mesh_script_test.c")
 		(private "." (root "abi") (raw "../third_party"))
 		(link "mesh_script" "script" "memory" "log"))
-	(test "mesh_script" "mesh_script_test")))
+	(test "mesh_script" "mesh_script_test")
+
+	(executable "texture_script_test"
+		(sources "texture_script_test.c")
+		(private "." (root "abi") (raw "../third_party"))
+		(link "texture_script" "script" "memory" "log"))
+	(test "texture_script" "texture_script_test")))

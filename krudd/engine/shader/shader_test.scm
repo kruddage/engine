@@ -126,6 +126,39 @@
 		    (fragment (set c (vec4 1.0 1.0 1.0 1.0))))")
 	       (list 0)))
 
+(display "shader: samplers\n")
+;;! A shader declaring a sampler alongside a std140 Material block: the fragment
+;;! samples it, the vertex never touches it. Samplers live in (uniforms ...) but
+;;! bind to their own texture unit rather than the block.
+(define tex-shader "(shader textured
+  (inputs (a_pos vec3 (location 0)) (a_uv0 vec2 (location 1)))
+  (uniforms (Camera (block 0) (layout std140) (view_proj mat4))
+            (Material (block 1) (layout std140) (base_color vec4 (edit color)))
+            (albedo sampler2D))
+  (varyings (v_uv vec2))
+  (targets (frag_color vec4 (location 0)))
+  (vertex
+    (set v_uv a_uv0)
+    (set position (* view_proj (vec4 a_pos 1.0))))
+  (fragment
+    (set frag_color (* (sample albedo v_uv) base_color))))")
+(define tvs (shader-transpile tex-shader "vertex"))
+(define tfs (shader-transpile tex-shader "fragment"))
+(check "the fragment declares the sampler it uses (own unit, no std140 layout)"
+       (has? tfs "uniform sampler2D albedo;"))
+(check "the sampler declaration carries no layout(std140)"
+       (not (has? tfs "layout(std140) uniform sampler2D")))
+(check "(sample tex uv) lowers to the GLSL texture() builtin"
+       (has? tfs "frag_color = (texture(albedo, v_uv) * base_color);"))
+(check "the Material block still declares alongside the sampler"
+       (has? tfs "layout(std140) uniform Material {\n\thighp vec4 base_color;\n};"))
+(check "the vertex omits the sampler it never samples"
+       (not (has? tvs "sampler2D")))
+(check "a sampler is not a material param (only base_color is, block size 16)"
+       (let ((mp (shader-material-params tex-shader)))
+	 (and (= (car mp) 16) (= (length (cdr mp)) 1)
+	      (equal? (car (list-ref mp 1)) "base_color"))))
+
 (display "shader: missing-stage shader\n")
 (let ((frag-only "(shader glow (targets (c vec4 (location 0)))
                     (fragment (set c (vec4 1.0 1.0 1.0 1.0))))"))

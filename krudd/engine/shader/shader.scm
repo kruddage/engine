@@ -74,6 +74,7 @@
 	       ((float) 'float) ((int) 'int)
 	       ((swizzle) (shader-swizzle-type (cadr args)))
 	       ((dot length distance) 'float)
+	       ((sample) 'vec4)
 	       ((cross) 'vec3)
 	       ((normalize sin cos tan sqrt abs floor fract exp log
 		 radians degrees)
@@ -136,6 +137,11 @@
 		      (shader-join (string-append " " (symbol->string op) " ")
 				   (map (lambda (a) (shader-emit a env)) args))
 		      ")")))
+	       ((sample)
+		(string-append "texture("
+			       (shader-join ", "
+				 (map (lambda (a) (shader-emit a env)) args))
+			       ")"))
 	       (else
 		(string-append (symbol->string op) "("
 			       (shader-join ", "
@@ -228,6 +234,37 @@
 	(shader-keep (lambda (f) (not (memq (car f) '(block layout))))
 		     (cdr block)))
 
+;;! A (uniforms ...) entry is either a std140 block or a standalone sampler
+;;! (NAME sampler2D) — a texture bound to its own unit, not packed into a block.
+;;! The cadr tells them apart: a block's is an option list like (block N), a
+;;! sampler's is a bare type symbol. Samplers carry no std140 layout and no
+;;! cross-stage precision constraint, so they take a separate emit path and never
+;;! reach the block/material machinery.
+(define shader-sampler-types '(sampler2D))
+
+(define (shader-uniform-sampler? u)
+	(and (pair? (cdr u)) (memq (cadr u) shader-sampler-types) #t))
+
+(define (shader-uniform-blocks form)
+	(shader-keep (lambda (u) (not (shader-uniform-sampler? u)))
+		     (shader-section form 'uniforms)))
+
+(define (shader-uniform-samplers form)
+	(shader-keep shader-uniform-sampler? (shader-section form 'uniforms)))
+
+;;! Emit `uniform sampler2D NAME;` for each sampler the stage actually samples
+;;! (unused ones are omitted, like unused blocks/varyings). A sampler binds to a
+;;! texture unit rather than an interface block, so it needs no layout qualifier
+;;! and no highp pin.
+(define (shader-emit-samplers samplers refs)
+	(apply string-append
+	  (map (lambda (s)
+		 (if (shader-uses? refs (car s))
+		     (string-append "uniform " (shader-type->glsl (cadr s)) " "
+				    (symbol->string (car s)) ";\n")
+		     ""))
+	       samplers)))
+
 (define (shader-emit-inputs inputs)
 	(apply string-append
 	  (map (lambda (i)
@@ -291,7 +328,9 @@
 		 (map (lambda (b)
 			(map (lambda (f) (cons (car f) (cadr f)))
 			     (shader-block-fields b)))
-		      (shader-section form 'uniforms)))
+		      (shader-uniform-blocks form)))
+	  (map (lambda (s) (cons (car s) (cadr s)))
+	       (shader-uniform-samplers form))
 	  (map (lambda (v) (cons (car v) (cadr v)))
 	       (shader-section form 'varyings))
 	  (map (lambda (tg) (cons (car tg) (cadr tg)))
@@ -404,7 +443,8 @@
 		   (if (eq? stage 'fragment) "precision mediump float;\n" "")
 		   (if (eq? stage 'vertex)
 		       (shader-emit-inputs (shader-section form 'inputs)) "")
-		   (shader-emit-uniforms (shader-section form 'uniforms) refs)
+		   (shader-emit-uniforms (shader-uniform-blocks form) refs)
+		   (shader-emit-samplers (shader-uniform-samplers form) refs)
 		   (shader-emit-varyings (shader-section form 'varyings)
 					 stage refs)
 		   (if (eq? stage 'fragment)

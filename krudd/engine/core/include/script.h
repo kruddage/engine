@@ -104,6 +104,18 @@ int script_entity_params(const char *src, struct shader_param *out,
 int script_mesh_params(const char *src, struct shader_param *out,
 		       uint32_t max, uint32_t *total_size);
 
+/*
+ * Introspect a texture script's (params ...) clause as editable parameters, the
+ * pixel-side twin of script_mesh_params: same tight packing, same reported
+ * shape, so one marshaller and one set of editor widgets serve textures too.
+ * Fills out[] with up to `max` fields (in declaration order), writes the
+ * tight-packed block size to *total_size (may be NULL), and returns the field
+ * count (>= 0), or -1 on the same failure conditions. A texture with no params
+ * yields 0 fields — not an error. SRC is the (texture ...) source.
+ */
+int script_texture_params(const char *src, struct shader_param *out,
+			  uint32_t max, uint32_t *total_size);
+
 /* Call the Scheme (tick) procedure if the image defines one. */
 void script_tick(void);
 

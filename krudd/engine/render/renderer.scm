@@ -163,12 +163,20 @@
 
 (c-section "Texture descriptors")
 
+;;! initial-data (may be NULL) is a tightly-packed pixel buffer uploaded to mip
+;;! level 0 at create time — the seam a baked procedural texture rides in on.
+;;! generate-mips (0/1) asks the backend to build the full mip chain from level 0
+;;! after upload (glGenerateMipmap on GL; a render/compute blit on a future
+;;! WebGPU backend). A render-target texture leaves both zero, exactly as before
+;;! these fields existed, so the frame graph is unaffected.
 (c-struct gpu-texture-desc
-	(format       gpu-format)
-	(width        u32)
-	(height       u32)
-	(mip-levels   u32)
-	(sample-count u32))
+	(format        gpu-format)
+	(width         u32)
+	(height        u32)
+	(mip-levels    u32)
+	(sample-count  u32)
+	(initial-data  (ptr (const void)))
+	(generate-mips u32))
 
 (c-section "Draw / dispatch")
 
@@ -226,4 +234,10 @@
 	(gpu-host-to-device-ptr (fn (ptr void) ((host-ptr (ptr void)))))
 
 	(texture-create (fn gpu-texture ((desc (ptr (const gpu-texture-desc))))))
-	(texture-destroy (fn void ((texture gpu-texture)))))
+	(texture-destroy (fn void ((texture gpu-texture))))
+
+	;;! Bind a sampled texture to a texture unit for the next draw. The shader's
+	;;! sampler2D uniform reads from the matching unit (unit 0 is the GLSL
+	;;! default, which the scene-textured shader's single albedo sampler uses).
+	(cmd-bind-texture
+	  (fn void ((cmd gpu-cmd-buf) (unit u32) (texture gpu-texture)))))

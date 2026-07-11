@@ -133,14 +133,10 @@
 (define (kruddboard-world-name id name)
   (if (string? name) name (format #f "entity ~D" id)))
 
-;;! (kruddboard-draw-world-header) draws the scene title and the right-aligned,
-;;! always-disabled "Save As..." placeholder the C header drew.
+;;! (kruddboard-draw-world-header) draws the scene title. Scene saving is
+;;! handled elsewhere, so this no longer carries a "Save As..." placeholder.
 (define (kruddboard-draw-world-header)
-  (imgui-text "Untitled Scene")
-  (imgui-same-line-right (imgui-calc-text-width "Save As..."))
-  (imgui-begin-disabled #t)
-  (imgui-small-button "Save As...")
-  (imgui-end-disabled))
+  (imgui-text "Untitled Scene"))
 
 ;;! (kruddboard-draw-world-tree-entity row caps) draws one entity as a tree
 ;;! node: a plain click selects it, the right-aligned x destroys it (disabled

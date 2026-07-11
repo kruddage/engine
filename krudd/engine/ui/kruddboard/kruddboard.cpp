@@ -727,6 +727,60 @@ static s7_pointer sp_imgui_pop_style_color(s7_scheme *sc, s7_pointer args)
 	return s7_unspecified(sc);
 }
 
+/*
+ * (imgui-push-id str) -> unspecified. Open an id scope: every widget id drawn
+ * until the matching imgui-pop-id is hashed against str, so two draws of the
+ * same panel under different ids (the World tree opens one inspector body per
+ * entity, all sharing "##ename" / "##pos" / "##sp") never collide. Pairs with
+ * imgui-pop-id exactly as ImGui::PushID/PopID do.
+ */
+static s7_pointer sp_imgui_push_id(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer id = s7_car(args);
+
+	if (s7_is_string(id))
+		ImGui::PushID(s7_string(id));
+	else
+		ImGui::PushID((int)s7_integer(id));
+	return s7_unspecified(sc);
+}
+
+/* (imgui-pop-id) -> unspecified. Close one imgui-push-id scope. */
+static s7_pointer sp_imgui_pop_id(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	ImGui::PopID();
+	return s7_unspecified(sc);
+}
+
+/*
+ * (imgui-dot r g b a) -> unspecified. Draw a small filled circle inline at the
+ * cursor and advance past it, so a caller can same-line one after a widget as
+ * an "overridden" marker. Uses the window draw list, not a font glyph — the
+ * built-in ProggyClean face has no bullet, so text "*" would be all that is
+ * available; a draw-list circle reads as the mockup's dot on any font.
+ */
+static s7_pointer sp_imgui_dot(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer p = args;
+	double     r = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double     g = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double     b = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double     a = s7_number_to_real(sc, s7_car(p));
+
+	ImDrawList *dl  = ImGui::GetWindowDrawList();
+	ImVec2      pos = ImGui::GetCursorScreenPos();
+	float       lh  = ImGui::GetTextLineHeight();
+	float       rad = lh * 0.28f;
+	ImVec2      c(pos.x + rad + 2.0f, pos.y + lh * 0.5f);
+
+	dl->AddCircleFilled(c, rad,
+			    ImGui::GetColorU32(ImVec4((float)r, (float)g,
+						      (float)b, (float)a)), 12);
+	ImGui::Dummy(ImVec2(rad * 2.0f + 4.0f, lh));
+	return s7_unspecified(sc);
+}
+
 /* Selection id honouring the api / g_entity_sel fallback the World tab uses. */
 static int32_t world_sel(void)
 {
@@ -2351,6 +2405,156 @@ static s7_pointer sp_krudd_entity_save_texture_params(s7_scheme *sc,
 	return s7_unspecified(sc);
 }
 
+/*
+ * Override flags — the per-field twin of the *-values accessors above, one
+ * boolean per param: is this entity's value an override that differs from the
+ * baseline it would draw without one? The World tree lights a dot beside a
+ * widget when its flag is #t. For a script or mesh the baseline is the param's
+ * declared default; for a material it is the shared asset's stored value (else
+ * the shader default), so the dot means "this one entity overrides the shared
+ * material", never "the material author set a non-default". A value edited back
+ * to its baseline clears the flag, so the dot tracks "customized", not "ever
+ * touched". Order matches the *-values list exactly, so map can walk both.
+ */
+
+/* True when any of C floats in an override blob differ from base[]; #f (0)
+ * when the entity has no override covering them, so an untouched param reads
+ * as not-overridden. */
+static int blob_differs(const uint8_t *blob, uint32_t off, uint32_t blen,
+			const float *base, uint32_t c)
+{
+	uint32_t k;
+	float    ov;
+
+	if (!blob || off + c * sizeof(float) > blen)
+		return 0;
+	for (k = 0; k < c; k++) {
+		memcpy(&ov, blob + off + k * sizeof(float), sizeof(float));
+		if (ov != base[k])
+			return 1;
+	}
+	return 0;
+}
+
+static s7_pointer sp_krudd_entity_script_overrides(s7_scheme *sc,
+						   s7_pointer args)
+{
+	int32_t              eid = (int32_t)s7_integer(s7_car(args));
+	uint32_t             ref = (uint32_t)s7_integer(s7_cadr(args));
+	const char          *src = shader_src_cstr(ref);
+	struct shader_param  p[MATERIAL_MAX_PARAMS];
+	uint32_t             total = 0, blen = 0;
+	const uint8_t       *blob = NULL;
+	const struct world  *w    = NULL;
+	int                  n, i;
+	s7_pointer           out = s7_nil(sc);
+
+	if (!src)
+		return out;
+	n = script_entity_params(src, p, MATERIAL_MAX_PARAMS, &total);
+	if (g_entity_api && g_entity_api->get_world)
+		w = g_entity_api->get_world();
+	if (w && eid >= 0 && (uint32_t)eid < w->count)
+		blob = world_script_params(w, (uint32_t)eid, &blen);
+
+	for (i = n - 1; i >= 0; i--) {
+		uint32_t c = p[i].components > 4 ? 4 : p[i].components;
+		float    base[4];
+		uint32_t k;
+
+		for (k = 0; k < c; k++)
+			base[k] = param_default(&p[i], k);
+		out = s7_cons(sc, s7_make_boolean(sc,
+			blob_differs(blob, p[i].offset, blen, base, c)), out);
+	}
+	return out;
+}
+
+static s7_pointer sp_krudd_entity_mesh_overrides(s7_scheme *sc, s7_pointer args)
+{
+	int32_t              eid = (int32_t)s7_integer(s7_car(args));
+	uint32_t             ref = (uint32_t)s7_integer(s7_cadr(args));
+	const char          *src = shader_src_cstr(ref);
+	struct shader_param  p[MATERIAL_MAX_PARAMS];
+	uint32_t             total = 0, blen = 0;
+	const uint8_t       *blob = NULL;
+	const struct world  *w    = NULL;
+	int                  n, i;
+	s7_pointer           out = s7_nil(sc);
+
+	if (!src)
+		return out;
+	n = script_mesh_params(src, p, MATERIAL_MAX_PARAMS, &total);
+	if (g_entity_api && g_entity_api->get_world)
+		w = g_entity_api->get_world();
+	if (w && eid >= 0 && (uint32_t)eid < w->count)
+		blob = world_mesh_params(w, (uint32_t)eid, &blen);
+
+	for (i = n - 1; i >= 0; i--) {
+		uint32_t c = p[i].components > 4 ? 4 : p[i].components;
+		float    base[4];
+		uint32_t k;
+
+		for (k = 0; k < c; k++)
+			base[k] = param_default(&p[i], k);
+		out = s7_cons(sc, s7_make_boolean(sc,
+			blob_differs(blob, p[i].offset, blen, base, c)), out);
+	}
+	return out;
+}
+
+static s7_pointer sp_krudd_entity_material_overrides(s7_scheme *sc,
+						     s7_pointer args)
+{
+	s7_pointer           a          = args;
+	int32_t              eid        = (int32_t)s7_integer(s7_car(a));
+	uint32_t             mat_id, shader_ref;
+	const char          *src;
+	struct shader_param  p[MATERIAL_MAX_PARAMS];
+	uint32_t             total = 0, msz = 0, stored = 0, blen = 0;
+	const unsigned char *mb   = NULL;
+	const uint8_t       *blob = NULL;
+	const struct world  *w    = NULL;
+	int                  n, i, use_stored = 0;
+	s7_pointer           out = s7_nil(sc);
+
+	a          = s7_cdr(a);
+	mat_id     = (uint32_t)s7_integer(s7_car(a));
+	a          = s7_cdr(a);
+	shader_ref = (uint32_t)s7_integer(s7_car(a));
+	src        = shader_src_cstr(shader_ref);
+	if (!src)
+		return out;
+	n = script_shader_material_params(src, p, MATERIAL_MAX_PARAMS, &total);
+	if (g_asset_api && g_asset_api->get_data)
+		mb = (const unsigned char *)g_asset_api->get_data(mat_id, &msz);
+	if (mb && msz >= MATERIAL_HEADER_BYTES) {
+		memcpy(&stored, mb, sizeof(stored));
+		use_stored = (stored == shader_ref);
+	}
+	if (g_entity_api && g_entity_api->get_world)
+		w = g_entity_api->get_world();
+	if (w && eid >= 0 && (uint32_t)eid < w->count)
+		blob = world_material_params(w, (uint32_t)eid, &blen);
+
+	for (i = n - 1; i >= 0; i--) {
+		uint32_t c    = p[i].components > 4 ? 4 : p[i].components;
+		uint32_t moff = MATERIAL_HEADER_BYTES + p[i].offset;
+		float    base[4];
+		uint32_t k;
+
+		/* Baseline the entity draws WITHOUT its override: the shared
+		 * material's stored value, else the shader default. */
+		for (k = 0; k < c; k++)
+			base[k] = param_default(&p[i], k);
+		if (use_stored && moff + c * sizeof(float) <= msz)
+			memcpy(base, mb + moff, c * sizeof(float));
+		out = s7_cons(sc, s7_make_boolean(sc,
+			blob_differs(blob, p[i].offset, blen, base, c)), out);
+	}
+	return out;
+}
+
 /* (krudd-shader-stages src) -> the declared stage list, or "" if none. */
 static s7_pointer sp_krudd_shader_stages(s7_scheme *sc, s7_pointer args)
 {
@@ -2897,6 +3101,12 @@ static s7_scheme *ensure_panel_scm(void)
 	s7_define_function(sc, "imgui-pop-style-color", sp_imgui_pop_style_color,
 			   0, 0, false,
 			   "(imgui-pop-style-color) undo a pushed colour");
+	s7_define_function(sc, "imgui-push-id", sp_imgui_push_id, 1, 0, false,
+			   "(imgui-push-id str) open a widget-id scope");
+	s7_define_function(sc, "imgui-pop-id", sp_imgui_pop_id, 0, 0, false,
+			   "(imgui-pop-id) close one imgui-push-id scope");
+	s7_define_function(sc, "imgui-dot", sp_imgui_dot, 4, 0, false,
+			   "(imgui-dot r g b a) inline filled circle");
 	s7_define_function(sc, "krudd-world-caps", sp_krudd_world_caps, 0, 0,
 			   false,
 			   "(krudd-world-caps) -> (entity-api? asset-api?)");
@@ -3034,6 +3244,18 @@ static s7_scheme *ensure_panel_scm(void)
 	s7_define_function(sc, "krudd-entity-save-texture-params",
 			   sp_krudd_entity_save_texture_params, 3, 0, false,
 			   "(krudd-entity-save-texture-params id texture-ref values)");
+	s7_define_function(sc, "krudd-entity-script-overrides",
+			   sp_krudd_entity_script_overrides, 2, 0, false,
+			   "(krudd-entity-script-overrides id script-ref) -> "
+			   "(overridden? ...)");
+	s7_define_function(sc, "krudd-entity-material-overrides",
+			   sp_krudd_entity_material_overrides, 3, 0, false,
+			   "(krudd-entity-material-overrides id mat shader) -> "
+			   "(bool ...)");
+	s7_define_function(sc, "krudd-entity-mesh-overrides",
+			   sp_krudd_entity_mesh_overrides, 2, 0, false,
+			   "(krudd-entity-mesh-overrides id mesh-ref) -> "
+			   "(overridden? ...)");
 	s7_define_function(sc, "krudd-shader-stages", sp_krudd_shader_stages, 1,
 			   0, false, "(krudd-shader-stages src) -> stage list string");
 	s7_define_function(sc, "krudd-asset-save-text", sp_krudd_asset_save_text,

@@ -4,6 +4,7 @@
 #include "asset_codec_api.h"
 #include "builtin_scripts.h"
 #include "builtin_mesh_scripts.h"
+#include "builtin_texture_scripts.h"
 #include "asset_edit.h"
 #include "edit_api.h"
 #include "subsystem.h"
@@ -336,6 +337,36 @@ static void seed_mesh(const char *path, const char *src)
 	e->type      = ASSET_TYPE_MESH;
 }
 
+/*
+ * Seed one built-in texture from NUL-terminated Scheme source, the same shape as
+ * seed_mesh: the (texture NAME (shade (u v) ...)) text becomes the asset's bytes,
+ * so a consumer bakes it to a real texture_blob on demand via
+ * texture_script_generate() (asset/texture_script.c) at whatever resolution it
+ * asks for, rather than at seed time. There is no separate "texture script"
+ * type: every ASSET_TYPE_TEXTURE asset is one of these.
+ */
+static void seed_texture(const char *path, const char *src)
+{
+	struct asset_entry *e;
+	uint32_t            n;
+
+	e = alloc_entry(path);
+	if (!e)
+		return;
+	n = (uint32_t)strlen(src) + 1;
+	e->data = g_mem->alloc(n);
+	if (!e->data) {
+		e->state = ASSET_ERROR;
+		return;
+	}
+	memcpy(e->data, src, n);
+	e->size      = n;
+	e->state     = ASSET_LOADED;
+	e->kind      = ASSET_KIND_PRIMITIVE;
+	e->read_only = 1;
+	e->type      = ASSET_TYPE_TEXTURE;
+}
+
 static void seed_builtins(void)
 {
 	if (builtins_seeded)
@@ -369,6 +400,15 @@ static void seed_builtins(void)
 	seed_script("builtin://script/wobble",  WOBBLE_SCRIPT_SRC);
 	seed_script("builtin://script/pulse",   PULSE_SCRIPT_SRC);
 	seed_script("builtin://script/orbit-camera", ORBIT_CAMERA_SCRIPT_SRC);
+
+	/*
+	 * Built-in textures, authored the same way as the meshes: each is a
+	 * (texture NAME (shade (u v) ...)) source, baked to a texture_blob on
+	 * demand at whatever resolution the material asks for.
+	 */
+	seed_texture("builtin://texture/checker",  CHECKER_TEXTURE_SCRIPT_SRC);
+	seed_texture("builtin://texture/gradient", GRADIENT_TEXTURE_SCRIPT_SRC);
+	seed_texture("builtin://texture/noise",    NOISE_TEXTURE_SCRIPT_SRC);
 }
 
 #ifdef __EMSCRIPTEN__
@@ -792,6 +832,27 @@ static const struct asset_decl_field grid_mesh_decl[] = {
 	{ "indices",  "96"         },
 };
 
+/*
+ * A texture asset is one (texture NAME (shade (u v) ...)) Scheme form. It
+ * advertises its source format and its authored params — resolution-independent,
+ * so it reports no fixed dimensions (the material picks the bake size), the way a
+ * mesh reports no fixed transform.
+ */
+static const struct asset_decl_field checker_texture_decl[] = {
+	{ "format", "krudd-texture"          },
+	{ "params", "scale, color-a, color-b" },
+};
+
+static const struct asset_decl_field gradient_texture_decl[] = {
+	{ "format", "krudd-texture" },
+	{ "params", "top, bottom"   },
+};
+
+static const struct asset_decl_field noise_texture_decl[] = {
+	{ "format", "krudd-texture" },
+	{ "params", "scale, seed"   },
+};
+
 struct builtin_desc {
 	const char                   *path;
 	const struct asset_decl_field *fields;
@@ -822,6 +883,12 @@ static const struct builtin_desc builtin_descs[] = {
 	  ARRAY_SIZE(orbit_camera_script_decl) },
 	{ "builtin://mesh/grid", grid_mesh_decl,
 	  ARRAY_SIZE(grid_mesh_decl) },
+	{ "builtin://texture/checker", checker_texture_decl,
+	  ARRAY_SIZE(checker_texture_decl) },
+	{ "builtin://texture/gradient", gradient_texture_decl,
+	  ARRAY_SIZE(gradient_texture_decl) },
+	{ "builtin://texture/noise", noise_texture_decl,
+	  ARRAY_SIZE(noise_texture_decl) },
 };
 
 #define BUILTIN_DESC_COUNT ARRAY_SIZE(builtin_descs)

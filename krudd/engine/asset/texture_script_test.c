@@ -9,6 +9,7 @@
  * function of u,v in [0,1) and never sees a size.
  */
 #include "texture_script.h"
+#include "builtin_texture_scripts.h"
 
 #include "script.h"
 #include "log.h"
@@ -159,6 +160,36 @@ static void test_malformed_source_yields_no_texture(void)
 	       == NULL);
 }
 
+/*
+ * Every shipped built-in must bake cleanly at a real authoring size with no
+ * override (defaults only) — checker, gradient, and the value-noise script whose
+ * sin/floor hash is the most likely to fault. A valid blob with opaque alpha
+ * everywhere is the bar; the pattern itself is the author's business.
+ */
+static void bake_builtin_ok(const char *src)
+{
+	struct texture_blob *b;
+	const uint8_t       *px;
+	uint32_t             i, n, size = 0;
+
+	b = texture_script_generate(src, NULL, 0, 64, 64, g_mem, &size);
+	assert(b != NULL);
+	assert(size == texture_blob_size(64, 64));
+	assert(b->width == 64 && b->height == 64);
+	px = texture_blob_pixels(b);
+	n  = 64u * 64u;
+	for (i = 0; i < n; i++)
+		assert(px[i * 4 + 3] == 255); /* opaque everywhere */
+	g_mem->free(b);
+}
+
+static void test_builtins_bake(void)
+{
+	bake_builtin_ok(CHECKER_TEXTURE_SCRIPT_SRC);
+	bake_builtin_ok(GRADIENT_TEXTURE_SCRIPT_SRC);
+	bake_builtin_ok(NOISE_TEXTURE_SCRIPT_SRC);
+}
+
 int main(void)
 {
 	mem_init();
@@ -170,6 +201,7 @@ int main(void)
 	test_checker_params_declared();
 	test_param_override_changes_output();
 	test_malformed_source_yields_no_texture();
+	test_builtins_bake();
 
 	printf("texture_script tests passed\n");
 	return 0;

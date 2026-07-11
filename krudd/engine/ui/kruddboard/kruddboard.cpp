@@ -26,6 +26,7 @@ extern "C" {
 #include "entity_api.h"
 #include "edit_api.h"
 #include "camera_api.h"
+#include "mesh.h"
 #ifdef __EMSCRIPTEN__
 #include "backend_api.h"
 #include "script.h"
@@ -57,6 +58,7 @@ extern "C" int  krudd_is_touch_device(void);
 #endif
 
 #include <cstdio>
+#include <cfloat>
 
 static const struct log_api           *g_log;
 static const struct stats_api         *g_stats;
@@ -3895,8 +3897,12 @@ static float gizmo_handle_len(const float eye[3], const float origin[3])
  * process a drag on one of them.  Runs every frame the board is visible; draws
  * nothing (and grabs nothing) when the selection is empty — satisfying "no
  * gizmo when nothing is selected".
+ *
+ * Returns true when a handle is hot or a drag is in flight, i.e. when the
+ * gizmo owns this frame's click, so the click-to-pick pass below stands down
+ * instead of reselecting out from under a handle grab.
  */
-static void gizmo_update_and_draw(void)
+static bool gizmo_update_and_draw(void)
 {
 	const struct world *w;
 	ImGuiIO            &io = ImGui::GetIO();
@@ -3912,12 +3918,12 @@ static void gizmo_update_and_draw(void)
 	int32_t             hot = GIZMO_AXIS_NONE;
 
 	if (!g_camera_api || !g_entity_api)
-		return;
+		return false;
 
 	sel = g_entity_api->get_selected();
 	w   = g_entity_api->get_world();
 	if (!w || sel < 0 || (uint32_t)sel >= w->count || !w->alive[(uint32_t)sel])
-		return;
+		return false;
 	e = (uint32_t)sel;
 
 	/* Anchor at the entity's world origin; write edits to its local xform. */
@@ -3930,7 +3936,7 @@ static void gizmo_update_and_draw(void)
 	len = gizmo_handle_len(eye, origin);
 
 	if (!gizmo_project(vp.m, origin, io.DisplaySize, &o2d))
-		return; /* entity behind the camera */
+		return false; /* entity behind the camera */
 
 	/* Project each axis tip; bail an axis that clips behind the camera. */
 	bool tip_ok[3];
@@ -4051,6 +4057,98 @@ static void gizmo_update_and_draw(void)
 				      0, (a == hot) ? 3.0f : 2.0f);
 		}
 	}
+
+	return g_gizmo_axis != GIZMO_AXIS_NONE || hot != GIZMO_AXIS_NONE;
+}
+
+/* ------------------------------------------------------------------ */
+/* Click-to-pick: raycast the pointer against entity meshes            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Inverse of the gizmo's world->screen path: cast a ray from the clicked pixel
+ * and return the live render entity whose mesh it strikes nearest the camera,
+ * or -1 when the ray misses everything.  Reuses the same view*projection and
+ * DisplaySize the gizmo projects with, so a click lands on exactly the pixels
+ * a mesh was drawn to.  Brute force over every triangle of every render entity:
+ * the world caps at WORLD_MAX_ENTITIES and the primitive meshes are tiny, so no
+ * broad-phase or per-mesh bounds are needed yet.
+ */
+static int32_t pick_entity_at(float sx, float sy)
+{
+	const struct world *w;
+	ImGuiIO            &io = ImGui::GetIO();
+	struct mat4         vp;
+	float               origin[3];
+	float               dir[3];
+	int32_t             best = -1;
+	float               best_t = FLT_MAX;
+	uint32_t            e;
+
+	if (!g_camera_api || !g_entity_api || !g_asset_api)
+		return -1;
+	w = g_entity_api->get_world();
+	if (!w)
+		return -1;
+
+	g_camera_api->get_view_proj(&vp);
+	if (ray_from_screen(&vp, sx, sy, io.DisplaySize.x, io.DisplaySize.y,
+			    origin, dir) != 0)
+		return -1;
+
+	for (e = 0; e < w->count; e++) {
+		const struct mesh_blob   *blob;
+		const struct mesh_vertex *vtx;
+		const uint16_t           *idx;
+		struct mat4               model;
+		uint32_t                  i;
+
+		if (!w->alive[e] || !(w->mask[e] & COMPONENT_RENDER))
+			continue;
+		blob = (const struct mesh_blob *)
+			g_asset_api->get_data(w->render_ref[e], NULL);
+		if (!blob || blob->magic != MESH_BLOB_MAGIC)
+			continue;
+
+		mat4_from_transform(&model, &w->world_xform[e]);
+		vtx = mesh_blob_vertices(blob);
+		idx = mesh_blob_indices(blob);
+
+		for (i = 0; i + 3 <= blob->index_count; i += 3) {
+			float a[3], b[3], c[3];
+			float t;
+
+			mat4_transform_point(a, &model, vtx[idx[i]].position);
+			mat4_transform_point(b, &model, vtx[idx[i + 1]].position);
+			mat4_transform_point(c, &model, vtx[idx[i + 2]].position);
+			if (ray_tri_intersect(origin, dir, a, b, c, &t) &&
+			    t < best_t) {
+				best_t = t;
+				best   = (int32_t)e;
+			}
+		}
+	}
+	return best;
+}
+
+/*
+ * Left-click over the bare viewport selects the entity under the pointer, or
+ * clears the selection on a miss.  Stands down when the gizmo owns the click
+ * (a handle grab) or the pointer is over an editor panel, so only clicks that
+ * reach the 3D scene ever change the selection.
+ */
+static void pick_update(bool gizmo_active)
+{
+	ImGuiIO &io = ImGui::GetIO();
+
+	if (!g_entity_api)
+		return;
+	if (gizmo_active || io.WantCaptureMouse)
+		return;
+	if (!ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+		return;
+
+	g_entity_api->set_selected(pick_entity_at(io.MousePos.x, io.MousePos.y));
 }
 
 #ifndef __EMSCRIPTEN__
@@ -4458,7 +4556,7 @@ static void draw_board(void * /*userdata*/)
 	if (g_camera_api && g_camera_api->set_viewport)
 		g_camera_api->set_viewport(ImGui::GetIO().DisplaySize.x,
 					   ImGui::GetIO().DisplaySize.y);
-	gizmo_update_and_draw();
+	pick_update(gizmo_update_and_draw());
 
 	/* Behind the overlay: catches asset drops onto the viewport. */
 	draw_spawn_drop_target();

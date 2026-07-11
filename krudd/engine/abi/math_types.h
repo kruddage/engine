@@ -55,4 +55,36 @@ void mat4_look_at(struct mat4 *out, const float eye[3],
  */
 void mat4_from_transform(struct mat4 *out, const struct transform *t);
 
+/*
+ * General 4x4 inverse (column-major).  Writes *out and returns 0 on success,
+ * or returns -1 and leaves *out untouched when the matrix is singular.  The
+ * mouse picker uses it to unproject screen points back into world space.
+ */
+int mat4_inverse(struct mat4 *out, const struct mat4 *in);
+
+/* Transform a point (implicit w = 1) by a column-major matrix. */
+void mat4_transform_point(float out[3], const struct mat4 *m,
+			  const float p[3]);
+
+/*
+ * Build a world-space picking ray from a viewport pixel.  view_proj is the
+ * live camera's view*projection; (sx, sy) is the pixel with a top-left origin
+ * (the same screen convention the gizmo projects into) and (width, height) the
+ * viewport size in those pixels.  Writes the ray origin (on the near plane) and
+ * a normalized direction, and returns 0; returns -1 when view_proj is singular
+ * or the viewport is degenerate.
+ */
+int ray_from_screen(const struct mat4 *view_proj, float sx, float sy,
+		    float width, float height, float origin[3], float dir[3]);
+
+/*
+ * Moller-Trumbore ray/triangle intersection.  On a hit at a positive distance
+ * along dir (either winding), writes that distance to *t_out and returns 1;
+ * returns 0 on a miss, a parallel ray, or a hit behind the origin.  dir need
+ * not be normalized, but then t_out is scaled by its length.
+ */
+int ray_tri_intersect(const float origin[3], const float dir[3],
+		      const float v0[3], const float v1[3], const float v2[3],
+		      float *t_out);
+
 #endif /* MATH_TYPES_H */

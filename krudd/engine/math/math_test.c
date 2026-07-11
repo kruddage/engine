@@ -4,6 +4,7 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 
 #define PI 3.14159265358979323846f
 
@@ -192,6 +193,123 @@ static void test_camera_view_proj(void)
 	assert(feq(cam.view_proj.m[15], 5.0f));
 }
 
+/* M * inverse(M) == identity for a non-trivial TRS matrix. */
+static void test_inverse_roundtrip(void)
+{
+	const float      h = 0.70710678f; /* 90 deg about Z */
+	struct transform t;
+	struct mat4      m, inv, prod;
+	int              i;
+
+	t.position[0] = 3.0f; t.position[1] = -1.0f; t.position[2] = 2.0f;
+	t.rotation[0] = 0.0f; t.rotation[1] = 0.0f;
+	t.rotation[2] = h;    t.rotation[3] = h;
+	t.scale[0] = 2.0f; t.scale[1] = 0.5f; t.scale[2] = 1.5f;
+
+	mat4_from_transform(&m, &t);
+	assert(mat4_inverse(&inv, &m) == 0);
+	mat4_mul(&prod, &m, &inv);
+	for (i = 0; i < 16; i++) {
+		int diag = (i == 0 || i == 5 || i == 10 || i == 15);
+
+		assert(feq(prod.m[i], diag ? 1.0f : 0.0f));
+	}
+}
+
+/* A singular (all-zero) matrix has no inverse. */
+static void test_inverse_singular(void)
+{
+	struct mat4 zero, inv;
+
+	memset(zero.m, 0, sizeof(zero.m));
+	assert(mat4_inverse(&inv, &zero) == -1);
+}
+
+static void test_transform_point(void)
+{
+	struct transform t;
+	struct mat4      m;
+	float            p[3] = { 1.0f, 0.0f, 0.0f };
+	float            out[3];
+
+	/* 90 deg about Z: +X maps to +Y, then translate by (0,0,5). */
+	t.position[0] = 0.0f; t.position[1] = 0.0f; t.position[2] = 5.0f;
+	t.rotation[0] = 0.0f; t.rotation[1] = 0.0f;
+	t.rotation[2] = 0.70710678f; t.rotation[3] = 0.70710678f;
+	t.scale[0] = t.scale[1] = t.scale[2] = 1.0f;
+
+	mat4_from_transform(&m, &t);
+	mat4_transform_point(out, &m, p);
+	assert(feq(out[0], 0.0f));
+	assert(feq(out[1], 1.0f));
+	assert(feq(out[2], 5.0f));
+}
+
+/* Ray straight down -Z through a triangle in the z=0 plane. */
+static void test_ray_tri_hit(void)
+{
+	float v0[3] = { 0.0f, 0.0f, 0.0f };
+	float v1[3] = { 1.0f, 0.0f, 0.0f };
+	float v2[3] = { 0.0f, 1.0f, 0.0f };
+	float o[3]  = { 0.25f, 0.25f, 1.0f };
+	float d[3]  = { 0.0f, 0.0f, -1.0f };
+	float t     = 0.0f;
+
+	assert(ray_tri_intersect(o, d, v0, v1, v2, &t) == 1);
+	assert(feq(t, 1.0f));
+}
+
+static void test_ray_tri_miss(void)
+{
+	float v0[3] = { 0.0f, 0.0f, 0.0f };
+	float v1[3] = { 1.0f, 0.0f, 0.0f };
+	float v2[3] = { 0.0f, 1.0f, 0.0f };
+	float d[3]  = { 0.0f, 0.0f, -1.0f };
+	float t     = 0.0f;
+
+	/* Outside the triangle's barycentric span. */
+	float outside[3] = { 2.0f, 2.0f, 1.0f };
+	assert(ray_tri_intersect(outside, d, v0, v1, v2, &t) == 0);
+
+	/* Over the triangle but aimed away from it. */
+	float away_o[3] = { 0.25f, 0.25f, 1.0f };
+	float away_d[3] = { 0.0f, 0.0f, 1.0f };
+	assert(ray_tri_intersect(away_o, away_d, v0, v1, v2, &t) == 0);
+}
+
+/*
+ * Screen-center pixel of the eye=(0,0,5), look -Z camera unprojects to a ray
+ * aimed along -Z, originating just in front of the eye; a pixel to the right
+ * tilts the ray toward +X (screen-right), proving no axis flip.
+ */
+static void test_ray_from_screen(void)
+{
+	struct camera cam;
+	float         o[3], d[3];
+
+	cam.eye[0] = 0.0f; cam.eye[1] = 0.0f; cam.eye[2] = 5.0f;
+	cam.target[0] = 0.0f; cam.target[1] = 0.0f; cam.target[2] = 0.0f;
+	cam.up[0] = 0.0f; cam.up[1] = 1.0f; cam.up[2] = 0.0f;
+	cam.fov_y  = PI * 0.5f;
+	cam.aspect = 1.0f;
+	cam.near   = 0.1f;
+	cam.far    = 100.0f;
+	camera_update(&cam);
+
+	assert(ray_from_screen(&cam.view_proj, 50.0f, 50.0f,
+			       100.0f, 100.0f, o, d) == 0);
+	assert(feq(d[0], 0.0f));
+	assert(feq(d[1], 0.0f));
+	assert(feq(d[2], -1.0f));
+	assert(feq(o[0], 0.0f));
+	assert(feq(o[1], 0.0f));
+	assert(o[2] < 5.0f && o[2] > 4.5f); /* near plane, in front of the eye */
+
+	assert(ray_from_screen(&cam.view_proj, 75.0f, 50.0f,
+			       100.0f, 100.0f, o, d) == 0);
+	assert(d[0] > 0.0f); /* right-of-center pixel leans toward +X */
+}
+
 int main(void)
 {
 	test_identity();
@@ -202,6 +320,12 @@ int main(void)
 	test_from_transform_identity();
 	test_from_transform_rot_z90();
 	test_camera_view_proj();
+	test_inverse_roundtrip();
+	test_inverse_singular();
+	test_transform_point();
+	test_ray_tri_hit();
+	test_ray_tri_miss();
+	test_ray_from_screen();
 
 	printf("math tests passed\n");
 	return 0;

@@ -308,6 +308,7 @@ static int         g_float_changed;
 static const char *g_combo_open;    /* id of the one open combo, or NULL  */
 static int         g_mat_param_mode; /* stubbed shader material schema mode */
 static int         g_script_param_mode; /* stubbed script params schema mode */
+static int         g_mesh_param_mode; /* stubbed mesh params schema mode */
 
 static s7_pointer st_begin_disabled(s7_scheme *sc, s7_pointer a)
 {
@@ -548,6 +549,7 @@ static void fw_reset(void)
 	g_float_changed = 0;
 	g_combo_open   = NULL;
 	g_script_param_mode = 0;
+	g_mesh_param_mode = 0;
 }
 
 static s7_pointer real_vec(s7_scheme *sc, const float *v, int n)
@@ -1094,6 +1096,39 @@ static s7_pointer st_entity_save_script_params(s7_scheme *sc, s7_pointer a)
 	return s7_unspecified(sc);
 }
 
+/*
+ * The mesh-declared params schema, stubbed. Mode 0 (default): no params, so the
+ * inspector draws no Mesh Parameters section. Mode 1: a single (edit range 0.1
+ * 3) "width" float, enough to exercise the slider widget + save path — the
+ * geometry twin of the script params stubs above.
+ */
+static s7_pointer st_mesh_params(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	if (g_mesh_param_mode == 1)
+		return s7_list(sc, 1,
+			mat_param(sc, "width", "float", 0, 4, 1, "range",
+				  0.1, 3.0));
+	return s7_nil(sc);
+}
+
+static s7_pointer st_entity_mesh_values(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	if (g_mesh_param_mode == 1)
+		return s7_list(sc, 1, s7_list(sc, 1, s7_make_real(sc, 1.0)));
+	return s7_nil(sc);
+}
+
+static s7_pointer st_entity_save_mesh_params(s7_scheme *sc, s7_pointer a)
+{
+	int        id  = (int)s7_integer(s7_car(a));
+	unsigned   ref = (unsigned)s7_integer(s7_cadr(a));
+
+	rec("save-mesh-params|%d|%u", id, ref);
+	return s7_unspecified(sc);
+}
+
 /* Per-entity material override values: (entity-id material-id shader-ref) ->
  * the same shape st_material_values yields, so the inspector's Material
  * Parameters group renders the shader's editable params for the entity. */
@@ -1592,6 +1627,9 @@ static s7_scheme *setup(void)
 	def(sc, "krudd-entity-material-values", st_entity_material_values, 3);
 	def(sc, "krudd-entity-save-material-params",
 	    st_entity_save_material_params, 3);
+	def(sc, "krudd-mesh-params", st_mesh_params, 1);
+	def(sc, "krudd-entity-mesh-values", st_entity_mesh_values, 2);
+	def(sc, "krudd-entity-save-mesh-params", st_entity_save_mesh_params, 3);
 	def(sc, "krudd-shader-stages", st_shader_stages, 1);
 	def(sc, "krudd-asset-save-text", st_asset_save_text, 2);
 	def(sc, "krudd-asset-save-shader", st_asset_save_shader, 2);
@@ -2061,6 +2099,41 @@ static void test_world_script_params_save(void)
 	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
 
 	assert(rec_has("save-script-params|0|301"));
+}
+
+/*
+ * A bound mesh that declares params surfaces them under the Mesh row as editable
+ * widgets — here a range-hinted "width" renders as a slider keyed "width##mshp".
+ * A mesh with no params (mode 0, a plain primitive) draws no such section.
+ */
+static void test_world_mesh_params_render(void)
+{
+	fw_reset();                       /* id0 already has render_ref 101 */
+	g_mesh_param_mode = 1;
+	rec_reset();
+	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+
+	assert(rec_has("slider|width##mshp"));
+
+	/* No params clause -> no slider drawn. */
+	fw_reset();
+	rec_reset();
+	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	assert(!rec_has("slider|width##mshp"));
+}
+
+/* Editing a mesh param writes the whole value set back through the save
+ * primitive, keyed on the entity's mesh (render_ref). */
+static void test_world_mesh_params_save(void)
+{
+	fw_reset();
+	g_mesh_param_mode = 1;
+	g_float_id        = "width##mshp";   /* force this slider to report a change */
+	g_float_changed   = 1;
+	rec_reset();
+	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+
+	assert(rec_has("save-mesh-params|0|101"));
 }
 
 /*
@@ -2834,6 +2907,8 @@ int main(void)
 	RUN(world_script_resolved);
 	RUN(world_script_params_render);
 	RUN(world_script_params_save);
+	RUN(world_mesh_params_render);
+	RUN(world_mesh_params_save);
 	RUN(world_material_params_render);
 	RUN(world_material_params_save);
 	RUN(world_gizmo_chips);

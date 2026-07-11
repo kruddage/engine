@@ -411,6 +411,32 @@
                 (when (and can-edit changed)
                   (krudd-entity-save-material-params e shader-ref new-vals))))))))))
 
+;;! (kruddboard-draw-entity-mesh-params e mesh-ref can-edit) draws the bound
+;;! mesh's authored parameters as live per-entity widgets — the per-entity
+;;! override layer over the shared mesh asset, the geometry twin of the material
+;;! params menu above. The values shown are the entity's override where set, else
+;;! the mesh's declared defaults, so a slider reflects the size this one entity
+;;! draws. Drawn only when the mesh declares params (a param-less primitive shows
+;;! nothing here); any edit is packed and saved immediately through the scene
+;;! api's undo-recording setter, so the geometry regenerates on the next frame —
+;;! no explicit Save, and the shared mesh asset (and every other entity on it) is
+;;! left untouched.
+(define (kruddboard-draw-entity-mesh-params e mesh-ref can-edit)
+  (let ((params (krudd-mesh-params mesh-ref)))
+    (unless (null? params)
+      (imgui-separator)
+      (when (imgui-collapsing-header "Mesh Parameters")
+        (let ((values (krudd-entity-mesh-values e mesh-ref)))
+          (imgui-begin-disabled (not can-edit))
+          (let* ((results  (map (lambda (p v)
+                                  (kruddboard-draw-param-widget p v "##mshp"))
+                                params values))
+                 (new-vals (map car results))
+                 (changed  (kruddboard-any-param-changed results)))
+            (imgui-end-disabled)
+            (when (and can-edit changed)
+              (krudd-entity-save-mesh-params e mesh-ref new-vals))))))))
+
 ;;! (kruddboard-draw-inspector-body e info caps) draws the editable name field
 ;;! and transform table (both disabled without the scene api), then the read-only
 ;;! details and the mesh/material/script binding rows. info is the
@@ -449,6 +475,8 @@
       (kruddboard-draw-inspector-binding "Mesh" "##emesh" "##meshsel" e
 	  has-render render-ref (krudd-mesh-assets) can-bind
 	  krudd-entity-set-render-ref)
+      (when has-render
+	(kruddboard-draw-entity-mesh-params e render-ref can-bind))
       (kruddboard-draw-inspector-binding "Material" "##ematerial"
 	  "##materialsel" e has-material material-ref (krudd-material-assets)
 	  can-bind krudd-entity-set-material-ref)

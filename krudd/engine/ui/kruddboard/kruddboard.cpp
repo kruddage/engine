@@ -2017,6 +2017,143 @@ static s7_pointer sp_krudd_entity_save_material_params(s7_scheme *sc,
 	return s7_unspecified(sc);
 }
 
+/*
+ * Mesh parameters — the geometry twin of the script helpers above. A mesh's
+ * params clause is its schema (introspected tight-packed, like a script's, no
+ * std140 header); an entity's override blob holds the values. These three feed
+ * the same widget dispatcher the script and material editors use, keyed on the
+ * entity, so editing a box's width is the same gesture as editing a tint.
+ */
+
+/*
+ * (krudd-mesh-params mesh-ref) -> ((name type off size components edit-kind
+ * edit-min edit-max) ...), the bound mesh's params clause as editable
+ * parameters. Empty when the asset is gone or declares no params.
+ */
+static s7_pointer sp_krudd_mesh_params(s7_scheme *sc, s7_pointer args)
+{
+	uint32_t            mesh_ref = (uint32_t)s7_integer(s7_car(args));
+	const char         *src      = shader_src_cstr(mesh_ref);
+	struct shader_param p[MATERIAL_MAX_PARAMS];
+	uint32_t            total = 0;
+	int                 n, i;
+	s7_pointer          out = s7_nil(sc);
+
+	if (!src)
+		return out;
+	n = script_mesh_params(src, p, MATERIAL_MAX_PARAMS, &total);
+	for (i = n - 1; i >= 0; i--)
+		out = s7_cons(sc,
+			s7_list(sc, 8,
+				s7_make_string(sc, p[i].name),
+				s7_make_string(sc, p[i].type),
+				s7_make_integer(sc, (s7_int)p[i].offset),
+				s7_make_integer(sc, (s7_int)p[i].size),
+				s7_make_integer(sc, (s7_int)p[i].components),
+				s7_make_string(sc, p[i].edit),
+				s7_make_real(sc, p[i].edit_min),
+				s7_make_real(sc, p[i].edit_max)),
+			out);
+	return out;
+}
+
+/*
+ * (krudd-entity-mesh-values entity-id mesh-ref) -> a per-field list of component
+ * lists, entity-id's current values for mesh-ref's params: read from its override
+ * blob where present, else the param's edit-hint default. This is the override ⊕
+ * defaults the entity inspector edits (and the generator sees). The mesh mirror
+ * of krudd-entity-script-values.
+ */
+static s7_pointer sp_krudd_entity_mesh_values(s7_scheme *sc, s7_pointer args)
+{
+	int32_t              eid      = (int32_t)s7_integer(s7_car(args));
+	uint32_t             mesh_ref = (uint32_t)s7_integer(s7_cadr(args));
+	const char          *src      = shader_src_cstr(mesh_ref);
+	struct shader_param  p[MATERIAL_MAX_PARAMS];
+	uint32_t             total = 0, blen = 0;
+	const uint8_t       *blob = NULL;
+	const struct world  *w    = NULL;
+	int                  n, i;
+	s7_pointer           out = s7_nil(sc);
+
+	if (!src)
+		return out;
+	n = script_mesh_params(src, p, MATERIAL_MAX_PARAMS, &total);
+	if (g_entity_api && g_entity_api->get_world)
+		w = g_entity_api->get_world();
+	if (w && eid >= 0 && (uint32_t)eid < w->count)
+		blob = world_mesh_params(w, (uint32_t)eid, &blen);
+
+	for (i = n - 1; i >= 0; i--) {
+		uint32_t c   = p[i].components > 4 ? 4 : p[i].components;
+		float    v[4];
+		uint32_t k;
+
+		for (k = 0; k < c; k++)
+			v[k] = param_default(&p[i], k);
+		if (blob && p[i].offset + c * sizeof(float) <= blen)
+			memcpy(v, blob + p[i].offset, c * sizeof(float));
+		out = s7_cons(sc, real_list(sc, v, (int)c), out);
+	}
+	return out;
+}
+
+/*
+ * (krudd-entity-save-mesh-params entity-id mesh-ref field-values) -> unspecified.
+ * Packs the per-field values into mesh-ref's tight params layout and stores them
+ * as entity-id's override (through the scene api, so it records an undo step).
+ * The mirror of krudd-entity-save-script-params for meshes; field-values is a
+ * list of per-field component lists.
+ */
+static s7_pointer sp_krudd_entity_save_mesh_params(s7_scheme *sc,
+						   s7_pointer args)
+{
+	s7_pointer          a        = args;
+	int32_t             eid      = (int32_t)s7_integer(s7_car(a));
+	uint32_t            mesh_ref;
+	s7_pointer          values;
+	const char         *src;
+	struct shader_param p[MATERIAL_MAX_PARAMS];
+	uint8_t             bytes[WORLD_MESH_PARAM_CAP];
+	uint32_t            total = 0, len;
+	int                 n, i;
+	s7_pointer          fv;
+
+	a        = s7_cdr(a);
+	mesh_ref = (uint32_t)s7_integer(s7_car(a));
+	a        = s7_cdr(a);
+	values   = s7_car(a);
+	fv       = values;
+	src      = shader_src_cstr(mesh_ref);
+	if (!src)
+		return s7_unspecified(sc);
+
+	n = script_mesh_params(src, p, MATERIAL_MAX_PARAMS, &total);
+	if (n < 0)
+		n = 0;
+	len = total > sizeof(bytes) ? (uint32_t)sizeof(bytes) : total;
+	memset(bytes, 0, len);
+
+	for (i = 0; i < n; i++) {
+		uint32_t c   = p[i].components > 4 ? 4 : p[i].components;
+		uint32_t off = p[i].offset;
+		float    v[4];
+		uint32_t k;
+
+		for (k = 0; k < c; k++)
+			v[k] = param_default(&p[i], k);
+		if (s7_is_pair(fv)) {
+			read_reals(sc, s7_car(fv), v, (int)c);
+			fv = s7_cdr(fv);
+		}
+		if (off + c * sizeof(float) <= len)
+			memcpy(bytes + off, v, c * sizeof(float));
+	}
+	if (g_entity_api && g_entity_api->set_mesh_params)
+		g_entity_api->set_mesh_params(eid, bytes, len);
+	return s7_unspecified(sc);
+}
+
 /* (krudd-shader-stages src) -> the declared stage list, or "" if none. */
 static s7_pointer sp_krudd_shader_stages(s7_scheme *sc, s7_pointer args)
 {
@@ -2656,6 +2793,17 @@ static s7_scheme *ensure_panel_scm(void)
 	s7_define_function(sc, "krudd-entity-save-material-params",
 			   sp_krudd_entity_save_material_params, 3, 0, false,
 			   "(krudd-entity-save-material-params id shader-ref values)");
+	s7_define_function(sc, "krudd-mesh-params",
+			   sp_krudd_mesh_params, 1, 0, false,
+			   "(krudd-mesh-params mesh-ref) -> "
+			   "((name type off size comps kind min max) ...)");
+	s7_define_function(sc, "krudd-entity-mesh-values",
+			   sp_krudd_entity_mesh_values, 2, 0, false,
+			   "(krudd-entity-mesh-values entity-id mesh-ref) -> "
+			   "(component-list ...)");
+	s7_define_function(sc, "krudd-entity-save-mesh-params",
+			   sp_krudd_entity_save_mesh_params, 3, 0, false,
+			   "(krudd-entity-save-mesh-params id mesh-ref values)");
 	s7_define_function(sc, "krudd-shader-stages", sp_krudd_shader_stages, 1,
 			   0, false, "(krudd-shader-stages src) -> stage list string");
 	s7_define_function(sc, "krudd-asset-save-text", sp_krudd_asset_save_text,

@@ -5615,6 +5615,9 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
   var _emscripten_glGenVertexArraysOES = _glGenVertexArrays;
   var _glGenVertexArraysOES = _emscripten_glGenVertexArraysOES;
 
+  var _emscripten_glGenerateMipmap = (x0) => GLctx.generateMipmap(x0);
+  var _glGenerateMipmap = _emscripten_glGenerateMipmap;
+
   var _emscripten_glGetActiveUniformBlockName = (program, uniformBlockIndex, bufSize, length, uniformBlockName) => {
       program = GL.programs[program];
   
@@ -7025,6 +7028,8 @@ var wasmImports = {
   glGenVertexArrays: _glGenVertexArrays,
   /** @export */
   glGenVertexArraysOES: _glGenVertexArraysOES,
+  /** @export */
+  glGenerateMipmap: _glGenerateMipmap,
   /** @export */
   glGetActiveUniformBlockName: _glGetActiveUniformBlockName,
   /** @export */

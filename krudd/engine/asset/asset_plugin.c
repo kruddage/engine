@@ -6,6 +6,7 @@
 #include "asset_edit.h"
 #include "edit_api.h"
 #include "primitives.h"
+#include "textures.h"
 #include "subsystem.h"
 #include "subsystem_manager.h"
 #include "log_api.h"
@@ -162,6 +163,23 @@ static const char *builtin_paths[] = {
 
 #define BUILTIN_COUNT \
 	((int32_t)(sizeof(builtin_paths) / sizeof(builtin_paths[0])))
+
+/*
+ * Built-in procedural textures, generated the same way as the mesh primitives:
+ * order matches enum texture_kind so a table index maps straight to a kind.
+ * Each is a square RGBA8 image synthesised from its texel coordinates alone
+ * (see textures.c), stored as a texture_blob the same way a mesh asset stores
+ * a mesh_blob.
+ */
+static const char *texture_paths[] = {
+	"builtin://texture/checker",
+	"builtin://texture/grid",
+	"builtin://texture/uv",
+	"builtin://texture/noise",
+};
+
+#define TEXTURE_COUNT \
+	((int32_t)(sizeof(texture_paths) / sizeof(texture_paths[0])))
 
 /*
  * Built-in shaders, authored in the krudd shader DSL (a Scheme S-expression
@@ -335,6 +353,19 @@ static void seed_builtins(void)
 		e->kind      = ASSET_KIND_PRIMITIVE;
 		e->read_only = 1;
 		e->type      = ASSET_TYPE_MESH;
+	}
+
+	/* texture_paths order matches enum texture_kind (checker, grid, ...). */
+	for (i = 0; i < TEXTURE_COUNT; i++) {
+		e = alloc_entry(texture_paths[i]);
+		if (!e)
+			continue;
+		e->data = texture_generate((enum texture_kind)i, g_mem,
+					   &e->size);
+		e->state     = e->data ? ASSET_LOADED : ASSET_ERROR;
+		e->kind      = ASSET_KIND_PRIMITIVE;
+		e->read_only = 1;
+		e->type      = ASSET_TYPE_TEXTURE;
 	}
 
 	{
@@ -683,6 +714,39 @@ static const struct asset_decl_field pyramid_decl[] = {
 };
 
 /*
+ * Built-in textures advertise their dimensions, pixel format, and the
+ * procedure that synthesised them, the way a mesh primitive advertises its
+ * topology and counts. All four are square 64x64 opaque RGBA8 images.
+ */
+static const struct asset_decl_field checker_texture_decl[] = {
+	{ "format",     "rgba8"          },
+	{ "dimensions", "64 x 64"        },
+	{ "pattern",    "checker, 8 x 8" },
+	{ "source",     "procedural"     },
+};
+
+static const struct asset_decl_field grid_texture_decl[] = {
+	{ "format",     "rgba8"           },
+	{ "dimensions", "64 x 64"         },
+	{ "pattern",    "grid, 16px step" },
+	{ "source",     "procedural"      },
+};
+
+static const struct asset_decl_field uv_texture_decl[] = {
+	{ "format",     "rgba8"           },
+	{ "dimensions", "64 x 64"         },
+	{ "pattern",    "uv, rgb=(u,v,0)" },
+	{ "source",     "procedural"      },
+};
+
+static const struct asset_decl_field noise_texture_decl[] = {
+	{ "format",     "rgba8"                 },
+	{ "dimensions", "64 x 64"               },
+	{ "pattern",    "value-noise fBm, 5 oct" },
+	{ "source",     "procedural"            },
+};
+
+/*
  * A shader asset is one DSL source holding every stage, so it advertises its
  * source format and the stages it defines (not a single stage per asset).  The
  * renderer lowers the DSL to whatever its backend speaks; a WebGPU/WGSL backend
@@ -754,6 +818,14 @@ static const struct builtin_desc builtin_descs[] = {
 	{ "builtin://sphere",  sphere_decl,  ARRAY_SIZE(sphere_decl)  },
 	{ "builtin://plane",   plane_decl,   ARRAY_SIZE(plane_decl)   },
 	{ "builtin://pyramid", pyramid_decl, ARRAY_SIZE(pyramid_decl) },
+	{ "builtin://texture/checker", checker_texture_decl,
+	  ARRAY_SIZE(checker_texture_decl) },
+	{ "builtin://texture/grid", grid_texture_decl,
+	  ARRAY_SIZE(grid_texture_decl) },
+	{ "builtin://texture/uv", uv_texture_decl,
+	  ARRAY_SIZE(uv_texture_decl) },
+	{ "builtin://texture/noise", noise_texture_decl,
+	  ARRAY_SIZE(noise_texture_decl) },
 	{ "builtin://shader/scene", scene_shader_decl,
 	  ARRAY_SIZE(scene_shader_decl) },
 	{ "builtin://material/default", default_material_decl,

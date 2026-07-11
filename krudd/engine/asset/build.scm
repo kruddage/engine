@@ -1,6 +1,7 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
 ((library "asset_plugin"
-	(sources "asset_plugin.c" "primitives_blob.c" "asset_edit.c"
+	(sources "asset_plugin.c" "primitives_blob.c" "textures.c"
+		"asset_edit.c"
 		(raw "${generated}/primitives.scm.c"))
 	(public "." (root "abi"))
 	(private (raw "${generated}") (raw "../third_party"))
@@ -36,6 +37,13 @@
 	(executable "primitive_test" (sources "primitive_test.c")
 		(link "primitives_ref" "m"))
 	(test "primitive" "primitive_test")
+
+	(library "textures_ref"
+		(sources "textures.c")
+		(public "." (root "abi")))
+	(executable "texture_test" (sources "texture_test.c")
+		(link "textures_ref" "m"))
+	(test "texture" "texture_test")
 
 	(library "primitives_scheme"
 		(sources "primitives_blob.c" (raw "${generated}/primitives.scm.c"))

@@ -154,10 +154,10 @@ static const struct camera_api g_camera_api = {
 };
 
 /*
- * The built-in primitives and mesh scripts that have uploadable geometry
- * today — every path here is either a stored mesh_blob or, for a mesh
- * script, source resolve_mesh_blob() compiles on the spot; either way
- * upload_mesh() below GPU-uploads it once at init.
+ * The built-in meshes uploaded once at init. Every one is a mesh script —
+ * there is no hardcoded C mesh generator — so resolve_mesh_blob() below
+ * compiles each from its Scheme source through the shared s7 image before
+ * upload_mesh() GPU-uploads it.
  */
 static const char *const PRIMITIVE_PATHS[] = {
 	"builtin://cube",

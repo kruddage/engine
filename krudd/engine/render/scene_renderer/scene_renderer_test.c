@@ -5,9 +5,10 @@
 #include "entity_api.h"
 #include "asset_api.h"
 #include "mesh.h"
-#include "primitives.h"
+#include "builtin_mesh_scripts.h"
 #include "subsystem_manager.h"
 #include "memory.h"
+#include "script.h"
 
 #include <assert.h>
 #include <stdint.h>
@@ -19,15 +20,9 @@ void fg_plugin_entry(struct subsystem_manager *mgr);
 void scene_renderer_plugin_entry(struct subsystem_manager *mgr);
 
 /* ------------------------------------------------------------------ */
-/* A minimal fake asset catalog: the built-in primitive blobs and the  */
+/* A minimal fake asset catalog: the built-in mesh scripts and the     */
 /* one scene shader (DSL, both stages), addressed by stable id (i + 1). */
 /* ------------------------------------------------------------------ */
-
-/* Route through modules/memory (raw malloc is banned outside it). */
-static const struct memory_api TEST_MEM = {
-	mem_alloc, mem_alloc_zero, mem_free,
-	mem_pool_create, mem_pool_alloc, mem_pool_free, mem_pool_destroy,
-};
 
 static const char *const CAT_PATHS[] = {
 	"builtin://cube",
@@ -43,18 +38,24 @@ static const char *const CAT_PATHS[] = {
 
 /* Per-index asset type, addressed the same way as the id (id == index + 1). */
 static const int32_t CAT_TYPES[CAT_COUNT] = {
-	ASSET_TYPE_MESH,     /* id 1 cube    */
-	ASSET_TYPE_MESH,     /* id 2 sphere  */
-	ASSET_TYPE_MESH,     /* id 3 plane   */
-	ASSET_TYPE_MESH,     /* id 4 pyramid */
-	ASSET_TYPE_SHADER,   /* id 5 scene shader */
-	ASSET_TYPE_MATERIAL, /* id 6 material/red (legacy 16-byte, no shader) */
-	ASSET_TYPE_SHADER,   /* id 7 shader/alt   */
-	ASSET_TYPE_MATERIAL, /* id 8 material/blue (v2: base_color + shader 7) */
+	ASSET_TYPE_MESH_SCRIPT, /* id 1 cube    */
+	ASSET_TYPE_MESH_SCRIPT, /* id 2 sphere  */
+	ASSET_TYPE_MESH_SCRIPT, /* id 3 plane   */
+	ASSET_TYPE_MESH_SCRIPT, /* id 4 pyramid */
+	ASSET_TYPE_SHADER,      /* id 5 scene shader */
+	ASSET_TYPE_MATERIAL,    /* id 6 material/red (legacy 16-byte, no shader) */
+	ASSET_TYPE_SHADER,      /* id 7 shader/alt   */
+	ASSET_TYPE_MATERIAL,    /* id 8 material/blue (v2: base_color + shader 7) */
 };
 
-static void    *g_blob[4];       /* cube, sphere, plane, pyramid */
-static uint32_t g_blob_size[4];
+/* ids 1-4 serve (mesh ...) source text — upload_mesh's resolve_mesh_blob
+ * compiles it through the real s7 image, exactly as the shipped asset plugin
+ * seeds these same four built-ins (see asset_plugin.c). */
+static const char *const CAT_MESH_SCRIPTS[4] = {
+	CUBE_MESH_SCRIPT_SRC, SPHERE_MESH_SCRIPT_SRC,
+	PLANE_MESH_SCRIPT_SRC, PYRAMID_MESH_SCRIPT_SRC,
+};
+
 /* The null backend records rather than compiles, so any DSL bytes suffice. */
 static const char *const SHADER_SRC =
 	"(shader scene (vertex (set position (vec4 0.0 0.0 0.0 1.0)))"
@@ -102,9 +103,11 @@ static int32_t cat_find(uint32_t id, struct asset_info *out)
 static const void *cat_get_data(uint32_t id, uint32_t *out_size)
 {
 	if (id >= 1 && id <= 4) {
+		const char *src = CAT_MESH_SCRIPTS[id - 1];
+
 		if (out_size)
-			*out_size = g_blob_size[id - 1];
-		return g_blob[id - 1];
+			*out_size = (uint32_t)strlen(src) + 1;
+		return src;
 	}
 	if (id == 5) {
 		if (out_size)
@@ -262,16 +265,9 @@ int main(void)
 	};
 	struct subsystem_manager mgr;
 	uint32_t idx_count = 0;
-	int      k;
 
 	mem_init();
-
-	/* Real primitive geometry for the fake catalog to serve. */
-	for (k = 0; k < 4; k++) {
-		g_blob[k] = primitive_generate((enum primitive_kind)k,
-					       &TEST_MEM, &g_blob_size[k]);
-		assert(g_blob[k] != NULL);
-	}
+	script_init(); /* loads the embedded mesh_script.scm image */
 
 	/* cube is catalog id 1. Two live entities reference it. */
 	build_world(1);
@@ -314,8 +310,6 @@ int main(void)
 	assert(count_draws(NULL) == 2);
 
 	subsystem_manager_shutdown(&mgr);
-	for (k = 0; k < 4; k++)
-		mem_free(g_blob[k]);
 	mem_shutdown();
 
 	printf("scene_renderer tests passed\n");

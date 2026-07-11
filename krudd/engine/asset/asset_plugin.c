@@ -6,7 +6,6 @@
 #include "builtin_mesh_scripts.h"
 #include "asset_edit.h"
 #include "edit_api.h"
-#include "primitives.h"
 #include "subsystem.h"
 #include "subsystem_manager.h"
 #include "log_api.h"
@@ -151,18 +150,8 @@ static void evict_entry(struct asset_entry *e)
 }
 
 /* ------------------------------------------------------------------ */
-/* Built-in primitive asset library                                    */
+/* Built-in mesh script asset library                                  */
 /* ------------------------------------------------------------------ */
-
-static const char *builtin_paths[] = {
-	"builtin://cube",
-	"builtin://sphere",
-	"builtin://plane",
-	"builtin://pyramid",
-};
-
-#define BUILTIN_COUNT \
-	((int32_t)(sizeof(builtin_paths) / sizeof(builtin_paths[0])))
 
 /*
  * Built-in shaders, authored in the krudd shader DSL (a Scheme S-expression
@@ -348,25 +337,22 @@ static void seed_mesh_script(const char *path, const char *src)
 
 static void seed_builtins(void)
 {
-	int32_t            i;
-	struct asset_entry *e;
-
 	if (builtins_seeded)
 		return;
 	builtins_seeded = 1;
 
-	/* builtin_paths order matches enum primitive_kind (cube, sphere, ...). */
-	for (i = 0; i < BUILTIN_COUNT; i++) {
-		e = alloc_entry(builtin_paths[i]);
-		if (!e)
-			continue;
-		e->data = primitive_generate((enum primitive_kind)i, g_mem,
-					     &e->size);
-		e->state     = e->data ? ASSET_LOADED : ASSET_ERROR;
-		e->kind      = ASSET_KIND_PRIMITIVE;
-		e->read_only = 1;
-		e->type      = ASSET_TYPE_MESH;
-	}
+	/*
+	 * Every built-in mesh, the four classic primitives included, is a mesh
+	 * script — there is no hardcoded C mesh generator. seed_mesh_script
+	 * stores each (mesh NAME (generate () ...)) source verbatim; a
+	 * consumer resolves it to a real mesh_blob on demand via
+	 * mesh_script_generate().
+	 */
+	seed_mesh_script("builtin://cube",    CUBE_MESH_SCRIPT_SRC);
+	seed_mesh_script("builtin://sphere",  SPHERE_MESH_SCRIPT_SRC);
+	seed_mesh_script("builtin://plane",   PLANE_MESH_SCRIPT_SRC);
+	seed_mesh_script("builtin://pyramid", PYRAMID_MESH_SCRIPT_SRC);
+	seed_mesh_script("builtin://mesh-script/grid", GRID_MESH_SCRIPT_SRC);
 
 	{
 		uint32_t scene_shader =
@@ -381,8 +367,6 @@ static void seed_builtins(void)
 	seed_script("builtin://script/wobble",  WOBBLE_SCRIPT_SRC);
 	seed_script("builtin://script/pulse",   PULSE_SCRIPT_SRC);
 	seed_script("builtin://script/orbit-camera", ORBIT_CAMERA_SCRIPT_SRC);
-
-	seed_mesh_script("builtin://mesh-script/grid", GRID_MESH_SCRIPT_SRC);
 }
 
 #ifdef __EMSCRIPTEN__
@@ -683,6 +667,7 @@ const void *asset_catalog_get_data(uint32_t id, uint32_t *out_size)
 /* ------------------------------------------------------------------ */
 
 static const struct asset_decl_field cube_decl[] = {
+	{ "format",     "krudd-mesh-script"     },
 	{ "topology",   "triangles"             },
 	{ "vertices",   "24"                    },
 	{ "indices",    "36"                    },
@@ -692,6 +677,7 @@ static const struct asset_decl_field cube_decl[] = {
 };
 
 static const struct asset_decl_field sphere_decl[] = {
+	{ "format",        "krudd-mesh-script"     },
 	{ "topology",      "triangles"             },
 	{ "segments",      "rings 16, sectors 32"  },
 	{ "vertices",      "561"                   },
@@ -701,6 +687,7 @@ static const struct asset_decl_field sphere_decl[] = {
 };
 
 static const struct asset_decl_field plane_decl[] = {
+	{ "format",     "krudd-mesh-script"     },
 	{ "topology",   "triangles"             },
 	{ "vertices",   "4"                     },
 	{ "indices",    "6"                     },
@@ -709,6 +696,7 @@ static const struct asset_decl_field plane_decl[] = {
 };
 
 static const struct asset_decl_field pyramid_decl[] = {
+	{ "format",     "krudd-mesh-script"     },
 	{ "topology",   "triangles"             },
 	{ "vertices",   "16"                    },
 	{ "indices",    "18"                    },
@@ -781,7 +769,10 @@ static const struct asset_decl_field orbit_camera_script_decl[] = {
  * carries exactly one generate clause.
  */
 static const struct asset_decl_field grid_mesh_script_decl[] = {
-	{ "format", "krudd-mesh-script" },
+	{ "format",   "krudd-mesh-script" },
+	{ "topology", "triangles"         },
+	{ "vertices", "25"                },
+	{ "indices",  "96"                },
 };
 
 struct builtin_desc {

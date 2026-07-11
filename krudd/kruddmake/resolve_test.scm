@@ -60,8 +60,7 @@
 		       "render/null" "log/include"
 		       "abi" "memory/include"
 		       "core/include"))
-(inc-check "asset_plugin" '("asset" "abi" "${generated}"
-			    "../third_party" "log/include"
+(inc-check "asset_plugin" '("asset" "abi" "log/include"
 			    "memory/include" "core/include"))
 
 (display "resolver: transitive link closures\n")

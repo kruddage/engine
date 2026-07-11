@@ -5,7 +5,6 @@
 			(root "math/math.c")
 			(root "math/camera.c")
 			(raw "${generated}/math_gen.c")
-			(root "asset/primitives.c")
 			(root "asset/mesh_script.c"))
 		(private "." (raw "${generated}")
 			(root "render/null")

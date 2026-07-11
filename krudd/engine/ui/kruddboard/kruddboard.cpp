@@ -899,6 +899,13 @@ static s7_pointer sp_krudd_script_assets(s7_scheme *sc, s7_pointer args)
 	return assets_of_type(sc, ASSET_TYPE_SCRIPT);
 }
 
+/* (krudd-texture-assets) -> ((id . path) ...) for a material's texture combo. */
+static s7_pointer sp_krudd_texture_assets(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	return assets_of_type(sc, ASSET_TYPE_TEXTURE);
+}
+
 /* (krudd-asset-find ref) -> the asset's path, or #f when ref is 0 / unknown. */
 static s7_pointer sp_krudd_asset_find(s7_scheme *sc, s7_pointer args)
 {
@@ -1670,6 +1677,64 @@ static uint32_t pack_material(s7_scheme *sc, uint32_t shader_ref,
 	return len;
 }
 
+/* The std140 byte size of a shader's Material block (0 when it has none). */
+static uint32_t mat_block_len(uint32_t shader_ref)
+{
+	const char *src   = shader_src_cstr(shader_ref);
+	uint32_t    total = 0;
+
+	if (src)
+		script_shader_material_params(src, NULL, 0, &total);
+	return total;
+}
+
+/*
+ * Locate a material's optional texture slot — the trailer after the shader-ref
+ * and the shader's Material block: [tex-ref u32][width u32][height u32]. Returns
+ * 1 and fills the outs when present, 0 otherwise. The block size comes from the
+ * material's own shader (its leading ref), the same split the renderer makes, so
+ * a material with no trailer reports no texture.
+ */
+static int mat_texture_slot(uint32_t id, uint32_t *tex, uint32_t *w, uint32_t *h)
+{
+	const uint8_t *bytes;
+	uint32_t       sz = 0, shader_ref = 0, block, off;
+
+	if (!g_asset_api || !g_asset_api->get_data)
+		return 0;
+	bytes = (const uint8_t *)g_asset_api->get_data(id, &sz);
+	if (!bytes || sz < MATERIAL_HEADER_BYTES)
+		return 0;
+	memcpy(&shader_ref, bytes, sizeof(shader_ref));
+	block = mat_block_len(shader_ref);
+	if (block == 0)
+		return 0;
+	off = MATERIAL_HEADER_BYTES + block;
+	if (sz < off + 3u * sizeof(uint32_t))
+		return 0;
+	memcpy(tex, bytes + off,      sizeof(uint32_t));
+	memcpy(w,   bytes + off + 4u, sizeof(uint32_t));
+	memcpy(h,   bytes + off + 8u, sizeof(uint32_t));
+	return *tex != 0;
+}
+
+/*
+ * (krudd-material-texture id) -> (tex-ref width height) when the material binds a
+ * texture, else '(). The material editor reads this to seed its texture picker
+ * and resolution control.
+ */
+static s7_pointer sp_krudd_material_texture(s7_scheme *sc, s7_pointer args)
+{
+	uint32_t id = (uint32_t)s7_integer(s7_car(args));
+	uint32_t tex = 0, w = 0, h = 0;
+
+	if (!mat_texture_slot(id, &tex, &w, &h))
+		return s7_nil(sc);
+	return s7_list(sc, 3, s7_make_integer(sc, (s7_int)tex),
+		       s7_make_integer(sc, (s7_int)w),
+		       s7_make_integer(sc, (s7_int)h));
+}
+
 /*
  * (krudd-shader-material-params shader-ref) -> ((name type off size components
  * edit-kind edit-min edit-max) ...), the shader's Material block as editable
@@ -2219,14 +2284,30 @@ static s7_pointer sp_krudd_asset_save_material(s7_scheme *sc, s7_pointer args)
 	s7_pointer    p          = args;
 	uint32_t      id         = (uint32_t)s7_integer(s7_car(p)); p = s7_cdr(p);
 	uint32_t      shader_ref = (uint32_t)s7_integer(s7_car(p)); p = s7_cdr(p);
-	s7_pointer    values     = s7_car(p);
+	s7_pointer    values     = s7_car(p);                       p = s7_cdr(p);
 	const char   *src        = shader_src_cstr(shader_ref);
-	unsigned char bytes[MATERIAL_WIRE_CAP];
+	unsigned char bytes[MATERIAL_WIRE_CAP + 3 * sizeof(uint32_t)];
 	uint32_t      len;
+	uint32_t      tex = 0, tw = 0, th = 0;
 
 	if (!src)
 		return s7_unspecified(sc);
-	len = pack_material(sc, shader_ref, src, values, bytes, sizeof(bytes));
+	len = pack_material(sc, shader_ref, src, values, bytes, MATERIAL_WIRE_CAP);
+	/*
+	 * Optional texture slot: trailing (tex-ref width height) appends the
+	 * trailer the renderer reads to bake and bind this material's procedural
+	 * texture. A tex-ref of 0, absent args, or a zero dimension leaves the
+	 * material texture-less — byte-for-byte the pre-texture wire form.
+	 */
+	if (s7_is_pair(p)) { tex = (uint32_t)s7_integer(s7_car(p)); p = s7_cdr(p); }
+	if (s7_is_pair(p)) { tw  = (uint32_t)s7_integer(s7_car(p)); p = s7_cdr(p); }
+	if (s7_is_pair(p)) { th  = (uint32_t)s7_integer(s7_car(p)); p = s7_cdr(p); }
+	if (tex != 0 && tw > 0 && th > 0 &&
+	    len + 3u * sizeof(uint32_t) <= sizeof(bytes)) {
+		memcpy(bytes + len, &tex, sizeof(tex)); len += (uint32_t)sizeof(tex);
+		memcpy(bytes + len, &tw,  sizeof(tw));  len += (uint32_t)sizeof(tw);
+		memcpy(bytes + len, &th,  sizeof(th));  len += (uint32_t)sizeof(th);
+	}
 	if (g_asset_mut)
 		g_asset_mut->set_data(id, bytes, len);
 	maybe_persist_asset(id, ASSET_TYPE_MATERIAL, bytes, len);
@@ -2709,6 +2790,12 @@ static s7_scheme *ensure_panel_scm(void)
 	s7_define_function(sc, "krudd-script-assets", sp_krudd_script_assets,
 			   0, 0, false,
 			   "(krudd-script-assets) -> ((id . path) ...)");
+	s7_define_function(sc, "krudd-texture-assets", sp_krudd_texture_assets,
+			   0, 0, false,
+			   "(krudd-texture-assets) -> ((id . path) ...)");
+	s7_define_function(sc, "krudd-material-texture", sp_krudd_material_texture,
+			   1, 0, false,
+			   "(krudd-material-texture id) -> (tex-ref w h) or ()");
 	s7_define_function(sc, "krudd-asset-find", sp_krudd_asset_find, 1, 0,
 			   false, "(krudd-asset-find ref) -> path or #f");
 	s7_define_function(sc, "krudd-entity-create", sp_krudd_entity_create, 0,
@@ -2815,8 +2902,9 @@ static s7_scheme *ensure_panel_scm(void)
 			   sp_krudd_asset_save_shader, 2, 0, false,
 			   "(krudd-asset-save-shader id text) -> compiled-ok?");
 	s7_define_function(sc, "krudd-asset-save-material",
-			   sp_krudd_asset_save_material, 3, 0, false,
-			   "(krudd-asset-save-material id shader-ref values)");
+			   sp_krudd_asset_save_material, 3, 3, false,
+			   "(krudd-asset-save-material id shader-ref values "
+			   "[tex-ref w h])");
 	s7_define_function(sc, "krudd-asset-delete", sp_krudd_asset_delete, 1,
 			   0, false, "(krudd-asset-delete id)");
 	s7_define_function(sc, "krudd-asset-create-text",

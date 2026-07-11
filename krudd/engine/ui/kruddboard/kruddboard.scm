@@ -142,18 +142,41 @@
   (imgui-small-button "Save As...")
   (imgui-end-disabled))
 
-;;! (kruddboard-draw-world-tree-entity row caps) draws one entity as a tree
+;;! (kruddboard-world-children rows parent-id) is every row in ROWS whose parent
+;;! column equals PARENT-ID, kept in list order — the child entities to draw
+;;! nested under a given node. ROWS are (id name parent) triples from
+;;! krudd-world-entities.
+(define (kruddboard-world-children rows parent-id)
+  (let loop ((r rows) (acc '()))
+    (cond ((null? r) (reverse acc))
+	  ((= (caddr (car r)) parent-id) (loop (cdr r) (cons (car r) acc)))
+	  (else (loop (cdr r) acc)))))
+
+;;! (kruddboard-world-roots rows) is every row whose parent is not itself a live
+;;! row — a true root (parent -1) or an entity orphaned by a destroyed parent —
+;;! so no entity drops off the tree. ROWS are (id name parent) triples; a root's
+;;! subtree is then walked from here via kruddboard-world-children.
+(define (kruddboard-world-roots rows)
+  (let ((ids (map car rows)))
+    (let loop ((r rows) (acc '()))
+      (cond ((null? r) (reverse acc))
+	    ((memv (caddr (car r)) ids) (loop (cdr r) acc))
+	    (else (loop (cdr r) (cons (car r) acc)))))))
+
+;;! (kruddboard-draw-world-tree-entity row caps rows) draws one entity as a tree
 ;;! node: a plain click selects it, the right-aligned x destroys it (disabled
 ;;! without the scene api), and expanding the node draws that entity's full
 ;;! inspector body — name, transform, bindings, and the script/material/mesh
-;;! param groups with their override dots — nested underneath. row is an
-;;! (id . name) pair; the selection is re-read so a click earlier in the frame
-;;! shows. The body's widget ids ("##ename", "##pos", "##sp", ...) are scoped
-;;! with imgui-push-id keyed on the entity, so several entities can sit open at
-;;! once without their identically-named fields colliding on one ImGui id.
-(define (kruddboard-draw-world-tree-entity row caps)
+;;! param groups with their override dots — then its child entities nested
+;;! underneath. row is an (id name parent) triple; ROWS is the whole entity list,
+;;! re-walked to find this node's children so the scene renders as its real
+;;! hierarchy. The selection is re-read so a click earlier in the frame shows.
+;;! The body's widget ids ("##ename", "##pos", "##sp", ...) are scoped with
+;;! imgui-push-id keyed on the entity, so several entities can sit open at once
+;;! without their identically-named fields colliding on one ImGui id.
+(define (kruddboard-draw-world-tree-entity row caps rows)
   (let* ((id      (car row))
-	 (disp    (kruddboard-world-name id (cdr row)))
+	 (disp    (kruddboard-world-name id (cadr row)))
 	 (has-api (car caps))
 	 (nid     (format #f "ent~D" id))
 	 (node    (imgui-tree-node nid disp #f (= id (krudd-selected)))))
@@ -171,6 +194,9 @@
 	    (imgui-text-disabled "(stale)")
 	    (kruddboard-draw-inspector-body id info caps)))
       (imgui-pop-id)
+      (for-each (lambda (child)
+		  (kruddboard-draw-world-tree-entity child caps rows))
+		(kruddboard-world-children rows id))
       (imgui-tree-pop))))
 
 ;;! (kruddboard-world-create) appends an entity, names it "Entity", and selects
@@ -182,10 +208,11 @@
       (krudd-entity-select id))))
 
 ;;! (kruddboard-draw-world-tree caps) draws the "+ Entity" button and the entity
-;;! tree — one expandable node per entity — or a dimmed "(no entities)" when the
-;;! world is empty or absent. (krudd-world-entities) hands back a materialised
-;;! ((id . name) ...) list, so destroying an entity from a node mid-frame (its x)
-;;! leaves this frame's iteration intact.
+;;! tree — one expandable node per root entity, each child entity nested under
+;;! its parent — or a dimmed "(no entities)" when the world is empty or absent.
+;;! (krudd-world-entities) hands back a materialised ((id name parent) ...) list,
+;;! so destroying an entity from a node mid-frame (its x) leaves this frame's
+;;! iteration intact.
 (define (kruddboard-draw-world-tree caps)
   (let ((has-api (car caps)))
     (imgui-begin-disabled (not has-api))
@@ -195,8 +222,9 @@
     (let ((ents (krudd-world-entities)))
       (if (or (not ents) (null? ents))
 	  (imgui-text-disabled "(no entities)")
-	  (for-each (lambda (row) (kruddboard-draw-world-tree-entity row caps))
-		    ents)))))
+	  (for-each (lambda (row)
+		      (kruddboard-draw-world-tree-entity row caps ents))
+		    (kruddboard-world-roots ents))))))
 
 ;;! Move/Rotate/Scale tool chips. The active chip is tinted the same blue the C
 ;;! draw_gizmo_mode_chips pushed (IM_COL32 70,110,170); clicking one sets the
@@ -549,16 +577,20 @@
 	(kruddboard-draw-script-params e script-ref can-bind)))))
 
 ;;! (kruddboard-draw-world) is the whole World tab: scene header, gizmo tool
-;;! chips, then the entity tree — one expandable node per entity that opens onto
-;;! its own inspector in place. This folds the old separate entity-list and
-;;! single-selection Inspector section into one tree: instead of "pick a row,
-;;! read the detached inspector below", an entity expands to reveal its editable
-;;! guts where it sits, and more than one can be open at a time. The transform
-;;! gizmo still tracks (krudd-selected), so a node's plain click still drives it.
+;;! chips, then the entity tree under a collapsing "Entities" header — one
+;;! expandable node per entity that opens onto its own inspector in place, with
+;;! child entities nested under their parent. This folds the old separate
+;;! entity-list and single-selection Inspector section into one tree: instead of
+;;! "pick a row, read the detached inspector below", an entity expands to reveal
+;;! its editable guts where it sits, and more than one can be open at a time. The
+;;! "Entities" header rolls up the whole tree the way the KRUDD tab's sections
+;;! do. The transform gizmo still tracks (krudd-selected), so a node's plain
+;;! click still drives it.
 (define (kruddboard-draw-world)
   (let ((caps (krudd-world-caps)))
     (kruddboard-draw-world-header)
     (imgui-separator)
     (kruddboard-draw-gizmo-chips)
     (imgui-separator)
-    (kruddboard-draw-world-tree caps)))
+    (when (imgui-collapsing-header "Entities")
+      (kruddboard-draw-world-tree caps))))

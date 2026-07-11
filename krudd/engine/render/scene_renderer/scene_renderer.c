@@ -846,10 +846,34 @@ static void ensure_textures(void)
 }
 
 /*
+ * Create an empty organizational entity — no mesh, just a named identity
+ * transform at the origin, like the camera entity below. It parents related
+ * props so the World-tab tree shows the scene as a nested hierarchy instead of
+ * a flat list; sitting at the origin with an identity transform, it leaves each
+ * child's world position exactly where the child's own transform puts it.
+ * Returns the new entity id, or -1 when the scene cannot take it.
+ */
+static int32_t seed_group(const char *name)
+{
+	struct transform t;
+	int32_t          id;
+
+	memset(&t, 0, sizeof(t));
+	t.rotation[3] = 1.0f;
+	t.scale[0] = t.scale[1] = t.scale[2] = 1.0f;
+	id = g_scene->create_entity(WORLD_NO_PARENT, &t, 0u, 0u);
+	if (id >= 0 && g_scene->set_name)
+		g_scene->set_name(id, name);
+	return id;
+}
+
+/*
  * Seed a small demo scene so the page shows content on load and exercises
  * depth-correct multi-entity rendering (#172 acceptance). Only runs when the
  * world holds no renderable entity yet, so it never clobbers a loaded scene.
- * Temporary — remove once scenes are authored/loaded routinely.
+ * The two box props nest under a "Boxes" group and the two checker cubes under
+ * a "Checkers" group, so the scene loads as a real hierarchy the World tab can
+ * show nested. Temporary — remove once scenes are authored/loaded routinely.
  */
 static void seed_demo_scene(void)
 {
@@ -860,23 +884,26 @@ static void seed_demo_scene(void)
 		const char *name;   /* shown in the entity list */
 		int         has_mesh_params; /* seed a mesh-param override? */
 		float       whd[3];          /* box width/height/depth when it does */
+		int         grouped;         /* nest under the "Boxes" group? */
 	} DEMO[] = {
-		{ "builtin://mesh/cube",    { -1.5f, 0.0f,  0.0f }, "builtin://script/spinner", "Cube",    0, { 0.0f, 0.0f, 0.0f } },
-		{ "builtin://mesh/sphere",  {  0.0f, 0.0f, -1.0f }, "builtin://script/bounce",  "Sphere",  0, { 0.0f, 0.0f, 0.0f } },
-		{ "builtin://mesh/pyramid", {  1.5f, 0.0f,  0.5f }, "builtin://script/wobble",  "Pyramid", 0, { 0.0f, 0.0f, 0.0f } },
-		{ "builtin://mesh/grid",    { 0.0f, -0.5f, 1.5f }, NULL, "Grid",                0, { 0.0f, 0.0f, 0.0f } },
+		{ "builtin://mesh/cube",    { -1.5f, 0.0f,  0.0f }, "builtin://script/spinner", "Cube",    0, { 0.0f, 0.0f, 0.0f }, 0 },
+		{ "builtin://mesh/sphere",  {  0.0f, 0.0f, -1.0f }, "builtin://script/bounce",  "Sphere",  0, { 0.0f, 0.0f, 0.0f }, 0 },
+		{ "builtin://mesh/pyramid", {  1.5f, 0.0f,  0.5f }, "builtin://script/wobble",  "Pyramid", 0, { 0.0f, 0.0f, 0.0f }, 0 },
+		{ "builtin://mesh/grid",    { 0.0f, -0.5f, 1.5f }, NULL, "Grid",                0, { 0.0f, 0.0f, 0.0f }, 0 },
 		/*
 		 * Two entities on ONE mesh asset (builtin://mesh/box), drawing at
 		 * different sizes purely from their per-entity mesh-param overrides —
 		 * the geometry twin of the two same-material entities that draw in
-		 * different colors. This is the whole point made visible on load.
+		 * different colors. This is the whole point made visible on load. Both
+		 * nest under the "Boxes" group so the tree shows them as a pair.
 		 */
-		{ "builtin://mesh/box",     { -3.2f, 0.0f,  0.0f }, NULL, "Tall Box",            1, { 0.6f, 2.0f, 0.6f } },
-		{ "builtin://mesh/box",     {  3.2f, 0.0f,  0.0f }, NULL, "Wide Box",            1, { 2.2f, 0.5f, 1.0f } },
+		{ "builtin://mesh/box",     { -3.2f, 0.0f,  0.0f }, NULL, "Tall Box",            1, { 0.6f, 2.0f, 0.6f }, 1 },
+		{ "builtin://mesh/box",     {  3.2f, 0.0f,  0.0f }, NULL, "Wide Box",            1, { 2.2f, 0.5f, 1.0f }, 1 },
 	};
 	const struct world *w;
 	uint32_t            i;
 	uint32_t            material;
+	int32_t             boxes_group;
 
 	if (!g_scene || !g_scene->create_entity)
 		return;
@@ -899,9 +926,13 @@ static void seed_demo_scene(void)
 	 */
 	material = asset_id_by_path("builtin://material/default");
 
+	/* Parent the two box props so the tree shows them nested, not flat. */
+	boxes_group = seed_group("Boxes");
+
 	for (i = 0; i < (uint32_t)(sizeof(DEMO) / sizeof(DEMO[0])); i++) {
 		struct transform t;
 		int32_t          id;
+		int32_t          parent;
 		uint32_t         ref = asset_id_by_path(DEMO[i].path);
 
 		if (!ref)
@@ -912,7 +943,9 @@ static void seed_demo_scene(void)
 		t.position[2] = DEMO[i].pos[2];
 		t.rotation[3] = 1.0f;
 		t.scale[0] = t.scale[1] = t.scale[2] = 1.0f;
-		id = g_scene->create_entity(WORLD_NO_PARENT, &t, 0u, ref);
+		parent = (DEMO[i].grouped && boxes_group >= 0) ? boxes_group
+							       : WORLD_NO_PARENT;
+		id = g_scene->create_entity(parent, &t, 0u, ref);
 		{
 			/*
 			 * The grid floor wears the built-in checker material — a
@@ -978,6 +1011,9 @@ static void seed_demo_scene(void)
 		};
 		uint32_t cube    = asset_id_by_path("builtin://mesh/cube");
 		uint32_t checker = asset_id_by_path("builtin://material/checker");
+		int32_t  group   = (cube && checker) ? seed_group("Checkers")
+						     : -1;
+		int32_t  parent  = group >= 0 ? group : WORLD_NO_PARENT;
 		uint32_t k;
 
 		for (k = 0; cube && checker &&
@@ -991,7 +1027,7 @@ static void seed_demo_scene(void)
 			t.position[2] = TEX[k].pos[2];
 			t.rotation[3] = 1.0f;
 			t.scale[0] = t.scale[1] = t.scale[2] = 0.8f;
-			id = g_scene->create_entity(WORLD_NO_PARENT, &t, 0u, cube);
+			id = g_scene->create_entity(parent, &t, 0u, cube);
 			if (id < 0)
 				continue;
 			g_scene->set_material_ref(id, checker);

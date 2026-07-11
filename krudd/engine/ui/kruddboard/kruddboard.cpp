@@ -808,8 +808,10 @@ static s7_pointer sp_krudd_selected(s7_scheme *sc, s7_pointer args)
 }
 
 /*
- * (krudd-world-entities) -> a list of (id . name) for each live entity in id
- * order; name is a string or #f when the entity has no name. Returns #f when the
+ * (krudd-world-entities) -> a list of (id name parent) for each live entity in
+ * id order; name is a string or #f when the entity has no name, and parent is
+ * the parent entity's id or -1 for a root. The parent column lets the World tab
+ * render the scene as a nested tree instead of a flat list. Returns #f when the
  * scene api or its world is absent, which the tab renders as "(no entities)".
  */
 static s7_pointer sp_krudd_world_entities(s7_scheme *sc, s7_pointer args)
@@ -836,7 +838,9 @@ static s7_pointer sp_krudd_world_entities(s7_scheme *sc, s7_pointer args)
 		else
 			name = s7_f(sc);
 		out = s7_cons(sc,
-			      s7_cons(sc, s7_make_integer(sc, (s7_int)i), name),
+			      s7_list(sc, 3, s7_make_integer(sc, (s7_int)i),
+				      name,
+				      s7_make_integer(sc, (s7_int)w->parent[i])),
 			      out);
 	}
 	return s7_reverse(sc, out);
@@ -3114,7 +3118,7 @@ static s7_scheme *ensure_panel_scm(void)
 			   "(krudd-selected) -> selected entity id or -1");
 	s7_define_function(sc, "krudd-world-entities", sp_krudd_world_entities,
 			   0, 0, false,
-			   "(krudd-world-entities) -> ((id . name) ...) or #f");
+			   "(krudd-world-entities) -> ((id name parent) ...) or #f");
 	s7_define_function(sc, "krudd-entity-inspect", sp_krudd_entity_inspect,
 			   1, 0, false,
 			   "(krudd-entity-inspect id) -> inspector bundle or #f");

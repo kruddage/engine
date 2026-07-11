@@ -624,7 +624,9 @@ static s7_pointer st_world_entities(s7_scheme *sc, s7_pointer a)
 			continue;
 		name = g_fw[i].has_name ? s7_make_string(sc, g_fw[i].name)
 					: s7_f(sc);
-		out = s7_cons(sc, s7_cons(sc, s7_make_integer(sc, i), name),
+		out = s7_cons(sc,
+			      s7_list(sc, 3, s7_make_integer(sc, i), name,
+				      s7_make_integer(sc, g_fw[i].parent)),
 			      out);
 	}
 	return s7_reverse(sc, out);
@@ -2051,7 +2053,7 @@ static void test_world_inspector(void)
 {
 	fw_reset();
 	rec_reset();
-	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (list 0 #f -1) (list #t #t) '())");
 
 	assert(rec_has("input-text|##ename|Cube"));
 	assert(rec_has("table-plain|##xform"));
@@ -2072,7 +2074,7 @@ static void test_world_inspector_stale(void)
 {
 	fw_reset();
 	rec_reset();
-	script_eval("(kruddboard-draw-world-tree-entity (cons 5 #f) (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (list 5 #f -1) (list #t #t) '())");
 
 	assert(rec_has("disabled|(stale)"));
 	assert(!rec_has("input-text|##ename"));
@@ -2086,7 +2088,7 @@ static void test_world_name_commit(void)
 	g_input_text   = "Renamed";
 	g_input_commit = 1;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (list 0 #f -1) (list #t #t) '())");
 	g_input_id = NULL;
 	g_input_commit = 0;
 
@@ -2101,7 +2103,7 @@ static void test_world_name_uncommitted(void)
 	g_input_text   = "Typing";
 	g_input_commit = 0;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (list 0 #f -1) (list #t #t) '())");
 	g_input_id = NULL;
 
 	assert(!rec_has("set-name|"));
@@ -2114,7 +2116,7 @@ static void test_world_transform_edit(void)
 	g_float_id      = "##pos";
 	g_float_changed = 1;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (list 0 #f -1) (list #t #t) '())");
 	g_float_id = NULL;
 	g_float_changed = 0;
 
@@ -2128,7 +2130,7 @@ static void test_world_mesh_bind(void)
 	g_combo_open = "##meshsel";
 	g_click = "sphere.mesh##m102";
 	rec_reset();
-	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (list 0 #f -1) (list #t #t) '())");
 	g_click = NULL;
 	g_combo_open = NULL;
 
@@ -2142,7 +2144,7 @@ static void test_world_mesh_unbind(void)
 	g_combo_open = "##meshsel";
 	g_click = "(none)";
 	rec_reset();
-	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (list 0 #f -1) (list #t #t) '())");
 	g_click = NULL;
 	g_combo_open = NULL;
 
@@ -2157,7 +2159,7 @@ static void test_world_bind_disabled(void)
 	g_combo_open = "##meshsel";
 	g_click = "sphere.mesh##m102";
 	rec_reset();
-	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #f))");
+	script_eval("(kruddboard-draw-world-tree-entity (list 0 #f -1) (list #t #f) '())");
 	g_click = NULL;
 	g_combo_open = NULL;
 
@@ -2171,7 +2173,7 @@ static void test_world_script_bind(void)
 	g_combo_open = "##scriptsel";
 	g_click = "orbit.kscm##m301";
 	rec_reset();
-	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (list 0 #f -1) (list #t #t) '())");
 	g_click = NULL;
 	g_combo_open = NULL;
 
@@ -2187,7 +2189,7 @@ static void test_world_script_unbind(void)
 	g_combo_open = "##scriptsel";
 	g_click = "(none)";
 	rec_reset();
-	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (list 0 #f -1) (list #t #t) '())");
 	g_click = NULL;
 	g_combo_open = NULL;
 
@@ -2201,7 +2203,7 @@ static void test_world_script_resolved(void)
 	g_fw[0].has_script = 1;
 	g_fw[0].script_ref = 301;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (list 0 #f -1) (list #t #t) '())");
 
 	assert(rec_has("text|Transform, Name, Render, Script"));
 	assert(rec_has("combo|##scriptsel|orbit.kscm"));
@@ -2219,7 +2221,7 @@ static void test_world_script_params_render(void)
 	g_fw[0].script_ref  = 301;
 	g_script_param_mode = 1;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (list 0 #f -1) (list #t #t) '())");
 
 	assert(rec_has("slider|speed##sp"));
 
@@ -2228,7 +2230,7 @@ static void test_world_script_params_render(void)
 	g_fw[0].has_script = 1;
 	g_fw[0].script_ref = 301;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (list 0 #f -1) (list #t #t) '())");
 	assert(!rec_has("slider|speed##sp"));
 }
 
@@ -2242,7 +2244,7 @@ static void test_world_script_params_save(void)
 	g_float_id          = "speed##sp";   /* force this slider to report a change */
 	g_float_changed     = 1;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (list 0 #f -1) (list #t #t) '())");
 
 	assert(rec_has("save-script-params|0|301"));
 }
@@ -2257,14 +2259,14 @@ static void test_world_mesh_params_render(void)
 	fw_reset();                       /* id0 already has render_ref 101 */
 	g_mesh_param_mode = 1;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (list 0 #f -1) (list #t #t) '())");
 
 	assert(rec_has("slider|width##mshp"));
 
 	/* No params clause -> no slider drawn. */
 	fw_reset();
 	rec_reset();
-	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (list 0 #f -1) (list #t #t) '())");
 	assert(!rec_has("slider|width##mshp"));
 }
 
@@ -2277,7 +2279,7 @@ static void test_world_mesh_params_save(void)
 	g_float_id        = "width##mshp";   /* force this slider to report a change */
 	g_float_changed   = 1;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (list 0 #f -1) (list #t #t) '())");
 
 	assert(rec_has("save-mesh-params|0|101"));
 }
@@ -2316,7 +2318,7 @@ static void test_world_material_params_render(void)
 {
 	material_bound_entity();
 	rec_reset();
-	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (list 0 #f -1) (list #t #t) '())");
 
 	assert(rec_has("coloredit|base_color##mp"));
 	assert(rec_has("combo|##scriptsel|(none)")); /* inspector did not abort */
@@ -2330,7 +2332,7 @@ static void test_world_material_params_save(void)
 	g_float_id      = "base_color##mp";  /* force this swatch to report a change */
 	g_float_changed = 1;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (list 0 #f -1) (list #t #t) '())");
 	g_float_id      = NULL;
 	g_float_changed = 0;
 
@@ -2349,13 +2351,13 @@ static void test_world_texture_params_render(void)
 	material_bound_entity();
 	g_texture_param_mode = 1;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (list 0 #f -1) (list #t #t) '())");
 	assert(rec_has("slider|scale##texp"));
 
 	/* No bound texture -> no Texture Parameters section. */
 	material_bound_entity();
 	rec_reset();
-	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (list 0 #f -1) (list #t #t) '())");
 	assert(!rec_has("slider|scale##texp"));
 }
 
@@ -2368,7 +2370,7 @@ static void test_world_texture_params_save(void)
 	g_float_id      = "scale##texp";   /* force this slider to report a change */
 	g_float_changed = 1;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (list 0 #f -1) (list #t #t) '())");
 	g_float_id      = NULL;
 	g_float_changed = 0;
 
@@ -2389,8 +2391,9 @@ static void test_world_gizmo_chips(void)
 	assert(rec_has("gizmo-mode|1"));
 }
 
-/* The whole tab composes header, tool chips, then the entity tree, in order —
- * each entity node opening onto its own inspector in place. */
+/* The whole tab composes header, tool chips, then the entity tree under a
+ * collapsing "Entities" header, in order — each node opening onto its own
+ * inspector in place. */
 static void test_world_composition(void)
 {
 	fw_reset();
@@ -2399,10 +2402,33 @@ static void test_world_composition(void)
 
 	assert(rec_has("text|Untitled Scene"));
 	assert(rec_index("text|Untitled Scene") < rec_index("text|Tool"));
-	assert(rec_index("text|Tool")
+	assert(rec_has("header|Entities|1")); /* the tree rolls up under it */
+	assert(rec_index("text|Tool") < rec_index("header|Entities|1"));
+	assert(rec_index("header|Entities|1")
 	       < rec_index("tree-node|ent0|Cube|folder|1"));
 	/* the node opened onto the inspector body in place */
 	assert(rec_has("input-text|##ename|Cube"));
+}
+
+/* A child entity is drawn nested inside its parent's expansion, not as a
+ * sibling root: with id1 parented under id0, id1's node lands before the first
+ * tree-pop (i.e. still inside id0's subtree), and id0 is the only root walked. */
+static void test_world_nested(void)
+{
+	fw_reset();
+	g_fw[1].has_name = 1;
+	strcpy(g_fw[1].name, "Child");
+	g_fw[1].parent = 0;
+	rec_reset();
+	script_eval("(kruddboard-draw-world-tree (list #t #t))");
+
+	assert(rec_has("tree-node|ent0|Cube|folder|1"));
+	assert(rec_count("tree-node|ent1|Child|folder|0") == 1);
+	/* nested: the child node is drawn before id0's subtree is popped */
+	assert(rec_index("tree-node|ent1|Child") < rec_index("tree-pop"));
+	/* and it sits inside id0's inspector body, past the parent name field */
+	assert(rec_index("input-text|##ename|Cube")
+	       < rec_index("tree-node|ent1|Child"));
 }
 
 /* An overridden param lights the amber dot beside its widget; a param still at
@@ -2416,8 +2442,8 @@ static void test_world_override_dot(void)
 	g_script_param_mode = 1;
 	g_override_on       = 1;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-tree-entity (cons 0 \"Cube\") "
-		    "(list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (list 0 \"Cube\" -1) "
+		    "(list #t #t) (quote ()))");
 
 	assert(rec_has("slider|speed##sp"));
 	assert(rec_has("dot|0.94,0.66,0.18,1.00"));
@@ -2429,8 +2455,8 @@ static void test_world_override_dot(void)
 	g_script_param_mode = 1;
 	g_override_on       = 0;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-tree-entity (cons 0 \"Cube\") "
-		    "(list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (list 0 \"Cube\" -1) "
+		    "(list #t #t) (quote ()))");
 
 	assert(rec_has("slider|speed##sp"));
 	assert(!rec_has("dot|"));
@@ -3164,6 +3190,7 @@ int main(void)
 	RUN(world_texture_params_save);
 	RUN(world_gizmo_chips);
 	RUN(world_composition);
+	RUN(world_nested);
 	RUN(world_override_dot);
 
 	RUN(assets_unavailable);

@@ -91,6 +91,7 @@ int32_t world_create_entity(struct world *w, int32_t parent,
 	w->script_ref[e]  = 0;
 	w->script_param_len[e] = 0;
 	w->material_param_len[e] = 0;
+	w->mesh_param_len[e] = 0;
 	return (int32_t)e;
 }
 
@@ -256,6 +257,34 @@ const uint8_t *world_material_params(const struct world *w, uint32_t e,
 	return w->material_params[e];
 }
 
+void world_set_mesh_params(struct world *w, int32_t e,
+			   const uint8_t *bytes, uint32_t len)
+{
+	if (e < 0 || (uint32_t)e >= w->count || !w->alive[e])
+		return;
+	if (!bytes || len == 0) {
+		w->mesh_param_len[e] = 0;
+		return;
+	}
+	if (len > WORLD_MESH_PARAM_CAP)
+		len = WORLD_MESH_PARAM_CAP;
+	memcpy(w->mesh_params[e], bytes, len);
+	w->mesh_param_len[e] = len;
+}
+
+const uint8_t *world_mesh_params(const struct world *w, uint32_t e,
+				 uint32_t *len)
+{
+	if (e >= w->count || w->mesh_param_len[e] == 0) {
+		if (len)
+			*len = 0;
+		return NULL;
+	}
+	if (len)
+		*len = w->mesh_param_len[e];
+	return w->mesh_params[e];
+}
+
 void world_set_selected(struct world *w, int32_t e)
 {
 	if (e < 0) {
@@ -308,11 +337,12 @@ int32_t world_ingest_scene(struct world *w, const struct scene *s)
 				    ? se->material_ref : 0;
 		w->script_ref[i]  = (se->mask & COMPONENT_SCRIPT)
 				    ? se->script_ref : 0;
-		/* Per-entity script- and material-param overrides are not carried
-		 * by the .scene transfer format yet (its codec is unwritten);
-		 * ingest starts each entity with no override. */
+		/* Per-entity script-, material-, and mesh-param overrides are not
+		 * carried by the .scene transfer format yet (its codec is
+		 * unwritten); ingest starts each entity with no override. */
 		w->script_param_len[i] = 0;
 		w->material_param_len[i] = 0;
+		w->mesh_param_len[i] = 0;
 
 		if ((se->mask & COMPONENT_NAME)
 		    && se->name_off != SCENE_NO_NAME && s->names) {
@@ -446,6 +476,8 @@ struct world_snapshot {
 	uint8_t          *script_params;   /* count * WORLD_SCRIPT_PARAM_CAP */
 	uint32_t         *material_param_len;
 	uint8_t          *material_params; /* count * WORLD_MATERIAL_PARAM_CAP */
+	uint32_t         *mesh_param_len;
+	uint8_t          *mesh_params;     /* count * WORLD_MESH_PARAM_CAP */
 	char             *names;
 };
 
@@ -465,6 +497,8 @@ void world_snapshot_free(struct world_snapshot *s, const struct memory_api *mem)
 	mem->free(s->script_params);
 	mem->free(s->material_param_len);
 	mem->free(s->material_params);
+	mem->free(s->mesh_param_len);
+	mem->free(s->mesh_params);
 	mem->free(s->names);
 	mem->free(s);
 }
@@ -526,6 +560,12 @@ struct world_snapshot *world_snapshot_capture(const struct world *w,
 	s->material_params = (uint8_t *)
 			dup_bytes(mem, w->material_params,
 				  (size_t)n * WORLD_MATERIAL_PARAM_CAP);
+	s->mesh_param_len = (uint32_t *)
+			dup_bytes(mem, w->mesh_param_len,
+				  n * sizeof(*w->mesh_param_len));
+	s->mesh_params = (uint8_t *)
+			dup_bytes(mem, w->mesh_params,
+				  (size_t)n * WORLD_MESH_PARAM_CAP);
 	s->names      = (char *)dup_bytes(mem, w->names, w->name_bytes);
 
 	/* A zero-length column dups to NULL; only a real short alloc is OOM. */
@@ -533,7 +573,8 @@ struct world_snapshot *world_snapshot_capture(const struct world *w,
 		   !s->name_off || !s->render_ref || !s->material_ref ||
 		   !s->script_ref || !s->script_param_len ||
 		   !s->script_params || !s->material_param_len ||
-		   !s->material_params)) ||
+		   !s->material_params || !s->mesh_param_len ||
+		   !s->mesh_params)) ||
 	    (w->name_bytes && !s->names)) {
 		world_snapshot_free(s, mem);
 		return NULL;
@@ -572,6 +613,10 @@ void world_snapshot_restore(struct world *w, const struct world_snapshot *s)
 		       n * sizeof(*w->material_param_len));
 		memcpy(w->material_params, s->material_params,
 		       (size_t)n * WORLD_MATERIAL_PARAM_CAP);
+		memcpy(w->mesh_param_len, s->mesh_param_len,
+		       n * sizeof(*w->mesh_param_len));
+		memcpy(w->mesh_params, s->mesh_params,
+		       (size_t)n * WORLD_MESH_PARAM_CAP);
 	}
 	if (s->name_bytes)
 		memcpy(w->names, s->names, s->name_bytes);

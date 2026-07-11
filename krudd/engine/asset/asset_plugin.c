@@ -350,6 +350,7 @@ static void seed_builtins(void)
 	 * mesh_script_generate().
 	 */
 	seed_mesh("builtin://mesh/cube",    CUBE_MESH_SCRIPT_SRC);
+	seed_mesh("builtin://mesh/box",     BOX_MESH_SCRIPT_SRC);
 	seed_mesh("builtin://mesh/sphere",  SPHERE_MESH_SCRIPT_SRC);
 	seed_mesh("builtin://mesh/plane",   PLANE_MESH_SCRIPT_SRC);
 	seed_mesh("builtin://mesh/pyramid", PYRAMID_MESH_SCRIPT_SRC);
@@ -677,6 +678,21 @@ static const struct asset_decl_field cube_decl[] = {
 	{ "bounds.max", "{ 0.5, 0.5, 0.5 }"    },
 };
 
+/*
+ * The box mesh is the first built-in to carry a (params ...) clause, so it
+ * advertises those parameters the way a script advertises its params — a mesh's
+ * authored inputs are first-class, like a shader's uniforms. Its geometry (and
+ * so its bounds) depends on those params, so it advertises the default extents.
+ */
+static const struct asset_decl_field box_mesh_decl[] = {
+	{ "format",     "krudd-mesh"            },
+	{ "topology",   "triangles"             },
+	{ "vertices",   "24"                    },
+	{ "indices",    "36"                    },
+	{ "attributes", "position, normal, uv0" },
+	{ "params",     "width, height, depth"  },
+};
+
 static const struct asset_decl_field sphere_decl[] = {
 	{ "format",        "krudd-mesh"            },
 	{ "topology",      "triangles"             },
@@ -786,6 +802,7 @@ struct builtin_desc {
 
 static const struct builtin_desc builtin_descs[] = {
 	{ "builtin://mesh/cube",    cube_decl,    ARRAY_SIZE(cube_decl)    },
+	{ "builtin://mesh/box",     box_mesh_decl, ARRAY_SIZE(box_mesh_decl) },
 	{ "builtin://mesh/sphere",  sphere_decl,  ARRAY_SIZE(sphere_decl)  },
 	{ "builtin://mesh/plane",   plane_decl,   ARRAY_SIZE(plane_decl)   },
 	{ "builtin://mesh/pyramid", pyramid_decl, ARRAY_SIZE(pyramid_decl) },

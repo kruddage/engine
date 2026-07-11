@@ -6,20 +6,29 @@
 ;;! — is one of these forms; there is no hardcoded C mesh generator anymore.
 ;;! Mirrors entity_script.scm's (script NAME ...) dispatcher.
 ;;!
-;;! A mesh script is one (mesh NAME (generate () EXPR ...)) S-expression. Its
-;;! generate clause takes no arguments and must evaluate to (cons VERTS
-;;! INDICES): VERTS a list of 8-element (px py pz nx ny nz u v) lists,
-;;! INDICES a flat list of vertex-index integers, a multiple of 3 (one
+;;! A mesh script is one (mesh NAME [(params ...)] (generate () EXPR ...))
+;;! S-expression. Its generate clause takes no arguments and must evaluate to
+;;! (cons VERTS INDICES): VERTS a list of 8-element (px py pz nx ny nz u v)
+;;! lists, INDICES a flat list of vertex-index integers, a multiple of 3 (one
 ;;! triangle per triple).
 ;;!
+;;! An optional (params (NAME TYPE [(edit ...)] [(default ...)]) ...) clause —
+;;! the same shape a (script ...) or shader material block declares — makes the
+;;! geometry a function of authored inputs the generate body reads through
+;;! (param NAME). Two entities can then share one mesh asset yet draw at
+;;! different sizes, exactly as they share a material asset yet draw in
+;;! different colors: the per-entity override lives in the world, the shape math
+;;! lives here.
+;;!
 ;;! The engine's mesh-script driver (asset/mesh_script.c) calls
-;;! mesh-script-generate with the source text of a bound ASSET_TYPE_MESH
-;;! asset and marshals the (VERTS . INDICES) result into a mesh_blob. Unlike
-;;! an entity script (re-run every tick, cheap pose math) a mesh script is a
-;;! pure function of nothing — no clock, no entity — so its result is parsed
-;;! AND generated once per exact source text, then cached: a render upload and
-;;! an editor hit-test both asking for the same mesh cost nothing after the
-;;! first.
+;;! mesh-script-generate with the source text of a bound ASSET_TYPE_MESH asset
+;;! and that entity's resolved params, and marshals the (VERTS . INDICES) result
+;;! into a mesh_blob. A param-less mesh is a pure function of nothing — no clock,
+;;! no entity, no params — so it is parsed AND generated once per exact source
+;;! text, then cached: a render upload and an editor hit-test both asking for the
+;;! same built-in cost nothing after the first. A parameterized mesh depends on
+;;! its params, so it regenerates on demand (the render layer caches the GPU
+;;! buffers per (source, params); see mesh-script-generate).
 
 ;;! --- geometry helpers ------------------------------------------------
 ;;!
@@ -111,30 +120,64 @@
 
 (define *mesh-scripts* (make-hash-table))
 
-;;! The (mesh NAME (generate () BODY ...)) form evaluates to a zero-argument
-;;! thunk over BODY. NAME is a human-readable label only, exactly like the
-;;! entity script DSL's NAME — the registry below keys on source text, not
-;;! NAME, so a renamed clone never collides with the original it was copied
-;;! from.
-(define-macro (mesh name generate-clause)
-  `(lambda () ,@(cddr generate-clause)))
+;;! The (mesh NAME [(params ...)] (generate () BODY ...)) form evaluates to a
+;;! zero-argument thunk over the generate clause's BODY. NAME is a human-readable
+;;! label only, exactly like the entity script DSL's NAME — the registry below
+;;! keys on source text (and params), not NAME, so a renamed clone never
+;;! collides with the original it was copied from. A (params ...) clause, when
+;;! present, is authored data read separately (see mesh-script-params); it is not
+;;! a lifecycle clause, so the thunk ignores every clause but generate. The
+;;! generate body may read those params through (param NAME) — the same reader a
+;;! (script ...) clause uses — so one mesh source can draw at many sizes.
+(define-macro (mesh name . clauses)
+  (let ((g (assq 'generate clauses)))
+    `(lambda () ,@(cddr g))))
 
-;;! (mesh-script-generate src) -> (VERTS . INDICES), parsing and running SRC's
-;;! generate thunk the first time this exact source is seen and caching the
-;;! result. A fault (a malformed form, or a generate body that errors) is
-;;! caught and logged, never taking the frame down, and caches to an empty
-;;! mesh so a broken script degrades to "nothing renders" rather than a fault
-;;! on every subsequent call.
-(define (mesh-script-generate src)
-  (or (hash-table-ref *mesh-scripts* src)
-      (let ((result
-              (catch #t
-                (lambda ()
-                  (let ((thunk (eval (with-input-from-string src (lambda () (read)))
-                                     (rootlet))))
-                    (thunk)))
-                (lambda args
-                  (krudd-log 2 (string-append "mesh-script: fault: " src))
-                  (cons '() '())))))
-        (hash-table-set! *mesh-scripts* src result)
-        result)))
+;;! (mesh-script-params src) -> (TOTAL-SIZE (NAME TYPE OFFSET SIZE COMPONENTS
+;;! EDIT-KIND EDIT-MIN EDIT-MAX DEFAULT) ...): a mesh's authorable parameters,
+;;! tight-packed, in the exact shape script-params / shader-material-params
+;;! report, so the one C marshaller (script_mesh_params -> query_params) and one
+;;! set of editor widgets serve meshes too. Reuses the entity dispatcher's
+;;! script-params-form (loaded before this image) since a (params ...) clause is
+;;! identical wherever it appears.
+(define (mesh-script-params src)
+  (catch #t
+    (lambda ()
+      (script-params-form (with-input-from-string src (lambda () (read)))))
+    (lambda args (cons 0 '()))))
+
+;;! Parse and run SRC's generate thunk with PARAMS (an ((name . value) ...)
+;;! alist) bound as the current (param ...) scope, returning (VERTS . INDICES).
+;;! A fault (a malformed form, or a generate body that errors) is caught and
+;;! logged, never taking the frame down, and degrades to an empty mesh. *params*
+;;! is restored on both the success and fault paths so a mesh fault never leaks
+;;! its params into a later entity-script tick.
+(define (mesh-script-run src params)
+  (set! *params* params)
+  (let ((result
+          (catch #t
+            (lambda ()
+              (let ((thunk (eval (with-input-from-string src (lambda () (read)))
+                                 (rootlet))))
+                (thunk)))
+            (lambda args
+              (krudd-log 2 (string-append "mesh-script: fault: " src))
+              (cons '() '())))))
+    (set! *params* '())
+    result))
+
+;;! (mesh-script-generate src params) -> (VERTS . INDICES). A param-less mesh
+;;! (PARAMS '()) is a pure function of nothing, so its result is cached per exact
+;;! source text — a render upload and an editor hit-test asking for the same
+;;! built-in cost nothing after the first, exactly as before params existed. A
+;;! parameterized mesh depends on PARAMS too, so it is regenerated on demand
+;;! rather than cached here: the render layer keys its GPU buffers on
+;;! (source, params) and only reaches this on a genuine cache miss, so the
+;;! unbounded (source x params) space never accumulates in the image.
+(define (mesh-script-generate src params)
+  (if (null? params)
+      (or (hash-table-ref *mesh-scripts* src)
+          (let ((result (mesh-script-run src '())))
+            (hash-table-set! *mesh-scripts* src result)
+            result))
+      (mesh-script-run src params)))

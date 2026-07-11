@@ -16,6 +16,9 @@
 #include "s7.h"
 
 #include <stddef.h>
+#include <string.h>
+
+#define MESH_SCRIPT_MAX_PARAMS 32
 
 /* The K-th real of an 8-element vertex list (px py pz nx ny nz u v), or 0.0
  * for a short or non-numeric entry — a malformed vertex degrades to the
@@ -39,7 +42,65 @@ static void fill_vertex(s7_scheme *sc, struct mesh_vertex *out, s7_pointer v)
 	out->uv0[1]       = vertex_field(sc, v, 7);
 }
 
+/* The default of param component K, honouring an authored (default V ...) first
+ * and otherwise the field's edit hint — the same resolution es_param_default
+ * makes for entity scripts, so an un-overridden mesh and the editor agree. */
+static float ms_param_default(const struct shader_param *p, uint32_t k)
+{
+	if (k < p->default_count)
+		return p->edit_default[k];
+	if (strcmp(p->edit, "color") == 0)
+		return 1.0f;
+	if (strcmp(p->edit, "range") == 0)
+		return p->edit_min;
+	return 0.0f;
+}
+
+/*
+ * Resolve mesh SRC's declared params against its override BLOB (blen bytes, or
+ * NULL for none) into an ((name . value) ...) alist — a real for a scalar param,
+ * a list of reals for a vector. Each field reads from the override where present
+ * and long enough, else from its default. This is the override ⊕ defaults the
+ * generator sees through (param ...); it mirrors entity_script.c's
+ * es_param_values so a mesh and a script resolve their params identically.
+ */
+static s7_pointer ms_param_values(s7_scheme *sc, const char *src,
+				  const uint8_t *blob, uint32_t blen)
+{
+	struct shader_param p[MESH_SCRIPT_MAX_PARAMS];
+	int                 n, i;
+	s7_pointer          out = s7_nil(sc);
+
+	if (!src)
+		return out;
+	n = script_mesh_params(src, p, MESH_SCRIPT_MAX_PARAMS, NULL);
+	for (i = n - 1; i >= 0; i--) {
+		uint32_t   c = p[i].components > 4 ? 4 : p[i].components;
+		float      v[4];
+		uint32_t   k;
+		s7_pointer val;
+
+		for (k = 0; k < c; k++)
+			v[k] = ms_param_default(&p[i], k);
+		if (blob && p[i].offset + c * sizeof(float) <= blen)
+			memcpy(v, blob + p[i].offset, c * sizeof(float));
+		if (c == 1) {
+			val = s7_make_real(sc, v[0]);
+		} else {
+			val = s7_nil(sc);
+			for (k = c; k > 0; k--)
+				val = s7_cons(sc, s7_make_real(sc, v[k - 1]),
+					      val);
+		}
+		out = s7_cons(sc,
+			      s7_cons(sc, s7_make_symbol(sc, p[i].name), val),
+			      out);
+	}
+	return out;
+}
+
 struct mesh_blob *mesh_script_generate(const char *src,
+				       const uint8_t *params, uint32_t plen,
 				       const struct memory_api *mem,
 				       uint32_t *out_size)
 {
@@ -59,7 +120,8 @@ struct mesh_blob *mesh_script_generate(const char *src,
 	if (!s7_is_procedure(fn))
 		return NULL;
 
-	res = s7_call(sc, fn, s7_list(sc, 1, s7_make_string(sc, src)));
+	res = s7_call(sc, fn, s7_list(sc, 2, s7_make_string(sc, src),
+				      ms_param_values(sc, src, params, plen)));
 	if (!s7_is_pair(res))
 		return NULL;
 	verts   = s7_car(res);

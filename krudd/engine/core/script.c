@@ -235,6 +235,12 @@ int script_entity_params(const char *src, struct shader_param *out,
 	return query_params("script-params", src, out, max, total_size);
 }
 
+int script_mesh_params(const char *src, struct shader_param *out,
+		       uint32_t max, uint32_t *total_size)
+{
+	return query_params("mesh-script-params", src, out, max, total_size);
+}
+
 void script_tick(void)
 {
 	s7_pointer tick;

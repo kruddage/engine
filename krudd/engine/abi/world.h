@@ -52,6 +52,17 @@
  */
 #define WORLD_MATERIAL_PARAM_CAP 256
 
+/*
+ * Per-entity mesh-parameter override: the tight-packed values a rendered entity
+ * substitutes on its bound mesh's params clause, letting two entities share one
+ * mesh asset yet draw at different sizes — the geometry twin of the material
+ * override above. Held inline like the others; a len of 0 means "no override":
+ * the mesh generates on its param defaults. Tight-packed (no std140 padding),
+ * since these feed a CPU geometry generator, not a GPU uniform block; sized like
+ * the script override, as mesh params are typically a handful of scalars.
+ */
+#define WORLD_MESH_PARAM_CAP 64
+
 struct transform {
 	float position[3];
 	float rotation[4];   /* quaternion, xyzw */
@@ -75,6 +86,8 @@ struct world {
 	uint8_t          script_params[WORLD_MAX_ENTITIES][WORLD_SCRIPT_PARAM_CAP];
 	uint32_t         material_param_len[WORLD_MAX_ENTITIES]; /* 0 = no override */
 	uint8_t          material_params[WORLD_MAX_ENTITIES][WORLD_MATERIAL_PARAM_CAP];
+	uint32_t         mesh_param_len[WORLD_MAX_ENTITIES]; /* 0 = no override */
+	uint8_t          mesh_params[WORLD_MAX_ENTITIES][WORLD_MESH_PARAM_CAP];
 	char             names[WORLD_NAME_BYTES];          /* NUL-terminated blob */
 };
 
@@ -175,6 +188,26 @@ void world_set_material_params(struct world *w, int32_t e,
  */
 const uint8_t *world_material_params(const struct world *w, uint32_t e,
 				     uint32_t *len);
+
+/*
+ * Override entity e's mesh parameters with `len` tight-packed bytes (the layout
+ * its bound mesh's params clause reports). A len of 0 clears the override, so
+ * the mesh falls back to its param defaults. Bytes beyond WORLD_MESH_PARAM_CAP
+ * are dropped. Out-of-range or tombstoned ids are ignored. Independent of
+ * COMPONENT_RENDER: an override can be authored before (or after) a mesh is
+ * bound, and it only reshapes the geometry — the mesh asset still comes from the
+ * bound render_ref.
+ */
+void world_set_mesh_params(struct world *w, int32_t e,
+			   const uint8_t *bytes, uint32_t len);
+
+/*
+ * Entity e's mesh-parameter override bytes, or NULL when it has none. *len (may
+ * be NULL) receives the byte count. The pointer is into the world and is valid
+ * until the next mutation of e's override.
+ */
+const uint8_t *world_mesh_params(const struct world *w, uint32_t e,
+				 uint32_t *len);
 
 /*
  * Editor selection model. set accepts -1 (none) or a live entity id; any

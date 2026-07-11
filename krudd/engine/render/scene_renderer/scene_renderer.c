@@ -7,6 +7,9 @@
 #include "math_types.h"
 #include "mesh.h"
 #include "mesh_script.h"
+#include "texture.h"
+#include "texture_script.h"
+#include "script.h"
 #include "asset_api.h"
 #include "memory_api.h"
 #include "subsystem.h"
@@ -88,6 +91,7 @@ static int            g_ready;
 struct shader_pso {
 	uint32_t       shader_ref;
 	gpu_pipeline_t pso;   /* 0 = the shader failed to compile; use default */
+	uint32_t       mat_block_size; /* std140 bytes of the shader's Material block */
 };
 
 #define SCENE_MAX_SHADER_PSOS 8
@@ -124,6 +128,28 @@ struct mesh_gpu {
 #define SCENE_MAX_MESHES 32
 static struct mesh_gpu g_meshes[SCENE_MAX_MESHES];
 static uint32_t        g_mesh_count;
+
+/*
+ * One uploaded, baked procedural texture, keyed by (texture_ref, width, height,
+ * gen-param bytes). Mirrors mesh_gpu: two materials that bake the same texture at
+ * the same size and params share one GPU texture; a different size or param set
+ * gets its own. `used` drives ensure_textures' mark/sweep, freeing combos no live
+ * material references anymore (a resolution change frees the old one's texture).
+ */
+#define SCENE_TEX_PARAM_CAP 128
+struct texture_gpu {
+	gpu_texture_t tex;
+	uint32_t      texture_ref;
+	uint32_t      width;
+	uint32_t      height;
+	uint32_t      param_len;
+	uint8_t       params[SCENE_TEX_PARAM_CAP];
+	int           used;
+};
+
+#define SCENE_MAX_TEXTURES 16
+static struct texture_gpu g_textures[SCENE_MAX_TEXTURES];
+static uint32_t           g_texture_count;
 
 static struct camera g_cam;
 
@@ -308,6 +334,69 @@ static struct shader_pso *find_shader_pso(uint32_t shader_ref)
 }
 
 /*
+ * The std140 byte size of a shader's Material block, from the same introspection
+ * the editor packs against. Cached per shader in the pso entry so the material's
+ * UBO/texture-trailer split (see material_texture) costs no per-draw s7 call;
+ * 0 for a shader with no Material block or an unparseable source.
+ */
+static uint32_t shader_material_block_size(const char *src)
+{
+	uint32_t total = 0;
+
+	if (src)
+		script_shader_material_params(src, NULL, 0, &total);
+	return total;
+}
+
+/* The cached Material-block size for a shader asset id, or 0 if not compiled. */
+static uint32_t material_block_size_of(uint32_t shader_ref)
+{
+	struct shader_pso *e = find_shader_pso(shader_ref);
+
+	return e ? e->mat_block_size : 0;
+}
+
+/*
+ * Parse a material's optional texture slot — the trailer after the shader-ref
+ * and the shader's std140 Material block:
+ *   [shader-ref u32][block: block_size][tex-ref u32][width u32][height u32][params...]
+ * Returns 1 and fills the out params when a texture slot is present, 0 otherwise.
+ * The block size comes from the material's shader (cached in the pso), so a
+ * material with no trailer (size == header + block) reports no texture, exactly
+ * as before this trailer existed — the backward-compatible split. A shader whose
+ * block size isn't known yet (0) is treated as "no texture" so ambiguous bytes
+ * are never misread as a slot.
+ */
+static int material_texture(uint32_t material_ref, uint32_t shader_ref,
+			    uint32_t *out_tex, uint32_t *out_w, uint32_t *out_h,
+			    const uint8_t **out_params, uint32_t *out_plen)
+{
+	const uint8_t *bytes;
+	uint32_t       size = 0;
+	uint32_t       block, off;
+
+	if (!material_ref || !g_asset)
+		return 0;
+	block = material_block_size_of(shader_ref);
+	if (block == 0)
+		return 0;
+	bytes = g_asset->get_data(material_ref, &size);
+	if (!bytes)
+		return 0;
+	off = (uint32_t)MATERIAL_HEADER_BYTES + block;
+	if (size < off + 3u * sizeof(uint32_t))
+		return 0; /* no trailer */
+	memcpy(out_tex, bytes + off,      sizeof(uint32_t));
+	memcpy(out_w,   bytes + off + 4u, sizeof(uint32_t));
+	memcpy(out_h,   bytes + off + 8u, sizeof(uint32_t));
+	if (*out_tex == 0)
+		return 0;
+	*out_params = bytes + off + 12u;
+	*out_plen   = size - (off + 12u);
+	return 1;
+}
+
+/*
  * Compile a pipeline from one shader asset's DSL source. All scene pipelines
  * share the same vertex layout and Camera/Material uniform blocks, so a custom
  * material shader must speak that same IO contract (a_pos/a_normal/a_uv0 in,
@@ -371,6 +460,8 @@ static void build_pipeline(const struct gpu_api *gpu)
 	    g_shader_pso_count < SCENE_MAX_SHADER_PSOS) {
 		g_shader_psos[g_shader_pso_count].shader_ref = scene_id;
 		g_shader_psos[g_shader_pso_count].pso        = g_default_pso;
+		g_shader_psos[g_shader_pso_count].mat_block_size =
+			shader_material_block_size(src);
 		g_shader_pso_count++;
 	}
 }
@@ -403,6 +494,8 @@ static void add_shader_pso(const struct gpu_api *gpu, uint32_t shader_ref)
 
 	g_shader_psos[g_shader_pso_count].shader_ref = shader_ref;
 	g_shader_psos[g_shader_pso_count].pso        = pso;
+	g_shader_psos[g_shader_pso_count].mat_block_size =
+		shader_material_block_size(src);
 	g_shader_pso_count++;
 }
 
@@ -578,6 +671,152 @@ static void ensure_meshes(void)
 }
 
 /*
+ * The cached texture for (texture_ref, width, height, params), or NULL when that
+ * exact combo is not resident. A match needs the same asset id, the same bake
+ * size, and the same gen-param bytes, so a shared texture at two resolutions (or
+ * two param sets) resolves to two distinct entries — the pixel analogue of the
+ * (render_ref, params) mesh key.
+ */
+static struct texture_gpu *find_texture(uint32_t texture_ref, uint32_t width,
+					uint32_t height, const uint8_t *params,
+					uint32_t plen)
+{
+	uint32_t i;
+
+	if (plen > SCENE_TEX_PARAM_CAP)
+		plen = SCENE_TEX_PARAM_CAP;
+	for (i = 0; i < g_texture_count; i++) {
+		struct texture_gpu *t = &g_textures[i];
+
+		if (t->texture_ref != texture_ref || t->width != width ||
+		    t->height != height || t->param_len != plen)
+			continue;
+		if (plen == 0 || memcmp(t->params, params, plen) == 0)
+			return t;
+	}
+	return NULL;
+}
+
+/*
+ * Bake (texture_ref, params) at width x height via texture_script_generate and
+ * upload the RGBA8 result as a sampled GPU texture with a full mip chain,
+ * returning the new cache slot (NULL when the cache is full, the asset has no
+ * source, or the generator yields nothing). Every ASSET_TYPE_TEXTURE asset's
+ * bytes are (texture NAME (shade (u v) ...)) Scheme source, so this compiles the
+ * pixels on demand — there is no stored image to borrow instead.
+ */
+static struct texture_gpu *upload_texture(const struct gpu_api *gpu,
+					  uint32_t texture_ref, uint32_t width,
+					  uint32_t height, const uint8_t *params,
+					  uint32_t plen)
+{
+	const struct texture_blob *blob;
+	struct gpu_texture_desc    td;
+	struct texture_gpu        *t;
+	const char                *src;
+
+	if (g_texture_count >= SCENE_MAX_TEXTURES)
+		return NULL;
+	src = (const char *)g_asset->get_data(texture_ref, NULL);
+	if (!src)
+		return NULL;
+	blob = texture_script_generate(src, params, plen, width, height,
+				       g_mem, NULL);
+	if (!blob)
+		return NULL;
+
+	memset(&td, 0, sizeof(td));
+	td.format        = GPU_FORMAT_RGBA8_UNORM;
+	td.width         = blob->width;
+	td.height        = blob->height;
+	td.mip_levels    = 1;
+	td.sample_count  = 1;
+	td.initial_data  = texture_blob_pixels(blob);
+	td.generate_mips = 1;
+
+	t = &g_textures[g_texture_count];
+	t->tex         = gpu->texture_create(&td);
+	t->texture_ref = texture_ref;
+	t->width       = width;
+	t->height      = height;
+	if (plen > SCENE_TEX_PARAM_CAP)
+		plen = SCENE_TEX_PARAM_CAP;
+	t->param_len = plen;
+	if (plen)
+		memcpy(t->params, params, plen);
+	g_texture_count++;
+
+	g_mem->free((void *)blob);
+	return t;
+}
+
+/*
+ * Reconcile the texture cache with the world, off-frame (from the tick, after
+ * ensure_shader_pipelines so a material's shader block size is known) so
+ * forward_pass never bakes or uploads a texture mid-pass. Mark/sweep like
+ * ensure_meshes: mark every cached combo unused, ensure each live material's
+ * texture slot is resident (baking on a miss) and mark it used, then destroy the
+ * combos no live material references — so a resolution change frees the old
+ * texture. Materials with no texture slot are simply skipped.
+ */
+static void ensure_textures(void)
+{
+	const struct gpu_api *gpu = NULL;
+	const struct world   *w;
+	uint32_t              i;
+
+	if (!g_scene || !g_asset)
+		return;
+	w = g_scene->get_world();
+	if (!w)
+		return;
+
+	for (i = 0; i < g_texture_count; i++)
+		g_textures[i].used = 0;
+
+	for (i = 0; i < w->count; i++) {
+		uint32_t       tex_ref, tw, th, plen = 0, shader_ref;
+		const uint8_t *params = NULL;
+		struct texture_gpu *t;
+
+		if (!w->alive[i] || !(w->mask[i] & COMPONENT_RENDER) ||
+		    !(w->mask[i] & COMPONENT_MATERIAL))
+			continue;
+		shader_ref = resolve_material_shader(w->material_ref[i]);
+		if (!material_texture(w->material_ref[i], shader_ref,
+				      &tex_ref, &tw, &th, &params, &plen))
+			continue;
+		t = find_texture(tex_ref, tw, th, params, plen);
+		if (!t) {
+			if (!gpu) {
+				gpu = g_mgr ? subsystem_manager_get_api(g_mgr,
+									"renderer")
+					    : NULL;
+				if (!gpu)
+					return;
+			}
+			t = upload_texture(gpu, tex_ref, tw, th, params, plen);
+		}
+		if (t)
+			t->used = 1;
+	}
+
+	for (i = 0; i < g_texture_count;) {
+		if (g_textures[i].used) {
+			i++;
+			continue;
+		}
+		if (!gpu)
+			gpu = g_mgr ? subsystem_manager_get_api(g_mgr,
+								"renderer")
+				    : NULL;
+		if (gpu)
+			gpu->texture_destroy(g_textures[i].tex);
+		g_textures[i] = g_textures[--g_texture_count];
+	}
+}
+
+/*
  * Seed a small demo scene so the page shows content on load and exercises
  * depth-correct multi-entity rendering (#172 acceptance). Only runs when the
  * world holds no renderable entity yet, so it never clobbers a loaded scene.
@@ -645,8 +884,25 @@ static void seed_demo_scene(void)
 		t.rotation[3] = 1.0f;
 		t.scale[0] = t.scale[1] = t.scale[2] = 1.0f;
 		id = g_scene->create_entity(WORLD_NO_PARENT, &t, 0u, ref);
-		if (id >= 0 && material && g_scene->set_material_ref)
-			g_scene->set_material_ref(id, material);
+		{
+			/*
+			 * The grid floor wears the built-in checker material — a
+			 * procedural texture baked and sampled on load, the proof
+			 * this whole path renders. Every other entity keeps the
+			 * opaque-white default, unchanged.
+			 */
+			uint32_t emat = material;
+
+			if (strcmp(DEMO[i].path, "builtin://mesh/grid") == 0) {
+				uint32_t c =
+					asset_id_by_path("builtin://material/checker");
+
+				if (c)
+					emat = c;
+			}
+			if (id >= 0 && emat && g_scene->set_material_ref)
+				g_scene->set_material_ref(id, emat);
+		}
 		if (id >= 0 && g_scene->set_name)
 			g_scene->set_name(id, DEMO[i].name);
 
@@ -782,6 +1038,7 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 		const uint8_t                *pbytes;
 		uint32_t                      plen;
 		uint32_t                      mat_ref;
+		uint32_t                      shader_ref;
 		gpu_pipeline_t                pso;
 
 		if (!w->alive[i] || !(w->mask[i] & COMPONENT_RENDER))
@@ -799,6 +1056,7 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 			continue;
 
 		mat_ref = w->material_ref[i];
+		shader_ref = resolve_material_shader(mat_ref);
 
 		/*
 		 * Select this material's pipeline (its shader, or the built-in
@@ -807,7 +1065,7 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 		 * have_pso flag forces the first bind even when the backend's
 		 * pipeline handle is 0 (a valid value for the recording backend).
 		 */
-		pso = pso_for_shader(resolve_material_shader(mat_ref));
+		pso = pso_for_shader(shader_ref);
 		if (!have_pso || pso != cur_pso) {
 			gpu->cmd_set_pipeline(cmd, pso);
 			cur_pso  = pso;
@@ -835,7 +1093,18 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 			pbytes = w->material_params[i];
 			plen   = w->material_param_len[i];
 		} else {
+			uint32_t block;
+
 			pbytes = material_params(mat_ref, &plen);
+			/*
+			 * A textured material's bytes are the Material block
+			 * followed by the texture trailer; upload only the block
+			 * to the UBO (the trailer is bound as a texture below),
+			 * so the sampler slot never leaks into the uniform data.
+			 */
+			block = material_block_size_of(shader_ref);
+			if (block && plen > block)
+				plen = block;
 		}
 		if (plen > MATERIAL_UBO_MAX)
 			plen = MATERIAL_UBO_MAX;
@@ -847,6 +1116,27 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 		}
 		gpu->buffer_update(g_material_ubo, 0, params, plen);
 		gpu->cmd_bind_uniform_buffer(cmd, 1, g_material_ubo, 0, plen);
+
+		/*
+		 * Bind this material's baked procedural texture, if it names one,
+		 * to the albedo unit the scene-textured shader samples. The combo
+		 * is already resident (ensure_textures ran off-frame); a miss just
+		 * skips the bind and the sampler reads whatever unit 0 holds.
+		 */
+		{
+			uint32_t       tex_ref, tw, th, tplen = 0;
+			const uint8_t *tparams = NULL;
+
+			if (material_texture(mat_ref, shader_ref, &tex_ref, &tw,
+					     &th, &tparams, &tplen)) {
+				struct texture_gpu *t = find_texture(tex_ref, tw,
+								     th, tparams,
+								     tplen);
+
+				if (t)
+					gpu->cmd_bind_texture(cmd, 0, t->tex);
+			}
+		}
 
 		gpu->cmd_bind_vertex_buffer(cmd, 0, m->vbo, 0);
 		gpu->cmd_bind_index_buffer(cmd, m->ebo, 0,
@@ -872,6 +1162,7 @@ static void scene_renderer_tick(void)
 	/* Warm pipelines and mesh buffers for the live world, off-frame, so the
 	 * forward pass never creates or destroys a GPU resource mid-pass. */
 	ensure_shader_pipelines();
+	ensure_textures();
 	ensure_meshes();
 
 	if (g_camera_entity_id >= 0) {
@@ -916,6 +1207,8 @@ static void scene_renderer_shutdown(void)
 			gpu->buffer_destroy(g_meshes[i].vbo);
 			gpu->buffer_destroy(g_meshes[i].ebo);
 		}
+		for (i = 0; i < g_texture_count; i++)
+			gpu->texture_destroy(g_textures[i].tex);
 		if (g_ubo)
 			gpu->buffer_destroy(g_ubo);
 		if (g_material_ubo)
@@ -935,6 +1228,7 @@ static void scene_renderer_shutdown(void)
 	g_default_pso      = 0;
 	g_shader_pso_count = 0;
 	g_mesh_count       = 0;
+	g_texture_count    = 0;
 	g_ready            = 0;
 	g_log->write(LOG_LEVEL_INFO, "scene_renderer: shutdown");
 }

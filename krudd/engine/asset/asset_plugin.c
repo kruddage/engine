@@ -201,6 +201,46 @@ static const char *SCENE_SHADER_SRC =
 	"      (set frag_color (vec4 (* col (swizzle base_color rgb)) 1.0)))))\n";
 
 /*
+ * Scene-textured shader — the scene shader plus a single albedo sampler. It
+ * speaks the same IO contract as the built-in scene pipeline (a_pos/a_normal/
+ * a_uv0 in, Camera at block 0, Material at block 1) so the renderer's shared
+ * pipeline layout binds it unchanged; it adds a v_uv varying and an `albedo`
+ * sampler2D (its own texture unit, not the Material block) and multiplies the
+ * sampled RGB into the lit base_color. A material naming this shader is what
+ * makes a procedural texture actually appear on a mesh.
+ */
+static const char *SCENE_TEXTURED_SHADER_SRC =
+	"(shader scene-textured\n"
+	"  (inputs\n"
+	"    (a_pos    vec3 (location 0))\n"
+	"    (a_normal vec3 (location 1))\n"
+	"    (a_uv0    vec2 (location 2)))\n"
+	"  (uniforms\n"
+	"    (Camera (block 0) (layout std140)\n"
+	"      (view_proj mat4)\n"
+	"      (model     mat4))\n"
+	"    (Material (block 1) (layout std140)\n"
+	"      (base_color vec4 (edit color)))\n"
+	"    (albedo sampler2D))\n"
+	"  (varyings\n"
+	"    (v_normal vec3)\n"
+	"    (v_uv     vec2))\n"
+	"  (targets\n"
+	"    (frag_color vec4 (location 0)))\n"
+	"  (vertex\n"
+	"    (set v_normal (* (mat3 model) a_normal))\n"
+	"    (set v_uv a_uv0)\n"
+	"    (set position (* view_proj model (vec4 a_pos 1.0))))\n"
+	"  (fragment\n"
+	"    (let* ((n    (normalize v_normal))\n"
+	"           (base (+ 0.5 (* 0.5 n)))\n"
+	"           (diff (max (dot n (normalize (vec3 0.5 0.8 0.4))) 0.0))\n"
+	"           (lit  (* base (+ 0.35 (* 0.65 diff))))\n"
+	"           (tex  (sample albedo v_uv)))\n"
+	"      (set frag_color\n"
+	"           (vec4 (* lit (swizzle base_color rgb) (swizzle tex rgb)) 1.0)))))\n";
+
+/*
  * Built-in default material — opaque white, the multiplicative identity the
  * scene shader's base_color expects.  This is the material the world scene binds
  * to every entity by default, so "no material assigned" is never the resting
@@ -278,6 +318,51 @@ static void seed_material(const char *path, uint32_t shader_ref,
 }
 
 /*
+ * Seed a built-in textured material: the v3 wire form (shader-ref + the shader's
+ * std140 Material block) followed by an optional texture slot the renderer reads
+ * as a trailer — [texture-ref u32][width u32][height u32][texture gen-params...].
+ * Here the slot names a built-in texture at a fixed bake size and no param
+ * override (the texture uses its declared defaults), so the material renders that
+ * procedural texture on whatever mesh it is bound to. shader_ref must name the
+ * scene-textured shader (whose Material block is one vec4 base_color, 16 bytes),
+ * so the trailer starts at offset 4 + 16; the renderer locates it from that
+ * block size. A zero shader_ref or tex_ref makes this a no-op.
+ */
+static void seed_textured_material(const char *path, uint32_t shader_ref,
+				   const float rgba[4], uint32_t tex_ref,
+				   uint32_t width, uint32_t height)
+{
+	struct asset_entry *e;
+	uint32_t            n;
+	unsigned char      *p;
+
+	if (!shader_ref || !tex_ref)
+		return;
+	e = alloc_entry(path);
+	if (!e)
+		return;
+	n = (uint32_t)(sizeof(uint32_t)      /* shader-ref            */
+		       + 4 * sizeof(float)   /* base_color block      */
+		       + 3 * sizeof(uint32_t)); /* tex-ref, width, height */
+	e->data = g_mem->alloc(n);
+	if (!e->data) {
+		e->state = ASSET_ERROR;
+		return;
+	}
+	p = (unsigned char *)e->data;
+	memcpy(p, &shader_ref, sizeof(shader_ref));                     p += 4;
+	memcpy(p, rgba, 4 * sizeof(float));                             p += 16;
+	memcpy(p, &tex_ref, sizeof(tex_ref));                          p += 4;
+	memcpy(p, &width, sizeof(width));                              p += 4;
+	memcpy(p, &height, sizeof(height));
+	e->size      = n;
+	e->state     = ASSET_LOADED;
+	e->kind      = ASSET_KIND_PRIMITIVE;
+	e->read_only = 1;
+	e->type      = ASSET_TYPE_MATERIAL;
+}
+
+/*
  * Seed one built-in entity script from NUL-terminated Scheme source, the same
  * shape as seed_shader: the (script NAME ...) text becomes the asset's bytes so
  * the entity-script driver can read it back as a C string via get_data().  The
@@ -345,19 +430,19 @@ static void seed_mesh(const char *path, const char *src)
  * asks for, rather than at seed time. There is no separate "texture script"
  * type: every ASSET_TYPE_TEXTURE asset is one of these.
  */
-static void seed_texture(const char *path, const char *src)
+static uint32_t seed_texture(const char *path, const char *src)
 {
 	struct asset_entry *e;
 	uint32_t            n;
 
 	e = alloc_entry(path);
 	if (!e)
-		return;
+		return 0;
 	n = (uint32_t)strlen(src) + 1;
 	e->data = g_mem->alloc(n);
 	if (!e->data) {
 		e->state = ASSET_ERROR;
-		return;
+		return 0;
 	}
 	memcpy(e->data, src, n);
 	e->size      = n;
@@ -365,6 +450,7 @@ static void seed_texture(const char *path, const char *src)
 	e->kind      = ASSET_KIND_PRIMITIVE;
 	e->read_only = 1;
 	e->type      = ASSET_TYPE_TEXTURE;
+	return e->id;
 }
 
 static void seed_builtins(void)
@@ -406,9 +492,33 @@ static void seed_builtins(void)
 	 * (texture NAME (shade (u v) ...)) source, baked to a texture_blob on
 	 * demand at whatever resolution the material asks for.
 	 */
-	seed_texture("builtin://texture/checker",  CHECKER_TEXTURE_SCRIPT_SRC);
-	seed_texture("builtin://texture/gradient", GRADIENT_TEXTURE_SCRIPT_SRC);
-	seed_texture("builtin://texture/noise",    NOISE_TEXTURE_SCRIPT_SRC);
+	{
+		uint32_t checker =
+			seed_texture("builtin://texture/checker",
+				     CHECKER_TEXTURE_SCRIPT_SRC);
+
+		seed_texture("builtin://texture/gradient",
+			     GRADIENT_TEXTURE_SCRIPT_SRC);
+		seed_texture("builtin://texture/noise",
+			     NOISE_TEXTURE_SCRIPT_SRC);
+
+		/*
+		 * The scene-textured shader and a material that binds the checker
+		 * through it — the built-ins that make a procedural texture render
+		 * on a mesh. Seeded after the checker so its id is known for the
+		 * material's texture slot; baked at 256x256 with the checker's own
+		 * default params.
+		 */
+		{
+			uint32_t tshader =
+				seed_shader("builtin://shader/scene-textured",
+					    SCENE_TEXTURED_SHADER_SRC);
+
+			seed_textured_material("builtin://material/checker",
+					       tshader, DEFAULT_MATERIAL_COLOR,
+					       checker, 256, 256);
+		}
+	}
 }
 
 #ifdef __EMSCRIPTEN__
@@ -783,6 +893,27 @@ static const struct asset_decl_field default_material_decl[] = {
 };
 
 /*
+ * The scene-textured shader advertises the same format/stages as the scene
+ * shader, plus the sampler it adds — the way a shader advertises its stages.
+ */
+static const struct asset_decl_field scene_textured_shader_decl[] = {
+	{ "format",   "krudd-shader"     },
+	{ "stages",   "vertex, fragment" },
+	{ "samplers", "albedo"           },
+};
+
+/*
+ * The built-in checker material advertises its shader and the texture it binds,
+ * the way the default material advertises its base_color — so the inspector
+ * shows what a textured material is made of.
+ */
+static const struct asset_decl_field checker_material_decl[] = {
+	{ "format",  "krudd-material"                  },
+	{ "shader",  "builtin://shader/scene-textured" },
+	{ "texture", "builtin://texture/checker @ 256" },
+};
+
+/*
  * A script asset is one (script NAME ...) Scheme form.  It advertises its
  * source format and the lifecycle hooks the built-in defines, the way a shader
  * advertises its stages.
@@ -871,6 +1002,10 @@ static const struct builtin_desc builtin_descs[] = {
 	  ARRAY_SIZE(scene_shader_decl) },
 	{ "builtin://material/default", default_material_decl,
 	  ARRAY_SIZE(default_material_decl) },
+	{ "builtin://shader/scene-textured", scene_textured_shader_decl,
+	  ARRAY_SIZE(scene_textured_shader_decl) },
+	{ "builtin://material/checker", checker_material_decl,
+	  ARRAY_SIZE(checker_material_decl) },
 	{ "builtin://script/spinner", spinner_script_decl,
 	  ARRAY_SIZE(spinner_script_decl) },
 	{ "builtin://script/bounce", bounce_script_decl,

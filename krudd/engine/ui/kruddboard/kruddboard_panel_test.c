@@ -310,6 +310,7 @@ static int         g_mat_param_mode; /* stubbed shader material schema mode */
 static int         g_script_param_mode; /* stubbed script params schema mode */
 static int         g_mesh_param_mode; /* stubbed mesh params schema mode */
 static int         g_texture_param_mode; /* stubbed texture slot + params mode */
+static int         g_override_on;    /* do the *-overrides stubs report #t?  */
 
 static s7_pointer st_begin_disabled(s7_scheme *sc, s7_pointer a)
 {
@@ -461,6 +462,35 @@ static s7_pointer st_pop_color(s7_scheme *sc, s7_pointer a)
 	return s7_unspecified(sc);
 }
 
+/* Id scopes: no-ops here — the stubs record widgets by their label string, not
+ * the hashed id, so push/pop-id change nothing to assert on; they exist only so
+ * the World tree's per-entity scoping calls resolve. */
+static s7_pointer st_push_id(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	return s7_unspecified(sc);
+}
+
+static s7_pointer st_pop_id(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	return s7_unspecified(sc);
+}
+
+/* (imgui-dot r g b a) — the override marker; record its colour so a test can
+ * assert the dot fired for an overridden param. */
+static s7_pointer st_dot(s7_scheme *sc, s7_pointer a)
+{
+	s7_pointer p = a;
+	double     r = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double     g = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double     b = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double     al = s7_number_to_real(sc, s7_car(p));
+
+	rec("dot|%.2f,%.2f,%.2f,%.2f", r, g, b, al);
+	return s7_unspecified(sc);
+}
+
 static s7_pointer st_begin_table_plain(s7_scheme *sc, s7_pointer a)
 {
 	rec("table-plain|%s|%lld", s7_string(s7_car(a)),
@@ -552,6 +582,7 @@ static void fw_reset(void)
 	g_script_param_mode = 0;
 	g_mesh_param_mode = 0;
 	g_texture_param_mode = 0;
+	g_override_on  = 0;
 }
 
 static s7_pointer real_vec(s7_scheme *sc, const float *v, int n)
@@ -1210,6 +1241,38 @@ static s7_pointer st_entity_save_material_params(s7_scheme *sc, s7_pointer a)
 	return s7_unspecified(sc);
 }
 
+/* Per-field override flags for the World tree's dots. Length tracks the
+ * matching *-params stub exactly (map walks params/values/overrides together,
+ * so a short list would truncate the save value set); every field reports
+ * g_override_on, off by default so the existing param tests see no dots. */
+static s7_pointer bool_list(s7_scheme *sc, int n, int val)
+{
+	s7_pointer out = s7_nil(sc);
+	int        i;
+
+	for (i = 0; i < n; i++)
+		out = s7_cons(sc, s7_make_boolean(sc, val), out);
+	return out;
+}
+
+static s7_pointer st_entity_script_overrides(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	return bool_list(sc, g_script_param_mode == 1 ? 1 : 0, g_override_on);
+}
+
+static s7_pointer st_entity_mesh_overrides(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	return bool_list(sc, g_mesh_param_mode == 1 ? 1 : 0, g_override_on);
+}
+
+static s7_pointer st_entity_material_overrides(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	return bool_list(sc, 1, g_override_on);
+}
+
 /* Mirrors the real shader_stages_from_source substring scan exactly, so the
  * Declaration display gets a meaningful test. */
 static s7_pointer st_shader_stages(s7_scheme *sc, s7_pointer a)
@@ -1655,6 +1718,9 @@ static s7_scheme *setup(void)
 	def(sc, "imgui-same-line-right", st_same_line_right, 1);
 	def(sc, "imgui-push-style-color-button", st_push_btn_color, 4);
 	def(sc, "imgui-pop-style-color", st_pop_color, 0);
+	def(sc, "imgui-push-id", st_push_id, 1);
+	def(sc, "imgui-pop-id", st_pop_id, 0);
+	def(sc, "imgui-dot", st_dot, 4);
 	def(sc, "imgui-begin-table-plain", st_begin_table_plain, 2);
 	def(sc, "imgui-table-setup-column-fixed", st_setup_column_fixed, 2);
 	def(sc, "krudd-world-caps", st_world_caps, 0);
@@ -1707,6 +1773,10 @@ static s7_scheme *setup(void)
 	def(sc, "krudd-entity-texture-values", st_entity_texture_values, 2);
 	def(sc, "krudd-entity-save-texture-params",
 	    st_entity_save_texture_params, 3);
+	def(sc, "krudd-entity-script-overrides", st_entity_script_overrides, 2);
+	def(sc, "krudd-entity-material-overrides",
+	    st_entity_material_overrides, 3);
+	def(sc, "krudd-entity-mesh-overrides", st_entity_mesh_overrides, 2);
 	def(sc, "krudd-shader-stages", st_shader_stages, 1);
 	def(sc, "krudd-asset-save-text", st_asset_save_text, 2);
 	def(sc, "krudd-asset-save-shader", st_asset_save_shader, 2);
@@ -1896,32 +1966,30 @@ static void test_world_header(void)
 	assert(rec_index("button|Save As...") < rec_index("dis-end"));
 }
 
-/* The entity list: a selectable per live entity (selected one flagged) + delete. */
+/* The entity tree: a node per live entity (selected one flagged), + delete. */
 static void test_world_entity_list(void)
 {
 	fw_reset();
 	rec_reset();
-	script_eval("(kruddboard-draw-world-entities #t)");
+	script_eval("(kruddboard-draw-world-tree (list #t #t))");
 
 	assert(rec_has("button|+ Entity"));
-	assert(rec_has("table-begin|##entlist|2"));
-	assert(rec_has("selectable|Cube##e0|1"));       /* selected        */
-	assert(rec_has("selectable|entity 1##e1|0"));   /* fallback name   */
+	assert(rec_has("tree-node|ent0|Cube|folder|1"));     /* selected      */
+	assert(rec_has("tree-node|ent1|entity 1|folder|0")); /* fallback name */
 	assert(rec_has("button|x##d0"));
 	assert(rec_has("button|x##d1"));
-	assert(rec_has("table-end"));
 }
 
-/* An empty world shows the dimmed placeholder and draws no table. */
+/* An empty world shows the dimmed placeholder and draws no node. */
 static void test_world_no_entities(void)
 {
 	fw_reset();
 	g_fw_count = 0;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-entities #t)");
+	script_eval("(kruddboard-draw-world-tree (list #t #t))");
 
 	assert(rec_has("disabled|(no entities)"));
-	assert(!rec_has("table-begin|##entlist"));
+	assert(!rec_has("tree-node|ent0"));
 }
 
 /* "+ Entity" appends, names the new entity, and selects it — in that order. */
@@ -1930,7 +1998,7 @@ static void test_world_create(void)
 	fw_reset();
 	g_click = "+ Entity";
 	rec_reset();
-	script_eval("(kruddboard-draw-world-entities #t)");
+	script_eval("(kruddboard-draw-world-tree (list #t #t))");
 	g_click = NULL;
 
 	assert(rec_has("create|2"));
@@ -1947,32 +2015,32 @@ static void test_world_create_disabled(void)
 	g_have_entity = 0;
 	g_click = "+ Entity";
 	rec_reset();
-	script_eval("(kruddboard-draw-world-entities #f)");
+	script_eval("(kruddboard-draw-world-tree (list #f #f))");
 	g_click = NULL;
 
 	assert(!rec_has("create|"));
 	assert(rec_has("disabled|(no entities)"));
 }
 
-/* The row delete button tombstones that entity. */
+/* A node's delete button tombstones that entity. */
 static void test_world_delete(void)
 {
 	fw_reset();
 	g_click = "x##d1";
 	rec_reset();
-	script_eval("(kruddboard-draw-world-entities #t)");
+	script_eval("(kruddboard-draw-world-tree (list #t #t))");
 	g_click = NULL;
 
 	assert(rec_has("destroy|1"));
 }
 
-/* Clicking a row's selectable selects that entity. */
+/* Clicking a node (its unique "entN" id) selects that entity. */
 static void test_world_select(void)
 {
 	fw_reset();
-	g_click = "entity 1##e1";
+	g_click = "ent1";
 	rec_reset();
-	script_eval("(kruddboard-draw-world-entities #t)");
+	script_eval("(kruddboard-draw-world-tree (list #t #t))");
 	g_click = NULL;
 
 	assert(rec_has("select|1"));
@@ -1983,7 +2051,7 @@ static void test_world_inspector(void)
 {
 	fw_reset();
 	rec_reset();
-	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
 
 	assert(rec_has("input-text|##ename|Cube"));
 	assert(rec_has("table-plain|##xform"));
@@ -1998,15 +2066,15 @@ static void test_world_inspector(void)
 	assert(rec_has("combo|##scriptsel|(none)"));     /* unbound script        */
 }
 
-/* Nothing selected -> the dimmed placeholder, and no editable widgets. */
-static void test_world_inspector_empty(void)
+/* A node whose entity has gone stale (inspect returns #f) shows a dimmed
+ * "(stale)" and draws no editable body, rather than erroring. */
+static void test_world_inspector_stale(void)
 {
 	fw_reset();
-	g_fw_sel = -1;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (cons 5 #f) (list #t #t))");
 
-	assert(rec_has("disabled|(nothing selected)"));
+	assert(rec_has("disabled|(stale)"));
 	assert(!rec_has("input-text|##ename"));
 }
 
@@ -2018,7 +2086,7 @@ static void test_world_name_commit(void)
 	g_input_text   = "Renamed";
 	g_input_commit = 1;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
 	g_input_id = NULL;
 	g_input_commit = 0;
 
@@ -2033,7 +2101,7 @@ static void test_world_name_uncommitted(void)
 	g_input_text   = "Typing";
 	g_input_commit = 0;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
 	g_input_id = NULL;
 
 	assert(!rec_has("set-name|"));
@@ -2046,7 +2114,7 @@ static void test_world_transform_edit(void)
 	g_float_id      = "##pos";
 	g_float_changed = 1;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
 	g_float_id = NULL;
 	g_float_changed = 0;
 
@@ -2060,7 +2128,7 @@ static void test_world_mesh_bind(void)
 	g_combo_open = "##meshsel";
 	g_click = "sphere.mesh##m102";
 	rec_reset();
-	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
 	g_click = NULL;
 	g_combo_open = NULL;
 
@@ -2074,7 +2142,7 @@ static void test_world_mesh_unbind(void)
 	g_combo_open = "##meshsel";
 	g_click = "(none)";
 	rec_reset();
-	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
 	g_click = NULL;
 	g_combo_open = NULL;
 
@@ -2089,7 +2157,7 @@ static void test_world_bind_disabled(void)
 	g_combo_open = "##meshsel";
 	g_click = "sphere.mesh##m102";
 	rec_reset();
-	script_eval("(kruddboard-draw-world-inspector (list #t #f))");
+	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #f))");
 	g_click = NULL;
 	g_combo_open = NULL;
 
@@ -2103,7 +2171,7 @@ static void test_world_script_bind(void)
 	g_combo_open = "##scriptsel";
 	g_click = "orbit.kscm##m301";
 	rec_reset();
-	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
 	g_click = NULL;
 	g_combo_open = NULL;
 
@@ -2119,7 +2187,7 @@ static void test_world_script_unbind(void)
 	g_combo_open = "##scriptsel";
 	g_click = "(none)";
 	rec_reset();
-	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
 	g_click = NULL;
 	g_combo_open = NULL;
 
@@ -2133,7 +2201,7 @@ static void test_world_script_resolved(void)
 	g_fw[0].has_script = 1;
 	g_fw[0].script_ref = 301;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
 
 	assert(rec_has("text|Transform, Name, Render, Script"));
 	assert(rec_has("combo|##scriptsel|orbit.kscm"));
@@ -2151,7 +2219,7 @@ static void test_world_script_params_render(void)
 	g_fw[0].script_ref  = 301;
 	g_script_param_mode = 1;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
 
 	assert(rec_has("slider|speed##sp"));
 
@@ -2160,7 +2228,7 @@ static void test_world_script_params_render(void)
 	g_fw[0].has_script = 1;
 	g_fw[0].script_ref = 301;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
 	assert(!rec_has("slider|speed##sp"));
 }
 
@@ -2174,7 +2242,7 @@ static void test_world_script_params_save(void)
 	g_float_id          = "speed##sp";   /* force this slider to report a change */
 	g_float_changed     = 1;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
 
 	assert(rec_has("save-script-params|0|301"));
 }
@@ -2189,14 +2257,14 @@ static void test_world_mesh_params_render(void)
 	fw_reset();                       /* id0 already has render_ref 101 */
 	g_mesh_param_mode = 1;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
 
 	assert(rec_has("slider|width##mshp"));
 
 	/* No params clause -> no slider drawn. */
 	fw_reset();
 	rec_reset();
-	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
 	assert(!rec_has("slider|width##mshp"));
 }
 
@@ -2209,7 +2277,7 @@ static void test_world_mesh_params_save(void)
 	g_float_id        = "width##mshp";   /* force this slider to report a change */
 	g_float_changed   = 1;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
 
 	assert(rec_has("save-mesh-params|0|101"));
 }
@@ -2248,7 +2316,7 @@ static void test_world_material_params_render(void)
 {
 	material_bound_entity();
 	rec_reset();
-	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
 
 	assert(rec_has("coloredit|base_color##mp"));
 	assert(rec_has("combo|##scriptsel|(none)")); /* inspector did not abort */
@@ -2262,7 +2330,7 @@ static void test_world_material_params_save(void)
 	g_float_id      = "base_color##mp";  /* force this swatch to report a change */
 	g_float_changed = 1;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
 	g_float_id      = NULL;
 	g_float_changed = 0;
 
@@ -2281,13 +2349,13 @@ static void test_world_texture_params_render(void)
 	material_bound_entity();
 	g_texture_param_mode = 1;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
 	assert(rec_has("slider|scale##texp"));
 
 	/* No bound texture -> no Texture Parameters section. */
 	material_bound_entity();
 	rec_reset();
-	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
 	assert(!rec_has("slider|scale##texp"));
 }
 
@@ -2300,7 +2368,7 @@ static void test_world_texture_params_save(void)
 	g_float_id      = "scale##texp";   /* force this slider to report a change */
 	g_float_changed = 1;
 	rec_reset();
-	script_eval("(kruddboard-draw-world-inspector (list #t #t))");
+	script_eval("(kruddboard-draw-world-tree-entity (cons 0 #f) (list #t #t))");
 	g_float_id      = NULL;
 	g_float_changed = 0;
 
@@ -2321,7 +2389,8 @@ static void test_world_gizmo_chips(void)
 	assert(rec_has("gizmo-mode|1"));
 }
 
-/* The whole tab composes header, entities, tool chips, then inspector, in order. */
+/* The whole tab composes header, tool chips, then the entity tree, in order —
+ * each entity node opening onto its own inspector in place. */
 static void test_world_composition(void)
 {
 	fw_reset();
@@ -2329,9 +2398,42 @@ static void test_world_composition(void)
 	script_eval("(kruddboard-draw-world)");
 
 	assert(rec_has("text|Untitled Scene"));
-	assert(rec_index("header|Entities") >= 0);
-	assert(rec_index("header|Entities") < rec_index("text|Tool"));
-	assert(rec_index("text|Tool") < rec_index("header|Inspector"));
+	assert(rec_index("text|Untitled Scene") < rec_index("text|Tool"));
+	assert(rec_index("text|Tool")
+	       < rec_index("tree-node|ent0|Cube|folder|1"));
+	/* the node opened onto the inspector body in place */
+	assert(rec_has("input-text|##ename|Cube"));
+}
+
+/* An overridden param lights the amber dot beside its widget; a param still at
+ * its baseline draws none. The dot rides the same override the sliders write,
+ * so this tracks "customized", not "ever touched". */
+static void test_world_override_dot(void)
+{
+	fw_reset();
+	g_fw[0].has_script  = 1;
+	g_fw[0].script_ref  = 301;
+	g_script_param_mode = 1;
+	g_override_on       = 1;
+	rec_reset();
+	script_eval("(kruddboard-draw-world-tree-entity (cons 0 \"Cube\") "
+		    "(list #t #t))");
+
+	assert(rec_has("slider|speed##sp"));
+	assert(rec_has("dot|0.94,0.66,0.18,1.00"));
+
+	/* Baseline (not overridden) -> the slider draws, but no dot. */
+	fw_reset();
+	g_fw[0].has_script  = 1;
+	g_fw[0].script_ref  = 301;
+	g_script_param_mode = 1;
+	g_override_on       = 0;
+	rec_reset();
+	script_eval("(kruddboard-draw-world-tree-entity (cons 0 \"Cube\") "
+		    "(list #t #t))");
+
+	assert(rec_has("slider|speed##sp"));
+	assert(!rec_has("dot|"));
 }
 
 /* ------------------------------------------------------------------ */
@@ -3042,7 +3144,7 @@ int main(void)
 	RUN(world_delete);
 	RUN(world_select);
 	RUN(world_inspector);
-	RUN(world_inspector_empty);
+	RUN(world_inspector_stale);
 	RUN(world_name_commit);
 	RUN(world_name_uncommitted);
 	RUN(world_transform_edit);
@@ -3062,6 +3164,7 @@ int main(void)
 	RUN(world_texture_params_save);
 	RUN(world_gizmo_chips);
 	RUN(world_composition);
+	RUN(world_override_dot);
 
 	RUN(assets_unavailable);
 	RUN(assets_no_assets);

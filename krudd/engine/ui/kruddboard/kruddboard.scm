@@ -142,23 +142,36 @@
   (imgui-small-button "Save As...")
   (imgui-end-disabled))
 
-;;! (kruddboard-draw-world-entity row has-api) draws one entity-list row: a
-;;! full-width selectable that sets the selection, then a fixed delete button
-;;! (disabled without the scene api). row is an (id . name) pair; the selection
-;;! is re-read each row so a click earlier in the frame is reflected.
-(define (kruddboard-draw-world-entity row has-api)
-  (let* ((id   (car row))
-	 (disp (kruddboard-world-name id (cdr row))))
-    (imgui-table-next-row)
-    (imgui-table-next-column)
-    (when (imgui-selectable (format #f "~A##e~D" disp id)
-			    (= id (krudd-selected)) #t)
+;;! (kruddboard-draw-world-tree-entity row caps) draws one entity as a tree
+;;! node: a plain click selects it, the right-aligned x destroys it (disabled
+;;! without the scene api), and expanding the node draws that entity's full
+;;! inspector body — name, transform, bindings, and the script/material/mesh
+;;! param groups with their override dots — nested underneath. row is an
+;;! (id . name) pair; the selection is re-read so a click earlier in the frame
+;;! shows. The body's widget ids ("##ename", "##pos", "##sp", ...) are scoped
+;;! with imgui-push-id keyed on the entity, so several entities can sit open at
+;;! once without their identically-named fields colliding on one ImGui id.
+(define (kruddboard-draw-world-tree-entity row caps)
+  (let* ((id      (car row))
+	 (disp    (kruddboard-world-name id (cdr row)))
+	 (has-api (car caps))
+	 (nid     (format #f "ent~D" id))
+	 (node    (imgui-tree-node nid disp #f (= id (krudd-selected)))))
+    (when (cdr node)
       (krudd-entity-select id))
-    (imgui-table-next-column)
+    (imgui-same-line-right (imgui-calc-text-width "x"))
     (imgui-begin-disabled (not has-api))
     (when (imgui-small-button (format #f "x##d~D" id))
       (krudd-entity-destroy id))
-    (imgui-end-disabled)))
+    (imgui-end-disabled)
+    (when (car node)
+      (imgui-push-id nid)
+      (let ((info (krudd-entity-inspect id)))
+	(if (not info)
+	    (imgui-text-disabled "(stale)")
+	    (kruddboard-draw-inspector-body id info caps)))
+      (imgui-pop-id)
+      (imgui-tree-pop))))
 
 ;;! (kruddboard-world-create) appends an entity, names it "Entity", and selects
 ;;! it — the three steps behind the "+ Entity" button.
@@ -168,23 +181,22 @@
       (krudd-entity-set-name id "Entity")
       (krudd-entity-select id))))
 
-;;! (kruddboard-draw-world-entities has-api) draws the "+ Entity" button and the
-;;! two-column entity table, or a dimmed "(no entities)" when the world is empty
-;;! or absent. (krudd-world-entities) hands back ((id . name) ...) or #f.
-(define (kruddboard-draw-world-entities has-api)
-  (imgui-begin-disabled (not has-api))
-  (when (imgui-small-button "+ Entity")
-    (kruddboard-world-create))
-  (imgui-end-disabled)
-  (let ((ents (krudd-world-entities)))
-    (if (or (not ents) (null? ents))
-	(imgui-text-disabled "(no entities)")
-	(when (imgui-begin-table "##entlist" 2)
-	  (imgui-table-setup-column "Name")
-	  (imgui-table-setup-column-fixed "" 24.0)
-	  (for-each (lambda (row) (kruddboard-draw-world-entity row has-api))
-		    ents)
-	  (imgui-end-table)))))
+;;! (kruddboard-draw-world-tree caps) draws the "+ Entity" button and the entity
+;;! tree — one expandable node per entity — or a dimmed "(no entities)" when the
+;;! world is empty or absent. (krudd-world-entities) hands back a materialised
+;;! ((id . name) ...) list, so destroying an entity from a node mid-frame (its x)
+;;! leaves this frame's iteration intact.
+(define (kruddboard-draw-world-tree caps)
+  (let ((has-api (car caps)))
+    (imgui-begin-disabled (not has-api))
+    (when (imgui-small-button "+ Entity")
+      (kruddboard-world-create))
+    (imgui-end-disabled)
+    (let ((ents (krudd-world-entities)))
+      (if (or (not ents) (null? ents))
+	  (imgui-text-disabled "(no entities)")
+	  (for-each (lambda (row) (kruddboard-draw-world-tree-entity row caps))
+		    ents)))))
 
 ;;! Move/Rotate/Scale tool chips. The active chip is tinted the same blue the C
 ;;! draw_gizmo_mode_chips pushed (IM_COL32 70,110,170); clicking one sets the
@@ -351,6 +363,21 @@
      ((= comps 4) (imgui-input-float4 wid value))
      (else (cons value #f)))))
 
+;;! The amber (#f0a92e) the World tree lights beside an overridden param — the
+;;! mockup's "modified" dot.
+(define kruddboard-override-rgba (list 0.94 0.66 0.18 1.0))
+
+;;! One param widget followed by its override dot: draw the widget, then — when
+;;! OVERRIDDEN? says this field differs from the baseline it would draw without
+;;! this entity's override — an inline amber dot after it. Returns the widget's
+;;! (new-value . changed?) untouched, so the save path is unaffected by the dot.
+(define (kruddboard-draw-param-row param value overridden? suffix)
+  (let ((r (kruddboard-draw-param-widget param value suffix)))
+    (when overridden?
+      (imgui-same-line)
+      (apply imgui-dot kruddboard-override-rgba))
+    r))
+
 ;;! True when any (value . changed?) result in RESULTS is changed. Plain fold —
 ;;! every widget already drew once in the map, so this never touches the UI.
 (define (kruddboard-any-param-changed results)
@@ -370,11 +397,12 @@
     (unless (null? params)
       (imgui-separator)
       (when (imgui-collapsing-header "Script Parameters")
-        (let ((values (krudd-entity-script-values e script-ref)))
+        (let ((values    (krudd-entity-script-values e script-ref))
+              (overrides (krudd-entity-script-overrides e script-ref)))
           (imgui-begin-disabled (not can-edit))
-          (let* ((results  (map (lambda (p v)
-                                  (kruddboard-draw-param-widget p v "##sp"))
-                                params values))
+          (let* ((results  (map (lambda (p v o)
+                                  (kruddboard-draw-param-row p v o "##sp"))
+                                params values overrides))
                  (new-vals (map car results))
                  (changed  (kruddboard-any-param-changed results)))
             (imgui-end-disabled)
@@ -400,11 +428,12 @@
         (unless (null? params)
           (imgui-separator)
           (when (imgui-collapsing-header "Material Parameters")
-            (let ((values (krudd-entity-material-values e material-ref shader-ref)))
+            (let ((values    (krudd-entity-material-values e material-ref shader-ref))
+                  (overrides (krudd-entity-material-overrides e material-ref shader-ref)))
               (imgui-begin-disabled (not can-edit))
-              (let* ((results  (map (lambda (p v)
-                                      (kruddboard-draw-param-widget p v "##mp"))
-                                    params values))
+              (let* ((results  (map (lambda (p v o)
+                                      (kruddboard-draw-param-row p v o "##mp"))
+                                    params values overrides))
                      (new-vals (map car results))
                      (changed  (kruddboard-any-param-changed results)))
                 (imgui-end-disabled)
@@ -426,11 +455,12 @@
     (unless (null? params)
       (imgui-separator)
       (when (imgui-collapsing-header "Mesh Parameters")
-        (let ((values (krudd-entity-mesh-values e mesh-ref)))
+        (let ((values    (krudd-entity-mesh-values e mesh-ref))
+              (overrides (krudd-entity-mesh-overrides e mesh-ref)))
           (imgui-begin-disabled (not can-edit))
-          (let* ((results  (map (lambda (p v)
-                                  (kruddboard-draw-param-widget p v "##mshp"))
-                                params values))
+          (let* ((results  (map (lambda (p v o)
+                                  (kruddboard-draw-param-row p v o "##mshp"))
+                                params values overrides))
                  (new-vals (map car results))
                  (changed  (kruddboard-any-param-changed results)))
             (imgui-end-disabled)
@@ -518,28 +548,17 @@
       (when has-script
 	(kruddboard-draw-script-params e script-ref can-bind)))))
 
-;;! (kruddboard-draw-world-inspector caps) shows the selected entity's inspector,
-;;! or a dimmed "(nothing selected)" when nothing live is selected.
-;;! (krudd-entity-inspect) returns #f for no / stale selection.
-(define (kruddboard-draw-world-inspector caps)
-  (let* ((sel  (krudd-selected))
-	 (info (and (>= sel 0) (krudd-entity-inspect sel))))
-    (if (not info)
-	(imgui-text-disabled "(nothing selected)")
-	(kruddboard-draw-inspector-body sel info caps))))
-
-;;! (kruddboard-draw-world) is the whole World tab: scene header, entity list,
-;;! gizmo tool chips, and inspector — the Scheme composition that replaces the C
-;;! draw_tab_world.
+;;! (kruddboard-draw-world) is the whole World tab: scene header, gizmo tool
+;;! chips, then the entity tree — one expandable node per entity that opens onto
+;;! its own inspector in place. This folds the old separate entity-list and
+;;! single-selection Inspector section into one tree: instead of "pick a row,
+;;! read the detached inspector below", an entity expands to reveal its editable
+;;! guts where it sits, and more than one can be open at a time. The transform
+;;! gizmo still tracks (krudd-selected), so a node's plain click still drives it.
 (define (kruddboard-draw-world)
-  (let* ((caps       (krudd-world-caps))
-	 (has-entity (car caps)))
+  (let ((caps (krudd-world-caps)))
     (kruddboard-draw-world-header)
-    (imgui-separator)
-    (when (imgui-collapsing-header "Entities")
-      (kruddboard-draw-world-entities has-entity))
     (imgui-separator)
     (kruddboard-draw-gizmo-chips)
     (imgui-separator)
-    (when (imgui-collapsing-header "Inspector")
-      (kruddboard-draw-world-inspector caps))))
+    (kruddboard-draw-world-tree caps)))

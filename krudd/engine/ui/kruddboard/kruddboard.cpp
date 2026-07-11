@@ -27,9 +27,11 @@ extern "C" {
 #include "edit_api.h"
 #include "camera_api.h"
 #include "mesh.h"
+#include "memory_api.h"
 #ifdef __EMSCRIPTEN__
 #include "backend_api.h"
 #include "script.h"
+#include "mesh_script.h"
 #endif
 }
 
@@ -63,6 +65,7 @@ extern "C" int  krudd_is_touch_device(void);
 static const struct log_api           *g_log;
 static const struct stats_api         *g_stats;
 static const struct asset_api         *g_asset_api;
+static const struct memory_api        *g_mem; /* for click-to-pick mesh gen */
 static const struct subsystem_manager *g_mgr;
 static int                             g_visible = 1;
 static int                             g_collapsed = 1;
@@ -4354,8 +4357,15 @@ static bool gizmo_update_and_draw(void)
  * or -1 when the ray misses everything.  Reuses the same view*projection and
  * DisplaySize the gizmo projects with, so a click lands on exactly the pixels
  * a mesh was drawn to.  Brute force over every triangle of every render entity:
- * the world caps at WORLD_MAX_ENTITIES and the primitive meshes are tiny, so no
- * broad-phase or per-mesh bounds are needed yet.
+ * the world caps at WORLD_MAX_ENTITIES and the meshes are tiny, so no broad-phase
+ * or per-mesh bounds are needed yet.
+ *
+ * A mesh asset stores (mesh ...) source, not a compiled blob, so each entity's
+ * geometry is generated on demand through mesh_script_generate — the same call
+ * the renderer uploads with, and crucially with this entity's mesh-param override
+ * (world_mesh_params), so a resized box's hit-box matches the box that was drawn
+ * rather than the un-parameterized default. Generated per click (not per frame),
+ * and the param-less fast path is cached in the image, so the cost is bounded.
  */
 static int32_t pick_entity_at(float sx, float sy)
 {
@@ -4368,7 +4378,7 @@ static int32_t pick_entity_at(float sx, float sy)
 	float               best_t = FLT_MAX;
 	uint32_t            e;
 
-	if (!g_camera_api || !g_entity_api || !g_asset_api)
+	if (!g_camera_api || !g_entity_api || !g_asset_api || !g_mem)
 		return -1;
 	w = g_entity_api->get_world();
 	if (!w)
@@ -4380,17 +4390,23 @@ static int32_t pick_entity_at(float sx, float sy)
 		return -1;
 
 	for (e = 0; e < w->count; e++) {
-		const struct mesh_blob   *blob;
+		struct mesh_blob         *blob;
 		const struct mesh_vertex *vtx;
 		const uint16_t           *idx;
+		const char               *src;
+		const uint8_t            *mp;
+		uint32_t                  mplen = 0;
 		struct mat4               model;
 		uint32_t                  i;
 
 		if (!w->alive[e] || !(w->mask[e] & COMPONENT_RENDER))
 			continue;
-		blob = (const struct mesh_blob *)
-			g_asset_api->get_data(w->render_ref[e], NULL);
-		if (!blob || blob->magic != MESH_BLOB_MAGIC)
+		src = (const char *)g_asset_api->get_data(w->render_ref[e], NULL);
+		if (!src)
+			continue;
+		mp   = world_mesh_params(w, e, &mplen);
+		blob = mesh_script_generate(src, mp, mplen, g_mem, NULL);
+		if (!blob)
 			continue;
 
 		mat4_from_transform(&model, &w->world_xform[e]);
@@ -4410,6 +4426,7 @@ static int32_t pick_entity_at(float sx, float sy)
 				best   = (int32_t)e;
 			}
 		}
+		g_mem->free(blob);
 	}
 	return best;
 }
@@ -4995,6 +5012,8 @@ extern "C" void kruddboard_plugin_entry(struct subsystem_manager *mgr)
 		subsystem_manager_get_api(mgr, "edit");
 	g_camera_api = (const struct camera_api *)
 		subsystem_manager_get_api(mgr, "camera");
+	g_mem        = (const struct memory_api *)
+		subsystem_manager_get_api(mgr, "memory");
 	g_mgr        = mgr;
 #endif
 

@@ -141,7 +141,10 @@
 ;;! script-params-form (loaded before this image) since a (params ...) clause is
 ;;! identical wherever it appears.
 (define (mesh-script-params src)
-  (script-params-form (with-input-from-string src (lambda () (read)))))
+  (catch #t
+    (lambda ()
+      (script-params-form (with-input-from-string src (lambda () (read)))))
+    (lambda args (cons 0 '()))))
 
 ;;! Parse and run SRC's generate thunk with PARAMS (an ((name . value) ...)
 ;;! alist) bound as the current (param ...) scope, returning (VERTS . INDICES).

@@ -50,18 +50,30 @@ getting refined.
 ## Architecture
 
 ```
-krudd/build/ninja/
-  ninja.scm    The Ninja emitter — renders build.ninja from the directory specs
-  resolve.scm  Transitive include/link resolver
-  manifest.scm The list of owned directories
-  modules/
-    core/    Engine heartbeat — init/tick/shutdown, subsystem manager
-    log/     Structured logging with level filtering and ring-buffer history
-    memory/  Allocator and fixed-size pool allocator
-    include/ Public vtable headers (the plugin ABI)
-    asset/ entity_plugin/ renderer_webgl/ frame_graph/ …
-             Engine subsystems, all compiled into the single WASM module
+krudd/
+  krudd.c        The front door — boots s7, hands off to the build language
+  kruddmake/     The build language (kruddmake): reads specs, emits C + build.ninja, runs ninja
+    build.scm    Orchestrator — the entry point `krudd build` loads
+    manifest.scm The list of engine module directories
+    ninja.scm    The Ninja emitter — renders build.ninja from the directory specs
+    resolve.scm  Transitive include/link resolver
+    introspect.scm Codegen — reads a module's .scm spec, emits its .h/.c
+  engine/        The engine — one folder per module, Scheme spec + C together
+    abi/         Public vtable headers (the plugin ABI)
+    core/        Engine heartbeat — init/tick/shutdown, subsystem manager, script host
+    log/         Structured logging with level filtering and ring-buffer history
+    memory/      Allocator and fixed-size pool allocator
+    math/        Vector/matrix math (math.scm spec → generated C) and camera
+    render/      Rendering cluster — renderer interface spec + webgl/null backends,
+                 frame_graph, scene_renderer
+    shader/      The shader DSL + transpiler (shader.scm) and node-graph reader (dag.scm)
+    asset/ entity/ edit/ ui/ …
+                 Engine subsystems, all compiled into the single WASM module
 ```
+
+Each module owns its Scheme source-of-truth spec, the C it lowers to (or hand-written C for
+speed), its headers, and its tests. `kruddmake/` is the thin build layer that reads those
+specs and emits + compiles them; it holds no engine domain logic.
 
 Every module is compiled straight into the one WASM module; at boot `engine.c` calls each
 subsystem's `<name>_plugin_entry` in dependency order. A subsystem discovers engine services

@@ -500,10 +500,11 @@ static void seed_demo_scene(void)
 	/*
 	 * Every seeded entity carries the built-in default material, so the
 	 * world scene never rests in the "no material" state — each renderable
-	 * points at a real, inspectable material rather than leaning on the
-	 * renderer's implicit white fallback (which still covers an entity that
-	 * is later unbound). The default is opaque white, so the seeded scene
-	 * looks identical to before.
+	 * points at a real, inspectable material rather than going undrawn
+	 * (forward_pass skips any entity with no COMPONENT_MATERIAL, which is
+	 * how an entity keeps its mesh for picking/collision but stops
+	 * drawing). The default is opaque white, so the seeded scene looks
+	 * identical to before.
 	 */
 	material = asset_id_by_path("builtin://material/default");
 
@@ -658,12 +659,13 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 
 		if (!w->alive[i] || !(w->mask[i] & COMPONENT_RENDER))
 			continue;
+		if (!(w->mask[i] & COMPONENT_MATERIAL))
+			continue; /* mesh stays pickable/collidable; just not drawn */
 		m = find_mesh(w->render_ref[i]);
 		if (!m)
 			continue;
 
-		mat_ref = (w->mask[i] & COMPONENT_MATERIAL) ? w->material_ref[i]
-							     : 0u;
+		mat_ref = w->material_ref[i];
 
 		/*
 		 * Select this material's pipeline (its shader, or the built-in
@@ -692,9 +694,9 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 		 * length. A per-entity material-param override wins when present,
 		 * so two entities sharing one material asset can draw with
 		 * different colors; otherwise the shared material asset's own
-		 * params are used. An unmaterialed or param-less entity falls back
-		 * to a single white vec4 — the identity tint the scene shader
-		 * expects, so it renders as it always has.
+		 * params are used. A param-less material (e.g. a legacy 16-byte
+		 * material with nothing to report) falls back to a single white
+		 * vec4 — the identity tint the scene shader expects.
 		 */
 		if (w->material_param_len[i] > 0) {
 			pbytes = w->material_params[i];

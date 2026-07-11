@@ -18,6 +18,7 @@
 #include "shader_scm.h"
 #include "entity_script_scm.h"
 #include "mesh_script_scm.h"
+#include "texture_script_scm.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -73,6 +74,14 @@ void script_init(void)
 	 * every mesh in the engine, built-in or authored, is one of these.
 	 */
 	script_eval(MESH_SCRIPT_SCM);
+	/*
+	 * Load the texture-script dispatcher: the (texture ...) form and
+	 * texture-script-generate. The asset plugin's texture_script.c calls it
+	 * to bake a bound ASSET_TYPE_TEXTURE asset's source into a texture_blob.
+	 * Loaded after the mesh image because its (params ...) reader and
+	 * *params* slot come from the entity-script image both reuse.
+	 */
+	script_eval(TEXTURE_SCRIPT_SCM);
 }
 
 s7_scheme *script_s7(void)
@@ -239,6 +248,12 @@ int script_mesh_params(const char *src, struct shader_param *out,
 		       uint32_t max, uint32_t *total_size)
 {
 	return query_params("mesh-script-params", src, out, max, total_size);
+}
+
+int script_texture_params(const char *src, struct shader_param *out,
+			  uint32_t max, uint32_t *total_size)
+{
+	return query_params("texture-script-params", src, out, max, total_size);
 }
 
 void script_tick(void)

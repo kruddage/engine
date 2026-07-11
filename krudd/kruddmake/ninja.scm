@@ -313,6 +313,9 @@
 		  (string-append srcroot "/core/mesh_script.scm")
 		  (string-append gen "/mesh_script_scm.h") "MESH_SCRIPT_SCM")
 		(krudd-embed-file
+		  (string-append srcroot "/core/texture_script.scm")
+		  (string-append gen "/texture_script_scm.h") "TEXTURE_SCRIPT_SCM")
+		(krudd-embed-file
 		  (string-append srcroot "/ui/kruddboard/kruddboard.scm")
 		  (string-append gen "/kruddboard_scm.h") "KRUDDBOARD_SCM")
 		(krudd-embed-file

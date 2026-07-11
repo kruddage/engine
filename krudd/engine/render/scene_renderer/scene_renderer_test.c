@@ -163,8 +163,9 @@ static void build_world(uint32_t cube_ref)
 	memset(&g_world, 0, sizeof(g_world));
 	g_world.count = 4;
 
-	/* Entity 0 carries a material (base_color red); entity 1 has none and
-	 * must fall back to the renderer's default (opaque white) tint. */
+	/* Entity 0 carries a material (base_color red) and draws. Entity 1 has
+	 * a mesh but no material — it must be skipped from drawing, though its
+	 * mesh stays live (COMPONENT_RENDER) for picking/collision. */
 	g_world.alive[0]        = 1;
 	g_world.mask[0]         = COMPONENT_RENDER | COMPONENT_MATERIAL;
 	g_world.render_ref[0]   = cube_ref;
@@ -202,8 +203,9 @@ static uint32_t count_draws(uint32_t *out_index_count)
 	return draws;
 }
 
-/* Every draw binds the material UBO at slot 1, materialed or not (the
- * renderer falls back to a white tint when an entity has no material_ref). */
+/* Every draw binds the material UBO at slot 1 (a param-less material falls
+ * back to a white tint; an entity with no material at all doesn't draw, so
+ * it never reaches this bind). */
 static uint32_t count_material_binds(void)
 {
 	const struct gpu_call_record *log;
@@ -233,8 +235,9 @@ static uint32_t count_calls(enum gpu_call_type type)
 
 /*
  * Entity 0 carries the v2 material (id 8) whose shader-ref selects shader/alt;
- * entity 1 has no material and must draw with the built-in scene pipeline. So a
- * frame binds two distinct pipelines, one switch between them.
+ * entity 1 carries the v3 material (id 6) whose shader-ref names the scene
+ * shader itself, so it reuses the pre-cached default pipeline. So a frame
+ * binds two distinct pipelines, one switch between them.
  */
 static void build_world_shaders(uint32_t cube_ref)
 {
@@ -247,9 +250,10 @@ static void build_world_shaders(uint32_t cube_ref)
 	g_world.material_ref[0] = 8u;
 	set_identity_xform(&g_world.world_xform[0], -1.0f, 0.0f, 0.0f);
 
-	g_world.alive[1]      = 1;
-	g_world.mask[1]       = COMPONENT_RENDER;
-	g_world.render_ref[1] = cube_ref;
+	g_world.alive[1]        = 1;
+	g_world.mask[1]         = COMPONENT_RENDER | COMPONENT_MATERIAL;
+	g_world.render_ref[1]   = cube_ref;
+	g_world.material_ref[1] = 6u;
 	set_identity_xform(&g_world.world_xform[1], 1.0f, 0.0f, 0.0f);
 }
 
@@ -281,12 +285,13 @@ int main(void)
 	fg_plugin_entry(&mgr);              /* "frame_graph" (needs renderer) */
 	scene_renderer_plugin_entry(&mgr);  /* resolves all, init uploads meshes */
 
-	/* One forward pass: exactly one draw per live COMPONENT_RENDER entity. */
+	/* One forward pass: one draw per live entity that carries both a mesh
+	 * and a material — entity 1's mesh is skipped since it has no material. */
 	renderer_null_reset_log();
 	subsystem_manager_tick(&mgr);
-	assert(count_draws(&idx_count) == 2);
+	assert(count_draws(&idx_count) == 1);
 	assert(idx_count == 36);            /* cube: 36 indices */
-	assert(count_material_binds() == 2); /* one per draw, materialed or not */
+	assert(count_material_binds() == 1); /* one per draw */
 
 	/* Degrade safe: an empty world draws nothing and does not crash. */
 	g_world.count = 0;

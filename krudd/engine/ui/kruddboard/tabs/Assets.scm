@@ -48,6 +48,18 @@
 (define kruddboard-assets-mat-params '())
 (define kruddboard-assets-mat-values '())
 
+;;! The material's optional texture binding: the bound texture asset id (0 =
+;;! none) and the square bake resolution (a power-of-two edge). Read from
+;;! krudd-material-texture on reload, written into the material's texture trailer
+;;! on Save. The texture only shows on a mesh when the material's shader samples
+;;! it (the scene-textured shader's albedo), but the binding is authored here
+;;! regardless.
+(define kruddboard-assets-mat-texture 0)
+(define kruddboard-assets-mat-tex-res 256)
+
+;;! The bake resolutions the texture combo offers — square, power-of-two.
+(define kruddboard-assets-tex-resolutions '(64 128 256 512 1024 2048))
+
 ;;! New Asset form state: visible?, the name field, and the type combo index
 ;;! (0 Text, 1 Shader, 2 Material, 3 Script, 4 Mesh).
 (define kruddboard-assets-naming #f)
@@ -119,6 +131,12 @@
   (unless (= kruddboard-assets-mat-id id)
     (set! kruddboard-assets-mat-id id)
     (set! kruddboard-assets-mat-shader (krudd-asset-shader-ref id))
+    (let ((tx (krudd-material-texture id)))
+      (if (pair? tx)
+	  (begin (set! kruddboard-assets-mat-texture (car tx))
+		 (set! kruddboard-assets-mat-tex-res (cadr tx)))
+	  (begin (set! kruddboard-assets-mat-texture 0)
+		 (set! kruddboard-assets-mat-tex-res 256))))
     (kruddboard-assets-refresh-material)))
 
 ;;! (kruddboard-assets-do-delete id) deletes the selected asset and clears
@@ -729,6 +747,49 @@
 	     kruddboard-assets-mat-values))
   (imgui-end-disabled))
 
+;;! Draw the material's Texture binding: a texture-asset picker (with a "(none)"
+;;! option) and, once a texture is bound, a bake-resolution combo. Both disabled
+;;! when the material is read-only. Edits update the state the Save row packs into
+;;! the material's texture trailer; a bound texture at 2K vs 256 is one combo.
+(define (kruddboard-draw-material-texture editable)
+  (imgui-begin-disabled (not editable))
+  (imgui-set-next-item-width -1.0)
+  (let ((preview (if (= kruddboard-assets-mat-texture 0)
+		     "(none)"
+		     (or (krudd-asset-find kruddboard-assets-mat-texture) "?"))))
+    (when (imgui-begin-combo "##mattex" preview)
+      (when (and (imgui-selectable "(none)##t0"
+				   (= kruddboard-assets-mat-texture 0) #f)
+		 editable)
+	(set! kruddboard-assets-mat-texture 0))
+      (for-each
+       (lambda (a)
+	 (let ((aid (car a))
+	       (cur (= (car a) kruddboard-assets-mat-texture)))
+	   (when (and (imgui-selectable (format #f "~A##t~D" (cdr a) aid) cur #f)
+		      editable)
+	     (set! kruddboard-assets-mat-texture aid))
+	   (when cur (imgui-set-item-default-focus))))
+       (krudd-texture-assets))
+      (imgui-end-combo)))
+  (when (> kruddboard-assets-mat-texture 0)
+    (imgui-set-next-item-width -1.0)
+    (when (imgui-begin-combo "##matres"
+			     (string-append
+			      (number->string kruddboard-assets-mat-tex-res)
+			      " x "
+			      (number->string kruddboard-assets-mat-tex-res)))
+      (for-each
+       (lambda (r)
+	 (let ((cur (= r kruddboard-assets-mat-tex-res)))
+	   (when (and (imgui-selectable (format #f "~D x ~D##r~D" r r r) cur #f)
+		      editable)
+	     (set! kruddboard-assets-mat-tex-res r))
+	   (when cur (imgui-set-item-default-focus))))
+       kruddboard-assets-tex-resolutions)
+      (imgui-end-combo)))
+  (imgui-end-disabled))
+
 ;;! Material inspector: a Shader picker and the shader-derived Parameters (both
 ;;! disabled when read-only) plus Save/Delete, or the built-in Clone row. A
 ;;! material has no fixed fields of its own — the selected shader's Material block
@@ -744,12 +805,18 @@
 	(imgui-text-disabled "(this shader has no material parameters)")
 	(kruddboard-draw-material-params editable)))
   (imgui-separator)
+  (when (imgui-collapsing-header "Texture")
+    (kruddboard-draw-material-texture editable))
+  (imgui-separator)
   (if editable
       (begin
 	(when (imgui-button "Save")
 	  (krudd-asset-save-material id
 				    kruddboard-assets-mat-shader
-				    kruddboard-assets-mat-values))
+				    kruddboard-assets-mat-values
+				    kruddboard-assets-mat-texture
+				    kruddboard-assets-mat-tex-res
+				    kruddboard-assets-mat-tex-res))
 	(imgui-same-line)
 	(when (imgui-button "Delete")
 	  (kruddboard-assets-do-delete id)))

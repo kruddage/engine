@@ -1026,6 +1026,24 @@ static s7_pointer st_shader_assets(s7_scheme *sc, s7_pointer a)
 	return assets_by_type(sc, 4);
 }
 
+/* (krudd-texture-assets) -> ((id . path) ...) for the material texture combo. */
+static s7_pointer st_texture_assets(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	return assets_by_type(sc, 2); /* ASSET_TYPE_TEXTURE */
+}
+
+/*
+ * (krudd-material-texture id) -> the material's texture slot or '(). The fake
+ * materials carry no trailer, so this reports "unbound" — the editor starts its
+ * texture picker at (none), and a texture-binding test drives it from there.
+ */
+static s7_pointer st_material_texture(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	return s7_nil(sc);
+}
+
 /*
  * The shader-derived material schema, stubbed. Mode 0 (g_mat_param_mode,
  * declared with the widget globals above) mimics the scene shader (one
@@ -1221,15 +1239,27 @@ static int fa_pack_material(s7_scheme *sc, struct fa_asset *f,
 	return len;
 }
 
-/* (krudd-asset-save-material id shader-ref values) -> unspecified. */
+/*
+ * (krudd-asset-save-material id shader-ref values [tex-ref w h]) -> unspecified.
+ * Records the shader and, when the optional texture slot is present and non-zero,
+ * the bound texture and its resolution, so a texture-binding test can assert the
+ * editor packs them.
+ */
 static s7_pointer st_asset_save_material(s7_scheme *sc, s7_pointer a)
 {
 	s7_pointer p          = a;
 	unsigned   id         = (unsigned)s7_integer(s7_car(p)); p = s7_cdr(p);
 	unsigned   shader_ref = (unsigned)s7_integer(s7_car(p)); p = s7_cdr(p);
-	s7_pointer values     = s7_car(p);
+	s7_pointer values     = s7_car(p);                       p = s7_cdr(p);
+	unsigned   tex = 0, tw = 0, th = 0;
 
-	rec("save-material|%u|%u", id, shader_ref);
+	if (s7_is_pair(p)) { tex = (unsigned)s7_integer(s7_car(p)); p = s7_cdr(p); }
+	if (s7_is_pair(p)) { tw  = (unsigned)s7_integer(s7_car(p)); p = s7_cdr(p); }
+	if (s7_is_pair(p)) { th  = (unsigned)s7_integer(s7_car(p)); p = s7_cdr(p); }
+	if (tex != 0)
+		rec("save-material|%u|%u|tex%u@%ux%u", id, shader_ref, tex, tw, th);
+	else
+		rec("save-material|%u|%u", id, shader_ref);
 	fa_pack_material(sc, fa_find(id), (uint32_t)shader_ref, values);
 	return s7_unspecified(sc);
 }
@@ -1593,6 +1623,8 @@ static s7_scheme *setup(void)
 	def(sc, "krudd-mesh-assets", st_mesh_assets, 0);
 	def(sc, "krudd-material-assets", st_material_assets, 0);
 	def(sc, "krudd-shader-assets", st_shader_assets, 0);
+	def(sc, "krudd-texture-assets", st_texture_assets, 0);
+	def(sc, "krudd-material-texture", st_material_texture, 1);
 	def(sc, "krudd-script-assets", st_script_assets, 0);
 	def(sc, "krudd-asset-find", st_asset_find, 1);
 	def(sc, "krudd-entity-create", st_entity_create, 0);
@@ -1633,7 +1665,8 @@ static s7_scheme *setup(void)
 	def(sc, "krudd-shader-stages", st_shader_stages, 1);
 	def(sc, "krudd-asset-save-text", st_asset_save_text, 2);
 	def(sc, "krudd-asset-save-shader", st_asset_save_shader, 2);
-	def(sc, "krudd-asset-save-material", st_asset_save_material, 3);
+	s7_define_function(sc, "krudd-asset-save-material",
+			   st_asset_save_material, 3, 3, false, "stub");
 	def(sc, "krudd-asset-delete", st_asset_delete, 1);
 	def(sc, "krudd-asset-create-text", st_asset_create_text, 1);
 	def(sc, "krudd-asset-create-shader", st_asset_create_shader, 1);
@@ -2826,6 +2859,37 @@ static void test_assets_material_shader_select(void)
 	assert(rec_has("save-material|901|809"));
 }
 
+/*
+ * Binding a texture to a material: open the Texture combo, pick a texture asset,
+ * and Save carries the texture slot (tex-ref + the default 256x256 bake) into the
+ * material's trailer. This is the authoring gesture that makes a procedural
+ * texture render on whatever mesh wears the material.
+ */
+static void test_assets_material_texture_bind(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	material_with_shader(808, "scene-textured.shader");
+	g_assets[1].id = 707; g_assets[1].path = "wood.tex";
+	g_assets[1].type = 2; /* ASSET_TYPE_TEXTURE */
+	g_assets_n = 2;
+	script_eval("(set! kruddboard-assets-sel 901)");
+
+	/* Frame 1: open the texture combo and bind wood.tex (707). */
+	g_combo_open = "##mattex";
+	g_click      = "wood.tex##t707";
+	script_eval("(kruddboard-draw-assets)");
+	g_combo_open = NULL; g_click = NULL;
+
+	/* Frame 2: Save packs the material's texture trailer (default 256x256). */
+	g_click = "Save";
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL;
+
+	assert(rec_has("save-material|901|808|tex707@256x256"));
+}
+
 /* Every type without a dedicated editor (texture, font, scene) falls back to
  * the read-only Declaration + Catalog tables. Mesh, material, shader, and
  * script all have one now — there is no hardcoded C mesh generator, so a
@@ -2949,6 +3013,7 @@ int main(void)
 	RUN(assets_material_clone);
 	RUN(assets_material_clone_conflict);
 	RUN(assets_material_shader_select);
+	RUN(assets_material_texture_bind);
 	RUN(assets_generic_fallback);
 	RUN(assets_inspector_stale);
 	RUN(assets_composition);

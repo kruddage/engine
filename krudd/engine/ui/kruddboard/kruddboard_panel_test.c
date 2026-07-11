@@ -796,6 +796,7 @@ static int              g_have_asset_mut;
 static int              g_create_fail;      /* next create()/clone() -> 0 */
 static int              g_shader_save_ok = 1; /* krudd-asset-save-shader ret */
 static int              g_script_save_ok = 1; /* krudd-asset-save-script ret */
+static int              g_mesh_save_ok = 1;   /* krudd-asset-save-mesh ret */
 static int              g_combo_pick = -1;  /* next imgui-combo result, or -1 */
 
 /* Same id-keyed "what's being typed / just changed" simulation the World-tab
@@ -808,11 +809,14 @@ static void asset_reset(void)
 	g_fa_n = 0;
 	g_mat_param_mode = 0;
 
-	/* id 501: built-in mesh — read-only, a drag source in the browser. */
+	/* id 501: built-in mesh — read-only, a drag source in the browser and
+	 * gets the Clone flow. */
 	g_fa[0].alive = 1; g_fa[0].id = 501;
 	strcpy(g_fa[0].path, "builtin://mesh/cube");
 	g_fa[0].type = 1; g_fa[0].kind = 1; g_fa[0].state = 1;
 	g_fa[0].read_only = 1; g_fa[0].origin = 0;
+	strcpy(g_fa[0].data, "(mesh cube (generate () (cons (list) (list))))");
+	g_fa[0].data_len = (int)strlen(g_fa[0].data);
 
 	/* id 601: built-in shader — read-only, gets the Clone flow. */
 	g_fa[1].alive = 1; g_fa[1].id = 601;
@@ -860,12 +864,28 @@ static void asset_reset(void)
 	strcpy(g_fa[6].data, "(script mine (on-tick (self t) 0))");
 	g_fa[6].data_len = (int)strlen(g_fa[6].data);
 
-	g_fa_n = 7;
+	/* id 1001: texture — no dedicated editor, falls back to the generic
+	 * Declaration + Catalog tables (unlike mesh/material/shader/script). */
+	g_fa[7].alive = 1; g_fa[7].id = 1001;
+	strcpy(g_fa[7].path, "icon.png");
+	g_fa[7].type = 2; g_fa[7].kind = 0; g_fa[7].state = 1;
+	g_fa[7].read_only = 0; g_fa[7].origin = 1;
+
+	/* id 1051: authored mesh — mutable, gets Save/Delete. */
+	g_fa[8].alive = 1; g_fa[8].id = 1051;
+	strcpy(g_fa[8].path, "my.mesh");
+	g_fa[8].type = 1; g_fa[8].kind = 0; g_fa[8].state = 1;
+	g_fa[8].read_only = 0; g_fa[8].origin = 1;
+	strcpy(g_fa[8].data, "(mesh mine (generate () (cons (list) (list))))");
+	g_fa[8].data_len = (int)strlen(g_fa[8].data);
+
+	g_fa_n = 9;
 	g_have_asset_api = 1;
 	g_have_asset_mut = 1;
 	g_create_fail    = 0;
 	g_shader_save_ok = 1;
 	g_script_save_ok = 1;
+	g_mesh_save_ok   = 1;
 
 	g_click        = NULL;
 	g_dis_top      = 0;
@@ -1312,6 +1332,45 @@ static s7_pointer st_asset_clone_script(s7_scheme *sc, s7_pointer a)
 	return s7_make_integer(sc, (s7_int)id);
 }
 
+static s7_pointer st_asset_save_mesh(s7_scheme *sc, s7_pointer a)
+{
+	unsigned         id  = (unsigned)s7_integer(s7_car(a));
+	const char      *txt = s7_is_string(s7_cadr(a)) ? s7_string(s7_cadr(a)) : "";
+	struct fa_asset *f   = fa_find(id);
+
+	rec("save-mesh|%u|%s", id, txt);
+	if (!g_mesh_save_ok)
+		return s7_f(sc);
+	if (f) {
+		strncpy(f->data, txt, sizeof(f->data) - 1);
+		f->data_len = (int)strlen(f->data);
+	}
+	return s7_t(sc);
+}
+
+#define MESH_SEED "(mesh seed (generate () (cons (list) (list))))"
+
+static s7_pointer st_asset_create_mesh(s7_scheme *sc, s7_pointer a)
+{
+	const char *path = s7_is_string(s7_car(a)) ? s7_string(s7_car(a)) : "";
+	unsigned    id;
+
+	rec("create-mesh|%s", path);
+	id = fa_create(path, 1, MESH_SEED, (int)strlen(MESH_SEED), 0, 1);
+	return s7_make_integer(sc, (s7_int)id);
+}
+
+static s7_pointer st_asset_clone_mesh(s7_scheme *sc, s7_pointer a)
+{
+	const char *name = s7_is_string(s7_car(a)) ? s7_string(s7_car(a)) : "";
+	const char *txt  = s7_is_string(s7_cadr(a)) ? s7_string(s7_cadr(a)) : "";
+	unsigned    id;
+
+	rec("clone-mesh|%s|%s", name, txt);
+	id = fa_create(name, 1, txt, (int)strlen(txt), 0, 1);
+	return s7_make_integer(sc, (s7_int)id);
+}
+
 /* (krudd-asset-clone-material name shader-ref values) -> new id or 0. */
 static s7_pointer st_asset_clone_material(s7_scheme *sc, s7_pointer a)
 {
@@ -1546,6 +1605,9 @@ static s7_scheme *setup(void)
 	def(sc, "krudd-asset-save-script", st_asset_save_script, 2);
 	def(sc, "krudd-asset-create-script", st_asset_create_script, 1);
 	def(sc, "krudd-asset-clone-script", st_asset_clone_script, 2);
+	def(sc, "krudd-asset-save-mesh", st_asset_save_mesh, 2);
+	def(sc, "krudd-asset-create-mesh", st_asset_create_mesh, 1);
+	def(sc, "krudd-asset-clone-mesh", st_asset_clone_mesh, 2);
 	def(sc, "krudd-asset-clone-material", st_asset_clone_material, 3);
 	def(sc, "krudd-md-preview", st_md_preview, 2);
 
@@ -2470,6 +2532,110 @@ static void test_assets_create_script(void)
 	assert(rec_has("create-script|new.script"));
 }
 
+/*
+ * A mesh's Declaration is a static "format: krudd-mesh" line — there is no
+ * hook set to derive, unlike a script — and its Source box loads the
+ * (mesh ...) form verbatim. Mirrors test_assets_script_declaration; every
+ * mesh (built-in or authored) goes through the same dispatch a script does.
+ */
+static void test_assets_mesh_declaration(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	script_eval("(set! kruddboard-assets-sel 1051)");
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+
+	assert(rec_has("text|format: krudd-mesh"));
+	assert(rec_has("input-ml|##meshscript|"
+		       "(mesh mine (generate () (cons (list) (list))))"));
+}
+
+static void test_assets_mesh_save_ok(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	script_eval("(set! kruddboard-assets-sel 1051)");
+	g_mesh_save_ok = 1;
+	g_click = "Save";
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL;
+
+	assert(rec_has("save-mesh|1051|"));
+	assert(rec_has("colored|0.30,0.90,0.30,1.00|Saved"));
+}
+
+/* A rejected save (not a well-formed mesh) shows the failure text and leaves
+ * the last-committed source live. */
+static void test_assets_mesh_save_fail(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	script_eval("(set! kruddboard-assets-sel 1051)");
+	g_mesh_save_ok = 0;
+	g_click = "Save";
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL;
+
+	assert(rec_has("colored|1.00,0.30,0.30,1.00|Not a valid mesh"));
+}
+
+/* A built-in mesh gets the Clone flow, seeded "<path>_copy" with the
+ * builtin:// scheme stripped, instead of Save/Delete. */
+static void test_assets_mesh_clone(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	script_eval("(set! kruddboard-assets-sel 501)");
+	script_eval("(kruddboard-draw-assets)"); /* seed the clone name */
+	g_click = "Clone";
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL;
+
+	assert(rec_has("input-enter|##clonename|mesh/cube_copy"));
+	assert(rec_has("clone-mesh|mesh/cube_copy|"));
+	assert(assets_sel() != 501 && assets_sel() != 0);
+}
+
+/* A duplicate clone name reports the conflict and keeps the built-in
+ * selected. */
+static void test_assets_mesh_clone_conflict(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	script_eval("(set! kruddboard-assets-sel 501)");
+	script_eval("(kruddboard-draw-assets)");
+	g_create_fail = 1;
+	g_click = "Clone";
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL;
+
+	assert(rec_has("colored|1.00,0.30,0.30,1.00|"
+		       "\"mesh/cube_copy\" already exists"));
+	assert(assets_sel() == 501);
+}
+
+/* Picking "Mesh" from the type combo dispatches to the mesh creator. */
+static void test_assets_create_mesh(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	g_click = "New Asset";
+	script_eval("(kruddboard-draw-assets)");
+	g_click = "Create";
+	g_input_id = "name"; g_input_text = "new.mesh"; g_input_commit = 0;
+	g_combo_pick = 4; /* Mesh */
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL; g_input_id = NULL; g_combo_pick = -1;
+
+	assert(rec_has("create-mesh|new.mesh"));
+}
+
 /* Publish shader 808 ("my.shader") and point material 901 at it, so the
  * editor loads a shader and its (stubbed) parameter schema. */
 static void material_with_shader(unsigned shader_id, const char *path)
@@ -2587,25 +2753,26 @@ static void test_assets_material_shader_select(void)
 	assert(rec_has("save-material|901|809"));
 }
 
-/* Every other asset type (mesh, texture, font, scene) falls back to the
- * read-only Declaration + Catalog tables. */
+/* Every type without a dedicated editor (texture, font, scene) falls back to
+ * the read-only Declaration + Catalog tables. Mesh, material, shader, and
+ * script all have one now — there is no hardcoded C mesh generator, so a
+ * mesh asset (like a script or shader) is source an author can edit. */
 static void test_assets_generic_fallback(void)
 {
 	asset_reset();
 	assets_scheme_reset();
-	script_eval("(set! kruddboard-assets-sel 501)");
+	script_eval("(set! kruddboard-assets-sel 1001)");
 	rec_reset();
 	script_eval("(kruddboard-draw-assets)");
 
 	assert(rec_has("text|Declaration"));
 	assert(rec_has("table-begin|##decl|2"));
 	assert(rec_has("text|path"));
-	assert(rec_has("text|builtin://mesh/cube"));
+	assert(rec_has("text|icon.png"));
 	assert(rec_has("text|Catalog"));
 	assert(rec_has("table-begin|##catalog|2"));
-	assert(rec_has("text|Mesh"));
-	assert(rec_has("text|Primitive"));
-	assert(rec_has("text|yes")); /* read_only */
+	assert(rec_has("text|Texture"));
+	assert(rec_has("text|Normal"));
 }
 
 /* A stale selection (the asset was deleted elsewhere) returns to the
@@ -2696,6 +2863,12 @@ int main(void)
 	RUN(assets_script_clone);
 	RUN(assets_script_clone_conflict);
 	RUN(assets_create_script);
+	RUN(assets_mesh_declaration);
+	RUN(assets_mesh_save_ok);
+	RUN(assets_mesh_save_fail);
+	RUN(assets_mesh_clone);
+	RUN(assets_mesh_clone_conflict);
+	RUN(assets_create_mesh);
 	RUN(assets_material_editor);
 	RUN(assets_material_range_param);
 	RUN(assets_material_clone);

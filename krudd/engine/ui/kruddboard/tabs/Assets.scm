@@ -35,6 +35,10 @@
 ;;! #t (saved) or #f (rejected as not a well-formed (script ...) form).
 (define kruddboard-assets-script-ok 'untried)
 
+;;! Last mesh script Save result, the same three states as script-ok: 'untried,
+;;! #t (saved) or #f (rejected as not a well-formed (mesh ...) form).
+(define kruddboard-assets-mesh-ok 'untried)
+
 ;;! Material editor model, keyed by the material id it was loaded for. A material
 ;;! carries no schema of its own: it names a shader, and the shader's Material
 ;;! block (via krudd-shader-material-params) is what the editor draws. -params is
@@ -45,7 +49,7 @@
 (define kruddboard-assets-mat-values '())
 
 ;;! New Asset form state: visible?, the name field, and the type combo index
-;;! (0 Text, 1 Shader, 2 Material, 3 Script).
+;;! (0 Text, 1 Shader, 2 Material, 3 Script, 4 Mesh).
 (define kruddboard-assets-naming #f)
 (define kruddboard-assets-new-name "")
 (define kruddboard-assets-new-type 0)
@@ -95,7 +99,8 @@
     (set! kruddboard-assets-edit-id id)
     (set! kruddboard-assets-edit-text (krudd-asset-data id))
     (set! kruddboard-assets-shader-ok 'untried)
-    (set! kruddboard-assets-script-ok 'untried)))
+    (set! kruddboard-assets-script-ok 'untried)
+    (set! kruddboard-assets-mesh-ok 'untried)))
 
 ;;! (kruddboard-assets-refresh-material) re-derives the parameter descriptors
 ;;! and current values for the loaded material against its selected shader —
@@ -143,6 +148,7 @@
   (cond ((= type 1) (krudd-asset-create-shader name))
 	((= type 2) (krudd-asset-create-material name))
 	((= type 3) (krudd-asset-create-script name))
+	((= type 4) (krudd-asset-create-mesh name))
 	(else (krudd-asset-create-text name))))
 
 ;;! (kruddboard-draw-new-asset-form) is the "New Asset" button, or (once
@@ -160,7 +166,8 @@
 	  (set! kruddboard-assets-new-name (car r))
 	  (imgui-set-next-item-width 160.0)
 	  (let* ((new-type (imgui-combo "type"
-					(list "Text" "Shader" "Material" "Script")
+					(list "Text" "Shader" "Material" "Script"
+					      "Mesh")
 					kruddboard-assets-new-type))
 		 (create-clicked (imgui-button "Create")))
 	    (set! kruddboard-assets-new-type new-type)
@@ -588,6 +595,73 @@
 	  (kruddboard-assets-do-delete id)))
       (kruddboard-draw-asset-script-clone id path)))
 
+;;! The Save button + save-result text for an editable mesh — the mesh
+;;! analogue of kruddboard-draw-asset-script-save.
+(define (kruddboard-draw-asset-mesh-save id)
+  (when (imgui-button "Save")
+    (set! kruddboard-assets-mesh-ok
+	  (krudd-asset-save-mesh id kruddboard-assets-edit-text)))
+  (imgui-same-line)
+  (cond ((eq? kruddboard-assets-mesh-ok #t)
+	 (imgui-text-colored 0.3 0.9 0.3 1.0 "Saved"))
+	((eq? kruddboard-assets-mesh-ok #f)
+	 (imgui-text-colored 1.0 0.3 0.3 1.0 "Not a valid mesh"))))
+
+;;! The name field + Clone button for a read-only (built-in) mesh — the mesh
+;;! analogue of kruddboard-draw-asset-script-clone. Shares the same
+;;! clone-src/name/conflict state (only one inspector is open at a time) and
+;;! commits through krudd-asset-clone-mesh.
+(define (kruddboard-draw-asset-mesh-clone id path)
+  (unless (= kruddboard-assets-clone-src id)
+    (set! kruddboard-assets-clone-src id)
+    (set! kruddboard-assets-clone-name
+	  (string-append (kruddboard-strip-builtin-prefix path) "_copy"))
+    (set! kruddboard-assets-clone-conflict #f))
+  (imgui-set-next-item-width 240.0)
+  (let ((r (imgui-input-text-enter "##clonename" kruddboard-assets-clone-name)))
+    (set! kruddboard-assets-clone-name (car r))
+    (imgui-same-line)
+    (let* ((clone-clicked (imgui-button "Clone"))
+	   (confirm (or (cdr r) clone-clicked)))
+      (when (and confirm (not (string=? kruddboard-assets-clone-name "")))
+	(let ((nid (krudd-asset-clone-mesh kruddboard-assets-clone-name
+						  kruddboard-assets-edit-text)))
+	  (if (= nid 0)
+	      (set! kruddboard-assets-clone-conflict #t)
+	      (begin
+		(set! kruddboard-assets-sel nid)
+		(set! kruddboard-assets-clone-conflict #f)))))))
+  (when kruddboard-assets-clone-conflict
+    (begin
+      (imgui-same-line)
+      (imgui-text-colored 1.0 0.3 0.3 1.0
+			  (format #f "\"~A\" already exists"
+				  kruddboard-assets-clone-name)))))
+
+;;! Mesh inspector: derived Declaration, Source box (editable or not), then
+;;! either the Save/Delete row or the built-in Clone row — the (mesh ...)
+;;! counterpart of kruddboard-draw-asset-script-editor. A mesh always defines
+;;! exactly one generate clause, so there is no hook list to introspect the
+;;! way an entity script's Declaration shows one.
+(define (kruddboard-draw-asset-mesh-editor id path editable)
+  (kruddboard-assets-maybe-reload-edit id)
+  (imgui-separator)
+  (when (imgui-collapsing-header "Declaration")
+    (imgui-text "format: krudd-mesh"))
+  (imgui-separator)
+  (when (imgui-collapsing-header "Source")
+    (let ((r (imgui-input-text-multiline "##meshscript" kruddboard-assets-edit-text
+					 260.0 (not editable))))
+      (set! kruddboard-assets-edit-text (car r))))
+  (imgui-separator)
+  (if editable
+      (begin
+	(kruddboard-draw-asset-mesh-save id)
+	(imgui-same-line)
+	(when (imgui-button "Delete")
+	  (kruddboard-assets-do-delete id)))
+      (kruddboard-draw-asset-mesh-clone id path)))
+
 ;;! The combo preview label for a material's shader: the shader asset's path, or
 ;;! "(missing #ref)" when it no longer resolves (a material always names one).
 (define (kruddboard-assets-shader-label ref)
@@ -721,9 +795,9 @@
     (imgui-end-table)))
 
 ;;! (kruddboard-draw-asset-body id info) dispatches to the right editor by
-;;! type/origin — ASSET_ORIGIN_AUTHORED=1 and ASSET_TYPE_TEXT=7/SHADER=4/
-;;! MATERIAL=3/SCRIPT=8, mirroring asset_api.h, the same convention the label
-;;! helpers above use.
+;;! type/origin — ASSET_ORIGIN_AUTHORED=1 and ASSET_TYPE_MESH=1/MATERIAL=3/
+;;! SHADER=4/TEXT=7/SCRIPT=8, mirroring asset_api.h, the same convention the
+;;! label helpers above use.
 (define (kruddboard-draw-asset-body id info)
   (let ((path (list-ref info 0))
 	(type (list-ref info 1))
@@ -731,6 +805,7 @@
 	(origin (list-ref info 7)))
     (cond
      ((and (= origin 1) (= type 7)) (kruddboard-draw-asset-text-editor id))
+     ((= type 1) (kruddboard-draw-asset-mesh-editor id path (not read-only)))
      ((= type 4) (kruddboard-draw-asset-shader-editor id path (not read-only)))
      ((= type 3) (kruddboard-draw-asset-material-editor id path (not read-only)))
      ((= type 8) (kruddboard-draw-asset-script-editor id path (not read-only)))

@@ -56,10 +56,10 @@ int main(void)
 			continue;
 		assert(info.read_only == 1);
 		assert(info.state == ASSET_LOADED);
-		if (strcmp(info.path, "builtin://cube")    == 0) found_cube    = 1;
-		if (strcmp(info.path, "builtin://sphere")  == 0) found_sphere  = 1;
-		if (strcmp(info.path, "builtin://plane")   == 0) found_plane   = 1;
-		if (strcmp(info.path, "builtin://pyramid") == 0) found_pyramid = 1;
+		if (strcmp(info.path, "builtin://mesh/cube")    == 0) found_cube    = 1;
+		if (strcmp(info.path, "builtin://mesh/sphere")  == 0) found_sphere  = 1;
+		if (strcmp(info.path, "builtin://mesh/plane")   == 0) found_plane   = 1;
+		if (strcmp(info.path, "builtin://mesh/pyramid") == 0) found_pyramid = 1;
 		if (strcmp(info.path, "builtin://shader/scene") == 0)
 			scene_shader_id = info.id;
 		if (strcmp(info.path, "builtin://material/default") == 0) {
@@ -101,10 +101,10 @@ int main(void)
 	assert(asset_catalog_info(0, NULL) == -1);
 
 	/* Built-ins are not evicted when asset_release is called on them. */
-	asset_request("builtin://cube");
-	assert(asset_state_of("builtin://cube") == ASSET_LOADED);
-	asset_release("builtin://cube");
-	assert(asset_state_of("builtin://cube") == ASSET_LOADED);
+	asset_request("builtin://mesh/cube");
+	assert(asset_state_of("builtin://mesh/cube") == ASSET_LOADED);
+	asset_release("builtin://mesh/cube");
+	assert(asset_state_of("builtin://mesh/cube") == ASSET_LOADED);
 	assert(asset_catalog_count() == n); /* count unchanged */
 
 	/* Normal project assets still work alongside built-ins. */
@@ -120,7 +120,7 @@ int main(void)
 	/* Built-ins still present after project-asset eviction. */
 	for (i = 0; i < asset_catalog_count(); i++) {
 		assert(asset_catalog_info(i, &info) == 0);
-		if (strcmp(info.path, "builtin://cube") == 0) {
+		if (strcmp(info.path, "builtin://mesh/cube") == 0) {
 			assert(info.kind      == ASSET_KIND_PRIMITIVE);
 			assert(info.read_only == 1);
 			assert(info.state     == ASSET_LOADED);

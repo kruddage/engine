@@ -17,6 +17,7 @@
 
 #include "shader_scm.h"
 #include "entity_script_scm.h"
+#include "mesh_script_scm.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -65,6 +66,13 @@ void script_init(void)
 	 * loading this image before they exist is fine.
 	 */
 	script_eval(ENTITY_SCRIPT_SCM);
+	/*
+	 * Load the mesh-script dispatcher: the (mesh ...) form and
+	 * mesh-script-generate. The asset plugin's mesh_script.c calls it to
+	 * marshal a bound ASSET_TYPE_MESH asset's source into a mesh_blob —
+	 * every mesh in the engine, built-in or authored, is one of these.
+	 */
+	script_eval(MESH_SCRIPT_SCM);
 }
 
 s7_scheme *script_s7(void)

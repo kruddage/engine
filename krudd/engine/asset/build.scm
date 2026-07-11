@@ -1,10 +1,8 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
 ((library "asset_plugin"
-	(sources "asset_plugin.c" "primitives_blob.c" "asset_edit.c"
-		(raw "${generated}/primitives.scm.c"))
+	(sources "asset_plugin.c" "asset_edit.c")
 	(public "." (root "abi"))
-	(private (raw "${generated}") (raw "../third_party"))
-	(link "log" "memory" "subsystem" "subsystem_manager" "script" "m"))
+	(link "log" "memory" "subsystem" "subsystem_manager" "m"))
  (native-only
 	(executable "asset_test" (sources "asset_test.c")
 		(link "asset_plugin" "log" "memory"))
@@ -30,18 +28,8 @@
 		(link "asset_plugin" "log" "memory"))
 	(test "asset_mesh" "asset_mesh_test")
 
-	(library "primitives_ref"
-		(sources "primitives.c")
-		(public "." (root "abi")))
-	(executable "primitive_test" (sources "primitive_test.c")
-		(link "primitives_ref" "m"))
-	(test "primitive" "primitive_test")
-
-	(library "primitives_scheme"
-		(sources "primitives_blob.c" (raw "${generated}/primitives.scm.c"))
-		(public "." (root "abi"))
-		(private (raw "${generated}") (raw "../third_party"))
-		(link "script"))
-	(executable "primitive_scheme_test" (sources "primitive_test.c")
-		(link "primitives_scheme" "m"))
-	(test "primitive_scheme" "primitive_scheme_test")))
+	(executable "mesh_script_test"
+		(sources "mesh_script_test.c" "mesh_script.c")
+		(private "." (root "abi") (raw "../third_party"))
+		(link "script" "memory" "log"))
+	(test "mesh_script" "mesh_script_test")))

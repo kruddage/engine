@@ -290,8 +290,6 @@
 	(let ((gen      (string-append builddir "/generated"))
 	      (mdscm    (string-append (krudd-repo-root)
 				      "/krudd/engine/ui/kruddboard/md_parse.scm"))
-	      (primscm  (string-append (krudd-repo-root)
-				      "/krudd/engine/asset/primitives.scm"))
 	      (mathscm  (string-append (krudd-repo-root)
 				      "/krudd/engine/math/math.scm"))
 	      (shaderscm (string-append (krudd-repo-root)
@@ -312,6 +310,9 @@
 		  (string-append srcroot "/core/entity_script.scm")
 		  (string-append gen "/entity_script_scm.h") "ENTITY_SCRIPT_SCM")
 		(krudd-embed-file
+		  (string-append srcroot "/core/mesh_script.scm")
+		  (string-append gen "/mesh_script_scm.h") "MESH_SCRIPT_SCM")
+		(krudd-embed-file
 		  (string-append srcroot "/ui/kruddboard/kruddboard.scm")
 		  (string-append gen "/kruddboard_scm.h") "KRUDDBOARD_SCM")
 		(krudd-embed-file
@@ -321,10 +322,6 @@
 		  mdscm
 		  (string-append gen "/md_parse.h")
 		  (string-append gen "/md_parse.scm.c"))
-		(krudd-embed-scheme-module
-		  primscm
-		  (string-append gen "/primitives_gen.h")
-		  (string-append gen "/primitives.scm.c"))
 		(krudd-emit-math-module
 		  mathscm
 		  (string-append gen "/math_gen.c"))

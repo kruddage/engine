@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "asset.h"
 #include "asset_api.h"
-#include "mesh.h"
 #include "log.h"
 #include "memory.h"
 
@@ -27,17 +26,17 @@ static int32_t index_of(const char *path)
 }
 
 /*
- * A built-in primitive must be a loaded read-only mesh whose get_data() returns
- * a well-formed mesh_blob with the expected vertex/index counts, sized exactly
- * to header + vertices + indices.
+ * A built-in mesh must be a loaded read-only ASSET_TYPE_MESH asset whose
+ * get_data() returns the (mesh ...) source text verbatim — the asset stores
+ * Scheme source, not a compiled mesh_blob (see seed_mesh in asset_plugin.c);
+ * a consumer resolves it to a blob on demand through mesh_script_generate().
  */
-static void check_primitive(const char *path, uint32_t vcount, uint32_t icount)
+static void check_mesh(const char *path)
 {
-	const struct mesh_blob *blob;
-	struct asset_info       info;
-	uint32_t                size;
-	int32_t                 idx;
-	uint32_t                i;
+	struct asset_info info;
+	const char        *src;
+	uint32_t           size;
+	int32_t            idx;
 
 	idx = index_of(path);
 	assert(idx >= 0);
@@ -50,17 +49,10 @@ static void check_primitive(const char *path, uint32_t vcount, uint32_t icount)
 	assert(info.id        != 0);
 
 	size = 0;
-	blob = asset_catalog_get_data(info.id, &size);
-	assert(blob != NULL);
-	assert(size == mesh_blob_size(vcount, icount));
-	assert(blob->magic        == MESH_BLOB_MAGIC);
-	assert(blob->vertex_count == vcount);
-	assert(blob->index_count  == icount);
-	assert(blob->index_format == 0);
-
-	/* Every index addresses a real vertex. */
-	for (i = 0; i < icount; i++)
-		assert(mesh_blob_indices(blob)[i] < vcount);
+	src = (const char *)asset_catalog_get_data(info.id, &size);
+	assert(src != NULL);
+	assert(size == strlen(src) + 1);
+	assert(strncmp(src, "(mesh", 5) == 0);
 }
 
 int main(void)
@@ -70,10 +62,11 @@ int main(void)
 
 	asset_init();
 
-	check_primitive("builtin://cube",    24, 36);
-	check_primitive("builtin://sphere",  561, 2880);
-	check_primitive("builtin://plane",   4, 6);
-	check_primitive("builtin://pyramid", 16, 18);
+	check_mesh("builtin://mesh/cube");
+	check_mesh("builtin://mesh/sphere");
+	check_mesh("builtin://mesh/plane");
+	check_mesh("builtin://mesh/pyramid");
+	check_mesh("builtin://mesh/grid");
 
 	log_shutdown();
 	mem_shutdown();

@@ -6,7 +6,9 @@
 #include "camera_api.h"
 #include "math_types.h"
 #include "mesh.h"
+#include "mesh_script.h"
 #include "asset_api.h"
+#include "memory_api.h"
 #include "subsystem.h"
 #include "subsystem_manager.h"
 #include "log_api.h"
@@ -17,7 +19,12 @@
 
 #ifndef __EMSCRIPTEN__
 #include "log.h"
-static const struct log_api native_log = { log_write };
+#include "memory.h"
+static const struct log_api    native_log = { log_write };
+static const struct memory_api native_mem = {
+	mem_alloc, mem_alloc_zero, mem_free,
+	mem_pool_create, mem_pool_alloc, mem_pool_free, mem_pool_destroy,
+};
 #endif
 
 /*
@@ -40,9 +47,11 @@ static const struct log_api native_log = { log_write };
  */
 
 #ifdef __EMSCRIPTEN__
-static const struct log_api *g_log;
+static const struct log_api    *g_log;
+static const struct memory_api *g_mem;
 #else
-static const struct log_api *g_log = &native_log;
+static const struct log_api    *g_log = &native_log;
+static const struct memory_api *g_mem = &native_mem;
 #endif
 
 static struct subsystem_manager *g_mgr;
@@ -144,12 +153,19 @@ static const struct camera_api g_camera_api = {
 	camera_set_viewport,
 };
 
-/* The built-in primitives that have uploadable geometry today. */
+/*
+ * The built-in meshes uploaded once at init. Every ASSET_TYPE_MESH asset's
+ * bytes are (mesh NAME (generate () ...)) Scheme source — there is no
+ * hardcoded C mesh generator and no separate "compiled blob" asset shape —
+ * so upload_mesh() below always compiles through mesh_script_generate()
+ * before GPU-uploading the result.
+ */
 static const char *const PRIMITIVE_PATHS[] = {
-	"builtin://cube",
-	"builtin://sphere",
-	"builtin://plane",
-	"builtin://pyramid",
+	"builtin://mesh/cube",
+	"builtin://mesh/sphere",
+	"builtin://mesh/plane",
+	"builtin://mesh/pyramid",
+	"builtin://mesh/grid",
 };
 
 #define PRIMITIVE_COUNT \
@@ -406,18 +422,26 @@ static void ensure_shader_pipelines(void)
 	}
 }
 
-/* Upload one primitive's vertex/index buffers from its mesh blob. */
+/*
+ * Upload one mesh's vertex/index buffers. Every ASSET_TYPE_MESH asset's bytes
+ * are (mesh NAME (generate () ...)) Scheme source, so this always compiles
+ * through mesh_script_generate() into a transient local blob before GPU-
+ * uploading it — there is no stored "compiled blob" shape to borrow instead.
+ */
 static void upload_mesh(const struct gpu_api *gpu, uint32_t render_ref)
 {
 	const struct mesh_blob *blob;
 	struct gpu_buffer_desc  bd;
 	struct mesh_gpu        *m;
-	uint32_t                size = 0;
+	const char             *src;
 
 	if (g_mesh_count >= SCENE_MAX_MESHES)
 		return;
-	blob = g_asset->get_data(render_ref, &size);
-	if (!blob || size < sizeof(*blob) || blob->magic != MESH_BLOB_MAGIC)
+	src = (const char *)g_asset->get_data(render_ref, NULL);
+	if (!src)
+		return;
+	blob = mesh_script_generate(src, g_mem, NULL);
+	if (!blob)
 		return;
 
 	m = &g_meshes[g_mesh_count];
@@ -436,6 +460,8 @@ static void upload_mesh(const struct gpu_api *gpu, uint32_t render_ref)
 	m->ebo = gpu->buffer_create(&bd);
 
 	g_mesh_count++;
+
+	g_mem->free((void *)blob);
 }
 
 /*
@@ -452,9 +478,10 @@ static void seed_demo_scene(void)
 		const char *script; /* behavior script to bind, or NULL */
 		const char *name;   /* shown in the entity list */
 	} DEMO[] = {
-		{ "builtin://cube",    { -1.5f, 0.0f,  0.0f }, "builtin://script/spinner", "Cube"    },
-		{ "builtin://sphere",  {  0.0f, 0.0f, -1.0f }, "builtin://script/bounce",  "Sphere"  },
-		{ "builtin://pyramid", {  1.5f, 0.0f,  0.5f }, "builtin://script/wobble",  "Pyramid" },
+		{ "builtin://mesh/cube",    { -1.5f, 0.0f,  0.0f }, "builtin://script/spinner", "Cube"    },
+		{ "builtin://mesh/sphere",  {  0.0f, 0.0f, -1.0f }, "builtin://script/bounce",  "Sphere"  },
+		{ "builtin://mesh/pyramid", {  1.5f, 0.0f,  0.5f }, "builtin://script/wobble",  "Pyramid" },
+		{ "builtin://mesh/grid",    { 0.0f, -0.5f, 1.5f }, NULL, "Grid" },
 	};
 	const struct world *w;
 	uint32_t            i;
@@ -799,6 +826,7 @@ void scene_renderer_plugin_entry(struct subsystem_manager *mgr)
 	g_mgr = mgr;
 #ifdef __EMSCRIPTEN__
 	g_log = subsystem_manager_get_api(mgr, "log");
+	g_mem = subsystem_manager_get_api(mgr, "memory");
 #endif
 	g_fg_api = subsystem_manager_get_api(mgr, "frame_graph");
 	g_scene  = subsystem_manager_get_api(mgr, "scene");

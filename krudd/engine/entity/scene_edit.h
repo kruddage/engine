@@ -32,6 +32,7 @@ enum scene_edit_field {
 	SCENE_EDIT_SCRIPT_PARAMS = 6,	/* per-entity script-param override */
 	SCENE_EDIT_MATERIAL_PARAMS = 7,	/* per-entity material-param override */
 	SCENE_EDIT_MESH_PARAMS = 8,	/* per-entity mesh-param override */
+	SCENE_EDIT_TEXTURE_PARAMS = 9,	/* per-entity texture-param override */
 };
 
 /* Compose an entity id and field tag into a non-zero coalesce key (0 when the

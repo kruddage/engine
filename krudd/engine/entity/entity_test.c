@@ -570,6 +570,59 @@ static void test_mesh_params_snapshot(void)
 	world_snapshot_free(snap, &test_mem);
 }
 
+/*
+ * Texture-param overrides are a fourth independent per-entity column: set/get
+ * round trips, two entities stay independent, the column is distinct from the
+ * mesh/material/script columns, and a snapshot captures and restores it (undo of
+ * a scale edit). Mirrors test_mesh_params_snapshot exactly, one column over.
+ */
+static void test_texture_params_snapshot(void)
+{
+	struct world_snapshot *snap;
+	struct transform       t;
+	uint8_t                ov[4];     /* one tight-packed float (a scale) */
+	const uint8_t         *got;
+	uint32_t               len = 99;
+	int32_t                a, b;
+
+	memset(&t, 0, sizeof(t));
+	t.rotation[3] = 1.0f;
+	t.scale[0] = t.scale[1] = t.scale[2] = 1.0f;
+	world_reset(&w);
+	a = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+	b = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+	assert(a >= 0 && b >= 0);
+
+	assert(world_texture_params(&w, a, &len) == NULL && len == 0);
+
+	memset(ov, 0x5A, sizeof(ov));
+	world_set_texture_params(&w, a, ov, sizeof(ov));
+	got = world_texture_params(&w, a, &len);
+	assert(got != NULL && len == sizeof(ov));
+	assert(memcmp(got, ov, sizeof(ov)) == 0);
+
+	/* The two entities' overrides are independent (b stays unset). */
+	assert(world_texture_params(&w, b, &len) == NULL && len == 0);
+
+	/* Texture, mesh, material, and script overrides are separate columns. */
+	assert(world_mesh_params(&w, a, &len) == NULL && len == 0);
+	assert(world_material_params(&w, a, &len) == NULL && len == 0);
+	assert(world_script_params(&w, a, &len) == NULL && len == 0);
+
+	snap = world_snapshot_capture(&w, &test_mem);
+	assert(snap != NULL);
+
+	world_set_texture_params(&w, a, NULL, 0);          /* clobber */
+	assert(world_texture_params(&w, a, &len) == NULL);
+
+	world_snapshot_restore(&w, snap);                  /* undo */
+	got = world_texture_params(&w, a, &len);
+	assert(got != NULL && len == sizeof(ov));
+	assert(memcmp(got, ov, sizeof(ov)) == 0);
+
+	world_snapshot_free(snap, &test_mem);
+}
+
 int main(void)
 {
 	mem_init();
@@ -590,6 +643,7 @@ int main(void)
 	test_script_params_snapshot();
 	test_material_params_snapshot();
 	test_mesh_params_snapshot();
+	test_texture_params_snapshot();
 
 	mem_shutdown();
 	printf("entity tests passed\n");

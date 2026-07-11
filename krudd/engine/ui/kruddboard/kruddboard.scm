@@ -437,6 +437,35 @@
             (when (and can-edit changed)
               (krudd-entity-save-mesh-params e mesh-ref new-vals))))))))
 
+;;! (kruddboard-draw-entity-texture-params e material-ref can-edit) draws the
+;;! entity's per-entity override of its material's bound texture's generation
+;;! params — a checker's scale/colours — the pixel twin of the mesh-params menu
+;;! above. The texture and its params come from the material's texture slot (via
+;;! krudd-material-texture), so this is drawn only when the material binds a
+;;! texture that declares params. The values shown are the entity's override where
+;;! set, else the texture's declared defaults. Any edit is packed and saved
+;;! immediately through the scene api's undo-recording setter, so just this
+;;! entity's texture re-bakes on the next frame — no explicit Save, and the shared
+;;! material (and every other entity on it) is left untouched.
+(define (kruddboard-draw-entity-texture-params e material-ref can-edit)
+  (let ((slot (krudd-material-texture material-ref)))
+    (when (pair? slot)
+      (let* ((tex-ref (car slot))
+             (params  (krudd-texture-params tex-ref)))
+        (unless (null? params)
+          (imgui-separator)
+          (when (imgui-collapsing-header "Texture Parameters")
+            (let ((values (krudd-entity-texture-values e tex-ref)))
+              (imgui-begin-disabled (not can-edit))
+              (let* ((results  (map (lambda (p v)
+                                      (kruddboard-draw-param-widget p v "##texp"))
+                                    params values))
+                     (new-vals (map car results))
+                     (changed  (kruddboard-any-param-changed results)))
+                (imgui-end-disabled)
+                (when (and can-edit changed)
+                  (krudd-entity-save-texture-params e tex-ref new-vals))))))))))
+
 ;;! (kruddboard-draw-inspector-body e info caps) draws the editable name field
 ;;! and transform table (both disabled without the scene api), then the read-only
 ;;! details and the mesh/material/script binding rows. info is the
@@ -481,7 +510,8 @@
 	  "##materialsel" e has-material material-ref (krudd-material-assets)
 	  can-bind krudd-entity-set-material-ref)
       (when has-material
-	(kruddboard-draw-entity-material-params e material-ref can-bind))
+	(kruddboard-draw-entity-material-params e material-ref can-bind)
+	(kruddboard-draw-entity-texture-params e material-ref can-bind))
       (kruddboard-draw-inspector-binding "Script" "##escript" "##scriptsel" e
 	  has-script script-ref (krudd-script-assets) can-bind
 	  krudd-entity-set-script-ref)

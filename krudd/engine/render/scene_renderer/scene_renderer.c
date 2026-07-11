@@ -272,6 +272,20 @@ static const uint8_t *entity_mesh_params(const struct world *w, uint32_t i,
 	return NULL;
 }
 
+/* The entity's texture-param override bytes for the bake, or NULL/0 when it has
+ * none (the texture then bakes on its declared defaults). Two entities sharing
+ * one material bake its texture with different params purely from this. */
+static const uint8_t *entity_texture_params(const struct world *w, uint32_t i,
+					    uint32_t *plen)
+{
+	if (w->texture_param_len[i] > 0) {
+		*plen = w->texture_param_len[i];
+		return w->texture_params[i];
+	}
+	*plen = 0;
+	return NULL;
+}
+
 /*
  * Resolve a material's shader — the leading uint32 asset id of its wire form.
  * Returns 0 (meaning "use the built-in scene pipeline") for a missing/short
@@ -786,6 +800,21 @@ static void ensure_textures(void)
 		if (!material_texture(w->material_ref[i], shader_ref,
 				      &tex_ref, &tw, &th, &params, &plen))
 			continue;
+		/*
+		 * A per-entity texture-param override wins over the material's own
+		 * trailer params, so two entities sharing one material bake the
+		 * texture with different generation params (a checker at scale 8
+		 * vs 16) — the pixel twin of the per-entity mesh-param override.
+		 */
+		{
+			uint32_t       eplen = 0;
+			const uint8_t *ep    = entity_texture_params(w, i, &eplen);
+
+			if (ep) {
+				params = ep;
+				plen   = eplen;
+			}
+		}
 		t = find_texture(tex_ref, tw, th, params, plen);
 		if (!t) {
 			if (!gpu) {
@@ -926,6 +955,50 @@ static void seed_demo_scene(void)
 
 			if (script)
 				g_scene->set_script_ref(id, script);
+		}
+	}
+
+	/*
+	 * Two cubes sharing ONE material (the built-in checker), each baking its
+	 * texture at a different scale purely from a per-entity texture-param
+	 * override — the pixel twin of the two boxes on one mesh above, and the
+	 * whole point of per-entity texture params made visible on load. The
+	 * override is one tight-packed float (the checker's leading `scale` param);
+	 * skipped cleanly on a build without the checker material or the
+	 * set_texture_params entry.
+	 */
+	if (g_scene->set_texture_params) {
+		static const struct {
+			float       pos[3];
+			float       scale;
+			const char *name;
+		} TEX[] = {
+			{ { -1.6f, 1.9f, 0.0f },  3.0f, "Checker x3"  },
+			{ {  1.6f, 1.9f, 0.0f }, 12.0f, "Checker x12" },
+		};
+		uint32_t cube    = asset_id_by_path("builtin://mesh/cube");
+		uint32_t checker = asset_id_by_path("builtin://material/checker");
+		uint32_t k;
+
+		for (k = 0; cube && checker &&
+		     k < (uint32_t)(sizeof(TEX) / sizeof(TEX[0])); k++) {
+			struct transform t;
+			int32_t          id;
+
+			memset(&t, 0, sizeof(t));
+			t.position[0] = TEX[k].pos[0];
+			t.position[1] = TEX[k].pos[1];
+			t.position[2] = TEX[k].pos[2];
+			t.rotation[3] = 1.0f;
+			t.scale[0] = t.scale[1] = t.scale[2] = 0.8f;
+			id = g_scene->create_entity(WORLD_NO_PARENT, &t, 0u, cube);
+			if (id < 0)
+				continue;
+			g_scene->set_material_ref(id, checker);
+			g_scene->set_texture_params(id, (const uint8_t *)&TEX[k].scale,
+						    sizeof(TEX[k].scale));
+			if (g_scene->set_name)
+				g_scene->set_name(id, TEX[k].name);
 		}
 	}
 
@@ -1129,10 +1202,16 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 
 			if (material_texture(mat_ref, shader_ref, &tex_ref, &tw,
 					     &th, &tparams, &tplen)) {
-				struct texture_gpu *t = find_texture(tex_ref, tw,
-								     th, tparams,
-								     tplen);
+				uint32_t       eplen = 0;
+				const uint8_t *ep    =
+					entity_texture_params(w, i, &eplen);
+				struct texture_gpu *t;
 
+				if (ep) {
+					tparams = ep;
+					tplen   = eplen;
+				}
+				t = find_texture(tex_ref, tw, th, tparams, tplen);
 				if (t)
 					gpu->cmd_bind_texture(cmd, 0, t->tex);
 			}

@@ -51,7 +51,9 @@ struct entity_api {
 	 * Bind id to a material by asset id (sets COMPONENT_MATERIAL); a zero
 	 * material_ref unbinds, clearing COMPONENT_MATERIAL. Mirrors
 	 * set_render_ref, but for the material asset that tints the draw
-	 * rather than the mesh it draws.
+	 * rather than the mesh it draws. An entity with no COMPONENT_MATERIAL
+	 * keeps its mesh (still hit-testable and collidable) but the renderer
+	 * skips drawing it.
 	 */
 	void    (*set_material_ref)(int32_t id, uint32_t material_ref);
 	/*

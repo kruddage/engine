@@ -14,7 +14,16 @@ body {
 	background: #0d0d0d;
 	color: #e0e0e0;
 	font-family: 'Courier New', Courier, monospace;
+	/*
+	 * dvh (dynamic viewport height) tracks the *visible* viewport, so the
+	 * app shrinks to fit above a mobile browser's dynamic toolbar instead
+	 * of extending behind it — otherwise 100vh (the large viewport) hides
+	 * the bottom strip of the canvas, and with it kruddgui's bottom-anchored
+	 * panels (the mode-bar, the Log handle), under Firefox Android's URL bar.
+	 * The 100vh line is the fallback for browsers without dvh.
+	 */
 	height: 100vh;
+	height: 100dvh;
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
@@ -281,7 +290,7 @@ footer {
 <header>
 	<span class="wordmark">KRUDD</span>
 	<span class="version" id="version" title="click for build info">17.11.0</span>
-	<span class="version-detail" id="version-detail">commit 5bd03c4 &middot; built 2026-07-12</span>
+	<span class="version-detail" id="version-detail">commit 14b5223 &middot; built 2026-07-12</span>
 </header>
 
 <div class="canvas-wrap">
@@ -401,13 +410,13 @@ footer {
 var Module = {
 	locateFile: function (path, prefix) {
 		if (path.endsWith('.wasm'))
-			return prefix + path.replace(/\.wasm$/, '.5bd03c4.wasm');
+			return prefix + path.replace(/\.wasm$/, '.14b5223.wasm');
 		return prefix + path;
 	}
 };
 </script>
 
-<script async type="text/javascript" src="index.5bd03c4.js"></script>
+<script async type="text/javascript" src="index.14b5223.js"></script>
 
 </body>
 </html>

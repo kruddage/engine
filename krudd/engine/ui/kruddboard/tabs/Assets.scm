@@ -225,7 +225,8 @@
 ;;!
 ;;! The browser groups rows into a tree by splitting each asset's path on
 ;;! "/", the same de facto virtual-filesystem convention builtin:// paths
-;;! already use ("builtin://shader/scene" -> folder "shader", leaf "scene")
+;;! already use ("builtin://shader/scene-textured" -> folder "shader", leaf
+;;! "scene-textured")
 ;;! and that authored names are free to opt into by including a "/". Rows
 ;;! that don't use it just come out as a single top-level leaf, so nothing
 ;;! about existing flat-named assets changes.

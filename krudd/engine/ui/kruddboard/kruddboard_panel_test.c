@@ -855,7 +855,7 @@ static void asset_reset(void)
 
 	/* id 601: built-in shader — read-only, gets the Clone flow. */
 	g_fa[1].alive = 1; g_fa[1].id = 601;
-	strcpy(g_fa[1].path, "builtin://shader/scene");
+	strcpy(g_fa[1].path, "builtin://shader/scene-textured");
 	g_fa[1].type = 4; g_fa[1].kind = 1; g_fa[1].state = 1;
 	g_fa[1].read_only = 1; g_fa[1].origin = 0;
 	strcpy(g_fa[1].data, "(vertex ...) (fragment ...)");
@@ -2387,7 +2387,7 @@ static void test_world_mesh_params_save(void)
  * store — the two are independent, so a world-tab test needs both. */
 static void material_bound_entity(void)
 {
-	uint32_t shref = 601;   /* builtin://shader/scene, present in the fa store */
+	uint32_t shref = 601;   /* builtin://shader/scene-textured, present in the fa store */
 	int      i;
 
 	fw_reset();
@@ -2845,8 +2845,8 @@ static void test_assets_shader_clone(void)
 	script_eval("(kruddboard-draw-assets)");
 	g_click = NULL;
 
-	assert(rec_has("input-enter|##clonename|shader/scene_copy"));
-	assert(rec_has("clone-shader|shader/scene_copy|"));
+	assert(rec_has("input-enter|##clonename|shader/scene-textured_copy"));
+	assert(rec_has("clone-shader|shader/scene-textured_copy|"));
 	assert(assets_sel() != 601 && assets_sel() != 0);
 }
 
@@ -2865,7 +2865,7 @@ static void test_assets_shader_clone_conflict(void)
 	g_click = NULL;
 
 	assert(rec_has("colored|1.00,0.30,0.30,1.00|"
-		       "\"shader/scene_copy\" already exists"));
+		       "\"shader/scene-textured_copy\" already exists"));
 	assert(assets_sel() == 601);
 }
 

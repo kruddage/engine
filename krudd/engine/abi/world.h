@@ -125,7 +125,10 @@ void world_destroy_entity(struct world *w, int32_t e);
 
 /*
  * Overwrite a live entity's local transform; out-of-range or tombstoned ids
- * are ignored. The change reaches world_xform after the next propagate.
+ * are ignored. world_xform for e and its live descendants is recomposed
+ * immediately (off each ancestor's current world_xform); every other entity
+ * is left exactly as it was, so an edit outside the tick never disturbs a
+ * script-authored pose elsewhere in the world (see world_snapshot_restore).
  */
 void world_set_transform(struct world *w, int32_t e,
 			 const struct transform *local);
@@ -263,12 +266,15 @@ int32_t world_ingest_scene(struct world *w, const struct scene *s);
 
 /*
  * Editor undo snapshots. A snapshot is a full-fidelity copy of the world's
- * used prefix — every persistent column, the name blob, and the selection —
- * sized to the live high-water mark rather than the fixed 4096 cap, so it
- * stays proportional to scene size. capture returns NULL on allocation
- * failure; restore and free tolerate a NULL snapshot. Restoring reinstates the
- * exact entity ids and tombstones (so a destroyed subtree comes back whole)
- * and re-derives world_xform.
+ * used prefix — every persistent column (including world_xform, captured
+ * verbatim rather than re-derived), the name blob, and the selection — sized
+ * to the live high-water mark rather than the fixed 4096 cap, so it stays
+ * proportional to scene size. capture returns NULL on allocation failure;
+ * restore and free tolerate a NULL snapshot. Restoring reinstates the exact
+ * entity ids and tombstones (so a destroyed subtree comes back whole) and the
+ * exact world_xform each entity carried at capture time — a checkpoint jump,
+ * not a tick, so a script-authored pose elsewhere in the world is reinstated
+ * rather than reset to its rest pose.
  *
  * All snapshot storage comes from the injected memory_api (never libc malloc);
  * free must be handed the same allocator that captured the snapshot.

@@ -4886,10 +4886,16 @@ static int32_t pick_entity_at(float sx, float sy)
  * clears the selection on a miss.  Stands down when the gizmo owns the click
  * (a handle grab) or the pointer is over an editor panel, so only clicks that
  * reach the 3D scene ever change the selection.
+ *
+ * Re-clicking the entity that is already selected doesn't change the
+ * selection — instead it cycles the gizmo through Move -> Rotate -> Scale,
+ * so repeated clicks step through the transform tools without a trip to
+ * the toolbar.
  */
 static void pick_update(bool gizmo_active)
 {
 	ImGuiIO &io = ImGui::GetIO();
+	int32_t  hit;
 
 	if (!g_entity_api)
 		return;
@@ -4898,7 +4904,12 @@ static void pick_update(bool gizmo_active)
 	if (!ImGui::IsMouseClicked(ImGuiMouseButton_Left))
 		return;
 
-	g_entity_api->set_selected(pick_entity_at(io.MousePos.x, io.MousePos.y));
+	hit = pick_entity_at(io.MousePos.x, io.MousePos.y);
+	if (hit != -1 && hit == g_entity_api->get_selected()) {
+		g_gizmo_mode = (enum gizmo_mode)((g_gizmo_mode + 1) % 3);
+		return;
+	}
+	g_entity_api->set_selected(hit);
 }
 
 #ifndef __EMSCRIPTEN__

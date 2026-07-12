@@ -642,11 +642,10 @@
 ;;! entity's editable guts) instead of unrolling it in place. The transform
 ;;! gizmo still tracks (krudd-selected), which a list-row click drives alongside
 ;;! the drill-in, so the gizmo mode set from the list keeps acting on the entity
-;;! being inspected.
+;;! being inspected. Above both screens sits the roll-up Perf bar, folded away by
+;;! default (the #f) so it stays out of the way, and drawn before the branch so
+;;! it's present whether the list or an inspector is showing.
 (define (kruddboard-draw-world)
-  ;; Roll-up perf bar at the top of the Scene tab: folded away by default (the
-  ;; #f), so it stays out of the way until you reach for it, and drawn before
-  ;; the list/inspector branch so it's present on both screens.
   (when (imgui-collapsing-header "Perf" #f) (kruddboard-draw-perf))
   (let ((caps (krudd-world-caps)))
     (if (not (= kruddboard-world-sel -1))

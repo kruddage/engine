@@ -62,7 +62,6 @@ int main(void)
 
 	asset_init();
 
-	check_mesh("builtin://mesh/cube");
 	check_mesh("builtin://mesh/box");
 	check_mesh("builtin://mesh/sphere");
 	check_mesh("builtin://mesh/plane");

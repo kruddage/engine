@@ -77,6 +77,7 @@ static bool                            g_touch_device;
 static bool                            g_kbd_shown;
 #endif
 static int                             g_panels_registered;
+static uint32_t                        asset_id_by_path(const char *path);
 static const struct entity_api        *g_entity_api;
 static int32_t                         g_entity_sel = -1; /* -1 = none */
 static const struct edit_api          *g_edit_api;  /* NULL = no history */
@@ -978,8 +979,9 @@ static s7_pointer sp_krudd_asset_find(s7_scheme *sc, s7_pointer args)
 
 /*
  * (krudd-entity-create) -> the new entity id, or -1 on failure. Appends a root
- * entity with an identity transform at the origin — what the "+ Entity" button
- * seeds; the caller names and selects it. Undo is recorded by the scene api.
+ * entity with an identity transform at the origin, a box mesh, and the
+ * default scene material — what the "+ Entity" button seeds; the caller
+ * names and selects it. Undo is recorded by the scene api.
  */
 static s7_pointer sp_krudd_entity_create(s7_scheme *sc, s7_pointer args)
 {
@@ -988,11 +990,17 @@ static s7_pointer sp_krudd_entity_create(s7_scheme *sc, s7_pointer args)
 
 	(void)args;
 	if (g_entity_api && g_entity_api->create_entity) {
+		uint32_t box = asset_id_by_path("builtin://mesh/box");
+		uint32_t material =
+			asset_id_by_path("builtin://material/default");
+
 		memset(&seed, 0, sizeof(seed));
 		seed.rotation[3] = 1.0f;
 		seed.scale[0] = seed.scale[1] = seed.scale[2] = 1.0f;
 		id = g_entity_api->create_entity(WORLD_NO_PARENT, &seed, 0u,
-						 0u);
+						 box);
+		if (id >= 0 && material && g_entity_api->set_material_ref)
+			g_entity_api->set_material_ref(id, material);
 	}
 	return s7_make_integer(sc, (s7_int)id);
 }
@@ -5195,13 +5203,19 @@ static void draw_tab_world(void)
 		ImGui::BeginDisabled(!g_entity_api);
 		if (ImGui::SmallButton("+ Entity") && g_entity_api) {
 			struct transform seed = {};  /* identity at origin */
+			uint32_t box = asset_id_by_path("builtin://mesh/box");
+			uint32_t material =
+				asset_id_by_path("builtin://material/default");
 			int32_t          id;
 
 			seed.rotation[3] = 1.0f;
 			seed.scale[0] = seed.scale[1] = seed.scale[2] = 1.0f;
 			id = g_entity_api->create_entity(WORLD_NO_PARENT, &seed,
-							 0u, 0u);
+							 0u, box);
 			if (id >= 0) {
+				if (material && g_entity_api->set_material_ref)
+					g_entity_api->set_material_ref(id,
+									material);
 				g_entity_api->set_name(id, "Entity");
 				g_entity_api->set_selected(id);
 				sel = id;

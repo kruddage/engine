@@ -138,51 +138,57 @@
 (define (kruddboard-draw-world-header)
   (imgui-text "Untitled Scene"))
 
-;;! (kruddboard-draw-world-tree-entity row caps) draws one entity as a tree
-;;! node: a plain click selects it, the right-aligned x destroys it (disabled
-;;! without the scene api), and expanding the node draws that entity's full
-;;! inspector body — name, transform, bindings, and the script/material/mesh
-;;! param groups with their override dots — nested underneath. row is an
-;;! (id . name) pair; the selection is re-read so a click earlier in the frame
-;;! shows. The body's widget ids ("##ename", "##pos", "##sp", ...) are scoped
-;;! with imgui-push-id keyed on the entity, so several entities can sit open at
-;;! once without their identically-named fields colliding on one ImGui id.
-(define (kruddboard-draw-world-tree-entity row caps)
-  (let* ((id      (car row))
-	 (disp    (kruddboard-world-name id (cdr row)))
-	 (has-api (car caps))
-	 (nid     (format #f "ent~D" id))
-	 (node    (imgui-tree-node nid disp #f (= id (krudd-selected)))))
-    (when (cdr node)
-      (krudd-entity-select id))
+;;! kruddboard-world-sel is the World tab's drill-down state, the entity twin of
+;;! the asset browser's kruddboard-assets-sel: -1 means "browsing the entity
+;;! list", any other value is the id of the entity whose inspector screen is
+;;! open. -1 (not 0) is the sentinel because entity id 0 is a live entity,
+;;! unlike asset ids which start at 1 — this matches the engine's own "no
+;;! selection" convention (krudd-selected returns -1 for none).
+(define kruddboard-world-sel -1)
+
+;;! (kruddboard-draw-world-list-entity row caps) draws one entity as a single
+;;! clickable row: the leaf label drills into that entity's inspector screen
+;;! (by setting kruddboard-world-sel, exactly as an asset browser leaf sets
+;;! kruddboard-assets-sel) and drives the viewport selection so the transform
+;;! gizmo tracks it; the right-aligned x destroys the entity (disabled without
+;;! the scene api). row is an (id . name) pair. The row is a leaf tree-node (a
+;;! bullet, never expandable) so its whole width is one click target reported
+;;! through the node's clicked? flag — the same leaf shape the asset browser's
+;;! asset rows use — and the inspector no longer unrolls in place: it opens on
+;;! its own screen (see kruddboard-draw-world-detail).
+(define (kruddboard-draw-world-list-entity row caps)
+  (let* ((id       (car row))
+	 (disp     (kruddboard-world-name id (cdr row)))
+	 (has-api  (car caps))
+	 (nid      (format #f "ent~D" id))
+	 (row-node (imgui-tree-node nid disp #t (= id (krudd-selected)))))
+    (when (cdr row-node)
+      (krudd-entity-select id)
+      (set! kruddboard-world-sel id))
     (imgui-same-line-right (imgui-calc-text-width "x"))
     (imgui-begin-disabled (not has-api))
     (when (imgui-small-button (format #f "x##d~D" id))
       (krudd-entity-destroy id))
-    (imgui-end-disabled)
-    (when (car node)
-      (imgui-push-id nid)
-      (let ((info (krudd-entity-inspect id)))
-	(if (not info)
-	    (imgui-text-disabled "(stale)")
-	    (kruddboard-draw-inspector-body id info caps)))
-      (imgui-pop-id)
-      (imgui-tree-pop))))
+    (imgui-end-disabled)))
 
-;;! (kruddboard-world-create) appends an entity, names it "Entity", and selects
-;;! it — the three steps behind the "+ Entity" button.
+;;! (kruddboard-world-create) appends an entity, names it "Entity", selects it,
+;;! and drills straight into its inspector screen — the four steps behind the
+;;! "+ Entity" button. Opening the new entity mirrors the asset browser, whose
+;;! New Asset form likewise jumps into the freshly created asset.
 (define (kruddboard-world-create)
   (let ((id (krudd-entity-create)))
     (when (>= id 0)
       (krudd-entity-set-name id "Entity")
-      (krudd-entity-select id))))
+      (krudd-entity-select id)
+      (set! kruddboard-world-sel id))))
 
-;;! (kruddboard-draw-world-tree caps) draws the "+ Entity" button and the entity
-;;! tree — one expandable node per entity — or a dimmed "(no entities)" when the
-;;! world is empty or absent. (krudd-world-entities) hands back a materialised
-;;! ((id . name) ...) list, so destroying an entity from a node mid-frame (its x)
-;;! leaves this frame's iteration intact.
-(define (kruddboard-draw-world-tree caps)
+;;! (kruddboard-draw-world-list caps) draws the "+ Entity" button and the flat
+;;! entity list — one clickable row per entity, each drilling into its own
+;;! inspector screen — or a dimmed "(no entities)" when the world is empty or
+;;! absent. (krudd-world-entities) hands back a materialised ((id . name) ...)
+;;! list, so destroying an entity from a row mid-frame (its x) leaves this
+;;! frame's iteration intact.
+(define (kruddboard-draw-world-list caps)
   (let ((has-api (car caps)))
     (imgui-begin-disabled (not has-api))
     (when (imgui-small-button "+ Entity")
@@ -191,7 +197,7 @@
     (let ((ents (krudd-world-entities)))
       (if (or (not ents) (null? ents))
 	  (imgui-text-disabled "(no entities)")
-	  (for-each (lambda (row) (kruddboard-draw-world-tree-entity row caps))
+	  (for-each (lambda (row) (kruddboard-draw-world-list-entity row caps))
 		    ents)))))
 
 ;;! Move/Rotate/Scale tool chips. The active chip is tinted the same blue the C
@@ -496,10 +502,10 @@
 ;;! then three collapsing sections: Transform (the position/rotation/scale
 ;;! table), Info (the read-only id / parent / components details), and Bindings
 ;;! (the mesh / material / script rows and their param menus). Folding the tall
-;;! parts keeps an opened entity short on the narrow phone-width layout the tree
-;;! now renders inline — Transform and Bindings default open, Info stays rolled
-;;! up since it's read-only reference. The name field and transform table are
-;;! disabled without the scene api, but the headers themselves stay clickable so
+;;! parts keeps an opened entity short on the narrow phone-width layout the
+;;! inspector screen renders in — Transform and Bindings default open, Info
+;;! stays rolled up since it's read-only reference. The name field and transform
+;;! table are disabled without the scene api, but the headers stay clickable so
 ;;! sections can still be folded. info is the krudd-entity-inspect bundle; caps
 ;;! is (entity-api? asset-api?). The name commits once on focus loss and the
 ;;! transform writes back after the disabled block, as the C did.
@@ -553,17 +559,54 @@
 	(when has-script
 	  (kruddboard-draw-script-params e script-ref can-bind))))))
 
-;;! (kruddboard-draw-world) is the whole World tab: scene header, gizmo tool
-;;! chips, then the entity tree — one expandable node per entity that opens onto
-;;! its own inspector in place. This folds the old separate entity-list and
-;;! single-selection Inspector section into one tree: instead of "pick a row,
-;;! read the detached inspector below", an entity expands to reveal its editable
-;;! guts where it sits, and more than one can be open at a time. The transform
-;;! gizmo still tracks (krudd-selected), so a node's plain click still drives it.
+;;! (kruddboard-world-detail-name id info) formats the drilled-in entity's
+;;! header label. krudd-entity-inspect reports "" for an unnamed entity (always
+;;! a string), so the empty case is mapped back to #f to reach kruddboard-world-
+;;! name's "entity N" fallback, matching the label the list row shows.
+(define (kruddboard-world-detail-name id info)
+  (let* ((n     (list-ref info 0))
+	 (named (and (string? n) (not (string=? n "")))))
+    (kruddboard-world-name id (and named n))))
+
+;;! (kruddboard-draw-world-entity-header disp) draws the "<- Back" button and
+;;! the entity name at the top of an entity's inspector screen — the World twin
+;;! of the asset browser's kruddboard-draw-asset-header. Back clears
+;;! kruddboard-world-sel, returning to the entity list.
+(define (kruddboard-draw-world-entity-header disp)
+  (when (imgui-small-button "<- Back")
+    (set! kruddboard-world-sel -1))
+  (imgui-same-line)
+  (imgui-text disp))
+
+;;! (kruddboard-draw-world-detail id caps) is the whole entity inspector screen:
+;;! the back-button header plus the shared inspector body, or a silent return to
+;;! the list if id no longer resolves (e.g. the entity was destroyed elsewhere)
+;;! — the same stale-guard kruddboard-draw-asset-inspector uses.
+(define (kruddboard-draw-world-detail id caps)
+  (let ((info (krudd-entity-inspect id)))
+    (if (not info)
+	(set! kruddboard-world-sel -1)
+	(begin
+	  (kruddboard-draw-world-entity-header
+	   (kruddboard-world-detail-name id info))
+	  (imgui-separator)
+	  (kruddboard-draw-inspector-body id info caps)))))
+
+;;! (kruddboard-draw-world) is the whole World tab. It mirrors the asset
+;;! browser's two-screen shape: while kruddboard-world-sel is -1 it shows the
+;;! scene header, gizmo tool chips, and the flat entity list; clicking an entity
+;;! drills into a dedicated inspector screen (a "<- Back" header over that
+;;! entity's editable guts) instead of unrolling it in place. The transform
+;;! gizmo still tracks (krudd-selected), which a list-row click drives alongside
+;;! the drill-in, so the gizmo mode set from the list keeps acting on the entity
+;;! being inspected.
 (define (kruddboard-draw-world)
   (let ((caps (krudd-world-caps)))
-    (kruddboard-draw-world-header)
-    (imgui-separator)
-    (kruddboard-draw-gizmo-chips)
-    (imgui-separator)
-    (kruddboard-draw-world-tree caps)))
+    (if (not (= kruddboard-world-sel -1))
+	(kruddboard-draw-world-detail kruddboard-world-sel caps)
+	(begin
+	  (kruddboard-draw-world-header)
+	  (imgui-separator)
+	  (kruddboard-draw-gizmo-chips)
+	  (imgui-separator)
+	  (kruddboard-draw-world-list caps)))))

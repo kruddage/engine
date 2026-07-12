@@ -809,7 +809,7 @@ static s7_pointer st_set_gizmo_mode(s7_scheme *sc, s7_pointer a)
 /* Fake authored asset catalog, driven by the mutating primitives. Mirrors
  * struct asset_info's shape closely enough for the Scheme logic under test:
  * type/kind/state/read_only/origin codes match asset_api.h. */
-#define FA_MAX 10
+#define FA_MAX 12
 
 struct fa_asset {
 	int         alive;
@@ -899,12 +899,14 @@ static void asset_reset(void)
 	strcpy(g_fa[6].data, "(script mine (on-tick (self t) 0))");
 	g_fa[6].data_len = (int)strlen(g_fa[6].data);
 
-	/* id 1001: texture — no dedicated editor, falls back to the generic
-	 * Declaration + Catalog tables (unlike mesh/material/shader/script). */
+	/* id 1001: authored texture — mutable, gets the texture editor (generation
+	 * sliders + live preview + read-only source). */
 	g_fa[7].alive = 1; g_fa[7].id = 1001;
-	strcpy(g_fa[7].path, "icon.png");
+	strcpy(g_fa[7].path, "checker.tex");
 	g_fa[7].type = 2; g_fa[7].kind = 0; g_fa[7].state = 1;
 	g_fa[7].read_only = 0; g_fa[7].origin = 1;
+	strcpy(g_fa[7].data, "(texture checker (shade (u v) (list u v 0)))");
+	g_fa[7].data_len = (int)strlen(g_fa[7].data);
 
 	/* id 1051: authored mesh — mutable, gets Save/Delete. */
 	g_fa[8].alive = 1; g_fa[8].id = 1051;
@@ -914,7 +916,15 @@ static void asset_reset(void)
 	strcpy(g_fa[8].data, "(mesh mine (generate () (cons (list) (list))))");
 	g_fa[8].data_len = (int)strlen(g_fa[8].data);
 
-	g_fa_n = 9;
+	/* id 1101: font — no dedicated editor, falls back to the generic
+	 * Declaration + Catalog tables (unlike mesh/texture/material/shader/
+	 * script). */
+	g_fa[9].alive = 1; g_fa[9].id = 1101;
+	strcpy(g_fa[9].path, "body.font");
+	g_fa[9].type = 5; g_fa[9].kind = 0; g_fa[9].state = 1;
+	g_fa[9].read_only = 0; g_fa[9].origin = 1;
+
+	g_fa_n = 10;
 	g_have_asset_api = 1;
 	g_have_asset_mut = 1;
 	g_create_fail    = 0;
@@ -944,6 +954,9 @@ static void assets_scheme_reset(void)
 	script_eval("(set! kruddboard-assets-mat-shader 0)");
 	script_eval("(set! kruddboard-assets-mat-params '())");
 	script_eval("(set! kruddboard-assets-mat-values '())");
+	script_eval("(set! kruddboard-assets-tex-id 0)");
+	script_eval("(set! kruddboard-assets-tex-params '())");
+	script_eval("(set! kruddboard-assets-tex-values '())");
 	script_eval("(set! kruddboard-assets-naming #f)");
 	script_eval("(set! kruddboard-assets-new-name \"\")");
 	script_eval("(set! kruddboard-assets-new-type 0)");
@@ -1215,6 +1228,33 @@ static s7_pointer st_entity_save_texture_params(s7_scheme *sc, s7_pointer a)
 	unsigned   ref = (unsigned)s7_integer(s7_cadr(a));
 
 	rec("save-texture-params|%d|%u", id, ref);
+	return s7_unspecified(sc);
+}
+
+/*
+ * (krudd-texture-values texture-ref) -> the texture's declared param defaults,
+ * matching st_texture_params: in mode 1 one "scale" value (8.0), else no params.
+ * The Assets-tab texture editor seeds its live-preview sliders from these.
+ */
+static s7_pointer st_texture_values(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	if (g_texture_param_mode == 1)
+		return s7_list(sc, 1, s7_list(sc, 1, s7_make_real(sc, 8.0)));
+	return s7_nil(sc);
+}
+
+/*
+ * (krudd-texture-preview texture-ref values res) — the real primitive bakes and
+ * draws a GL image; the harness only records that it fired with which ref/res, so
+ * a test can assert the editor requested a preview.
+ */
+static s7_pointer st_texture_preview(s7_scheme *sc, s7_pointer a)
+{
+	unsigned ref = (unsigned)s7_integer(s7_car(a));
+	unsigned res = (unsigned)s7_integer(s7_caddr(a));
+
+	rec("tex-preview|%u|%u", ref, res);
 	return s7_unspecified(sc);
 }
 
@@ -1772,6 +1812,8 @@ static s7_scheme *setup(void)
 	def(sc, "krudd-entity-texture-values", st_entity_texture_values, 2);
 	def(sc, "krudd-entity-save-texture-params",
 	    st_entity_save_texture_params, 3);
+	def(sc, "krudd-texture-values", st_texture_values, 1);
+	def(sc, "krudd-texture-preview", st_texture_preview, 3);
 	def(sc, "krudd-entity-script-overrides", st_entity_script_overrides, 2);
 	def(sc, "krudd-entity-material-overrides",
 	    st_entity_material_overrides, 3);
@@ -3148,26 +3190,65 @@ static void test_assets_material_texture_bind(void)
 	assert(rec_has("save-material|901|808|tex707@256x256"));
 }
 
-/* Every type without a dedicated editor (texture, font, scene) falls back to
- * the read-only Declaration + Catalog tables. Mesh, material, shader, and
- * script all have one now — there is no hardcoded C mesh generator, so a
- * mesh asset (like a script or shader) is source an author can edit. */
+/* Every type without a dedicated editor (font, scene) falls back to the
+ * read-only Declaration + Catalog tables. Mesh, texture, material, shader, and
+ * script all have one now — there is no hardcoded C mesh/texture generator, so a
+ * mesh or texture asset (like a script or shader) is source an author can edit. */
 static void test_assets_generic_fallback(void)
 {
 	asset_reset();
 	assets_scheme_reset();
-	script_eval("(set! kruddboard-assets-sel 1001)");
+	script_eval("(set! kruddboard-assets-sel 1101)");
 	rec_reset();
 	script_eval("(kruddboard-draw-assets)");
 
 	assert(rec_has("text|Declaration"));
 	assert(rec_has("table-begin|##decl|2"));
 	assert(rec_has("text|path"));
-	assert(rec_has("text|icon.png"));
+	assert(rec_has("text|body.font"));
 	assert(rec_has("text|Catalog"));
 	assert(rec_has("table-begin|##catalog|2"));
-	assert(rec_has("text|Texture"));
+	assert(rec_has("text|Font"));
 	assert(rec_has("text|Normal"));
+}
+
+/* The texture inspector draws its Declaration, the generation Parameters as live
+ * sliders (a "range" scale param -> imgui-slider-float), a live Preview swatch
+ * baked from those values via krudd-texture-preview, and the read-only Source. */
+static void test_assets_texture_editor(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	g_texture_param_mode = 1;
+	script_eval("(set! kruddboard-assets-sel 1001)");
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_texture_param_mode = 0;
+
+	assert(rec_has("text|format: krudd-texture"));
+	assert(rec_has("header|Parameters"));
+	assert(rec_has("slider|scale##mp"));
+	assert(rec_has("header|Preview"));
+	assert(rec_has("tex-preview|1001|128"));
+	assert(rec_has("header|Source"));
+	/* Source view is read-only: the multiline draws the asset bytes. */
+	assert(rec_has("input-ml|##texsrc"));
+}
+
+/* A texture that declares no params shows a note in place of the slider list but
+ * still bakes a preview from its (empty) value set. */
+static void test_assets_texture_no_params(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	g_texture_param_mode = 0;
+	script_eval("(set! kruddboard-assets-sel 1001)");
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+
+	assert(rec_has("disabled|(this texture declares no parameters)"));
+	assert(rec_has("tex-preview|1001|128"));
+	assert(!rec_has("slider|scale##mp"));
 }
 
 /* A stale selection (the asset was deleted elsewhere) returns to the
@@ -3277,6 +3358,8 @@ int main(void)
 	RUN(assets_material_clone_conflict);
 	RUN(assets_material_shader_select);
 	RUN(assets_material_texture_bind);
+	RUN(assets_texture_editor);
+	RUN(assets_texture_no_params);
 	RUN(assets_generic_fallback);
 	RUN(assets_inspector_stale);
 	RUN(assets_composition);

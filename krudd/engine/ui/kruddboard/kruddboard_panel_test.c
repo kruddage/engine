@@ -1594,7 +1594,12 @@ static s7_pointer st_asset_clone_mesh(s7_scheme *sc, s7_pointer a)
 	return s7_make_integer(sc, (s7_int)id);
 }
 
-/* (krudd-asset-clone-material name shader-ref values) -> new id or 0. */
+/*
+ * (krudd-asset-clone-material name shader-ref values [tex-ref w h]) -> new id
+ * or 0. Records the shader and, when the optional texture slot is present and
+ * non-zero, the bound texture and its resolution, mirroring
+ * st_asset_save_material so a clone-preserves-texture test can assert it.
+ */
 static s7_pointer st_asset_clone_material(s7_scheme *sc, s7_pointer a)
 {
 	s7_pointer  p          = a;
@@ -1602,11 +1607,19 @@ static s7_pointer st_asset_clone_material(s7_scheme *sc, s7_pointer a)
 	unsigned    shader_ref;
 	uint32_t    sref;
 	unsigned    id;
+	unsigned    tex = 0, tw = 0, th = 0;
 
 	p          = s7_cdr(p);
-	shader_ref = (unsigned)s7_integer(s7_car(p));
+	shader_ref = (unsigned)s7_integer(s7_car(p)); p = s7_cdr(p);
 	sref       = (uint32_t)shader_ref;
-	rec("clone-material|%s|%u", name, shader_ref);
+	p          = s7_cdr(p);
+	if (s7_is_pair(p)) { tex = (unsigned)s7_integer(s7_car(p)); p = s7_cdr(p); }
+	if (s7_is_pair(p)) { tw  = (unsigned)s7_integer(s7_car(p)); p = s7_cdr(p); }
+	if (s7_is_pair(p)) { th  = (unsigned)s7_integer(s7_car(p)); p = s7_cdr(p); }
+	if (tex != 0)
+		rec("clone-material|%s|%u|tex%u@%ux%u", name, shader_ref, tex, tw, th);
+	else
+		rec("clone-material|%s|%u", name, shader_ref);
 	id = fa_create(name, 3, (const char *)&sref, (int)sizeof(sref), 0, 1);
 	return s7_make_integer(sc, (s7_int)id);
 }
@@ -1851,7 +1864,8 @@ static s7_scheme *setup(void)
 	def(sc, "krudd-asset-save-mesh", st_asset_save_mesh, 2);
 	def(sc, "krudd-asset-create-mesh", st_asset_create_mesh, 1);
 	def(sc, "krudd-asset-clone-mesh", st_asset_clone_mesh, 2);
-	def(sc, "krudd-asset-clone-material", st_asset_clone_material, 3);
+	s7_define_function(sc, "krudd-asset-clone-material",
+			   st_asset_clone_material, 3, 3, false, "stub");
 	def(sc, "krudd-md-preview", st_md_preview, 2);
 
 	assert(script_eval(KRUDDBOARD_SCM) == 0);
@@ -3140,6 +3154,31 @@ static void test_assets_material_clone(void)
 	assert(assets_sel() != 901 && assets_sel() != 0);
 }
 
+/*
+ * Cloning a read-only material with a bound texture must carry that texture
+ * (and its bake resolution) into the new asset, not just the shader-ref and
+ * param values — otherwise the clone comes up textureless and the user has
+ * to re-bind it by hand.
+ */
+static void test_assets_material_clone_texture(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	g_texture_param_mode = 1; /* material reports bound texture 707@256x256 */
+	material_with_shader(808, "my.shader");
+	g_fa[4].read_only = 1;
+	script_eval("(set! kruddboard-assets-sel 901)");
+	script_eval("(kruddboard-draw-assets)"); /* seed the clone name */
+	g_click = "Clone";
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL;
+	g_texture_param_mode = 0;
+
+	assert(rec_has("clone-material|red.mat_copy|808|tex707@256x256"));
+	assert(assets_sel() != 901 && assets_sel() != 0);
+}
+
 /* A duplicate clone name reports the conflict and keeps the built-in
  * selected instead of navigating to a nonexistent new asset. */
 static void test_assets_material_clone_conflict(void)
@@ -3385,6 +3424,7 @@ int main(void)
 	RUN(assets_material_editor);
 	RUN(assets_material_range_param);
 	RUN(assets_material_clone);
+	RUN(assets_material_clone_texture);
 	RUN(assets_material_clone_conflict);
 	RUN(assets_material_shader_select);
 	RUN(assets_material_texture_bind);

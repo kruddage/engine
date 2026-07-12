@@ -611,7 +611,10 @@
 	(let ((nid (krudd-asset-clone-material
 		    kruddboard-assets-clone-name
 		    kruddboard-assets-mat-shader
-		    kruddboard-assets-mat-values)))
+		    kruddboard-assets-mat-values
+		    kruddboard-assets-mat-texture
+		    kruddboard-assets-mat-tex-res
+		    kruddboard-assets-mat-tex-res)))
 	  (if (= nid 0)
 	      (set! kruddboard-assets-clone-conflict #t)
 	      (begin

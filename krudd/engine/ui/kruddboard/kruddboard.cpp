@@ -5635,6 +5635,16 @@ static void kruddboard_init(void)
 	emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT,
 					nullptr, 0, on_keydown);
 	g_touch_device = krudd_is_touch_device() != 0;
+
+	/*
+	 * Register the Scheme primitives eagerly, not on first panel draw. The
+	 * gizmo-mode getter/setter (krudd-gizmo-mode / krudd-set-gizmo-mode)
+	 * lives here but is now also read by kruddgui's mode-bar, whose tick can
+	 * run before any kruddboard tab has drawn (the board may be collapsed).
+	 * Populating the shared s7 environment at init makes the binding exist
+	 * regardless of board visibility; the draw-time calls then no-op.
+	 */
+	ensure_panel_scm();
 #endif
 	if (g_log)
 		g_log->write(LOG_LEVEL_INFO, "kruddboard: init");

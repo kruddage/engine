@@ -106,72 +106,44 @@ static bool s_touch_device;
  */
 #define KBD_GESTURE_GRACE_FRAMES 2
 
-static EM_BOOL on_mouse_move(int /*type*/, const EmscriptenMouseEvent *e,
-			     void * /*ud*/)
+/*
+ * Speculative soft-keyboard raise on a forwarded touch-end.
+ *
+ * The Emscripten pointer callbacks now live in kruddgui (which owns input and
+ * forwards non-bar events to ImGui verbatim — see kruddgui.cpp); it pokes this
+ * hint when it forwards a touch-end, keeping the grace countdown and the
+ * WantTextInput reconcile (imgui_tick) here where they already lived.
+ *
+ * Mobile browsers (iOS Safari, Firefox Android, …) only honour focus() from
+ * inside a user-gesture handler, but ImGui doesn't activate InputText until the
+ * tick after the tap — too late, outside the gesture window.  So focus here on
+ * touch-end and let imgui_tick reconcile: if this tap didn't land on a text
+ * widget, WantTextInput stays false and the keyboard is dismissed within
+ * KBD_GESTURE_GRACE_FRAMES.
+ *
+ * The grace countdown is what makes the dismissal work.  The previous
+ * edge-based logic only hid on a WantTextInput true->false transition, which a
+ * spurious show() never produces — so any tap on empty canvas raised the
+ * keyboard and left it up for good.
+ *
+ * We only raise when the touch lands on an ImGui window at all
+ * (io.WantCaptureMouse, set the frame after the pointer position was updated).
+ * A tap on the bare 3D canvas can never activate a text widget, so raising
+ * there only produces a visible focus()->blur() flash a couple frames later.
+ * Gating on WantCaptureMouse skips that: the keyboard stays down unless the tap
+ * is inside the debug UI, where a text field might claim it.
+ *
+ * Touch devices skip this: it's precisely the "keyboard pops up on every tap"
+ * behaviour kruddboard's on-screen toggle replaces.
+ */
+extern "C" void imgui_soft_keyboard_touch_hint(void)
 {
-	ImGui::GetIO().AddMousePosEvent((float)e->canvasX, (float)e->canvasY);
-	return EM_FALSE;
-}
-
-static EM_BOOL on_mouse_button(int type, const EmscriptenMouseEvent *e,
-			       void * /*ud*/)
-{
-	bool pressed = (type == EMSCRIPTEN_EVENT_MOUSEDOWN);
-
-	if ((int)e->button < 5)
-		ImGui::GetIO().AddMouseButtonEvent((int)e->button, pressed);
-	return EM_FALSE;
-}
-
-static EM_BOOL on_touch(int type, const EmscriptenTouchEvent *e,
-			void * /*ud*/)
-{
-	if (e->numTouches < 1)
-		return EM_FALSE;
-
-	const EmscriptenTouchPoint *t = &e->touches[0];
 	ImGuiIO &io = ImGui::GetIO();
 
-	io.AddMousePosEvent((float)t->targetX, (float)t->targetY);
-
-	if (type == EMSCRIPTEN_EVENT_TOUCHSTART)
-		io.AddMouseButtonEvent(0, true);
-	else if (type == EMSCRIPTEN_EVENT_TOUCHEND ||
-		 type == EMSCRIPTEN_EVENT_TOUCHCANCEL)
-		io.AddMouseButtonEvent(0, false);
-
-	/*
-	 * Speculative soft-keyboard raise.  Mobile browsers (iOS Safari,
-	 * Firefox Android, …) only honour focus() from inside a user-gesture
-	 * handler, but ImGui doesn't activate InputText until the tick after
-	 * the tap — too late, outside the gesture window.  So focus here on
-	 * touch-end and let imgui_tick reconcile: if this tap didn't land on a
-	 * text widget, WantTextInput stays false and the keyboard is dismissed
-	 * within KBD_GESTURE_GRACE_FRAMES.
-	 *
-	 * The grace countdown is what makes the dismissal work.  The previous
-	 * edge-based logic only hid on a WantTextInput true->false transition,
-	 * which a spurious show() never produces — so any tap on empty canvas
-	 * raised the keyboard and left it up for good.
-	 *
-	 * We only raise when the touch lands on an ImGui window at all
-	 * (io.WantCaptureMouse, set the frame after touch-start positioned the
-	 * cursor).  A tap on the bare 3D canvas can never activate a text
-	 * widget, so raising there only produces a visible focus()->blur()
-	 * flash a couple frames later.  Gating on WantCaptureMouse skips that:
-	 * the keyboard stays down unless the tap is inside the debug UI, where
-	 * a text field might claim it.
-	 *
-	 * Touch devices skip this: it's precisely the "keyboard pops up on
-	 * every tap" behaviour kruddboard's on-screen toggle replaces.
-	 */
-	if (!s_touch_device && type == EMSCRIPTEN_EVENT_TOUCHEND &&
-	    io.WantCaptureMouse) {
+	if (!s_touch_device && io.WantCaptureMouse) {
 		krudd_text_input_show();
 		s_kbd_grace = KBD_GESTURE_GRACE_FRAMES;
 	}
-
-	return EM_TRUE;
 }
 
 #endif /* __EMSCRIPTEN__ */
@@ -189,15 +161,12 @@ static void imgui_init(void)
 	ImGui_ImplOpenGL3_Init("#version 300 es");
 
 #ifdef __EMSCRIPTEN__
-	emscripten_set_mousemove_callback("#canvas", nullptr, 0, on_mouse_move);
-	emscripten_set_mousedown_callback("#canvas", nullptr, 0, on_mouse_button);
-	emscripten_set_mouseup_callback("#canvas",   nullptr, 0, on_mouse_button);
-	emscripten_set_touchstart_callback("#canvas",  nullptr, 0, on_touch);
-	emscripten_set_touchmove_callback("#canvas",   nullptr, 0, on_touch);
-	emscripten_set_touchend_callback("#canvas",    nullptr, 0, on_touch);
-	emscripten_set_touchcancel_callback("#canvas", nullptr, 0, on_touch);
-
-	/* Create the hidden <input> element for keyboard / soft-keyboard capture. */
+	/*
+	 * The pointer callbacks are registered by kruddgui, which owns input and
+	 * forwards non-bar events to ImGui verbatim.  imgui_plugin keeps only the
+	 * hidden <input> for keyboard / soft-keyboard capture and the
+	 * WantTextInput reconcile in imgui_tick.
+	 */
 	krudd_text_input_init();
 	s_touch_device = krudd_is_touch_device() != 0;
 #endif

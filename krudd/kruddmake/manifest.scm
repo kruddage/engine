@@ -13,4 +13,5 @@
  "render/scene_renderer"
  "asset"
  "ui/imgui"
- "ui/kruddboard")
+ "ui/kruddboard"
+ "ui/kruddgui")

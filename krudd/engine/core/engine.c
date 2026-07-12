@@ -65,6 +65,7 @@ void fg_plugin_entry(struct subsystem_manager *mgr);
 void scene_renderer_plugin_entry(struct subsystem_manager *mgr);
 void imgui_plugin_entry(struct subsystem_manager *mgr);
 void kruddboard_plugin_entry(struct subsystem_manager *mgr);
+void kruddgui_plugin_entry(struct subsystem_manager *mgr);
 
 static void register_plugins(struct subsystem_manager *mgr)
 {
@@ -76,6 +77,7 @@ static void register_plugins(struct subsystem_manager *mgr)
 	scene_renderer_plugin_entry(mgr);
 	imgui_plugin_entry(mgr);
 	kruddboard_plugin_entry(mgr);
+	kruddgui_plugin_entry(mgr);
 }
 #endif
 

@@ -20,7 +20,7 @@
 	(link "subsystem" "subsystem_manager" "log" "memory" "script")
 	(wasm-modules "asset_plugin" "edit_plugin" "entity_plugin"
 		"renderer_webgl" "frame_graph" "scene_renderer" "imgui_plugin"
-		"kruddboard"))
+		"kruddboard" "kruddgui"))
 
  (native-only
 	(executable "subsystem_test"

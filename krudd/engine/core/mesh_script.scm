@@ -2,7 +2,7 @@
 
 ;;! mesh-script — the (mesh NAME (generate () ...)) form, its geometry helper
 ;;! vocabulary, and the mesh generator. Every mesh in the engine — including
-;;! the built-in cube/sphere/plane/pyramid/grid (see builtin_mesh_scripts.h)
+;;! the built-in box/sphere/plane/pyramid/grid (see builtin_mesh_scripts.h)
 ;;! — is one of these forms; there is no hardcoded C mesh generator anymore.
 ;;! Mirrors entity_script.scm's (script NAME ...) dispatcher.
 ;;!

@@ -198,6 +198,35 @@ static s7_pointer sp_krudd_stats(s7_scheme *sc, s7_pointer args)
 }
 
 /*
+ * (krudd-startup) -> (init-ms first-frame-ms (name . ms) ...), or #f when the
+ * stats subsystem is absent. init-ms is the whole engine_init wall time,
+ * first-frame-ms is boot-start to the first tick, and each trailing pair is one
+ * startup phase in boot order. The phases are consed tail-first so they come
+ * back oldest-first, matching the order they ran.
+ */
+static s7_pointer sp_krudd_startup(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer phases;
+	int        i;
+
+	(void)args;
+	if (!g_stats)
+		return s7_f(sc);
+	phases = s7_nil(sc);
+	for (i = (int)g_stats->phase_count - 1; i >= 0; i--)
+		phases = s7_cons(sc,
+			s7_cons(sc,
+				s7_make_string(sc, g_stats->phases[i].name),
+				s7_make_real(sc, (s7_double)g_stats->phases[i].ms)),
+			phases);
+	return s7_cons(sc,
+		s7_make_real(sc, (s7_double)g_stats->init_ms),
+		s7_cons(sc,
+			s7_make_real(sc, (s7_double)g_stats->first_frame_ms),
+			phases));
+}
+
+/*
  * (imgui-text-colored r g b a str) -> unspecified. Draw one line in an RGBA
  * colour (each channel 0..1). A non-string str is ignored, like imgui-text.
  */
@@ -3205,6 +3234,8 @@ static s7_scheme *ensure_panel_scm(void)
 			   "(imgui-text-disabled str) draw a dimmed line of text");
 	s7_define_function(sc, "krudd-stats", sp_krudd_stats, 0, 0, false,
 			   "(krudd-stats) -> (fps frame-ms frame-count) or #f");
+	s7_define_function(sc, "krudd-startup", sp_krudd_startup, 0, 0, false,
+			   "(krudd-startup) -> (init-ms first-frame-ms (name . ms) ...) or #f");
 	s7_define_function(sc, "imgui-text-colored", sp_imgui_text_colored,
 			   5, 0, false,
 			   "(imgui-text-colored r g b a str) coloured line");

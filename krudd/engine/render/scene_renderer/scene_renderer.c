@@ -861,7 +861,7 @@ static void seed_demo_scene(void)
 		int         has_mesh_params; /* seed a mesh-param override? */
 		float       whd[3];          /* box width/height/depth when it does */
 	} DEMO[] = {
-		{ "builtin://mesh/cube",    { -1.5f, 0.0f,  0.0f }, "builtin://script/spinner", "Cube",    0, { 0.0f, 0.0f, 0.0f } },
+		{ "builtin://mesh/box",     { -1.5f, 0.0f,  0.0f }, "builtin://script/spinner", "Box",     0, { 0.0f, 0.0f, 0.0f } },
 		{ "builtin://mesh/sphere",  {  0.0f, 0.0f, -1.0f }, "builtin://script/bounce",  "Sphere",  0, { 0.0f, 0.0f, 0.0f } },
 		{ "builtin://mesh/pyramid", {  1.5f, 0.0f,  0.5f }, "builtin://script/wobble",  "Pyramid", 0, { 0.0f, 0.0f, 0.0f } },
 		{ "builtin://mesh/grid",    { 0.0f, -0.5f, 1.5f }, NULL, "Grid",                0, { 0.0f, 0.0f, 0.0f } },
@@ -946,7 +946,7 @@ static void seed_demo_scene(void)
 
 		/*
 		 * Bind a behavior script so the demo scene animates on load — the
-		 * cube spins, the sphere bounces, the pyramid wobbles. Each is a
+		 * box spins, the sphere bounces, the pyramid wobbles. Each is a
 		 * built-in ASSET_TYPE_SCRIPT; skipped cleanly on an engine build
 		 * without the script assets or the set_script_ref entry.
 		 */
@@ -959,7 +959,7 @@ static void seed_demo_scene(void)
 	}
 
 	/*
-	 * Two cubes sharing ONE material (the built-in checker), each baking its
+	 * Two boxes sharing ONE material (the built-in checker), each baking its
 	 * texture at a different scale purely from a per-entity texture-param
 	 * override — the pixel twin of the two boxes on one mesh above, and the
 	 * whole point of per-entity texture params made visible on load. The
@@ -976,11 +976,11 @@ static void seed_demo_scene(void)
 			{ { -1.6f, 1.9f, 0.0f },  3.0f, "Checker x3"  },
 			{ {  1.6f, 1.9f, 0.0f }, 12.0f, "Checker x12" },
 		};
-		uint32_t cube    = asset_id_by_path("builtin://mesh/cube");
+		uint32_t box     = asset_id_by_path("builtin://mesh/box");
 		uint32_t checker = asset_id_by_path("builtin://material/checker");
 		uint32_t k;
 
-		for (k = 0; cube && checker &&
+		for (k = 0; box && checker &&
 		     k < (uint32_t)(sizeof(TEX) / sizeof(TEX[0])); k++) {
 			struct transform t;
 			int32_t          id;
@@ -991,7 +991,7 @@ static void seed_demo_scene(void)
 			t.position[2] = TEX[k].pos[2];
 			t.rotation[3] = 1.0f;
 			t.scale[0] = t.scale[1] = t.scale[2] = 0.8f;
-			id = g_scene->create_entity(WORLD_NO_PARENT, &t, 0u, cube);
+			id = g_scene->create_entity(WORLD_NO_PARENT, &t, 0u, box);
 			if (id < 0)
 				continue;
 			g_scene->set_material_ref(id, checker);

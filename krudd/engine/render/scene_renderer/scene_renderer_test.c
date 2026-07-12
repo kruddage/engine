@@ -25,7 +25,7 @@ void scene_renderer_plugin_entry(struct subsystem_manager *mgr);
 /* ------------------------------------------------------------------ */
 
 static const char *const CAT_PATHS[] = {
-	"builtin://mesh/cube",
+	"builtin://mesh/box",
 	"builtin://mesh/sphere",
 	"builtin://mesh/plane",
 	"builtin://mesh/pyramid",
@@ -38,7 +38,7 @@ static const char *const CAT_PATHS[] = {
 
 /* Per-index asset type, addressed the same way as the id (id == index + 1). */
 static const int32_t CAT_TYPES[CAT_COUNT] = {
-	ASSET_TYPE_MESH,     /* id 1 cube    */
+	ASSET_TYPE_MESH,     /* id 1 box     */
 	ASSET_TYPE_MESH,     /* id 2 sphere  */
 	ASSET_TYPE_MESH,     /* id 3 plane   */
 	ASSET_TYPE_MESH,     /* id 4 pyramid */
@@ -52,7 +52,7 @@ static const int32_t CAT_TYPES[CAT_COUNT] = {
  * real s7 image, exactly as the shipped asset plugin seeds these same four
  * built-ins (see asset_plugin.c). */
 static const char *const CAT_MESH_SCRIPTS[4] = {
-	CUBE_MESH_SCRIPT_SRC, SPHERE_MESH_SCRIPT_SRC,
+	BOX_MESH_SCRIPT_SRC, SPHERE_MESH_SCRIPT_SRC,
 	PLANE_MESH_SCRIPT_SRC, PYRAMID_MESH_SCRIPT_SRC,
 };
 
@@ -160,8 +160,8 @@ static void set_identity_xform(struct transform *t, float x, float y, float z)
 	t->scale[0] = t->scale[1] = t->scale[2] = 1.0f;
 }
 
-/* Two live cube entities, one tombstoned render entity, one non-render. */
-static void build_world(uint32_t cube_ref)
+/* Two live box entities, one tombstoned render entity, one non-render. */
+static void build_world(uint32_t box_ref)
 {
 	memset(&g_world, 0, sizeof(g_world));
 	g_world.count = 4;
@@ -171,18 +171,18 @@ static void build_world(uint32_t cube_ref)
 	 * mesh stays live (COMPONENT_RENDER) for picking/collision. */
 	g_world.alive[0]        = 1;
 	g_world.mask[0]         = COMPONENT_RENDER | COMPONENT_MATERIAL;
-	g_world.render_ref[0]   = cube_ref;
+	g_world.render_ref[0]   = box_ref;
 	g_world.material_ref[0] = 6u;
 	set_identity_xform(&g_world.world_xform[0], -1.0f, 0.0f, 0.0f);
 
 	g_world.alive[1]      = 1;
 	g_world.mask[1]       = COMPONENT_RENDER;
-	g_world.render_ref[1] = cube_ref;
+	g_world.render_ref[1] = box_ref;
 	set_identity_xform(&g_world.world_xform[1], 1.0f, 0.0f, 0.0f);
 
 	g_world.alive[2]      = 0; /* tombstoned — must be skipped */
 	g_world.mask[2]       = COMPONENT_RENDER;
-	g_world.render_ref[2] = cube_ref;
+	g_world.render_ref[2] = box_ref;
 	set_identity_xform(&g_world.world_xform[2], 0.0f, 0.0f, 0.0f);
 
 	g_world.alive[3]      = 1;
@@ -242,20 +242,20 @@ static uint32_t count_calls(enum gpu_call_type type)
  * shader itself, so it reuses the pre-cached default pipeline. So a frame
  * binds two distinct pipelines, one switch between them.
  */
-static void build_world_shaders(uint32_t cube_ref)
+static void build_world_shaders(uint32_t box_ref)
 {
 	memset(&g_world, 0, sizeof(g_world));
 	g_world.count = 2;
 
 	g_world.alive[0]        = 1;
 	g_world.mask[0]         = COMPONENT_RENDER | COMPONENT_MATERIAL;
-	g_world.render_ref[0]   = cube_ref;
+	g_world.render_ref[0]   = box_ref;
 	g_world.material_ref[0] = 8u;
 	set_identity_xform(&g_world.world_xform[0], -1.0f, 0.0f, 0.0f);
 
 	g_world.alive[1]        = 1;
 	g_world.mask[1]         = COMPONENT_RENDER | COMPONENT_MATERIAL;
-	g_world.render_ref[1]   = cube_ref;
+	g_world.render_ref[1]   = box_ref;
 	g_world.material_ref[1] = 6u;
 	set_identity_xform(&g_world.world_xform[1], 1.0f, 0.0f, 0.0f);
 }
@@ -273,7 +273,7 @@ int main(void)
 	mem_init();
 	script_init(); /* loads the embedded mesh_script.scm image */
 
-	/* cube is catalog id 1. Two live entities reference it. */
+	/* box is catalog id 1. Two live entities reference it. */
 	build_world(1);
 
 	subsystem_manager_init(&mgr, static_table);
@@ -286,7 +286,7 @@ int main(void)
 	renderer_null_reset_log();
 	subsystem_manager_tick(&mgr);
 	assert(count_draws(&idx_count) == 1);
-	assert(idx_count == 36);            /* cube: 36 indices */
+	assert(idx_count == 36);            /* box: 36 indices */
 	assert(count_material_binds() == 1); /* one per draw */
 
 	/* Degrade safe: an empty world draws nothing and does not crash. */

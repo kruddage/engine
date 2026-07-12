@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define SCENE_PATH "builtin://shader/scene"
+#define SCENE_PATH "builtin://shader/scene-textured"
 
 /* Locate a built-in by path; return its catalog index, or -1 if absent. */
 static int32_t index_of(const char *path)

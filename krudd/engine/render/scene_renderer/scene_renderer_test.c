@@ -29,7 +29,7 @@ static const char *const CAT_PATHS[] = {
 	"builtin://mesh/sphere",
 	"builtin://mesh/plane",
 	"builtin://mesh/pyramid",
-	"builtin://shader/scene",
+	"builtin://shader/scene-textured",
 	"material/red",
 	"shader/alt",
 	"material/blue",
@@ -42,7 +42,7 @@ static const int32_t CAT_TYPES[CAT_COUNT] = {
 	ASSET_TYPE_MESH,     /* id 2 sphere  */
 	ASSET_TYPE_MESH,     /* id 3 plane   */
 	ASSET_TYPE_MESH,     /* id 4 pyramid */
-	ASSET_TYPE_SHADER,   /* id 5 scene shader */
+	ASSET_TYPE_SHADER,   /* id 5 scene-textured shader */
 	ASSET_TYPE_MATERIAL, /* id 6 material/red (legacy 16-byte, no shader) */
 	ASSET_TYPE_SHADER,   /* id 7 shader/alt   */
 	ASSET_TYPE_MATERIAL, /* id 8 material/blue (v2: base_color + shader 7) */
@@ -58,15 +58,15 @@ static const char *const CAT_MESH_SCRIPTS[4] = {
 
 /* The null backend records rather than compiles, so any DSL bytes suffice. */
 static const char *const SHADER_SRC =
-	"(shader scene (vertex (set position (vec4 0.0 0.0 0.0 1.0)))"
+	"(shader scene-textured (vertex (set position (vec4 0.0 0.0 0.0 1.0)))"
 	" (fragment (set c (vec4 1.0 1.0 1.0 1.0))))";
 static const char *const SHADER_ALT_SRC =
 	"(shader alt (vertex (set position (vec4 0.0 0.0 0.0 1.0)))"
 	" (fragment (set c (vec4 0.0 0.0 1.0 1.0))))";
 /*
  * A v3 material's wire form: a leading shader-ref (asset id) then the shader's
- * std140 Material block — here one vec4 base_color. Red (id 6) names the scene
- * shader (id 5); blue (id 8) names shader/alt (id 7).
+ * std140 Material block — here one vec4 base_color. Red (id 6) names the
+ * scene-textured shader (id 5); blue (id 8) names shader/alt (id 7).
  */
 static const struct {
 	uint32_t shader_ref;
@@ -238,9 +238,9 @@ static uint32_t count_calls(enum gpu_call_type type)
 
 /*
  * Entity 0 carries the v2 material (id 8) whose shader-ref selects shader/alt;
- * entity 1 carries the v3 material (id 6) whose shader-ref names the scene
- * shader itself, so it reuses the pre-cached default pipeline. So a frame
- * binds two distinct pipelines, one switch between them.
+ * entity 1 carries the v3 material (id 6) whose shader-ref names the
+ * scene-textured shader itself, so it reuses the pre-cached default
+ * pipeline. So a frame binds two distinct pipelines, one switch between them.
  */
 static void build_world_shaders(uint32_t box_ref)
 {

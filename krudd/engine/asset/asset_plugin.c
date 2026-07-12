@@ -163,51 +163,20 @@ static void evict_entry(struct asset_entry *e)
  * shader_transpile).  describe()'s decl-fields below advertise the source
  * format and which stages are present.
  *
- * Scene shader: the entity-driven pipeline the scene renderer (#172) binds.
- * Consumes the mesh_vertex layout (position/normal/uv0), a std140 Camera
- * block carrying view_proj and per-draw model, and a std140 Material block
- * carrying a single per-draw base_color tint (#materials v0 — the smallest
- * possible material parameter, with no fixed-function state or textures
- * yet). Each block binds at the GL index matching its declaration order
- * among the blocks a stage actually uses (see scene_renderer.c), so Camera
- * (vertex-only) lands at slot 0 and Material (fragment-only) at slot 1. The
- * fragment stage shades from the world normal (readable 3D, no lighting)
- * then multiplies in the material tint.
- */
-static const char *SCENE_SHADER_SRC =
-	"(shader scene\n"
-	"  (inputs\n"
-	"    (a_pos    vec3 (location 0))\n"
-	"    (a_normal vec3 (location 1))\n"
-	"    (a_uv0    vec2 (location 2)))\n"
-	"  (uniforms\n"
-	"    (Camera (block 0) (layout std140)\n"
-	"      (view_proj mat4)\n"
-	"      (model     mat4))\n"
-	"    (Material (block 1) (layout std140)\n"
-	"      (base_color vec4 (edit color))))\n"
-	"  (varyings\n"
-	"    (v_normal vec3))\n"
-	"  (targets\n"
-	"    (frag_color vec4 (location 0)))\n"
-	"  (vertex\n"
-	"    (set v_normal (* (mat3 model) a_normal))\n"
-	"    (set position (* view_proj model (vec4 a_pos 1.0))))\n"
-	"  (fragment\n"
-	"    (let* ((n    (normalize v_normal))\n"
-	"           (base (+ 0.5 (* 0.5 n)))\n"
-	"           (diff (max (dot n (normalize (vec3 0.5 0.8 0.4))) 0.0))\n"
-	"           (col  (* base (+ 0.35 (* 0.65 diff)))))\n"
-	"      (set frag_color (vec4 (* col (swizzle base_color rgb)) 1.0)))))\n";
-
-/*
- * Scene-textured shader — the scene shader plus a single albedo sampler. It
- * speaks the same IO contract as the built-in scene pipeline (a_pos/a_normal/
- * a_uv0 in, Camera at block 0, Material at block 1) so the renderer's shared
- * pipeline layout binds it unchanged; it adds a v_uv varying and an `albedo`
- * sampler2D (its own texture unit, not the Material block) and multiplies the
- * sampled RGB into the lit base_color. A material naming this shader is what
- * makes a procedural texture actually appear on a mesh.
+ * Scene-textured shader — the entity-driven pipeline the scene renderer
+ * (#172) binds, and the engine's only built-in scene shader. Consumes the
+ * mesh_vertex layout (position/normal/uv0), a std140 Camera block carrying
+ * view_proj and per-draw model, and a std140 Material block carrying a
+ * single per-draw base_color tint (#materials v0 — the smallest possible
+ * material parameter, with no fixed-function state beyond it). Each block
+ * binds at the GL index matching its declaration order among the blocks a
+ * stage actually uses (see scene_renderer.c), so Camera (vertex-only) lands
+ * at slot 0 and Material (fragment-only) at slot 1. It also adds a v_uv
+ * varying and an `albedo` sampler2D (its own texture unit, not the Material
+ * block); the fragment stage shades from the world normal (readable 3D, no
+ * lighting), multiplies in the material tint, then multiplies in the sampled
+ * albedo — a material naming this shader is what makes a procedural texture
+ * actually appear on a mesh.
  */
 static const char *SCENE_TEXTURED_SHADER_SRC =
 	"(shader scene-textured\n"
@@ -241,14 +210,9 @@ static const char *SCENE_TEXTURED_SHADER_SRC =
 	"           (vec4 (* lit (swizzle base_color rgb) (swizzle tex rgb)) 1.0)))))\n";
 
 /*
- * Built-in default material — opaque white, the multiplicative identity the
- * scene shader's base_color expects.  This is the material the world scene binds
- * to every entity by default, so "no material assigned" is never the resting
- * state — an entity always points at a real, inspectable material.  It is stored
- * in the same v3 wire form an authored material uses: a leading shader-ref (the
- * scene shader — a material always names its shader) followed by the shader's
- * std140 Material block (here one vec4 base_color).  The renderer and editor read
- * it with no special case.
+ * Opaque white — the multiplicative identity the scene-textured shader's
+ * base_color expects, so a textured material's tint defaults to "show the
+ * texture unmodified" rather than tinting it.
  */
 static const float DEFAULT_MATERIAL_COLOR[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
 
@@ -282,39 +246,6 @@ static uint32_t seed_shader(const char *path, const char *src)
 	e->read_only = 1;
 	e->type      = ASSET_TYPE_SHADER;
 	return e->id;
-}
-
-/*
- * Seed one built-in material asset in the v3 wire form: a leading uint32
- * shader-ref (the asset id of the shader that owns its parameters) followed by
- * the shader's std140 Material block — here the single vec4 base_color.  The
- * renderer uploads those trailing bytes to the Material UBO as-is and the editor
- * derives its widgets from the referenced shader, so a material carries no schema
- * of its own; shutdown frees the bytes like any other asset.
- */
-static void seed_material(const char *path, uint32_t shader_ref,
-			  const float rgba[4])
-{
-	struct asset_entry *e;
-	uint32_t            n;
-
-	e = alloc_entry(path);
-	if (!e)
-		return;
-	n = (uint32_t)(sizeof(uint32_t) + 4 * sizeof(float));
-	e->data = g_mem->alloc(n);
-	if (!e->data) {
-		e->state = ASSET_ERROR;
-		return;
-	}
-	memcpy(e->data, &shader_ref, sizeof(shader_ref));
-	memcpy((unsigned char *)e->data + sizeof(shader_ref), rgba,
-	       4 * sizeof(float));
-	e->size      = n;
-	e->state     = ASSET_LOADED;
-	e->kind      = ASSET_KIND_PRIMITIVE;
-	e->read_only = 1;
-	e->type      = ASSET_TYPE_MATERIAL;
 }
 
 /*
@@ -470,14 +401,6 @@ static void seed_builtins(void)
 	seed_mesh("builtin://mesh/plane",   PLANE_MESH_SCRIPT_SRC);
 	seed_mesh("builtin://mesh/pyramid", PYRAMID_MESH_SCRIPT_SRC);
 	seed_mesh("builtin://mesh/grid",    GRID_MESH_SCRIPT_SRC);
-
-	{
-		uint32_t scene_shader =
-			seed_shader("builtin://shader/scene", SCENE_SHADER_SRC);
-
-		seed_material("builtin://material/default", scene_shader,
-			      DEFAULT_MATERIAL_COLOR);
-	}
 
 	seed_script("builtin://script/spinner", SPINNER_SCRIPT_SRC);
 	seed_script("builtin://script/bounce",  BOUNCE_SCRIPT_SRC);
@@ -862,27 +785,9 @@ static const struct asset_decl_field pyramid_decl[] = {
  * A shader asset is one DSL source holding every stage, so it advertises its
  * source format and the stages it defines (not a single stage per asset).  The
  * renderer lowers the DSL to whatever its backend speaks; a WebGPU/WGSL backend
- * slots in without the asset — or this metadata — changing.
- */
-static const struct asset_decl_field scene_shader_decl[] = {
-	{ "format", "krudd-shader"     },
-	{ "stages", "vertex, fragment" },
-};
-
-/*
- * The built-in default material advertises its single parameter — the opaque
- * white base_color the scene shader multiplies in — the way the shader
- * built-ins advertise their format/stages.
- */
-static const struct asset_decl_field default_material_decl[] = {
-	{ "format",     "krudd-material"          },
-	{ "base_color", "{ 1, 1, 1, 1 }"         },
-	{ "shader",     "builtin://shader/scene" },
-};
-
-/*
- * The scene-textured shader advertises the same format/stages as the scene
- * shader, plus the sampler it adds — the way a shader advertises its stages.
+ * slots in without the asset — or this metadata — changing. The scene-textured
+ * shader is the engine's only built-in scene shader, so it also advertises the
+ * albedo sampler it adds.
  */
 static const struct asset_decl_field scene_textured_shader_decl[] = {
 	{ "format",   "krudd-shader"     },
@@ -891,9 +796,9 @@ static const struct asset_decl_field scene_textured_shader_decl[] = {
 };
 
 /*
- * The built-in checker material advertises its shader and the texture it binds,
- * the way the default material advertises its base_color — so the inspector
- * shows what a textured material is made of.
+ * The built-in checker material advertises its shader and the texture it binds
+ * — the way the shader built-ins advertise their format/stages — so the
+ * inspector shows what a textured material is made of.
  */
 static const struct asset_decl_field checker_material_decl[] = {
 	{ "format",  "krudd-material"                  },
@@ -985,10 +890,6 @@ static const struct builtin_desc builtin_descs[] = {
 	{ "builtin://mesh/sphere",  sphere_decl,  ARRAY_SIZE(sphere_decl)  },
 	{ "builtin://mesh/plane",   plane_decl,   ARRAY_SIZE(plane_decl)   },
 	{ "builtin://mesh/pyramid", pyramid_decl, ARRAY_SIZE(pyramid_decl) },
-	{ "builtin://shader/scene", scene_shader_decl,
-	  ARRAY_SIZE(scene_shader_decl) },
-	{ "builtin://material/default", default_material_decl,
-	  ARRAY_SIZE(default_material_decl) },
 	{ "builtin://shader/scene-textured", scene_textured_shader_decl,
 	  ARRAY_SIZE(scene_textured_shader_decl) },
 	{ "builtin://material/checker", checker_material_decl,

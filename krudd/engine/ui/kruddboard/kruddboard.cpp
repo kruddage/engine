@@ -2996,10 +2996,11 @@ static s7_pointer sp_krudd_asset_clone_script(s7_scheme *sc, s7_pointer args)
 }
 
 /*
- * (krudd-asset-clone-material name shader-ref field-values) -> the new id, or 0
- * on failure (e.g. a duplicate path) — the built-in material "Clone" flow's
- * whole commit: pack the current shader + values into the v3 wire form, create,
- * persist. Mirrors krudd-asset-clone-shader above.
+ * (krudd-asset-clone-material name shader-ref field-values [tex-ref w h]) ->
+ * the new id, or 0 on failure (e.g. a duplicate path) — the built-in material
+ * "Clone" flow's whole commit: pack the current shader + values (plus the
+ * optional bound texture trailer, mirroring krudd-asset-save-material) into
+ * the v3 wire form, create, persist. Mirrors krudd-asset-clone-shader above.
  */
 static s7_pointer sp_krudd_asset_clone_material(s7_scheme *sc, s7_pointer args)
 {
@@ -3009,18 +3010,28 @@ static s7_pointer sp_krudd_asset_clone_material(s7_scheme *sc, s7_pointer args)
 	uint32_t      shader_ref;
 	s7_pointer    values;
 	const char   *src;
-	unsigned char bytes[MATERIAL_WIRE_CAP];
+	unsigned char bytes[MATERIAL_WIRE_CAP + 3 * sizeof(uint32_t)];
 	uint32_t      len;
 	uint32_t      nid = 0;
+	uint32_t      tex = 0, tw = 0, th = 0;
 
 	p          = s7_cdr(p);
 	shader_ref = (uint32_t)s7_integer(s7_car(p)); p = s7_cdr(p);
-	values     = s7_car(p);
+	values     = s7_car(p);                       p = s7_cdr(p);
 	src        = shader_src_cstr(shader_ref);
 	if (!src)
 		return s7_make_integer(sc, 0);
 
-	len = pack_material(sc, shader_ref, src, values, bytes, sizeof(bytes));
+	len = pack_material(sc, shader_ref, src, values, bytes, MATERIAL_WIRE_CAP);
+	if (s7_is_pair(p)) { tex = (uint32_t)s7_integer(s7_car(p)); p = s7_cdr(p); }
+	if (s7_is_pair(p)) { tw  = (uint32_t)s7_integer(s7_car(p)); p = s7_cdr(p); }
+	if (s7_is_pair(p)) { th  = (uint32_t)s7_integer(s7_car(p)); p = s7_cdr(p); }
+	if (tex != 0 && tw > 0 && th > 0 &&
+	    len + 3u * sizeof(uint32_t) <= sizeof(bytes)) {
+		memcpy(bytes + len, &tex, sizeof(tex)); len += (uint32_t)sizeof(tex);
+		memcpy(bytes + len, &tw,  sizeof(tw));  len += (uint32_t)sizeof(tw);
+		memcpy(bytes + len, &th,  sizeof(th));  len += (uint32_t)sizeof(th);
+	}
 	if (g_asset_mut)
 		nid = g_asset_mut->create(nm, ASSET_TYPE_MATERIAL, bytes, len);
 	if (nid != 0)
@@ -3462,9 +3473,9 @@ static s7_scheme *ensure_panel_scm(void)
 			   sp_krudd_asset_clone_mesh, 2, 0, false,
 			   "(krudd-asset-clone-mesh name text) -> new id or 0");
 	s7_define_function(sc, "krudd-asset-clone-material",
-			   sp_krudd_asset_clone_material, 3, 0, false,
-			   "(krudd-asset-clone-material name shader-ref values)"
-			   " -> new id or 0");
+			   sp_krudd_asset_clone_material, 3, 3, false,
+			   "(krudd-asset-clone-material name shader-ref values "
+			   "[tex-ref w h]) -> new id or 0");
 	s7_define_function(sc, "krudd-md-preview", sp_krudd_md_preview, 2, 0,
 			   false, "(krudd-md-preview text h) scrolling preview child");
 	script_eval(KRUDDBOARD_SCM);

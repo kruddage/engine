@@ -16,34 +16,13 @@
  */
 
 /*
- * cube — 6 quad faces via mesh-quad-verts/-indices (core/mesh_script.scm),
- * 24 verts / 36 indices. Unit-sized, centred on the origin.
- */
-#define CUBE_MESH_SCRIPT_SRC \
-	"(mesh cube\n" \
-	"  (generate ()\n" \
-	"    (let* ((faces (list\n" \
-	"                    (list (list 1.0 0.0 0.0) (list 0.0 0.0 1.0) (list 0.0 1.0 0.0))\n" \
-	"                    (list (list -1.0 0.0 0.0) (list 0.0 0.0 1.0) (list 0.0 1.0 0.0))\n" \
-	"                    (list (list 0.0 1.0 0.0) (list 1.0 0.0 0.0) (list 0.0 0.0 1.0))\n" \
-	"                    (list (list 0.0 -1.0 0.0) (list 1.0 0.0 0.0) (list 0.0 0.0 1.0))\n" \
-	"                    (list (list 0.0 0.0 1.0) (list 1.0 0.0 0.0) (list 0.0 1.0 0.0))\n" \
-	"                    (list (list 0.0 0.0 -1.0) (list 1.0 0.0 0.0) (list 0.0 1.0 0.0)))))\n" \
-	"      (let loop ((f 0) (verts '()) (indices '()))\n" \
-	"        (if (= f 6)\n" \
-	"            (cons verts indices)\n" \
-	"            (let ((face (list-ref faces f)))\n" \
-	"              (loop (+ f 1)\n" \
-	"                    (append verts (mesh-quad-verts (car face) (cadr face) (caddr face) 0.5))\n" \
-	"                    (append indices (mesh-quad-indices (* f 4))))))))))\n"
-
-/*
- * box — a cube parameterized by full width/height/depth. Same 6-quad topology
- * as cube (24 verts / 36 indices), but its generate body reads (param 'width)
- * etc. and scales the unit-cube positions, so two entities sharing this one mesh
- * asset draw at different sizes purely from their per-entity param overrides.
- * The first built-in to carry a (params ...) clause — the geometry twin of a
- * material's shader uniforms. Defaults to the unit cube (1x1x1).
+ * box — 6 quad faces via mesh-quad-verts/-indices (core/mesh_script.scm),
+ * 24 verts / 36 indices, parameterized by full width/height/depth. Its
+ * generate body reads (param 'width) etc. and scales the unit-cube positions,
+ * so two entities sharing this one mesh asset draw at different sizes purely
+ * from their per-entity param overrides. The first built-in to carry a
+ * (params ...) clause — the geometry twin of a material's shader uniforms.
+ * Defaults to the unit cube (1x1x1).
  */
 #define BOX_MESH_SCRIPT_SRC \
 	"(mesh box\n" \

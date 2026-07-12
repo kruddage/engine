@@ -460,13 +460,11 @@ static void seed_builtins(void)
 	builtins_seeded = 1;
 
 	/*
-	 * Every built-in mesh, the four classic primitives included, is
-	 * authored the same way — there is no hardcoded C mesh generator.
-	 * seed_mesh stores each (mesh NAME (generate () ...)) source
-	 * verbatim; a consumer resolves it to a real mesh_blob on demand via
-	 * mesh_script_generate().
+	 * Every built-in mesh is authored the same way — there is no
+	 * hardcoded C mesh generator. seed_mesh stores each
+	 * (mesh NAME (generate () ...)) source verbatim; a consumer resolves
+	 * it to a real mesh_blob on demand via mesh_script_generate().
 	 */
-	seed_mesh("builtin://mesh/cube",    CUBE_MESH_SCRIPT_SRC);
 	seed_mesh("builtin://mesh/box",     BOX_MESH_SCRIPT_SRC);
 	seed_mesh("builtin://mesh/sphere",  SPHERE_MESH_SCRIPT_SRC);
 	seed_mesh("builtin://mesh/plane",   PLANE_MESH_SCRIPT_SRC);
@@ -818,16 +816,6 @@ const void *asset_catalog_get_data(uint32_t id, uint32_t *out_size)
 /* Built-in declaration descriptors                                    */
 /* ------------------------------------------------------------------ */
 
-static const struct asset_decl_field cube_decl[] = {
-	{ "format",     "krudd-mesh"            },
-	{ "topology",   "triangles"             },
-	{ "vertices",   "24"                    },
-	{ "indices",    "36"                    },
-	{ "attributes", "position, normal, uv0" },
-	{ "bounds.min", "{ -0.5, -0.5, -0.5 }" },
-	{ "bounds.max", "{ 0.5, 0.5, 0.5 }"    },
-};
-
 /*
  * The box mesh is the first built-in to carry a (params ...) clause, so it
  * advertises those parameters the way a script advertises its params — a mesh's
@@ -993,7 +981,6 @@ struct builtin_desc {
 #define ARRAY_SIZE(a) ((uint32_t)(sizeof(a) / sizeof((a)[0])))
 
 static const struct builtin_desc builtin_descs[] = {
-	{ "builtin://mesh/cube",    cube_decl,    ARRAY_SIZE(cube_decl)    },
 	{ "builtin://mesh/box",     box_mesh_decl, ARRAY_SIZE(box_mesh_decl) },
 	{ "builtin://mesh/sphere",  sphere_decl,  ARRAY_SIZE(sphere_decl)  },
 	{ "builtin://mesh/plane",   plane_decl,   ARRAY_SIZE(plane_decl)   },

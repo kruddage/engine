@@ -72,11 +72,6 @@
 (define kruddboard-assets-clone-name "")
 (define kruddboard-assets-clone-conflict #f)
 
-;;! Whether the browser table's BUILT-IN group is shown. Off by default —
-;;! most sessions only care about project assets, and the read-only builtin://
-;;! rows just add noise to the list.
-(define kruddboard-assets-show-builtin #f)
-
 ;;! Label helpers. The integer codes mirror asset_api.h's ASSET_KIND_* /
 ;;! ASSET_TYPE_* defines and asset_api's state values (0 pending, 1 loaded,
 ;;! else error) — the same raw-int-from-C convention kruddboard-log-colors
@@ -369,35 +364,53 @@
        (kruddboard-draw-asset-row (list-ref e 1) (car (list-ref e 0)) ro?))
      leaves)))
 
-;;! (kruddboard-draw-asset-table groups) is the six-column Path / Type /
-;;! Kind / State / Size / Flags tree table, in two labeled groups — the old
-;;! draw_tab_assets table body, with the flat Path column turned into an
-;;! expandable folder tree. groups is (builtin-rows project-rows), as
-;;! krudd-assets returns.
-(define (kruddboard-draw-asset-table groups)
-  (let ((builtin (car groups))
-	(project (cadr groups)))
-    (when (imgui-begin-table "##assets" 6)
-      (imgui-table-setup-column "Path")
-      (imgui-table-setup-column "Type")
-      (imgui-table-setup-column "Kind")
-      (imgui-table-setup-column "State")
-      (imgui-table-setup-column "Size")
-      (imgui-table-setup-column "Flags")
-      (imgui-table-headers-row)
-      (unless (null? builtin)
-	(imgui-table-next-row)
-	(imgui-table-next-column)
-	(imgui-text-disabled "-- BUILT-IN (read-only) --")
-	(kruddboard-draw-asset-tree
-	 (kruddboard-assets-rows->entries builtin) "builtin" #t))
-      (unless (null? project)
-	(imgui-table-next-row)
-	(imgui-table-next-column)
-	(imgui-text-disabled "-- PROJECT --")
-	(kruddboard-draw-asset-tree
-	 (kruddboard-assets-rows->entries project) "project" #f))
-      (imgui-end-table))))
+;;! (kruddboard-draw-package name origin locked open-default prefix rows) is one
+;;! collapsible package section: a header naming the package, its origin, whether
+;;! it's locked, and its asset count, over the six-column Path / Type / Kind /
+;;! State / Size / Flags folder tree its members live in. A package is the
+;;! browser's top-level grouping — a named, provenance-tagged bundle that shares
+;;! an origin and a lock state; the engine's read-only built-ins are one package
+;;! (krudd:engine), the authored project another (pkg:project). This replaces the
+;;! old fixed "-- BUILT-IN --" / "-- PROJECT --" split (and the "Show built-in
+;;! assets" checkbox that hid the noise) with per-package sections that fold away.
+;;!
+;;! The visible header carries the (dynamic) asset count, but the collapsing-
+;;! header id is pinned with a trailing "###pkg-<prefix>" so its open/closed state
+;;! survives a changing count — the "###id" tail is ImGui's stable-id escape, the
+;;! part before it is display-only. open-default seeds the initial fold: the engine
+;;! package starts collapsed (built-ins are reference, not your working set), the
+;;! project package open. prefix is the tree-node id root ("builtin" / "project")
+;;! the folder tree already keys its ids on, and doubles as the table id and the
+;;! pinned header id, so nothing about the existing folder-tree ids changes. locked
+;;! flows straight through as the tree's ro? flag (the "RO"/"-" Flags cell).
+(define (kruddboard-draw-package name origin locked open-default prefix rows)
+  (unless (null? rows)
+    (let ((label (format #f "~A   ~A~A  (~D)###pkg-~A"
+			 name origin (if locked ", locked" "")
+			 (length rows) prefix)))
+      (when (imgui-collapsing-header label open-default)
+	(when (imgui-begin-table (string-append "##pkg/" prefix) 6)
+	  (imgui-table-setup-column "Path")
+	  (imgui-table-setup-column "Type")
+	  (imgui-table-setup-column "Kind")
+	  (imgui-table-setup-column "State")
+	  (imgui-table-setup-column "Size")
+	  (imgui-table-setup-column "Flags")
+	  (imgui-table-headers-row)
+	  (kruddboard-draw-asset-tree
+	   (kruddboard-assets-rows->entries rows) prefix locked)
+	  (imgui-end-table))))))
+
+;;! (kruddboard-draw-asset-packages engine project) draws the browser's package
+;;! sections in order: the engine's built-ins first (collapsed by default), then
+;;! the authored project (open). Its two arguments are the (builtin-rows
+;;! project-rows) krudd-assets returns — split by read_only, which is exactly the
+;;! engine / project provenance line, so the two groups already are the two
+;;! packages. When imported third-party packages land (a later step), they slot in
+;;! here as more kruddboard-draw-package calls with their own origin and lock.
+(define (kruddboard-draw-asset-packages engine project)
+  (kruddboard-draw-package "krudd:engine" "engine" #t #f "builtin" engine)
+  (kruddboard-draw-package "pkg:project" "project" #f #t "project" project))
 
 ;;! ------------------------------------------------------------------
 ;;! Asset inspector — header + per-type editors
@@ -896,9 +909,9 @@
 ;;! (kruddboard-draw-assets) is the whole Assets tab: either the inspector
 ;;! (once something is selected — it draws its own red collapsing headers,
 ;;! see below) or a single "Browser" section holding the New Asset form and
-;;! the table/"(no assets)" placeholder — the Scheme composition that
-;;! replaces the C draw_tab_assets. (krudd-assets) returning #f (no asset
-;;! api) mirrors the old top-of-function null check.
+;;! the per-package sections (or the "(no assets)" placeholder) — the Scheme
+;;! composition that replaces the C draw_tab_assets. (krudd-assets) returning
+;;! #f (no asset api) mirrors the old top-of-function null check.
 ;;!
 ;;! "Browser" has no C ancestor — draw_tab_assets never wrapped the table in
 ;;! a header. It exists purely so the tab reads as Scheme-driven the instant
@@ -917,13 +930,8 @@
 	      (when (krudd-asset-mut?)
 		(kruddboard-draw-new-asset-form)
 		(imgui-separator))
-	      (set! kruddboard-assets-show-builtin
-		    (imgui-checkbox "Show built-in assets"
-				    kruddboard-assets-show-builtin))
-	      (let ((visible (list (if kruddboard-assets-show-builtin
-					(car groups)
-					'())
-				    (cadr groups))))
-		(if (and (null? (car visible)) (null? (cadr visible)))
+	      (let ((engine  (car groups))
+		    (project (cadr groups)))
+		(if (and (null? engine) (null? project))
 		    (imgui-text-disabled "(no assets)")
-		    (kruddboard-draw-asset-table visible))))))))
+		    (kruddboard-draw-asset-packages engine project))))))))

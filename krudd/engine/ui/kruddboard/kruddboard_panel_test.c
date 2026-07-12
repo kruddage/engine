@@ -950,7 +950,6 @@ static void assets_scheme_reset(void)
 	script_eval("(set! kruddboard-assets-clone-src 0)");
 	script_eval("(set! kruddboard-assets-clone-name \"\")");
 	script_eval("(set! kruddboard-assets-clone-conflict #f)");
-	script_eval("(set! kruddboard-assets-show-builtin #f)");
 	g_combo_pick    = -1;
 	g_float_id      = NULL;
 	g_float_changed = 0;
@@ -2469,9 +2468,14 @@ static void test_assets_no_assets(void)
 	assert(rec_has("disabled|(no assets)"));
 }
 
-/* The browser table lists project assets by default; the BUILT-IN group is
- * hidden behind a checkbox that starts unchecked (#420 — builtin:// rows are
- * just noise in most sessions). */
+/* The browser groups assets into collapsible packages instead of one flat
+ * table: the engine's read-only built-ins as "krudd:engine" (collapsed by
+ * default) and the authored project as "pkg:project" (open). The old "Show
+ * built-in assets" checkbox is gone — folding the engine package away is what
+ * hides the builtin:// noise now. Each package draws its own six-column tree
+ * table; the stub forces every header open, so both packages' rows are recorded
+ * here regardless of their default fold, and the default fold is asserted via
+ * the "###pkg-<prefix>|<default-open>" the header id carries. */
 static void test_assets_browser_table(void)
 {
 	asset_reset();
@@ -2480,36 +2484,55 @@ static void test_assets_browser_table(void)
 	script_eval("(kruddboard-draw-assets)");
 
 	assert(rec_has("header|Browser"));
-	assert(rec_has("checkbox|Show built-in assets|0"));
-	assert(rec_has("table-begin|##assets|6"));
+	assert(!rec_has("checkbox|Show built-in assets|0"));
 	assert(!rec_has("disabled|-- BUILT-IN (read-only) --"));
-	assert(rec_has("disabled|-- PROJECT --"));
-	assert(!rec_has("tree-node|builtin://mesh/cube|"));
-	assert(rec_has("tree-node|my.shader|my.shader|leaf|0"));
-	assert(!rec_has("drag-source|501|builtin://mesh/cube"));
-	assert(!rec_has("colored|1.00,0.60,0.20,1.00|RO"));
-}
+	assert(!rec_has("disabled|-- PROJECT --"));
 
-/* Checking "Show built-in assets" reveals the BUILT-IN group and its rows,
- * including the mesh row's drag source. */
-static void test_assets_browser_table_show_builtin(void)
-{
-	asset_reset();
-	assets_scheme_reset();
-	g_click = "Show built-in assets";
-	rec_reset();
-	script_eval("(kruddboard-draw-assets)");
-	g_click = NULL;
+	/* Two package headers, engine before project; the pinned id tail carries
+	 * each one's default-open flag — engine collapsed (|0), project open (|1). */
+	assert(rec_has("header|krudd:engine"));
+	assert(rec_has("###pkg-builtin|0"));
+	assert(rec_has("header|pkg:project"));
+	assert(rec_has("###pkg-project|1"));
+	assert(rec_index("###pkg-builtin") < rec_index("###pkg-project"));
 
-	assert(rec_has("checkbox|Show built-in assets|0"));
-	assert(rec_has("disabled|-- BUILT-IN (read-only) --"));
-	assert(rec_has("disabled|-- PROJECT --"));
+	/* Each package draws its own tree table under its own id. */
+	assert(rec_has("table-begin|##pkg/builtin|6"));
+	assert(rec_has("table-begin|##pkg/project|6"));
+
+	/* Engine package: folder tree, the cube leaf, its drag source, RO flag. */
 	assert(rec_has("tree-node|builtin/mesh|mesh|folder|0"));
 	assert(rec_has("tree-node|builtin://mesh/cube|cube|leaf|0"));
-	assert(rec_has("tree-node|my.shader|my.shader|leaf|0"));
 	assert(rec_has("drag-source|501|builtin://mesh/cube"));
 	assert(!rec_has("drag-source|601|"));
 	assert(rec_has("colored|1.00,0.60,0.20,1.00|RO"));
+
+	/* Project package: the authored shader leaf. */
+	assert(rec_has("tree-node|my.shader|my.shader|leaf|0"));
+}
+
+/* A catalog with only authored assets (no read-only built-ins) draws just the
+ * project package: the engine package's (unless (null? rows) ...) guard skips it
+ * entirely rather than drawing an empty section, and the "(no assets)"
+ * placeholder is reserved for a genuinely empty catalog (both groups empty). */
+static void test_assets_packages_project_only(void)
+{
+	int i;
+
+	asset_reset();
+	assets_scheme_reset();
+	for (i = 0; i < g_fa_n; i++)
+		if (g_fa[i].read_only)
+			g_fa[i].alive = 0;
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+
+	assert(rec_has("header|Browser"));
+	assert(rec_has("header|pkg:project"));
+	assert(rec_has("table-begin|##pkg/project|6"));
+	assert(!rec_has("header|krudd:engine"));
+	assert(!rec_has("table-begin|##pkg/builtin|6"));
+	assert(!rec_has("disabled|(no assets)"));
 }
 
 /* Clicking a row's tree-node opens that asset in the inspector next draw. */
@@ -3114,7 +3137,7 @@ static void test_assets_inspector_stale(void)
 	assert(assets_sel() == 0);
 }
 
-/* The New Asset form draws before the browser table, in that order. */
+/* The New Asset form draws before the package sections, in that order. */
 static void test_assets_composition(void)
 {
 	asset_reset();
@@ -3124,7 +3147,7 @@ static void test_assets_composition(void)
 
 	assert(rec_index("header|Browser") >= 0);
 	assert(rec_index("header|Browser") < rec_index("btn|New Asset"));
-	assert(rec_index("btn|New Asset") < rec_index("table-begin|##assets|6"));
+	assert(rec_index("btn|New Asset") < rec_index("table-begin|##pkg/builtin|6"));
 }
 
 int main(void)
@@ -3173,7 +3196,7 @@ int main(void)
 	RUN(assets_unavailable);
 	RUN(assets_no_assets);
 	RUN(assets_browser_table);
-	RUN(assets_browser_table_show_builtin);
+	RUN(assets_packages_project_only);
 	RUN(assets_row_select);
 	RUN(assets_new_asset_button);
 	RUN(assets_new_asset_hidden_without_mut);

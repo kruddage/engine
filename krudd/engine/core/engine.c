@@ -9,6 +9,7 @@
 #include "stats_api.h"
 #include "version.h"
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __EMSCRIPTEN__
@@ -67,18 +68,25 @@ void imgui_plugin_entry(struct subsystem_manager *mgr);
 void kruddboard_plugin_entry(struct subsystem_manager *mgr);
 void kruddgui_plugin_entry(struct subsystem_manager *mgr);
 
-static void register_plugins(struct subsystem_manager *mgr)
-{
-	asset_plugin_entry(mgr);
-	edit_plugin_entry(mgr);
-	entity_plugin_entry(mgr);
-	renderer_webgl_plugin_entry(mgr);
-	fg_plugin_entry(mgr);
-	scene_renderer_plugin_entry(mgr);
-	imgui_plugin_entry(mgr);
-	kruddboard_plugin_entry(mgr);
-	kruddgui_plugin_entry(mgr);
-}
+/*
+ * The boot order, as data so the profiler can time each entry point and label
+ * its slice. Same sequence the hand-unrolled calls used to run in — services
+ * before the plugins that consume them.
+ */
+static const struct {
+	const char *name;
+	void      (*entry)(struct subsystem_manager *);
+} plugin_table[] = {
+	{ "asset",          asset_plugin_entry          },
+	{ "edit",           edit_plugin_entry           },
+	{ "entity",         entity_plugin_entry         },
+	{ "renderer_webgl", renderer_webgl_plugin_entry },
+	{ "fg",             fg_plugin_entry             },
+	{ "scene_renderer", scene_renderer_plugin_entry },
+	{ "imgui",          imgui_plugin_entry          },
+	{ "kruddboard",     kruddboard_plugin_entry     },
+	{ "kruddgui",       kruddgui_plugin_entry       },
+};
 #endif
 
 static struct subsystem_manager manager;
@@ -88,6 +96,23 @@ static int32_t frame_count;
 static double s_last_ms;
 static float  s_frame_times[60];
 static int    s_ft_head;
+static double s_boot_ms;	/* emscripten_get_now() at engine_init entry */
+
+/*
+ * Record how long the slice since START took as the next startup phase.
+ * Overflow past STATS_MAX_PHASES is dropped rather than clobbering earlier
+ * phases — the bounded table keeps the profiler allocation-free.
+ */
+static void stats_record_phase(const char *name, double start)
+{
+	uint32_t n = g_stats_api.phase_count;
+
+	if (n >= STATS_MAX_PHASES)
+		return;
+	g_stats_api.phases[n].name = name;
+	g_stats_api.phases[n].ms   = (float)(emscripten_get_now() - start);
+	g_stats_api.phase_count    = n + 1;
+}
 
 static void stats_update(void)
 {
@@ -131,6 +156,12 @@ EM_JS(void, krudd_signal_running, (void), {
 
 void engine_init(void)
 {
+#ifdef __EMSCRIPTEN__
+	double phase;
+	size_t i;
+
+	s_boot_ms = emscripten_get_now();
+#endif
 	subsystem_manager_init(&manager, subsystems);
 	frame_count = 0;
 	LOG_INFO("engine: init " ENGINE_VERSION_STRING);
@@ -140,11 +171,28 @@ void engine_init(void)
 	 * transpiler into the image, and the renderer plugins lower their
 	 * shaders through it as they build pipelines at register time.
 	 */
+	phase = emscripten_get_now();
 	script_init();
-	/* Register the statically-linked plugins now that core services exist. */
-	register_plugins(&manager);
+	stats_record_phase("script_init", phase);
+
+	/*
+	 * Register the statically-linked plugins now that core services exist,
+	 * timing each entry point so the board can show where boot went — a
+	 * plugin lowers its shaders and bakes its textures at register time, so
+	 * this is where "adding a texture" shows up as startup cost.
+	 */
+	for (i = 0; i < sizeof(plugin_table) / sizeof(plugin_table[0]); i++) {
+		phase = emscripten_get_now();
+		plugin_table[i].entry(&manager);
+		stats_record_phase(plugin_table[i].name, phase);
+	}
+
 	/* Load the runtime image: it owns the body of the frame from here. */
+	phase = emscripten_get_now();
 	script_eval(RUNTIME_SCM);
+	stats_record_phase("runtime_scm", phase);
+
+	g_stats_api.init_ms = (float)(emscripten_get_now() - s_boot_ms);
 #endif
 }
 
@@ -152,6 +200,14 @@ void engine_tick(void)
 {
 	frame_count++;
 #ifdef __EMSCRIPTEN__
+	/*
+	 * Time to first frame: init plus the browser's first animation-frame
+	 * round-trip, captured once on the opening tick. Together with init_ms
+	 * this separates "engine boot" from "waiting on the first rAF".
+	 */
+	if (frame_count == 1)
+		g_stats_api.first_frame_ms = (float)(emscripten_get_now()
+						      - s_boot_ms);
 	stats_update();
 	script_tick();
 #endif

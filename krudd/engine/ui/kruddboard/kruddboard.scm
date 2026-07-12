@@ -579,9 +579,12 @@
   (imgui-text disp))
 
 ;;! (kruddboard-draw-world-detail id caps) is the whole entity inspector screen:
-;;! the back-button header plus the shared inspector body, or a silent return to
-;;! the list if id no longer resolves (e.g. the entity was destroyed elsewhere)
-;;! — the same stale-guard kruddboard-draw-asset-inspector uses.
+;;! the back-button header, the Move/Rotate/Scale gizmo tool chips, and the
+;;! shared inspector body, or a silent return to the list if id no longer
+;;! resolves (e.g. the entity was destroyed elsewhere) — the same stale-guard
+;;! kruddboard-draw-asset-inspector uses. The gizmo chips live here rather than
+;;! on the list screen since they only mean something once an entity is open
+;;! and its handles are on screen to drag.
 (define (kruddboard-draw-world-detail id caps)
   (let ((info (krudd-entity-inspect id)))
     (if (not info)
@@ -590,23 +593,23 @@
 	  (kruddboard-draw-world-entity-header
 	   (kruddboard-world-detail-name id info))
 	  (imgui-separator)
+	  (kruddboard-draw-gizmo-chips)
+	  (imgui-separator)
 	  (kruddboard-draw-inspector-body id info caps)))))
 
 ;;! (kruddboard-draw-world) is the whole World tab. It mirrors the asset
 ;;! browser's two-screen shape: while kruddboard-world-sel is -1 it shows the
-;;! scene header, gizmo tool chips, and the flat entity list; clicking an entity
-;;! drills into a dedicated inspector screen (a "<- Back" header over that
-;;! entity's editable guts) instead of unrolling it in place. The transform
-;;! gizmo still tracks (krudd-selected), which a list-row click drives alongside
-;;! the drill-in, so the gizmo mode set from the list keeps acting on the entity
-;;! being inspected.
+;;! scene header and the flat entity list; clicking an entity drills into a
+;;! dedicated inspector screen (a "<- Back" header, the gizmo tool chips, and
+;;! that entity's editable guts) instead of unrolling it in place. The
+;;! transform gizmo still tracks (krudd-selected), which a list-row click
+;;! drives alongside the drill-in, so the gizmo mode set from the inspector
+;;! keeps acting on the entity being inspected.
 (define (kruddboard-draw-world)
   (let ((caps (krudd-world-caps)))
     (if (not (= kruddboard-world-sel -1))
 	(kruddboard-draw-world-detail kruddboard-world-sel caps)
 	(begin
 	  (kruddboard-draw-world-header)
-	  (imgui-separator)
-	  (kruddboard-draw-gizmo-chips)
 	  (imgui-separator)
 	  (kruddboard-draw-world-list caps)))))

@@ -5275,10 +5275,6 @@ static void draw_tab_world(void)
 
 	ImGui::Separator();
 
-	draw_gizmo_mode_chips();
-
-	ImGui::Separator();
-
 	/* ---- Inspector ---- */
 	if (ImGui::CollapsingHeader("Inspector",
 				    ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -5287,6 +5283,9 @@ static void draw_tab_world(void)
 		    !w->alive[(uint32_t)sel]) {
 			ImGui::TextDisabled("(nothing selected)");
 		} else {
+			draw_gizmo_mode_chips();
+			ImGui::Separator();
+
 			e     = (uint32_t)sel;
 			t     = &w->local[e];
 			ename = NULL;

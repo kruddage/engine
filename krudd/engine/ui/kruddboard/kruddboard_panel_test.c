@@ -2480,9 +2480,10 @@ static void test_world_gizmo_chips(void)
 	assert(rec_has("gizmo-mode|1"));
 }
 
-/* The list screen composes scene header, tool chips, then the flat entity list,
- * in order — each entity a clickable leaf row. It no longer unrolls an inspector
- * body in place; that opens on its own screen (see test_world_drill_screen). */
+/* The list screen composes scene header then the flat entity list, in order —
+ * each entity a clickable leaf row. It no longer unrolls an inspector body (or
+ * the gizmo tool chips) in place; those open on the entity's own screen (see
+ * test_world_drill_screen). */
 static void test_world_composition(void)
 {
 	fw_reset();
@@ -2491,16 +2492,17 @@ static void test_world_composition(void)
 	script_eval("(kruddboard-draw-world)");
 
 	assert(rec_has("text|Untitled Scene"));
-	assert(rec_index("text|Untitled Scene") < rec_index("text|Tool"));
-	assert(rec_index("text|Tool")
+	assert(rec_index("text|Untitled Scene")
 	       < rec_index("tree-node|ent0|Cube|leaf|1"));
-	/* the list screen draws no inspector body in place */
+	/* the list screen draws no inspector body, and no tool chips, in place */
 	assert(!rec_has("input-text|##ename"));
+	assert(!rec_has("text|Tool"));
 }
 
 /* With an entity selected (world-sel set), the World tab replaces the list with
- * that entity's inspector screen: a "<- Back" button over the editable body,
- * and neither the scene header nor the sibling rows. */
+ * that entity's inspector screen: a "<- Back" button, the Move/Rotate/Scale
+ * tool chips, then the editable body — in order — and neither the scene header
+ * nor the sibling rows. */
 static void test_world_drill_screen(void)
 {
 	fw_reset();
@@ -2510,7 +2512,10 @@ static void test_world_drill_screen(void)
 	script_eval("(set! kruddboard-world-sel -1)");
 
 	assert(rec_has("button|<- Back"));
+	assert(rec_has("text|Tool"));
 	assert(rec_has("input-text|##ename|Cube"));  /* the drilled-in body     */
+	assert(rec_index("button|<- Back") < rec_index("text|Tool"));
+	assert(rec_index("text|Tool") < rec_index("input-text|##ename|Cube"));
 	assert(!rec_has("text|Untitled Scene"));     /* not the list screen      */
 	assert(!rec_has("tree-node|ent1|entity 1|leaf|0"));
 }

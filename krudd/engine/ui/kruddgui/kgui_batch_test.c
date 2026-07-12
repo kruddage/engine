@@ -152,6 +152,63 @@ static void test_overflow_latches_and_bounds(void)
 	assert(b.count == 6); /* never wrote past capacity */
 }
 
+static void test_unclipped_is_one_command(void)
+{
+	struct kgui_batch b;
+
+	kgui_batch_init(&b, verts, STORAGE);
+	kgui_batch_quad(&b, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1);
+	kgui_batch_quad(&b, 2, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1);
+
+	/* No clip set: both quads share one full-viewport command. */
+	assert(b.cmd_count == 1);
+	assert(!b.cmds[0].clipped);
+	assert(b.cmds[0].first == 0 && b.cmds[0].count == 12);
+}
+
+static void test_clip_splits_commands(void)
+{
+	struct kgui_batch b;
+
+	kgui_batch_init(&b, verts, STORAGE);
+	kgui_batch_quad(&b, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1); /* unclipped */
+	kgui_batch_set_clip(&b, 10, 20, 30, 40);
+	kgui_batch_quad(&b, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1); /* clipped   */
+	kgui_batch_quad(&b, 2, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1); /* same clip */
+	kgui_batch_clear_clip(&b);
+	kgui_batch_quad(&b, 4, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1); /* unclipped */
+
+	assert(b.cmd_count == 3);
+
+	assert(!b.cmds[0].clipped);
+	assert(b.cmds[0].first == 0 && b.cmds[0].count == 6);
+
+	assert(b.cmds[1].clipped);
+	assert(b.cmds[1].x == 10 && b.cmds[1].y == 20 &&
+	       b.cmds[1].w == 30 && b.cmds[1].h == 40);
+	assert(b.cmds[1].first == 6 && b.cmds[1].count == 12); /* two quads */
+
+	assert(!b.cmds[2].clipped);
+	assert(b.cmds[2].first == 18 && b.cmds[2].count == 6);
+}
+
+static void test_reset_clears_clip_and_commands(void)
+{
+	struct kgui_batch b;
+
+	kgui_batch_init(&b, verts, STORAGE);
+	kgui_batch_set_clip(&b, 1, 2, 3, 4);
+	kgui_batch_quad(&b, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1);
+	assert(b.cmd_count == 1 && b.cmds[0].clipped);
+
+	kgui_batch_reset(&b);
+	assert(b.cmd_count == 0);
+
+	/* The clip did not survive the reset: the next quad is unclipped. */
+	kgui_batch_quad(&b, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1);
+	assert(b.cmd_count == 1 && !b.cmds[0].clipped);
+}
+
 static void test_utf8_decode(void)
 {
 	/* 'A', 'é' (U+00E9, 2 bytes), '€' (U+20AC, 3 bytes). */
@@ -171,6 +228,9 @@ int main(void)
 	RUN(missing_glyph_skipped);
 	RUN(width_matches_no_geometry);
 	RUN(overflow_latches_and_bounds);
+	RUN(unclipped_is_one_command);
+	RUN(clip_splits_commands);
+	RUN(reset_clears_clip_and_commands);
 	RUN(utf8_decode);
 
 	printf("%d/%d tests passed\n", tests_passed, tests_run);

@@ -3604,74 +3604,13 @@ static void draw_tab_stats(void)
 #endif
 }
 
-/* ------------------------------------------------------------------ */
-/* Tab: Log                                                            */
-/* ------------------------------------------------------------------ */
-
-static void draw_tab_log(void)
-{
-#ifdef __EMSCRIPTEN__
-	/* Ported to Scheme (kruddboard.scm). Fall back only if the image can't
-	 * run at all — an empty panel would read as "no log". */
-	if (call_scm_panel("kruddboard-draw-log"))
-		return;
-	ImGui::TextDisabled("(log unavailable)");
-#else
-	static struct log_message msgs[LOG_HISTORY_CAP];
-	static int   filter     = LOG_LEVEL_DEBUG;
-	static bool  autoscroll = true;
-	uint32_t     count;
-	uint32_t     i;
-	float        vp_h;
-	float        scroll_h;
-
-	if (!g_log) {
-		ImGui::TextDisabled("(log unavailable)");
-		return;
-	}
-
-	vp_h     = ImGui::GetMainViewport()->WorkSize.y;
-	scroll_h = vp_h * 0.88f - 120.0f;
-	if (scroll_h < 80.0f)
-		scroll_h = 80.0f;
-
-	count = g_log->get_history(msgs, LOG_HISTORY_CAP);
-
-	if (ImGui::SmallButton("DEBUG")) filter = LOG_LEVEL_DEBUG;
-	ImGui::SameLine();
-	if (ImGui::SmallButton("INFO"))  filter = LOG_LEVEL_INFO;
-	ImGui::SameLine();
-	if (ImGui::SmallButton("WARN"))  filter = LOG_LEVEL_WARN;
-	ImGui::SameLine();
-	if (ImGui::SmallButton("ERROR")) filter = LOG_LEVEL_ERROR;
-	ImGui::SameLine();
-	ImGui::Checkbox("Auto-scroll", &autoscroll);
-
-	ImGui::Separator();
-
-	ImGui::BeginChild("##logscroll", ImVec2(0.0f, scroll_h),
-			  false, ImGuiWindowFlags_HorizontalScrollbar);
-
-	static const ImVec4 level_colors[] = {
-		{ 0.6f, 0.6f, 0.6f, 1.0f }, /* DEBUG — grey   */
-		{ 1.0f, 1.0f, 1.0f, 1.0f }, /* INFO  — white  */
-		{ 1.0f, 0.8f, 0.2f, 1.0f }, /* WARN  — yellow */
-		{ 1.0f, 0.3f, 0.3f, 1.0f }, /* ERROR — red    */
-	};
-
-	for (i = 0; i < count; i++) {
-		if ((int)msgs[i].level < filter)
-			continue;
-		ImGui::TextColored(level_colors[msgs[i].level],
-				   "%s", msgs[i].text);
-	}
-
-	if (autoscroll)
-		ImGui::SetScrollHereY(1.0f);
-
-	ImGui::EndChild();
-#endif
-}
+/*
+ * The Log tab was lifted out of ImGui (#491): the kruddgui Log console
+ * (kruddgui.scm) now draws the engine log over the editor with kruddgui's own
+ * quads and font-atlas text, reading the same krudd-log-history accessor. Its
+ * ImGui draw path — the draw_tab_log that lived here and the "Log" section of
+ * draw_tab_krudd — is gone.
+ */
 
 /* ------------------------------------------------------------------ */
 /* Tab: Subsystems                                                     */
@@ -4541,19 +4480,19 @@ static void draw_tab_assets(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* Tab: KRUDD — frame stats, subsystems, log                          */
+/* Tab: KRUDD — frame stats, subsystems                               */
 /* ------------------------------------------------------------------ */
 
 static void draw_tab_krudd(void)
 {
 #ifdef __EMSCRIPTEN__
 	/*
-	 * The whole tab — the three sections and their headers — is composed in
-	 * Scheme (kruddboard-draw-krudd), whose (imgui-collapsing-header ...)
-	 * calls render red instead of the native blue (see
-	 * sp_imgui_collapsing_header) — that's the tab's Scheme-driven marker.
-	 * Fall back to the C composition below only if the image can't run at
-	 * all.
+	 * The tab — the two sections and their headers — is composed in Scheme
+	 * (kruddboard-draw-krudd), whose (imgui-collapsing-header ...) calls
+	 * render red instead of the native blue (see sp_imgui_collapsing_header)
+	 * — that's the tab's Scheme-driven marker. Fall back to the C
+	 * composition below only if the image can't run at all. (The Log section
+	 * moved to the kruddgui Log console — see kruddgui.scm.)
 	 */
 	if (call_scm_panel("kruddboard-draw-krudd"))
 		return;
@@ -4564,10 +4503,6 @@ static void draw_tab_krudd(void)
 
 	if (ImGui::CollapsingHeader("Subsystems"))
 		draw_tab_subsystems();
-
-	if (ImGui::CollapsingHeader("Log",
-				    ImGuiTreeNodeFlags_DefaultOpen))
-		draw_tab_log();
 }
 
 /* ------------------------------------------------------------------ */

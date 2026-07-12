@@ -14,7 +14,16 @@ body {
 	background: #0d0d0d;
 	color: #e0e0e0;
 	font-family: 'Courier New', Courier, monospace;
+	/*
+	 * dvh (dynamic viewport height) tracks the *visible* viewport, so the
+	 * app shrinks to fit above a mobile browser's dynamic toolbar instead
+	 * of extending behind it — otherwise 100vh (the large viewport) hides
+	 * the bottom strip of the canvas, and with it kruddgui's bottom-anchored
+	 * panels (the mode-bar, the Log handle), under Firefox Android's URL bar.
+	 * The 100vh line is the fallback for browsers without dvh.
+	 */
 	height: 100vh;
+	height: 100dvh;
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;

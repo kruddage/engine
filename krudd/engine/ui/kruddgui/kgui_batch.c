@@ -15,12 +15,64 @@ void kgui_batch_init(struct kgui_batch *b, struct kgui_vertex *storage, int cap)
 	b->cap      = cap;
 	b->count    = 0;
 	b->overflow = 0;
+	kgui_batch_reset(b);
 }
 
 void kgui_batch_reset(struct kgui_batch *b)
 {
-	b->count    = 0;
-	b->overflow = 0;
+	b->count     = 0;
+	b->overflow  = 0;
+	b->cmd_count = 0;
+	b->clip_on   = 0;
+}
+
+void kgui_batch_set_clip(struct kgui_batch *b,
+			 float x, float y, float w, float h)
+{
+	b->clip_on = 1;
+	b->clip_x  = x;
+	b->clip_y  = y;
+	b->clip_w  = w;
+	b->clip_h  = h;
+}
+
+void kgui_batch_clear_clip(struct kgui_batch *b)
+{
+	b->clip_on = 0;
+}
+
+/*
+ * The draw command that the next quad belongs to: the last one when its clip
+ * matches the current clip, otherwise a fresh command starting at the current
+ * vertex. When the command list is full the last command is reused so vertices
+ * are never dropped for want of a command (its clip may then be stale, a
+ * bounded and unlikely overflow the renderer tolerates).
+ */
+static struct kgui_clip_cmd *cur_cmd(struct kgui_batch *b)
+{
+	struct kgui_clip_cmd *c;
+
+	if (b->cmd_count > 0) {
+		c = &b->cmds[b->cmd_count - 1];
+		if (c->clipped == b->clip_on &&
+		    (!b->clip_on ||
+		     (c->x == b->clip_x && c->y == b->clip_y &&
+		      c->w == b->clip_w && c->h == b->clip_h)))
+			return c;
+	}
+
+	if (b->cmd_count >= KGUI_BATCH_MAX_CMDS)
+		return &b->cmds[KGUI_BATCH_MAX_CMDS - 1];
+
+	c          = &b->cmds[b->cmd_count++];
+	c->clipped = b->clip_on;
+	c->x       = b->clip_x;
+	c->y       = b->clip_y;
+	c->w       = b->clip_w;
+	c->h       = b->clip_h;
+	c->first   = b->count;
+	c->count   = 0;
+	return c;
 }
 
 static void push_vertex(struct kgui_batch *b, float x, float y,
@@ -48,12 +100,13 @@ void kgui_batch_quad(struct kgui_batch *b,
 		     float u0, float v0, float u1, float v1,
 		     float r, float g, float bl, float a)
 {
-	float x1 = x + w;
-	float y1 = y + h;
+	float                 x1  = x + w;
+	float                 y1  = y + h;
+	struct kgui_clip_cmd *cmd = cur_cmd(b);
 
 	/*
 	 * Two triangles, counter-clockwise, sharing the tl->br diagonal.
-	 * A six-vertex list keeps the batch a single non-indexed draw.
+	 * A six-vertex list keeps each clip run a single non-indexed draw.
 	 */
 	push_vertex(b, x,  y,  u0, v0, r, g, bl, a);
 	push_vertex(b, x1, y,  u1, v0, r, g, bl, a);
@@ -62,6 +115,9 @@ void kgui_batch_quad(struct kgui_batch *b,
 	push_vertex(b, x,  y,  u0, v0, r, g, bl, a);
 	push_vertex(b, x1, y1, u1, v1, r, g, bl, a);
 	push_vertex(b, x,  y1, u0, v1, r, g, bl, a);
+
+	/* Extend the run to whatever actually landed (short on overflow). */
+	cmd->count = b->count - cmd->first;
 }
 
 uint32_t kgui_utf8_next(const char **s)

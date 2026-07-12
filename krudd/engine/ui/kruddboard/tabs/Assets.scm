@@ -60,6 +60,22 @@
 ;;! The bake resolutions the texture combo offers — square, power-of-two.
 (define kruddboard-assets-tex-resolutions '(64 128 256 512 1024 2048))
 
+;;! Texture inspector model, keyed by the texture id it was loaded for. A texture
+;;! asset is a (texture NAME [(params ...)] (shade ...)) form: -tex-params is its
+;;! declared generation parameters (via krudd-texture-params) and -tex-values the
+;;! current value per field, seeded from the declared defaults on reload. The
+;;! sliders edit -tex-values live to drive the preview bake; they are not persisted
+;;! back to the asset (the authored source is the source of truth), so a reopened
+;;! texture starts from its defaults again.
+(define kruddboard-assets-tex-id 0)
+(define kruddboard-assets-tex-params '())
+(define kruddboard-assets-tex-values '())
+
+;;! The preview bake resolution — a small square edge kept independent of the
+;;! material bake-resolution combo above, since a live inspector swatch wants
+;;! speed over fidelity (the render layer bakes the shipped texture at full res).
+(define kruddboard-assets-tex-preview-res 128)
+
 ;;! New Asset form state: visible?, the name field, and the type combo index
 ;;! (0 Text, 1 Shader, 2 Material, 3 Script, 4 Mesh).
 (define kruddboard-assets-naming #f)
@@ -141,6 +157,7 @@
   (set! kruddboard-assets-edit-id 0)
   (set! kruddboard-assets-edit-text "")
   (set! kruddboard-assets-mat-id 0)
+  (set! kruddboard-assets-tex-id 0)
   (set! kruddboard-assets-sel 0))
 
 ;;! One "Label: value" row in a bordered two-column table.
@@ -835,10 +852,65 @@
 	  (kruddboard-assets-do-delete id)))
       (kruddboard-draw-asset-material-clone id path)))
 
+;;! (kruddboard-assets-maybe-reload-texture id) loads the texture inspector model
+;;! when the selection changes: its declared generation params, then their default
+;;! values — the pixel counterpart of maybe-reload-material. Reseeding the values
+;;! from the defaults on every reload is deliberate: the sliders are a live-preview
+;;! scratchpad, not persisted state, so a reopened texture starts fresh.
+(define (kruddboard-assets-maybe-reload-texture id)
+  (unless (= kruddboard-assets-tex-id id)
+    (set! kruddboard-assets-tex-id id)
+    (set! kruddboard-assets-tex-params (krudd-texture-params id))
+    (set! kruddboard-assets-tex-values (krudd-texture-values id))))
+
+;;! Draw every texture generation-parameter widget in order and write the edited
+;;! values back, reusing the shared kruddboard-draw-material-param dispatcher (a
+;;! range hint -> slider, a color hint -> picker, else numeric input). map draws
+;;! each widget exactly once per frame, the invariant this file relies on. Unlike
+;;! the material params these are never disabled: editing them only tweaks the
+;;! preview, it does not mutate the asset, so a read-only built-in is still
+;;! previewable.
+(define (kruddboard-draw-texture-params)
+  (set! kruddboard-assets-tex-values
+	(map kruddboard-draw-material-param
+	     kruddboard-assets-tex-params
+	     kruddboard-assets-tex-values)))
+
+;;! Texture inspector: the derived Declaration, the generation Parameters as live
+;;! sliders, a live Preview swatch baked from those sliders, and a read-only view
+;;! of the source form. A texture asset carries no separate value store — its
+;;! params clause holds the authored defaults — so there is no Save for the
+;;! sliders; the sliders drive the preview only, and Delete (when mutable) is the
+;;! one persisting action. Every ImGui primitive draws once per frame regardless
+;;! of the fold state, matching the other inspectors.
+(define (kruddboard-draw-asset-texture-editor id editable)
+  (kruddboard-assets-maybe-reload-texture id)
+  (imgui-separator)
+  (when (imgui-collapsing-header "Declaration")
+    (imgui-text "format: krudd-texture")
+    (imgui-text (format #f "parameters: ~D"
+			(length kruddboard-assets-tex-params))))
+  (imgui-separator)
+  (when (imgui-collapsing-header "Parameters")
+    (if (null? kruddboard-assets-tex-params)
+	(imgui-text-disabled "(this texture declares no parameters)")
+	(kruddboard-draw-texture-params)))
+  (imgui-separator)
+  (when (imgui-collapsing-header "Preview")
+    (krudd-texture-preview id kruddboard-assets-tex-values
+			   kruddboard-assets-tex-preview-res))
+  (imgui-separator)
+  (when (imgui-collapsing-header "Source")
+    (imgui-input-text-multiline "##texsrc" (krudd-asset-data id) 200.0 #t))
+  (imgui-separator)
+  (when editable
+    (when (imgui-button "Delete")
+      (kruddboard-assets-do-delete id))))
+
 ;;! Read-only fallback for every asset type without a dedicated editor: the
 ;;! declaration table (from describe()) and the full catalog snapshot — the
 ;;! old draw_asset_inspector generic tail, reached by every non-text/shader/
-;;! material asset (meshes, textures, fonts, scenes).
+;;! material asset (fonts, scenes).
 (define (kruddboard-draw-asset-generic id info)
   (imgui-separator)
   (imgui-text "Declaration")
@@ -886,6 +958,7 @@
     (cond
      ((and (= origin 1) (= type 7)) (kruddboard-draw-asset-text-editor id))
      ((= type 1) (kruddboard-draw-asset-mesh-editor id path (not read-only)))
+     ((= type 2) (kruddboard-draw-asset-texture-editor id (not read-only)))
      ((= type 4) (kruddboard-draw-asset-shader-editor id path (not read-only)))
      ((= type 3) (kruddboard-draw-asset-material-editor id path (not read-only)))
      ((= type 8) (kruddboard-draw-asset-script-editor id path (not read-only)))

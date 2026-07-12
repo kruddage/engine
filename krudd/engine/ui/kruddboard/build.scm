@@ -6,8 +6,8 @@
 		(private "." (raw "${generated}") (raw "../third_party")
 			(root "asset")
 			(raw "${imgui}") (raw "${imgui}/backends"))
-		(link "mesh_script" "imgui_plugin" "script" "log" "memory" "subsystem"
-			"subsystem_manager")))
+		(link "mesh_script" "texture_script" "imgui_plugin" "script" "log"
+			"memory" "subsystem" "subsystem_manager")))
 
  (native-only
 	(library "md_parse"

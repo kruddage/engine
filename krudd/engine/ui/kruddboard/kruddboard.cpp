@@ -32,6 +32,7 @@ extern "C" {
 #include "backend_api.h"
 #include "script.h"
 #include "mesh_script.h"
+#include "texture_script.h"
 #endif
 }
 
@@ -39,6 +40,7 @@ extern "C" {
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten/html5.h>
+#include <GLES3/gl3.h>
 #include <string.h>
 #include <math.h>
 #include "md_parse.h"
@@ -2406,6 +2408,156 @@ static s7_pointer sp_krudd_entity_save_texture_params(s7_scheme *sc,
 }
 
 /*
+ * (krudd-texture-values texture-ref) -> a per-field list of component lists, the
+ * texture's declared parameter defaults (its params clause, no override) — the
+ * seed the Assets-tab texture inspector's live-preview sliders start from, the
+ * asset-level twin of krudd-entity-texture-values (which overlays an entity's
+ * override). Empty when the asset is gone or declares no params.
+ */
+static s7_pointer sp_krudd_texture_values(s7_scheme *sc, s7_pointer args)
+{
+	uint32_t             tex_ref = (uint32_t)s7_integer(s7_car(args));
+	const char          *src     = shader_src_cstr(tex_ref);
+	struct shader_param  p[MATERIAL_MAX_PARAMS];
+	uint32_t             total = 0;
+	int                  n, i;
+	s7_pointer           out = s7_nil(sc);
+
+	if (!src)
+		return out;
+	n = script_texture_params(src, p, MATERIAL_MAX_PARAMS, &total);
+	for (i = n - 1; i >= 0; i--) {
+		uint32_t c = p[i].components > 4 ? 4 : p[i].components;
+		float    v[4];
+		uint32_t k;
+
+		for (k = 0; k < c; k++)
+			v[k] = param_default(&p[i], k);
+		out = s7_cons(sc, real_list(sc, v, (int)c), out);
+	}
+	return out;
+}
+
+/*
+ * Live texture-preview cache. One GL texture is baked from the inspected
+ * texture's (source, params, resolution) and re-uploaded only when that key
+ * changes, so a still frame costs nothing and dragging a slider re-bakes. The
+ * single object is reused across selections (glTexImage2D reallocates its
+ * storage), so there is nothing to free until the module unloads.
+ */
+static GLuint   g_tex_prev_gl;    /* 0 = not yet allocated                 */
+static uint32_t g_tex_prev_ref;   /* asset id of the last successful bake  */
+static uint32_t g_tex_prev_res;   /* edge length of the last bake          */
+static uint32_t g_tex_prev_hash;  /* FNV-1a of the last packed params      */
+static int      g_tex_prev_valid; /* did the last bake succeed?            */
+
+static uint32_t tex_prev_hash(const uint8_t *b, uint32_t n)
+{
+	uint32_t h = 2166136261u, i;
+
+	for (i = 0; i < n; i++) {
+		h ^= b[i];
+		h *= 16777619u;
+	}
+	return h;
+}
+
+/*
+ * (krudd-texture-preview texture-ref field-values res) draws a live res x res
+ * bake of the texture as an inline image. field-values is the per-field list the
+ * Parameters sliders edit; it is packed into the texture's tight params layout
+ * (the same packing the entity texture-param save does, minus the world write)
+ * and fed to texture_script_generate, so a slider drag re-bakes the swatch. res
+ * is clamped to a preview-sized edge. Draws a disabled note instead when the
+ * source is gone, the memory api is absent, or the shade clause faults.
+ */
+static s7_pointer sp_krudd_texture_preview(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer          a       = args;
+	uint32_t            tex_ref = (uint32_t)s7_integer(s7_car(a)); a = s7_cdr(a);
+	s7_pointer          values  = s7_car(a);                      a = s7_cdr(a);
+	uint32_t            res     = (uint32_t)s7_integer(s7_car(a));
+	const char         *src     = shader_src_cstr(tex_ref);
+	struct shader_param p[MATERIAL_MAX_PARAMS];
+	uint8_t             bytes[WORLD_TEXTURE_PARAM_CAP];
+	uint32_t            total = 0, len, hash;
+	int                 n, i;
+	s7_pointer          fv = values;
+
+	if (!src || res == 0) {
+		ImGui::TextDisabled("(no preview)");
+		return s7_unspecified(sc);
+	}
+	if (res > 256)
+		res = 256;
+
+	n = script_texture_params(src, p, MATERIAL_MAX_PARAMS, &total);
+	if (n < 0)
+		n = 0;
+	len = total > sizeof(bytes) ? (uint32_t)sizeof(bytes) : total;
+	memset(bytes, 0, len);
+	for (i = 0; i < n; i++) {
+		uint32_t c   = p[i].components > 4 ? 4 : p[i].components;
+		uint32_t off = p[i].offset;
+		float    v[4];
+		uint32_t k;
+
+		for (k = 0; k < c; k++)
+			v[k] = param_default(&p[i], k);
+		if (s7_is_pair(fv)) {
+			read_reals(sc, s7_car(fv), v, (int)c);
+			fv = s7_cdr(fv);
+		}
+		if (off + c * sizeof(float) <= len)
+			memcpy(bytes + off, v, c * sizeof(float));
+	}
+	hash = tex_prev_hash(bytes, len);
+
+	if (!(g_tex_prev_gl && g_tex_prev_valid && g_tex_prev_ref == tex_ref &&
+	      g_tex_prev_res == res && g_tex_prev_hash == hash)) {
+		struct texture_blob *b =
+			g_mem ? texture_script_generate(src, bytes, len, res, res,
+							g_mem, NULL)
+			      : NULL;
+
+		g_tex_prev_ref   = tex_ref;
+		g_tex_prev_res   = res;
+		g_tex_prev_hash  = hash;
+		g_tex_prev_valid = (b != NULL);
+		if (b) {
+			if (!g_tex_prev_gl) {
+				glGenTextures(1, &g_tex_prev_gl);
+				glBindTexture(GL_TEXTURE_2D, g_tex_prev_gl);
+				glTexParameteri(GL_TEXTURE_2D,
+						GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+				glTexParameteri(GL_TEXTURE_2D,
+						GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+				glTexParameteri(GL_TEXTURE_2D,
+						GL_TEXTURE_WRAP_S,
+						GL_CLAMP_TO_EDGE);
+				glTexParameteri(GL_TEXTURE_2D,
+						GL_TEXTURE_WRAP_T,
+						GL_CLAMP_TO_EDGE);
+			} else {
+				glBindTexture(GL_TEXTURE_2D, g_tex_prev_gl);
+			}
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (GLsizei)res,
+				     (GLsizei)res, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+				     (const uint8_t *)(b + 1));
+			glBindTexture(GL_TEXTURE_2D, 0);
+			g_mem->free(b);
+		}
+	}
+
+	if (g_tex_prev_valid && g_tex_prev_gl)
+		ImGui::Image((ImTextureID)(intptr_t)g_tex_prev_gl,
+			     ImVec2(128.0f, 128.0f));
+	else
+		ImGui::TextDisabled("(bake failed)");
+	return s7_unspecified(sc);
+}
+
+/*
  * Override flags — the per-field twin of the *-values accessors above, one
  * boolean per param: is this entity's value an override that differs from the
  * baseline it would draw without one? The World tree lights a dot beside a
@@ -3244,6 +3396,14 @@ static s7_scheme *ensure_panel_scm(void)
 	s7_define_function(sc, "krudd-entity-save-texture-params",
 			   sp_krudd_entity_save_texture_params, 3, 0, false,
 			   "(krudd-entity-save-texture-params id texture-ref values)");
+	s7_define_function(sc, "krudd-texture-values", sp_krudd_texture_values,
+			   1, 0, false,
+			   "(krudd-texture-values texture-ref) -> "
+			   "(component-list ...) of declared defaults");
+	s7_define_function(sc, "krudd-texture-preview", sp_krudd_texture_preview,
+			   3, 0, false,
+			   "(krudd-texture-preview texture-ref values res) draw a "
+			   "live bake as an inline image");
 	s7_define_function(sc, "krudd-entity-script-overrides",
 			   sp_krudd_entity_script_overrides, 2, 0, false,
 			   "(krudd-entity-script-overrides id script-ref) -> "

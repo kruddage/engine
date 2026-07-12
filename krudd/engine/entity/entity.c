@@ -121,12 +121,48 @@ void world_destroy_entity(struct world *w, int32_t e)
 		w->selected = -1;
 }
 
+/*
+ * Recompute world_xform for `root` and every live descendant, composing off
+ * each ancestor's CURRENT world_xform. Everything outside this subtree is
+ * left untouched — unlike world_propagate_transforms, which re-derives the
+ * whole world from `local` and so discards any script-authored world_xform
+ * (e.g. an orbiting camera) that has drifted from its rest pose. That's fine
+ * once a frame, right before scripts re-run and correct it, but a live edit
+ * outside the tick — a gizmo drag while Paused holds scripts still — has no
+ * following tick to fix it back up, so a full re-derive would snap every
+ * other entity to its rest pose instead of leaving it frozen in place.
+ */
+static void propagate_subtree(struct world *w, int32_t root)
+{
+	uint8_t  touched[WORLD_MAX_ENTITIES];
+	uint32_t i;
+	int32_t  p;
+
+	memset(touched, 0, w->count);
+
+	p = w->parent[root];
+	w->world_xform[root] = (p < 0) ? w->local[root]
+					: compose(&w->world_xform[p], &w->local[root]);
+	touched[root] = 1;
+
+	for (i = (uint32_t)root + 1; i < w->count; i++) {
+		if (!w->alive[i])
+			continue;
+		p = w->parent[i];
+		if (p < 0 || !touched[p])
+			continue;
+		w->world_xform[i] = compose(&w->world_xform[p], &w->local[i]);
+		touched[i] = 1;
+	}
+}
+
 void world_set_transform(struct world *w, int32_t e,
 			 const struct transform *local)
 {
 	if (e < 0 || (uint32_t)e >= w->count || !w->alive[e])
 		return;
 	w->local[e] = *local;
+	propagate_subtree(w, e);
 }
 
 int32_t world_set_name(struct world *w, int32_t e, const char *name)
@@ -488,7 +524,10 @@ oom:
  * Full-fidelity snapshot of the world's used prefix. Column arrays are sized
  * to `count` (the high-water mark) and the name blob to `name_bytes`, so a
  * snapshot costs O(scene) rather than O(WORLD_MAX_ENTITIES). world_xform is
- * derived and left out — restore re-propagates it.
+ * captured and restored verbatim rather than re-derived from `local`: a
+ * script can leave it well away from the rest pose (an orbiting camera), and
+ * a restore is a checkpoint jump, not a tick — it must bring that back
+ * exactly, not snap every entity to its authored rest pose.
  */
 struct world_snapshot {
 	uint32_t          count;
@@ -498,6 +537,7 @@ struct world_snapshot {
 	uint32_t         *mask;
 	int32_t          *parent;
 	struct transform *local;
+	struct transform *world_xform;
 	uint32_t         *name_off;
 	uint32_t         *render_ref;
 	uint32_t         *material_ref;
@@ -521,6 +561,7 @@ void world_snapshot_free(struct world_snapshot *s, const struct memory_api *mem)
 	mem->free(s->mask);
 	mem->free(s->parent);
 	mem->free(s->local);
+	mem->free(s->world_xform);
 	mem->free(s->name_off);
 	mem->free(s->render_ref);
 	mem->free(s->material_ref);
@@ -572,6 +613,8 @@ struct world_snapshot *world_snapshot_capture(const struct world *w,
 			dup_bytes(mem, w->parent, n * sizeof(*w->parent));
 	s->local      = (struct transform *)
 			dup_bytes(mem, w->local, n * sizeof(*w->local));
+	s->world_xform = (struct transform *)
+			dup_bytes(mem, w->world_xform, n * sizeof(*w->world_xform));
 	s->name_off   = (uint32_t *)
 			dup_bytes(mem, w->name_off, n * sizeof(*w->name_off));
 	s->render_ref = (uint32_t *)
@@ -610,6 +653,7 @@ struct world_snapshot *world_snapshot_capture(const struct world *w,
 
 	/* A zero-length column dups to NULL; only a real short alloc is OOM. */
 	if ((n && (!s->alive || !s->mask || !s->parent || !s->local ||
+		   !s->world_xform ||
 		   !s->name_off || !s->render_ref || !s->material_ref ||
 		   !s->script_ref || !s->script_param_len ||
 		   !s->script_params || !s->material_param_len ||
@@ -640,6 +684,8 @@ void world_snapshot_restore(struct world *w, const struct world_snapshot *s)
 		memcpy(w->mask,       s->mask,       n * sizeof(*w->mask));
 		memcpy(w->parent,     s->parent,     n * sizeof(*w->parent));
 		memcpy(w->local,      s->local,      n * sizeof(*w->local));
+		memcpy(w->world_xform, s->world_xform,
+		       n * sizeof(*w->world_xform));
 		memcpy(w->name_off,   s->name_off,   n * sizeof(*w->name_off));
 		memcpy(w->render_ref, s->render_ref, n * sizeof(*w->render_ref));
 		memcpy(w->material_ref, s->material_ref,
@@ -665,8 +711,6 @@ void world_snapshot_restore(struct world *w, const struct world_snapshot *s)
 	}
 	if (s->name_bytes)
 		memcpy(w->names, s->names, s->name_bytes);
-
-	world_propagate_transforms(w, 0.0f);
 }
 
 void world_propagate_transforms(struct world *w, float dt)

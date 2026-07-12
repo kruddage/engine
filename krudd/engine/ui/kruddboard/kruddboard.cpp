@@ -980,7 +980,7 @@ static s7_pointer sp_krudd_asset_find(s7_scheme *sc, s7_pointer args)
 /*
  * (krudd-entity-create) -> the new entity id, or -1 on failure. Appends a root
  * entity with an identity transform at the origin, a box mesh, and the
- * default scene material — what the "+ Entity" button seeds; the caller
+ * built-in checker material — what the "+ Entity" button seeds; the caller
  * names and selects it. Undo is recorded by the scene api.
  */
 static s7_pointer sp_krudd_entity_create(s7_scheme *sc, s7_pointer args)
@@ -992,7 +992,7 @@ static s7_pointer sp_krudd_entity_create(s7_scheme *sc, s7_pointer args)
 	if (g_entity_api && g_entity_api->create_entity) {
 		uint32_t box = asset_id_by_path("builtin://mesh/box");
 		uint32_t material =
-			asset_id_by_path("builtin://material/default");
+			asset_id_by_path("builtin://material/checker");
 
 		memset(&seed, 0, sizeof(seed));
 		seed.rotation[3] = 1.0f;
@@ -1178,8 +1178,9 @@ static bool shader_compiles(const char *src)
 }
 
 /*
- * The engine's built-in scene shader — always present, read-only — used to
- * seed new shader assets so they start from working source instead of blank.
+ * The engine's built-in scene-textured shader — always present, read-only —
+ * used to seed new shader assets so they start from working source instead
+ * of blank.
  */
 static const char *default_shader_src(void)
 {
@@ -1193,7 +1194,7 @@ static const char *default_shader_src(void)
 		if (g_asset_api->info(i, &info) != 0 || !info.read_only ||
 		    info.type != ASSET_TYPE_SHADER)
 			continue;
-		if (strcmp(info.path, "builtin://shader/scene") == 0) {
+		if (strcmp(info.path, "builtin://shader/scene-textured") == 0) {
 			const void *data = g_asset_api->get_data(info.id, NULL);
 			return data ? (const char *)data : "";
 		}
@@ -2868,9 +2869,9 @@ static s7_pointer sp_krudd_asset_create_text(s7_scheme *sc, s7_pointer args)
 
 /*
  * (krudd-asset-create-shader path) -> the new id, or 0 on failure. Seeds
- * from the built-in scene shader so authoring starts from working source;
- * no declaration is set yet, matching the pre-port New Asset flow — the
- * first successful Save publishes it.
+ * from the built-in scene-textured shader so authoring starts from working
+ * source; no declaration is set yet, matching the pre-port New Asset flow —
+ * the first successful Save publishes it.
  */
 static s7_pointer sp_krudd_asset_create_shader(s7_scheme *sc, s7_pointer args)
 {
@@ -2889,15 +2890,15 @@ static s7_pointer sp_krudd_asset_create_shader(s7_scheme *sc, s7_pointer args)
 
 /*
  * (krudd-asset-create-material path) -> the new id, or 0 on failure. A new
- * material names the built-in scene shader and takes that shader's default
- * parameter values (its base_color defaults to white), packed in the v3 wire
- * form — a material is never shaderless.
+ * material names the built-in scene-textured shader and takes that shader's
+ * default parameter values (its base_color defaults to white), packed in the
+ * v3 wire form — a material is never shaderless.
  */
 static s7_pointer sp_krudd_asset_create_material(s7_scheme *sc, s7_pointer args)
 {
 	const char   *p          = s7_is_string(s7_car(args))
 		? s7_string(s7_car(args)) : "";
-	uint32_t      shader_ref = asset_id_by_path("builtin://shader/scene");
+	uint32_t      shader_ref = asset_id_by_path("builtin://shader/scene-textured");
 	const char   *src        = shader_src_cstr(shader_ref);
 	unsigned char bytes[MATERIAL_WIRE_CAP];
 	uint32_t      len        = MATERIAL_HEADER_BYTES;
@@ -5205,7 +5206,7 @@ static void draw_tab_world(void)
 			struct transform seed = {};  /* identity at origin */
 			uint32_t box = asset_id_by_path("builtin://mesh/box");
 			uint32_t material =
-				asset_id_by_path("builtin://material/default");
+				asset_id_by_path("builtin://material/checker");
 			int32_t          id;
 
 			seed.rotation[3] = 1.0f;

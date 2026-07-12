@@ -2,8 +2,8 @@
 //
 // Derives the engine's version with no VERSION file and no git tags: fold
 // every PR merged to main, in merge order, by its release:{breaking,feature,
-// fix,chore} label (release-label-gate.yml guarantees each carries exactly
-// one) into an X.Y.Z version. That fold IS the version — recomputed fresh
+// fix,chore} label (each PR is expected to carry exactly one) into an X.Y.Z
+// version. That fold IS the version — recomputed fresh
 // every build, not stored anywhere. It's ordinary semver: breaking bumps X,
 // feature bumps Y, and fix and chore both bump Z — so every merge, including a
 // purely internal one (docs, CI, refactor), still moves the displayed version.

@@ -260,6 +260,23 @@ static s7_pointer st_stats(s7_scheme *sc, s7_pointer a)
 }
 
 /*
+ * Fixture: (init-ms first-frame-ms (name . ms) ...) — the shape sp_krudd_startup
+ * hands back, with two phases so the Scene tab's Perf bar has a breakdown to
+ * lay out.
+ */
+static s7_pointer st_startup(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	return s7_cons(sc, s7_make_real(sc, 12.5),
+		s7_cons(sc, s7_make_real(sc, 30.0),
+			s7_list(sc, 2,
+				s7_cons(sc, s7_make_string(sc, "script_init"),
+					s7_make_real(sc, 4.0)),
+				s7_cons(sc, s7_make_string(sc, "asset"),
+					s7_make_real(sc, 6.0)))));
+}
+
+/*
  * Fixture: three subsystems exercising every cell shape —
  *   log        api=yes tick=yes size=1024
  *   memory     api=yes tick=-   size=- (zero)
@@ -1762,6 +1779,7 @@ static s7_scheme *setup(void)
 	def(sc, "imgui-set-scroll-here-y", st_scroll_here, 1);
 	def(sc, "imgui-viewport-work-height", st_work_height, 0);
 	def(sc, "krudd-stats", st_stats, 0);
+	def(sc, "krudd-startup", st_startup, 0);
 	def(sc, "krudd-subsystems", st_subsystems, 0);
 	def(sc, "krudd-log-history", st_log_history, 0);
 

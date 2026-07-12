@@ -24,6 +24,49 @@
 	  (imgui-text (format #f "Frame ms:  ~,2F" (cadr s)))
 	  (imgui-text (format #f "Frame:     ~D"   (caddr s)))))))
 
+;;! (kruddboard-draw-startup-row p) draws one boot phase as a Phase / ms table
+;;! row. p is a (name . ms) pair from (krudd-startup)'s phase list.
+(define (kruddboard-draw-startup-row p)
+  (imgui-table-next-row)
+  (imgui-table-next-column)
+  (imgui-text (car p))
+  (imgui-table-next-column)
+  (imgui-text (format #f "~,2F" (cdr p))))
+
+;;! (kruddboard-draw-startup) shows the one-time boot profile: the total
+;;! engine_init time, the time to the first frame, then a per-phase breakdown
+;;! of where init went (one row per plugin, plus the script_init / runtime
+;;! bookends). This is the "profile startup" view — a plugin bakes its textures
+;;! and lowers its shaders at register time, so a costly texture shows up as its
+;;! plugin's row. (krudd-startup) hands back #f when the stats subsystem is
+;;! absent (the #f branch mirrors the frame-stats null check) and, on a native
+;;! build with no boot timing, an all-zero profile.
+(define (kruddboard-draw-startup)
+  (let ((s (krudd-startup)))
+    (if (not s)
+	(imgui-text-disabled "(startup timings unavailable)")
+	(let ((init-ms  (car s))
+	      (first-ms (cadr s))
+	      (phases   (cddr s)))
+	  (imgui-text (format #f "Init total: ~,1F ms" init-ms))
+	  (imgui-text (format #f "1st frame:  ~,1F ms" first-ms))
+	  (when (pair? phases)
+	    (when (imgui-begin-table "##startup" 2)
+	      (imgui-table-setup-column "Phase")
+	      (imgui-table-setup-column "ms")
+	      (imgui-table-headers-row)
+	      (for-each kruddboard-draw-startup-row phases)
+	      (imgui-end-table)))))))
+
+;;! (kruddboard-draw-perf) is the Scene tab's roll-up perf bar body: the live
+;;! frame stats up top, then the one-time startup profile under its own
+;;! separator. Composed here so the Scene tab just folds one "Perf" header over
+;;! it (see kruddboard-draw-world).
+(define (kruddboard-draw-perf)
+  (kruddboard-draw-stats)
+  (imgui-separator)
+  (kruddboard-draw-startup))
+
 ;;! (kruddboard-draw-subsystem-row r) draws one subsystem: its name, then
 ;;! yes/- for whether it exposes an API and a tick. r is a (name api? tick?
 ;;! wasm-size) list; wasm-size is no longer shown (#kruddboard, WASM Size
@@ -546,8 +589,11 @@
 ;;! entity's editable guts) instead of unrolling it in place. The transform
 ;;! gizmo still tracks (krudd-selected), which a list-row click drives alongside
 ;;! the drill-in, so the gizmo mode set from the list keeps acting on the entity
-;;! being inspected.
+;;! being inspected. Above both screens sits the roll-up Perf bar, folded away by
+;;! default (the #f) so it stays out of the way, and drawn before the branch so
+;;! it's present whether the list or an inspector is showing.
 (define (kruddboard-draw-world)
+  (when (imgui-collapsing-header "Perf" #f) (kruddboard-draw-perf))
   (let ((caps (krudd-world-caps)))
     (if (not (= kruddboard-world-sel -1))
 	(kruddboard-draw-world-detail kruddboard-world-sel caps)

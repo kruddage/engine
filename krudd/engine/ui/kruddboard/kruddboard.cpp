@@ -628,7 +628,10 @@ static s7_pointer sp_imgui_selectable(s7_scheme *sc, s7_pointer args)
  * click on the label is unambiguously a select, mirroring imgui-selectable's
  * contract; a leaf node draws a bullet instead of an arrow, never carries
  * children, and always reports open? as #f. When open? is #t for a non-leaf
- * node the caller must draw its children and then call imgui-tree-pop.
+ * node the caller must draw its children and then call imgui-tree-pop. The
+ * node allows overlap so a trailing widget placed on the same line (e.g. an
+ * imgui-same-line-right delete button) can still be hovered/clicked despite
+ * the node's own hit-test rect spanning the full row width.
  */
 static s7_pointer sp_imgui_tree_node(s7_scheme *sc, s7_pointer args)
 {
@@ -640,7 +643,8 @@ static s7_pointer sp_imgui_tree_node(s7_scheme *sc, s7_pointer args)
 	bool       clicked  = false;
 
 	if (s7_is_string(id) && s7_is_string(label)) {
-		ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth;
+		ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth |
+					   ImGuiTreeNodeFlags_AllowOverlap;
 
 		if (selected)
 			flags |= ImGuiTreeNodeFlags_Selected;
@@ -5031,7 +5035,8 @@ static void draw_tab_world(void)
 				if (ImGui::Selectable(
 					    sel_id,
 					    (int32_t)i == sel,
-					    ImGuiSelectableFlags_SpanAllColumns)) {
+					    ImGuiSelectableFlags_SpanAllColumns |
+					    ImGuiSelectableFlags_AllowOverlap)) {
 					if (g_entity_api)
 						g_entity_api->set_selected(
 							(int32_t)i);

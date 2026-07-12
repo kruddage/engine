@@ -48,8 +48,8 @@ static const struct memory_api native_mem = {
  * wire form — see resolve_material_shader). Each distinct selected shader gets
  * its own pipeline, compiled once and cached by shader asset id; forward_pass
  * binds the right one per draw. A material with no shader-ref (every legacy
- * 16-byte material, the built-in default) renders with the built-in scene
- * pipeline exactly as before.
+ * 16-byte material) renders with the built-in scene-textured pipeline exactly
+ * as before.
  */
 
 #ifdef __EMSCRIPTEN__
@@ -549,8 +549,8 @@ static gpu_pipeline_t create_pso(const struct gpu_api *gpu, const char *src)
 /* Compile the built-in scene pipeline and pre-cache it under its asset id. */
 static void build_pipeline(const struct gpu_api *gpu)
 {
-	const char *src      = shader_src_by_path("builtin://shader/scene");
-	uint32_t    scene_id = asset_id_by_path("builtin://shader/scene");
+	const char *src      = shader_src_by_path("builtin://shader/scene-textured");
+	uint32_t    scene_id = asset_id_by_path("builtin://shader/scene-textured");
 
 	if (!src) {
 		g_log->write(LOG_LEVEL_WARN,
@@ -559,9 +559,9 @@ static void build_pipeline(const struct gpu_api *gpu)
 	}
 	g_default_pso = create_pso(gpu, src);
 	/*
-	 * Cache the built-in pipeline under the scene shader's id so a material
-	 * that names it (the default) reuses this pipeline instead of compiling
-	 * a second, identical one.
+	 * Cache the built-in pipeline under the scene-textured shader's id so a
+	 * material that names it (the default) reuses this pipeline instead of
+	 * compiling a second, identical one.
 	 */
 	if (g_default_pso && scene_id &&
 	    g_shader_pso_count < SCENE_MAX_SHADER_PSOS) {
@@ -1203,7 +1203,7 @@ static uint32_t scene_preview_render_mesh(uint32_t mesh_ref,
 	 * first sight, off-frame, exactly as ensure_shader_pipelines does.
 	 */
 	if (material_ref == 0)
-		material_ref = asset_id_by_path("builtin://material/default");
+		material_ref = asset_id_by_path("builtin://material/checker");
 	shader_ref = resolve_material_shader(material_ref);
 	if (shader_ref && !find_shader_pso(shader_ref))
 		add_shader_pso(gpu, shader_ref);
@@ -1325,27 +1325,21 @@ static void seed_demo_scene(void)
 	static const struct {
 		const char *path;
 		float       pos[3];
+		float       scale[3];
 		const char *script; /* behavior script to bind, or NULL */
 		const char *name;   /* shown in the entity list */
-		int         has_mesh_params; /* seed a mesh-param override? */
-		float       whd[3];          /* box width/height/depth when it does */
 	} DEMO[] = {
-		{ "builtin://mesh/box",     { -1.5f, 0.0f,  0.0f }, "builtin://script/spinner", "Box",     0, { 0.0f, 0.0f, 0.0f } },
-		{ "builtin://mesh/sphere",  {  0.0f, 0.0f, -1.0f }, "builtin://script/bounce",  "Sphere",  0, { 0.0f, 0.0f, 0.0f } },
-		{ "builtin://mesh/pyramid", {  1.5f, 0.0f,  0.5f }, "builtin://script/wobble",  "Pyramid", 0, { 0.0f, 0.0f, 0.0f } },
-		{ "builtin://mesh/grid",    { 0.0f, -0.5f, 1.5f }, NULL, "Grid",                0, { 0.0f, 0.0f, 0.0f } },
-		/*
-		 * Two entities on ONE mesh asset (builtin://mesh/box), drawing at
-		 * different sizes purely from their per-entity mesh-param overrides —
-		 * the geometry twin of the two same-material entities that draw in
-		 * different colors. This is the whole point made visible on load.
-		 */
-		{ "builtin://mesh/box",     { -3.2f, 0.0f,  0.0f }, NULL, "Tall Box",            1, { 0.6f, 2.0f, 0.6f } },
-		{ "builtin://mesh/box",     {  3.2f, 0.0f,  0.0f }, NULL, "Wide Box",            1, { 2.2f, 0.5f, 1.0f } },
+		{ "builtin://mesh/plane",   { 0.0f, -0.5f,  0.0f }, { 6.0f, 1.0f, 6.0f }, NULL,                        "Floor"   },
+		{ "builtin://mesh/box",     { -1.5f, 0.0f,  0.0f }, { 1.0f, 1.0f, 1.0f }, "builtin://script/spinner", "Box"     },
+		{ "builtin://mesh/sphere",  {  0.0f, 0.0f, -1.0f }, { 1.0f, 1.0f, 1.0f }, "builtin://script/bounce",  "Sphere"  },
+		{ "builtin://mesh/pyramid", {  1.5f, 0.0f,  0.5f }, { 1.0f, 1.0f, 1.0f }, "builtin://script/wobble",  "Pyramid" },
 	};
+	/* The floor bakes the checker at a denser scale than the built-in
+	 * default so it reads as a checkerboard rather than one giant tile. */
+	static const float  FLOOR_TEX_SCALE = 12.0f;
 	const struct world *w;
 	uint32_t            i;
-	uint32_t            material;
+	uint32_t            checker;
 
 	if (!g_scene || !g_scene->create_entity)
 		return;
@@ -1358,15 +1352,15 @@ static void seed_demo_scene(void)
 	}
 
 	/*
-	 * Every seeded entity carries the built-in default material, so the
-	 * world scene never rests in the "no material" state — each renderable
-	 * points at a real, inspectable material rather than going undrawn
+	 * Every seeded entity wears the built-in checker material, so the world
+	 * scene never rests in the "no material" state — each renderable points
+	 * at a real, inspectable material rather than going undrawn
 	 * (forward_pass skips any entity with no COMPONENT_MATERIAL, which is
 	 * how an entity keeps its mesh for picking/collision but stops
-	 * drawing). The default is opaque white, so the seeded scene looks
-	 * identical to before.
+	 * drawing) — and the whole scene proves the procedural-texture path
+	 * renders, not just the floor.
 	 */
-	material = asset_id_by_path("builtin://material/default");
+	checker = asset_id_by_path("builtin://material/checker");
 
 	for (i = 0; i < (uint32_t)(sizeof(DEMO) / sizeof(DEMO[0])); i++) {
 		struct transform t;
@@ -1380,38 +1374,20 @@ static void seed_demo_scene(void)
 		t.position[1] = DEMO[i].pos[1];
 		t.position[2] = DEMO[i].pos[2];
 		t.rotation[3] = 1.0f;
-		t.scale[0] = t.scale[1] = t.scale[2] = 1.0f;
+		t.scale[0] = DEMO[i].scale[0];
+		t.scale[1] = DEMO[i].scale[1];
+		t.scale[2] = DEMO[i].scale[2];
 		id = g_scene->create_entity(WORLD_NO_PARENT, &t, 0u, ref);
-		{
-			/*
-			 * The grid floor wears the built-in checker material — a
-			 * procedural texture baked and sampled on load, the proof
-			 * this whole path renders. Every other entity keeps the
-			 * opaque-white default, unchanged.
-			 */
-			uint32_t emat = material;
-
-			if (strcmp(DEMO[i].path, "builtin://mesh/grid") == 0) {
-				uint32_t c =
-					asset_id_by_path("builtin://material/checker");
-
-				if (c)
-					emat = c;
-			}
-			if (id >= 0 && emat && g_scene->set_material_ref)
-				g_scene->set_material_ref(id, emat);
-		}
+		if (id >= 0 && checker && g_scene->set_material_ref)
+			g_scene->set_material_ref(id, checker);
 		if (id >= 0 && g_scene->set_name)
 			g_scene->set_name(id, DEMO[i].name);
 
-		/*
-		 * Seed a mesh-param override so the two box entities, sharing one
-		 * mesh asset, generate distinct geometry (a tall box and a wide
-		 * one). Skipped cleanly on a build without the set_mesh_params entry.
-		 */
-		if (id >= 0 && DEMO[i].has_mesh_params && g_scene->set_mesh_params)
-			g_scene->set_mesh_params(id, (const uint8_t *)DEMO[i].whd,
-						 sizeof(DEMO[i].whd));
+		if (id >= 0 && strcmp(DEMO[i].path, "builtin://mesh/plane") == 0 &&
+		    g_scene->set_texture_params)
+			g_scene->set_texture_params(id,
+						    (const uint8_t *)&FLOOR_TEX_SCALE,
+						    sizeof(FLOOR_TEX_SCALE));
 
 		/*
 		 * Bind a behavior script so the demo scene animates on load — the
@@ -1424,50 +1400,6 @@ static void seed_demo_scene(void)
 
 			if (script)
 				g_scene->set_script_ref(id, script);
-		}
-	}
-
-	/*
-	 * Two boxes sharing ONE material (the built-in checker), each baking its
-	 * texture at a different scale purely from a per-entity texture-param
-	 * override — the pixel twin of the two boxes on one mesh above, and the
-	 * whole point of per-entity texture params made visible on load. The
-	 * override is one tight-packed float (the checker's leading `scale` param);
-	 * skipped cleanly on a build without the checker material or the
-	 * set_texture_params entry.
-	 */
-	if (g_scene->set_texture_params) {
-		static const struct {
-			float       pos[3];
-			float       scale;
-			const char *name;
-		} TEX[] = {
-			{ { -1.6f, 1.9f, 0.0f },  3.0f, "Checker x3"  },
-			{ {  1.6f, 1.9f, 0.0f }, 12.0f, "Checker x12" },
-		};
-		uint32_t box     = asset_id_by_path("builtin://mesh/box");
-		uint32_t checker = asset_id_by_path("builtin://material/checker");
-		uint32_t k;
-
-		for (k = 0; box && checker &&
-		     k < (uint32_t)(sizeof(TEX) / sizeof(TEX[0])); k++) {
-			struct transform t;
-			int32_t          id;
-
-			memset(&t, 0, sizeof(t));
-			t.position[0] = TEX[k].pos[0];
-			t.position[1] = TEX[k].pos[1];
-			t.position[2] = TEX[k].pos[2];
-			t.rotation[3] = 1.0f;
-			t.scale[0] = t.scale[1] = t.scale[2] = 0.8f;
-			id = g_scene->create_entity(WORLD_NO_PARENT, &t, 0u, box);
-			if (id < 0)
-				continue;
-			g_scene->set_material_ref(id, checker);
-			g_scene->set_texture_params(id, (const uint8_t *)&TEX[k].scale,
-						    sizeof(TEX[k].scale));
-			if (g_scene->set_name)
-				g_scene->set_name(id, TEX[k].name);
 		}
 	}
 

@@ -31,7 +31,7 @@ int main(void)
 	int32_t           found_sphere = 0;
 	int32_t           found_plane = 0;
 	int32_t           found_pyramid = 0;
-	int32_t           found_default_material = 0;
+	int32_t           found_checker_material = 0;
 	uint32_t          scene_shader_id = 0;
 	uint32_t          id_a;
 	uint32_t          id_b;
@@ -60,10 +60,10 @@ int main(void)
 		if (strcmp(info.path, "builtin://mesh/sphere")  == 0) found_sphere  = 1;
 		if (strcmp(info.path, "builtin://mesh/plane")   == 0) found_plane   = 1;
 		if (strcmp(info.path, "builtin://mesh/pyramid") == 0) found_pyramid = 1;
-		if (strcmp(info.path, "builtin://shader/scene") == 0)
+		if (strcmp(info.path, "builtin://shader/scene-textured") == 0)
 			scene_shader_id = info.id;
-		if (strcmp(info.path, "builtin://material/default") == 0) {
-			found_default_material = 1;
+		if (strcmp(info.path, "builtin://material/checker") == 0) {
+			found_checker_material = 1;
 			assert(info.type == ASSET_TYPE_MATERIAL);
 		}
 	}
@@ -73,21 +73,23 @@ int main(void)
 	assert(found_pyramid);
 
 	/*
-	 * The built-in default material is a read-only material asset in the v3
-	 * wire form: a leading shader-ref (the scene shader it names) followed by
-	 * the opaque-white base_color the scene binds to every world entity.
+	 * The built-in checker material is a read-only material asset in the v3
+	 * wire form: a leading shader-ref (the scene-textured shader it names),
+	 * the opaque-white base_color the scene binds to every world entity, and
+	 * a texture trailer naming the checker texture.
 	 */
-	assert(found_default_material);
+	assert(found_checker_material);
 	assert(scene_shader_id != 0);
 	{
 		uint32_t       mat_size = 0;
 		const uint8_t *bytes    = (const uint8_t *)
-			asset_get("builtin://material/default", &mat_size);
+			asset_get("builtin://material/checker", &mat_size);
 		uint32_t       shader_ref;
 		const float   *rgba;
 
 		assert(bytes != NULL);
-		assert(mat_size == sizeof(uint32_t) + 4 * sizeof(float));
+		assert(mat_size == sizeof(uint32_t) + 4 * sizeof(float)
+				   + 3 * sizeof(uint32_t));
 		memcpy(&shader_ref, bytes, sizeof(shader_ref));
 		assert(shader_ref == scene_shader_id);
 		rgba = (const float *)(bytes + sizeof(uint32_t));

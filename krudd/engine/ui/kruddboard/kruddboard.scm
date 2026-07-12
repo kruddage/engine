@@ -532,12 +532,17 @@
                 (when (and can-edit changed)
                   (krudd-entity-save-texture-params e tex-ref new-vals))))))))))
 
-;;! (kruddboard-draw-inspector-body e info caps) draws the editable name field
-;;! and transform table (both disabled without the scene api), then the read-only
-;;! details and the mesh/material/script binding rows. info is the
-;;! krudd-entity-inspect bundle; caps is (entity-api? asset-api?). The name
-;;! commits once on focus loss and the transform writes back after the disabled
-;;! block, as the C did.
+;;! (kruddboard-draw-inspector-body e info caps) draws the editable name field,
+;;! then three collapsing sections: Transform (the position/rotation/scale
+;;! table), Info (the read-only id / parent / components details), and Bindings
+;;! (the mesh / material / script rows and their param menus). Folding the tall
+;;! parts keeps an opened entity short on the narrow phone-width layout the tree
+;;! now renders inline — Transform and Bindings default open, Info stays rolled
+;;! up since it's read-only reference. The name field and transform table are
+;;! disabled without the scene api, but the headers themselves stay clickable so
+;;! sections can still be folded. info is the krudd-entity-inspect bundle; caps
+;;! is (entity-api? asset-api?). The name commits once on focus loss and the
+;;! transform writes back after the disabled block, as the C did.
 (define (kruddboard-draw-inspector-body e info caps)
   (let ((name         (list-ref info 0))
 	(pos          (list-ref info 1))
@@ -558,31 +563,35 @@
     (let ((edit (imgui-input-text "##ename" name)))
       (when (cdr edit)
 	(krudd-entity-set-name e (car edit))))
+    (imgui-end-disabled)
     (imgui-separator)
-    (let ((xf (kruddboard-draw-xform-table pos rot scl)))
-      (imgui-end-disabled)
-      (when (car xf)
-	(krudd-entity-set-transform e (cadr xf) (caddr xf) (cadddr xf))))
-    (imgui-separator)
-    (kruddboard-draw-inspector-details e parent has-name has-render
-				       has-material has-script)
-    (let ((can-bind (and has-entity has-asset)))
-      (kruddboard-draw-inspector-binding "Mesh" "##emesh" "##meshsel" e
-	  has-render render-ref (krudd-mesh-assets) can-bind
-	  krudd-entity-set-render-ref)
-      (when has-render
-	(kruddboard-draw-entity-mesh-params e render-ref can-bind))
-      (kruddboard-draw-inspector-binding "Material" "##ematerial"
-	  "##materialsel" e has-material material-ref (krudd-material-assets)
-	  can-bind krudd-entity-set-material-ref)
-      (when has-material
-	(kruddboard-draw-entity-material-params e material-ref can-bind)
-	(kruddboard-draw-entity-texture-params e material-ref can-bind))
-      (kruddboard-draw-inspector-binding "Script" "##escript" "##scriptsel" e
-	  has-script script-ref (krudd-script-assets) can-bind
-	  krudd-entity-set-script-ref)
-      (when has-script
-	(kruddboard-draw-script-params e script-ref can-bind)))))
+    (when (imgui-collapsing-header "Transform")
+      (imgui-begin-disabled (not has-entity))
+      (let ((xf (kruddboard-draw-xform-table pos rot scl)))
+	(imgui-end-disabled)
+	(when (car xf)
+	  (krudd-entity-set-transform e (cadr xf) (caddr xf) (cadddr xf)))))
+    (when (imgui-collapsing-header "Info" #f)
+      (kruddboard-draw-inspector-details e parent has-name has-render
+					 has-material has-script))
+    (when (imgui-collapsing-header "Bindings")
+      (let ((can-bind (and has-entity has-asset)))
+	(kruddboard-draw-inspector-binding "Mesh" "##emesh" "##meshsel" e
+	    has-render render-ref (krudd-mesh-assets) can-bind
+	    krudd-entity-set-render-ref)
+	(when has-render
+	  (kruddboard-draw-entity-mesh-params e render-ref can-bind))
+	(kruddboard-draw-inspector-binding "Material" "##ematerial"
+	    "##materialsel" e has-material material-ref (krudd-material-assets)
+	    can-bind krudd-entity-set-material-ref)
+	(when has-material
+	  (kruddboard-draw-entity-material-params e material-ref can-bind)
+	  (kruddboard-draw-entity-texture-params e material-ref can-bind))
+	(kruddboard-draw-inspector-binding "Script" "##escript" "##scriptsel" e
+	    has-script script-ref (krudd-script-assets) can-bind
+	    krudd-entity-set-script-ref)
+	(when has-script
+	  (kruddboard-draw-script-params e script-ref can-bind))))))
 
 ;;! (kruddboard-draw-world) is the whole World tab: scene header, gizmo tool
 ;;! chips, then the entity tree — one expandable node per entity that opens onto

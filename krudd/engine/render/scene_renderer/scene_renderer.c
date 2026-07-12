@@ -4,7 +4,10 @@
 #include "entity_api.h"
 #include "camera.h"
 #include "camera_api.h"
+#include "preview_api.h"
 #include "math_types.h"
+
+#include <math.h>
 #include "mesh.h"
 #include "mesh_script.h"
 #include "texture.h"
@@ -845,6 +848,312 @@ static void ensure_textures(void)
 	}
 }
 
+/* ------------------------------------------------------------------ */
+/* Mesh preview — render one mesh, shaded, into an offscreen target     */
+/* ------------------------------------------------------------------ */
+/*
+ * The editor's mesh inspector wants a lit thumbnail of an authored mesh. Rather
+ * than approximate it, render the real geometry through the real scene pipeline
+ * into an offscreen color+depth target and hand back the color texture's native
+ * handle for ImGui to composite (see preview_api.h). This drives the gpu device
+ * directly — a legitimate off-frame render like init's resource creation, not a
+ * frame-graph pass — so it never touches the per-frame forward pass.
+ *
+ * State is a single reusable slot: one pair of render targets sized to the last
+ * requested edge, and one uploaded mesh keyed by asset id. Both are kept apart
+ * from the world caches (g_meshes/g_textures) so ensure_meshes' mark/sweep never
+ * evicts the preview geometry (no live entity references it).
+ */
+#define PREVIEW_MAX_RES 512
+
+static gpu_texture_t g_prev_color;      /* RGBA8 target; 0 until first preview */
+static gpu_texture_t g_prev_depth;      /* depth target, same edge as color    */
+static uint32_t      g_prev_res;        /* edge of the current targets         */
+static gpu_buffer_t  g_prev_vbo;
+static gpu_buffer_t  g_prev_ebo;
+static uint32_t      g_prev_mesh_ref;   /* asset id the buffers hold (0 = none) */
+static uint32_t      g_prev_index_count;
+static float         g_prev_center[3];  /* AABB center of the cached mesh       */
+static float         g_prev_radius;     /* bounding radius, for camera framing  */
+
+/*
+ * (Re)allocate the color+depth preview targets at `res` when the requested edge
+ * changes. Returns 0 on allocation failure. The old pair is freed first so a
+ * resolution change doesn't leak.
+ */
+static int preview_ensure_targets(const struct gpu_api *gpu, uint32_t res)
+{
+	struct gpu_texture_desc td;
+
+	if (g_prev_color && g_prev_res == res)
+		return 1;
+	if (g_prev_color) {
+		gpu->texture_destroy(g_prev_color);
+		g_prev_color = 0;
+	}
+	if (g_prev_depth) {
+		gpu->texture_destroy(g_prev_depth);
+		g_prev_depth = 0;
+	}
+
+	memset(&td, 0, sizeof(td));
+	td.format       = GPU_FORMAT_RGBA8_UNORM;
+	td.width        = res;
+	td.height       = res;
+	td.mip_levels   = 1;
+	td.sample_count = 1;
+	g_prev_color = gpu->texture_create(&td);
+
+	td.format    = GPU_FORMAT_DEPTH32_FLOAT;
+	g_prev_depth = gpu->texture_create(&td);
+
+	if (!g_prev_color || !g_prev_depth) {
+		if (g_prev_color) gpu->texture_destroy(g_prev_color);
+		if (g_prev_depth) gpu->texture_destroy(g_prev_depth);
+		g_prev_color = g_prev_depth = 0;
+		g_prev_res   = 0;
+		return 0;
+	}
+	g_prev_res = res;
+	return 1;
+}
+
+/*
+ * (Re)generate and upload the preview mesh when the inspected asset changes,
+ * caching its geometry and the AABB (center + radius) the camera frames against.
+ * Param-less generation (the mesh's declared defaults) is what the inspector
+ * shows. Returns 0 when the asset has no source or the generator yields nothing.
+ */
+static int preview_ensure_mesh(const struct gpu_api *gpu, uint32_t mesh_ref)
+{
+	const struct mesh_blob   *blob;
+	const struct mesh_vertex *vtx;
+	struct gpu_buffer_desc    bd;
+	const char               *src;
+	float                     lo[3], hi[3];
+	uint32_t                  i;
+
+	if (g_prev_mesh_ref == mesh_ref && g_prev_vbo)
+		return 1;
+
+	if (g_prev_vbo) { gpu->buffer_destroy(g_prev_vbo); g_prev_vbo = 0; }
+	if (g_prev_ebo) { gpu->buffer_destroy(g_prev_ebo); g_prev_ebo = 0; }
+	g_prev_mesh_ref = 0;
+
+	src = (const char *)g_asset->get_data(mesh_ref, NULL);
+	if (!src)
+		return 0;
+	blob = mesh_script_generate(src, NULL, 0, g_mem, NULL);
+	if (!blob)
+		return 0;
+
+	vtx = mesh_blob_vertices(blob);
+	if (blob->vertex_count == 0) {
+		g_mem->free((void *)blob);
+		return 0;
+	}
+	lo[0] = hi[0] = vtx[0].position[0];
+	lo[1] = hi[1] = vtx[0].position[1];
+	lo[2] = hi[2] = vtx[0].position[2];
+	for (i = 1; i < blob->vertex_count; i++) {
+		uint32_t k;
+
+		for (k = 0; k < 3; k++) {
+			float v = vtx[i].position[k];
+
+			if (v < lo[k]) lo[k] = v;
+			if (v > hi[k]) hi[k] = v;
+		}
+	}
+	{
+		float r2 = 0.0f;
+		float d[3];
+
+		for (i = 0; i < 3; i++)
+			g_prev_center[i] = 0.5f * (lo[i] + hi[i]);
+		d[0] = 0.5f * (hi[0] - lo[0]);
+		d[1] = 0.5f * (hi[1] - lo[1]);
+		d[2] = 0.5f * (hi[2] - lo[2]);
+		r2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+		g_prev_radius = r2 > 0.0f ? sqrtf(r2) : 1.0f;
+	}
+
+	memset(&bd, 0, sizeof(bd));
+	bd.usage        = GPU_BUFFER_USAGE_VERTEX;
+	bd.size         = (size_t)blob->vertex_count * sizeof(struct mesh_vertex);
+	bd.initial_data = vtx;
+	g_prev_vbo = gpu->buffer_create(&bd);
+
+	bd.usage        = GPU_BUFFER_USAGE_INDEX;
+	bd.size         = (size_t)blob->index_count * sizeof(uint16_t);
+	bd.initial_data = mesh_blob_indices(blob);
+	g_prev_ebo = gpu->buffer_create(&bd);
+
+	g_prev_index_count = blob->index_count;
+	g_prev_mesh_ref    = mesh_ref;
+	g_mem->free((void *)blob);
+	return (g_prev_vbo && g_prev_ebo) ? 1 : 0;
+}
+
+/*
+ * Render mesh_ref shaded with material_ref into the preview target and return
+ * the color texture's native handle (see preview_api.h). Drives the device
+ * directly for a single off-frame pass, reusing the scene pipeline, the shared
+ * Camera/Material UBOs and the mesh upload path so the thumbnail matches how the
+ * mesh draws in-scene. Returns 0 on any failure.
+ */
+static uint32_t scene_preview_render_mesh(uint32_t mesh_ref,
+					  uint32_t material_ref,
+					  uint32_t res, float yaw)
+{
+	static const float          BG[4] = { 0.10f, 0.11f, 0.13f, 1.0f };
+	static const float          WHITE[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+	const struct gpu_api        *gpu;
+	struct gpu_render_pass_desc  rp;
+	struct gpu_draw_indexed_args draw;
+	struct camera                cam;
+	struct transform             mt;
+	struct mat4                  model;
+	gpu_cmd_buf_t                cmd;
+	gpu_pipeline_t               pso;
+	uint32_t                     shader_ref;
+	float                        ubo[SCENE_UBO_FLOATS];
+	unsigned char                params[MATERIAL_UBO_MAX];
+	const uint8_t               *pbytes;
+	uint32_t                     plen = 0;
+	float                        dist;
+
+	if (!g_ready || !g_scene || !g_asset || !mesh_ref || res == 0)
+		return 0;
+	if (res > PREVIEW_MAX_RES)
+		res = PREVIEW_MAX_RES;
+
+	gpu = g_mgr ? subsystem_manager_get_api(g_mgr, "renderer") : NULL;
+	if (!gpu)
+		return 0;
+
+	if (!preview_ensure_targets(gpu, res))
+		return 0;
+	if (!preview_ensure_mesh(gpu, mesh_ref))
+		return 0;
+
+	/*
+	 * A material_ref of 0 means "the built-in default", so a pure-geometry
+	 * preview needs no material picked. Compile its shader's pipeline on
+	 * first sight, off-frame, exactly as ensure_shader_pipelines does.
+	 */
+	if (material_ref == 0)
+		material_ref = asset_id_by_path("builtin://material/default");
+	shader_ref = resolve_material_shader(material_ref);
+	if (shader_ref && !find_shader_pso(shader_ref))
+		add_shader_pso(gpu, shader_ref);
+	pso = pso_for_shader(shader_ref);
+
+	/* Frame the mesh's bounds from a fixed three-quarter view. */
+	cam.fov_y  = 0.6f;
+	cam.aspect = 1.0f;
+	cam.near   = 0.05f;
+	cam.far    = 100.0f;
+	cam.up[0]  = 0.0f; cam.up[1] = 1.0f; cam.up[2] = 0.0f;
+	cam.target[0] = g_prev_center[0];
+	cam.target[1] = g_prev_center[1];
+	cam.target[2] = g_prev_center[2];
+	dist = (g_prev_radius / sinf(cam.fov_y * 0.5f)) * 1.25f;
+	/* Direction (0.5, 0.45, 1.0), normalized, scaled to the framing distance. */
+	{
+		float dir[3] = { 0.5f, 0.45f, 1.0f };
+		float len = sqrtf(dir[0]*dir[0] + dir[1]*dir[1] + dir[2]*dir[2]);
+
+		cam.eye[0] = cam.target[0] + dir[0] / len * dist;
+		cam.eye[1] = cam.target[1] + dir[1] / len * dist;
+		cam.eye[2] = cam.target[2] + dir[2] / len * dist;
+	}
+	camera_update(&cam);
+
+	/* model: a yaw about +Y so the caller can spin the preview. */
+	memset(&mt, 0, sizeof(mt));
+	mt.position[0] = mt.position[1] = mt.position[2] = 0.0f;
+	mt.rotation[0] = 0.0f;
+	mt.rotation[1] = sinf(yaw * 0.5f);
+	mt.rotation[2] = 0.0f;
+	mt.rotation[3] = cosf(yaw * 0.5f);
+	mt.scale[0] = mt.scale[1] = mt.scale[2] = 1.0f;
+	mat4_from_transform(&model, &mt);
+
+	memcpy(&ubo[0],  cam.view_proj.m, 16 * sizeof(float));
+	memcpy(&ubo[16], model.m,         16 * sizeof(float));
+
+	/* Material params: the shader's Material block, or a white tint fallback. */
+	pbytes = material_params(material_ref, &plen);
+	if (pbytes && shader_ref) {
+		uint32_t block = material_block_size_of(shader_ref);
+
+		if (block && plen > block)
+			plen = block;
+	}
+	if (plen > MATERIAL_UBO_MAX)
+		plen = MATERIAL_UBO_MAX;
+	if (!pbytes || plen == 0) {
+		memcpy(params, WHITE, sizeof(WHITE));
+		plen = MATERIAL_FALLBACK_BYTES;
+	} else {
+		memcpy(params, pbytes, plen);
+	}
+
+	cmd = gpu->cmd_buf_begin();
+
+	memset(&rp, 0, sizeof(rp));
+	rp.color_count       = 1;
+	rp.color[0].texture  = g_prev_color;
+	rp.color[0].load_op  = GPU_LOAD_OP_CLEAR;
+	rp.color[0].store_op = GPU_STORE_OP_STORE;
+	rp.color[0].clear[0] = BG[0];
+	rp.color[0].clear[1] = BG[1];
+	rp.color[0].clear[2] = BG[2];
+	rp.color[0].clear[3] = BG[3];
+	rp.depth             = g_prev_depth;
+	rp.depth_load_op     = GPU_LOAD_OP_CLEAR;
+	rp.depth_store_op    = GPU_STORE_OP_STORE;
+	rp.clear_depth       = 1.0f;
+	gpu->cmd_begin_render_pass(cmd, &rp);
+
+	gpu->cmd_set_pipeline(cmd, pso);
+	gpu->buffer_update(g_ubo, 0, ubo, (uint32_t)sizeof(ubo));
+	gpu->cmd_bind_uniform_buffer(cmd, 0, g_ubo, 0, (uint32_t)sizeof(ubo));
+	gpu->buffer_update(g_material_ubo, 0, params, plen);
+	gpu->cmd_bind_uniform_buffer(cmd, 1, g_material_ubo, 0, plen);
+	gpu->cmd_bind_vertex_buffer(cmd, 0, g_prev_vbo, 0);
+	gpu->cmd_bind_index_buffer(cmd, g_prev_ebo, 0, GPU_INDEX_FORMAT_UINT16);
+
+	memset(&draw, 0, sizeof(draw));
+	draw.index_count    = g_prev_index_count;
+	draw.instance_count = 1;
+	gpu->cmd_draw_indexed(cmd, &draw);
+
+	gpu->cmd_end_render_pass(cmd);
+	gpu->cmd_buf_submit(cmd);
+
+	return gpu->texture_native_handle(g_prev_color);
+}
+
+/* Free the preview's targets and mesh buffers — called from shutdown. */
+static void preview_release(const struct gpu_api *gpu)
+{
+	if (!gpu)
+		return;
+	if (g_prev_color) gpu->texture_destroy(g_prev_color);
+	if (g_prev_depth) gpu->texture_destroy(g_prev_depth);
+	if (g_prev_vbo)   gpu->buffer_destroy(g_prev_vbo);
+	if (g_prev_ebo)   gpu->buffer_destroy(g_prev_ebo);
+	g_prev_color = g_prev_depth = 0;
+	g_prev_vbo = g_prev_ebo = 0;
+	g_prev_res = g_prev_mesh_ref = g_prev_index_count = 0;
+}
+
+static const struct preview_api g_preview_api = {
+	scene_preview_render_mesh,
+};
+
 /*
  * Seed a small demo scene so the page shows content on load and exercises
  * depth-correct multi-entity rendering (#172 acceptance). Only runs when the
@@ -1282,6 +1591,7 @@ static void scene_renderer_shutdown(void)
 
 	gpu = g_mgr ? subsystem_manager_get_api(g_mgr, "renderer") : NULL;
 	if (gpu) {
+		preview_release(gpu);
 		for (i = 0; i < g_mesh_count; i++) {
 			gpu->buffer_destroy(g_meshes[i].vbo);
 			gpu->buffer_destroy(g_meshes[i].ebo);
@@ -1329,6 +1639,16 @@ static const struct subsystem camera_desc = {
 	.api  = &g_camera_api,
 };
 
+/*
+ * The mesh-preview service (see preview_api.h) — published like the camera as
+ * its own read-only subsystem so the editor resolves it by intent. No lifecycle
+ * of its own; the renderer owns the preview targets and frees them at shutdown.
+ */
+static const struct subsystem preview_desc = {
+	.name = "mesh_preview",
+	.api  = &g_preview_api,
+};
+
 void scene_renderer_plugin_entry(struct subsystem_manager *mgr)
 {
 	g_mgr = mgr;
@@ -1340,5 +1660,6 @@ void scene_renderer_plugin_entry(struct subsystem_manager *mgr)
 	g_scene  = subsystem_manager_get_api(mgr, "scene");
 	g_asset  = subsystem_manager_get_api(mgr, "asset");
 	subsystem_manager_register(mgr, &camera_desc);
+	subsystem_manager_register(mgr, &preview_desc);
 	subsystem_manager_register(mgr, &desc);
 }

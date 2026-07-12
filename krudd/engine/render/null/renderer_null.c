@@ -298,6 +298,13 @@ static void null_texture_destroy(gpu_texture_t texture)
 	});
 }
 
+/* The null backend owns no GL objects, so there is no native handle to hand out. */
+static uint32_t null_texture_native_handle(gpu_texture_t texture)
+{
+	(void)texture;
+	return 0u;
+}
+
 static const struct gpu_api null_api = {
 	.caps                   = GPU_CAP_DRAW_INDEXED | GPU_CAP_COMPUTE,
 	.cmd_buf_begin          = null_cmd_buf_begin,
@@ -323,6 +330,7 @@ static const struct gpu_api null_api = {
 	.texture_create         = null_texture_create,
 	.texture_destroy        = null_texture_destroy,
 	.cmd_bind_texture       = null_cmd_bind_texture,
+	.texture_native_handle  = null_texture_native_handle,
 };
 
 static void renderer_null_init(void)

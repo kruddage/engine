@@ -1258,6 +1258,21 @@ static s7_pointer st_texture_preview(s7_scheme *sc, s7_pointer a)
 	return s7_unspecified(sc);
 }
 
+/*
+ * (krudd-mesh-preview mesh-ref material-ref res) — the real primitive renders the
+ * mesh shaded into an offscreen target and draws it as a GL image; the harness
+ * only records that it fired with which mesh-ref/res, so a test can assert the
+ * mesh inspector requested a preview.
+ */
+static s7_pointer st_mesh_preview(s7_scheme *sc, s7_pointer a)
+{
+	unsigned ref = (unsigned)s7_integer(s7_car(a));
+	unsigned res = (unsigned)s7_integer(s7_caddr(a));
+
+	rec("mesh-preview|%u|%u", ref, res);
+	return s7_unspecified(sc);
+}
+
 /* Per-entity material override values: (entity-id material-id shader-ref) ->
  * the same shape st_material_values yields, so the inspector's Material
  * Parameters group renders the shader's editable params for the entity. */
@@ -1814,6 +1829,7 @@ static s7_scheme *setup(void)
 	    st_entity_save_texture_params, 3);
 	def(sc, "krudd-texture-values", st_texture_values, 1);
 	def(sc, "krudd-texture-preview", st_texture_preview, 3);
+	def(sc, "krudd-mesh-preview", st_mesh_preview, 3);
 	def(sc, "krudd-entity-script-overrides", st_entity_script_overrides, 2);
 	def(sc, "krudd-entity-material-overrides",
 	    st_entity_material_overrides, 3);
@@ -2957,6 +2973,19 @@ static void test_assets_mesh_declaration(void)
 		       "(mesh mine (generate () (cons (list) (list))))"));
 }
 
+/* The mesh inspector requests a shaded preview of the selected mesh, drawn with
+ * the built-in default material (material-ref 0) at the module's preview edge. */
+static void test_assets_mesh_preview(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	script_eval("(set! kruddboard-assets-sel 1051)");
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+
+	assert(rec_has("mesh-preview|1051|256"));
+}
+
 static void test_assets_mesh_save_ok(void)
 {
 	asset_reset();
@@ -3347,6 +3376,7 @@ int main(void)
 	RUN(assets_script_clone_conflict);
 	RUN(assets_create_script);
 	RUN(assets_mesh_declaration);
+	RUN(assets_mesh_preview);
 	RUN(assets_mesh_save_ok);
 	RUN(assets_mesh_save_fail);
 	RUN(assets_mesh_clone);

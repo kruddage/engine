@@ -26,6 +26,7 @@ extern "C" {
 #include "entity_api.h"
 #include "edit_api.h"
 #include "camera_api.h"
+#include "preview_api.h"
 #include "mesh.h"
 #include "memory_api.h"
 #ifdef __EMSCRIPTEN__
@@ -80,6 +81,7 @@ static const struct entity_api        *g_entity_api;
 static int32_t                         g_entity_sel = -1; /* -1 = none */
 static const struct edit_api          *g_edit_api;  /* NULL = no history */
 static const struct camera_api        *g_camera_api; /* NULL = no viewport gizmo */
+static const struct preview_api       *g_preview_api; /* NULL = no mesh preview */
 
 /* Transform gizmo mode, shared between the viewport handles and the World tab. */
 enum gizmo_mode {
@@ -2558,6 +2560,37 @@ static s7_pointer sp_krudd_texture_preview(s7_scheme *sc, s7_pointer args)
 }
 
 /*
+ * (krudd-mesh-preview mesh-ref material-ref res) renders mesh-ref shaded — the
+ * real scene pipeline into an offscreen target, via scene_renderer's preview
+ * service (preview_api.h) — and draws the result inline as a slowly rotating
+ * thumbnail. material-ref 0 uses the built-in default material, so the mesh
+ * inspector shows pure lit geometry regardless of any authored material. Draws a
+ * disabled note when the preview service is absent (no renderer) or the render
+ * fails. Unlike the texture preview's CPU bake, the pixels come from a GPU render
+ * pass into a render-target texture — the first consumer of the FBO path.
+ */
+static s7_pointer sp_krudd_mesh_preview(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer a        = args;
+	uint32_t   mesh_ref = (uint32_t)s7_integer(s7_car(a)); a = s7_cdr(a);
+	uint32_t   mat_ref  = (uint32_t)s7_integer(s7_car(a)); a = s7_cdr(a);
+	uint32_t   res      = (uint32_t)s7_integer(s7_car(a));
+	float      yaw      = (float)ImGui::GetTime() * 0.5f;
+	uint32_t   tex;
+
+	if (!g_preview_api || !g_preview_api->render_mesh || res == 0) {
+		ImGui::TextDisabled("(no preview)");
+		return s7_unspecified(sc);
+	}
+	tex = g_preview_api->render_mesh(mesh_ref, mat_ref, res, yaw);
+	if (tex)
+		ImGui::Image((ImTextureID)(intptr_t)tex, ImVec2(192.0f, 192.0f));
+	else
+		ImGui::TextDisabled("(preview unavailable)");
+	return s7_unspecified(sc);
+}
+
+/*
  * Override flags — the per-field twin of the *-values accessors above, one
  * boolean per param: is this entity's value an override that differs from the
  * baseline it would draw without one? The World tree lights a dot beside a
@@ -3404,6 +3437,10 @@ static s7_scheme *ensure_panel_scm(void)
 			   3, 0, false,
 			   "(krudd-texture-preview texture-ref values res) draw a "
 			   "live bake as an inline image");
+	s7_define_function(sc, "krudd-mesh-preview", sp_krudd_mesh_preview,
+			   3, 0, false,
+			   "(krudd-mesh-preview mesh-ref material-ref res) draw a "
+			   "shaded offscreen render as an inline image");
 	s7_define_function(sc, "krudd-entity-script-overrides",
 			   sp_krudd_entity_script_overrides, 2, 0, false,
 			   "(krudd-entity-script-overrides id script-ref) -> "
@@ -5633,6 +5670,8 @@ extern "C" void kruddboard_plugin_entry(struct subsystem_manager *mgr)
 		subsystem_manager_get_api(mgr, "edit");
 	g_camera_api = (const struct camera_api *)
 		subsystem_manager_get_api(mgr, "camera");
+	g_preview_api = (const struct preview_api *)
+		subsystem_manager_get_api(mgr, "mesh_preview");
 	g_mem        = (const struct memory_api *)
 		subsystem_manager_get_api(mgr, "memory");
 	g_mgr        = mgr;

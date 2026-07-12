@@ -44,7 +44,10 @@ struct gpu_buffer {
 };
 
 struct gpu_texture {
-	unsigned int gl_tex; /* GLuint */
+	unsigned int gl_tex;   /* GLuint */
+	unsigned int width;    /* pixels; the viewport size when used as a target */
+	unsigned int height;
+	int          is_depth; /* 1 = depth texture (a render pass's depth attach) */
 };
 
 #ifdef __EMSCRIPTEN__
@@ -55,6 +58,15 @@ static unsigned int                    g_topology;   /* active draw topology */
 static unsigned int                    g_index_type = GL_UNSIGNED_SHORT;
 static unsigned int                    g_index_size = 2; /* bytes per index */
 static struct gpu_pipeline            *g_cur_pipeline; /* bound by set_pipeline */
+/*
+ * One reusable framebuffer object for every offscreen render pass. A pass whose
+ * color attachment is a real texture (not the imported backbuffer, whose handle
+ * is NULL) binds this FBO and points its attachments at the pass's textures; the
+ * backbuffer path leaves it untouched and draws to framebuffer 0 as before. Zero
+ * until the first offscreen pass creates it; reused across passes and selections
+ * (each begin re-attaches), so there is nothing to free until context teardown.
+ */
+static unsigned int                    g_offscreen_fbo;
 #else
 static const struct log_api    *g_log = &native_log;
 static const struct memory_api *g_mem = &native_mem;
@@ -454,29 +466,59 @@ webgl_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 {
 	(void)cmd;
 #ifdef __EMSCRIPTEN__
-	GLbitfield clear_mask = 0;
-	int        dw = 0, dh = 0;
+	GLbitfield          clear_mask = 0;
+	int                 vw = 0, vh = 0;
+	struct gpu_texture *color0 =
+		desc->color_count > 0
+			? (struct gpu_texture *)desc->color[0].texture
+			: NULL;
 
-	/* Bind default framebuffer; FBO path deferred to a later pass. */
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	if (color0) {
+		/*
+		 * Offscreen pass: the color attachment is a real texture (the
+		 * imported backbuffer's handle is NULL — see fg_import_backbuffer),
+		 * so bind the shared FBO, point its attachments at this pass's
+		 * textures, and size the viewport to the target. Depth is optional;
+		 * detach any stale depth from a previous offscreen pass when this
+		 * one supplies none.
+		 */
+		struct gpu_texture *dtex = (struct gpu_texture *)desc->depth;
+
+		if (!g_offscreen_fbo)
+			glGenFramebuffers(1, &g_offscreen_fbo);
+		glBindFramebuffer(GL_FRAMEBUFFER, g_offscreen_fbo);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+				       GL_TEXTURE_2D, (GLuint)color0->gl_tex, 0);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+				       GL_TEXTURE_2D,
+				       dtex ? (GLuint)dtex->gl_tex : 0, 0);
+		if (glCheckFramebufferStatus(GL_FRAMEBUFFER) !=
+		    GL_FRAMEBUFFER_COMPLETE) {
+			g_log->write(LOG_LEVEL_ERROR,
+				     "renderer_webgl: offscreen framebuffer "
+				     "incomplete; skipping pass");
+			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+			return;
+		}
+		vw = (int)color0->width;
+		vh = (int)color0->height;
+	} else {
+		/* Backbuffer pass: the canvas's default framebuffer. */
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		emscripten_webgl_get_drawing_buffer_size(g_ctx, &vw, &vh);
+	}
 
 	/*
 	 * Establish our own GL state rather than inheriting whatever the
 	 * previous subsystem (the ImGui backend) left behind. ImGui leaves
 	 * GL_SCISSOR_TEST and GL_BLEND enabled with a stale scissor box, which
-	 * otherwise clips the clear and the draw to a corner of the canvas.
+	 * otherwise clips the clear and the draw to a corner of the target.
+	 * glDepthMask must be enabled for the depth clear below to take effect.
 	 */
-	emscripten_webgl_get_drawing_buffer_size(g_ctx, &dw, &dh);
-	glViewport(0, 0, dw, dh);
+	glViewport(0, 0, vw, vh);
 	glDisable(GL_SCISSOR_TEST);
 	glDisable(GL_BLEND);
 	glDisable(GL_CULL_FACE);
-	/*
-	 * Depth test against the canvas's own depth buffer. The frame graph
-	 * scopes offscreen depth targets out for now, so 3D passes rendering to
-	 * the backbuffer rely on this default-framebuffer depth. glDepthMask
-	 * must be enabled for the depth clear below to take effect.
-	 */
 	glEnable(GL_DEPTH_TEST);
 	glDepthFunc(GL_LESS);
 	glDepthMask(GL_TRUE);
@@ -489,8 +531,8 @@ webgl_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 		clear_mask |= GL_COLOR_BUFFER_BIT;
 	}
 	/*
-	 * Clear the backbuffer depth each pass. Honour an explicit clear value
-	 * when the pass supplies one, else reset to the far plane (1.0).
+	 * Clear the pass's depth. Honour an explicit clear value when the pass
+	 * supplies one, else reset to the far plane (1.0).
 	 */
 	glClearDepthf(desc->depth_load_op == GPU_LOAD_OP_CLEAR
 		      ? desc->clear_depth : 1.0f);
@@ -505,7 +547,15 @@ webgl_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 static void webgl_cmd_end_render_pass(gpu_cmd_buf_t cmd)
 {
 	(void)cmd;
-	/* WebGL 2 has no explicit pass end. */
+#ifdef __EMSCRIPTEN__
+	/*
+	 * Return to the default framebuffer so whatever renders next (a later
+	 * backbuffer pass, or the ImGui backend compositing an offscreen result
+	 * with ImGui::Image) draws to the canvas and never to a stale FBO. A
+	 * backbuffer pass was already bound to 0, so this is a no-op for it.
+	 */
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+#endif
 }
 
 static void webgl_cmd_barrier(gpu_cmd_buf_t cmd,
@@ -555,34 +605,53 @@ webgl_texture_create(const struct gpu_texture_desc *desc)
 	t = g_mem->alloc(sizeof(*t));
 	if (!t)
 		return NULL;
-	t->gl_tex = 0;
+	t->gl_tex   = 0;
+	t->width    = desc->width;
+	t->height   = desc->height;
+	t->is_depth = (desc->format == GPU_FORMAT_DEPTH32_FLOAT);
 #ifdef __EMSCRIPTEN__
 	glGenTextures(1, &tex_id);
 	glBindTexture(GL_TEXTURE_2D, tex_id);
-	/*
-	 * Upload level 0 from desc->initial_data when present (a baked procedural
-	 * texture), or allocate empty storage (a render target). RGBA8 is the only
-	 * sampled format today, matching texture_blob's wire format.
-	 */
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8,
-		     (GLsizei)desc->width, (GLsizei)desc->height, 0,
-		     GL_RGBA, GL_UNSIGNED_BYTE, desc->initial_data);
-	if (desc->generate_mips) {
-		/* Build the full chain from level 0; trilinear minification. */
-		glGenerateMipmap(GL_TEXTURE_2D);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-				GL_LINEAR_MIPMAP_LINEAR);
+	if (t->is_depth) {
+		/*
+		 * A depth render target: 32-bit float depth, no initial data and
+		 * no mips. Depth textures are not linearly filterable in WebGL 2,
+		 * so sample them NEAREST; clamp so a shadow/preview lookup off the
+		 * edge reads the border rather than wrapping.
+		 */
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F,
+			     (GLsizei)desc->width, (GLsizei)desc->height, 0,
+			     GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	} else {
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		/*
+		 * Upload level 0 from desc->initial_data when present (a baked
+		 * procedural texture), or allocate empty storage (a color render
+		 * target). RGBA8 is the only sampled/color-target format today,
+		 * matching texture_blob's wire format.
+		 */
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8,
+			     (GLsizei)desc->width, (GLsizei)desc->height, 0,
+			     GL_RGBA, GL_UNSIGNED_BYTE, desc->initial_data);
+		if (desc->generate_mips) {
+			/* Build the full chain from level 0; trilinear minification. */
+			glGenerateMipmap(GL_TEXTURE_2D);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+					GL_LINEAR_MIPMAP_LINEAR);
+		} else {
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+					GL_LINEAR);
+		}
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		/* Tile procedural textures — a scaled checker/noise repeats over uv. */
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 	}
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	/* Tile procedural textures — a scaled checker/noise repeats across uv. */
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 	glBindTexture(GL_TEXTURE_2D, 0);
 	t->gl_tex = (unsigned int)tex_id;
-#else
-	(void)desc;
 #endif
 	return t;
 }
@@ -621,6 +690,19 @@ static void webgl_texture_destroy(gpu_texture_t texture)
 	g_mem->free(t);
 }
 
+/*
+ * The GL texture name behind an opaque gpu_texture — the escape hatch a UI layer
+ * uses to composite a render-target texture through its own stack (kruddboard
+ * hands it to ImGui::Image as an ImTextureID). 0 for a null texture or a build
+ * without a live GL context.
+ */
+static uint32_t webgl_texture_native_handle(gpu_texture_t texture)
+{
+	struct gpu_texture *t = (struct gpu_texture *)texture;
+
+	return t ? (uint32_t)t->gl_tex : 0u;
+}
+
 static const struct gpu_api webgl_api = {
 	/* WebGL 2: draw yes; compute no. */
 	.caps                   = GPU_CAP_DRAW_DIRECT | GPU_CAP_DRAW_INDEXED,
@@ -647,6 +729,7 @@ static const struct gpu_api webgl_api = {
 	.texture_create         = webgl_texture_create,
 	.texture_destroy        = webgl_texture_destroy,
 	.cmd_bind_texture       = webgl_cmd_bind_texture,
+	.texture_native_handle  = webgl_texture_native_handle,
 };
 
 static void renderer_webgl_init(void)
@@ -674,6 +757,10 @@ static void renderer_webgl_shutdown(void)
 {
 	g_log->write(LOG_LEVEL_INFO, "renderer_webgl: shutdown");
 #ifdef __EMSCRIPTEN__
+	if (g_offscreen_fbo) {
+		glDeleteFramebuffers(1, &g_offscreen_fbo);
+		g_offscreen_fbo = 0;
+	}
 	emscripten_webgl_destroy_context(g_ctx);
 #endif
 }

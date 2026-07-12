@@ -10,9 +10,9 @@
  * Toggle visibility with backtick (`).
  *
  * Tabs:
- *   KRUDD      — frame stats, subsystems, log (collapsible sections)
  *   Scene      — entity list, create/delete, inspector
  *   Assets     — asset browser and markdown editor
+ *   KRUDD      — frame stats, subsystems, log (collapsible sections)
  */
 
 extern "C" {
@@ -5592,16 +5592,16 @@ static void draw_board(void * /*userdata*/)
 	if (!g_collapsed) {
 		if (ImGui::BeginTabBar("##tabs",
 				       ImGuiTabBarFlags_FittingPolicyScroll)) {
-			if (ImGui::BeginTabItem("KRUDD")) {
-				draw_tab_krudd();
-				ImGui::EndTabItem();
-			}
 			if (ImGui::BeginTabItem("Scene")) {
 				draw_tab_world();
 				ImGui::EndTabItem();
 			}
 			if (ImGui::BeginTabItem("Assets")) {
 				draw_tab_assets();
+				ImGui::EndTabItem();
+			}
+			if (ImGui::BeginTabItem("KRUDD")) {
+				draw_tab_krudd();
 				ImGui::EndTabItem();
 			}
 			ImGui::EndTabBar();

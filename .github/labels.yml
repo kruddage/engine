@@ -1,6 +1,6 @@
 # Release labels, synced to the repo by .github/workflows/sync-labels.yml.
-# Every PR must carry exactly one of these (enforced by release-label-gate.yml)
-# — edit this file to change labels, don't click them together in the UI.
+# Every PR is expected to carry exactly one of these — edit this file to
+# change labels, don't click them together in the UI.
 
 - name: release:feature
   color: "0E8A16"

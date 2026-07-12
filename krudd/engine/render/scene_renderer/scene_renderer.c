@@ -71,6 +71,92 @@ static gpu_buffer_t   g_ubo;         /* 2 * mat4: { view_proj, model } */
 static gpu_buffer_t   g_material_ubo; /* the active material's std140 params */
 static int            g_ready;
 
+/*
+ * Selection-outline resources (#selection-outline). When an entity is selected
+ * the tick runs a three-pass graph instead of the plain forward pass: the scene
+ * into an offscreen colour+depth target, the selected mesh alone into a 1-bit
+ * silhouette mask, then a full-screen pass that samples both and paints a red
+ * border where the mask's edge is. All are created once, off-frame, and stay
+ * null (so the outline is silently skipped) if their pipelines fail to compile.
+ */
+static gpu_pipeline_t g_mask_pso;    /* selected mesh -> solid-white silhouette */
+static gpu_pipeline_t g_outline_pso; /* full-screen edge-detect + composite     */
+static gpu_buffer_t   g_fs_vbo;      /* full-screen triangle clip-space corners  */
+static gpu_buffer_t   g_fs_ebo;
+static gpu_buffer_t   g_outline_ubo; /* std140 { vec2 texel; vec4 color; }       */
+
+/* Last viewport pixel size the UI reported (0 = unknown -> no outline pass). */
+static float g_view_w, g_view_h;
+
+/* The transients the composite pass samples, published per-frame by the tick. */
+static struct {
+	fg_resource_t scene_color;
+	fg_resource_t mask;
+} g_outline_frame;
+
+#define OUTLINE_UBO_FLOATS 8         /* vec2 texel + 2 pad + vec4 color          */
+#define OUTLINE_THICKNESS  2.0f      /* border half-width, in pixels             */
+
+/*
+ * Silhouette shader: the selected mesh drawn flat white. It speaks the scene
+ * pipeline's vertex contract (a_pos at location 0, Camera block 0) so it reuses
+ * the shared mesh vertex layout; normals/uvs go unread. Culling is off during
+ * the pass, so the fragment set is the mesh's full screen-space footprint — a
+ * 1-bit "is the selected object here" mask, no depth needed.
+ */
+static const char *MASK_SHADER_SRC =
+	"(shader sel_mask\n"
+	"  (inputs (a_pos vec3 (location 0)))\n"
+	"  (uniforms\n"
+	"    (Camera (block 0) (layout std140)\n"
+	"      (view_proj mat4)\n"
+	"      (model     mat4)))\n"
+	"  (targets (frag_color vec4 (location 0)))\n"
+	"  (vertex   (set position (* view_proj model (vec4 a_pos 1.0))))\n"
+	"  (fragment (set frag_color (vec4 1.0 1.0 1.0 1.0))))\n";
+
+/*
+ * Outline/composite shader: a full-screen triangle that reads the offscreen
+ * scene colour and the selection mask and returns the scene tinted red exactly
+ * where a mask edge sits. Both samplers bind by the backend's alphabetical unit
+ * rule (mask -> unit 0, scene -> unit 1). `texel` is the per-tap offset already
+ * scaled by the border thickness; `color` is the outline colour. edge = (any of
+ * eight ring taps is inside the mask) AND (this pixel is outside it), so the red
+ * lands just outside the silhouette without covering the object.
+ */
+static const char *OUTLINE_SHADER_SRC =
+	"(shader sel_outline\n"
+	"  (inputs (a_pos vec2 (location 0)))\n"
+	"  (uniforms\n"
+	"    (Outline (block 0) (layout std140)\n"
+	"      (texel vec2)\n"
+	"      (color vec4))\n"
+	"    (mask  sampler2D)\n"
+	"    (scene sampler2D))\n"
+	"  (varyings (v_uv vec2))\n"
+	"  (targets (frag_color vec4 (location 0)))\n"
+	"  (vertex\n"
+	"    (set v_uv (+ (* a_pos 0.5) 0.5))\n"
+	"    (set position (vec4 a_pos 0.0 1.0)))\n"
+	"  (fragment\n"
+	"    (let* ((tx   (swizzle texel x))\n"
+	"           (ty   (swizzle texel y))\n"
+	"           (here (swizzle (sample mask v_uv) r))\n"
+	"           (n0 (swizzle (sample mask (+ v_uv (vec2 tx    0.0))) r))\n"
+	"           (n1 (swizzle (sample mask (+ v_uv (vec2 (- 0.0 tx) 0.0))) r))\n"
+	"           (n2 (swizzle (sample mask (+ v_uv (vec2 0.0    ty))) r))\n"
+	"           (n3 (swizzle (sample mask (+ v_uv (vec2 0.0 (- 0.0 ty)))) r))\n"
+	"           (n4 (swizzle (sample mask (+ v_uv (vec2 tx    ty))) r))\n"
+	"           (n5 (swizzle (sample mask (+ v_uv (vec2 (- 0.0 tx) ty))) r))\n"
+	"           (n6 (swizzle (sample mask (+ v_uv (vec2 tx (- 0.0 ty)))) r))\n"
+	"           (n7 (swizzle (sample mask (+ v_uv (vec2 (- 0.0 tx) (- 0.0 ty)))) r))\n"
+	"           (ring (max (max (max n0 n1) (max n2 n3))\n"
+	"                      (max (max n4 n5) (max n6 n7))))\n"
+	"           (edge (* ring (- 1.0 here)))\n"
+	"           (col  (mix (swizzle (sample scene v_uv) rgb)\n"
+	"                      (swizzle color rgb) edge)))\n"
+	"      (set frag_color (vec4 col 1.0)))))\n";
+
 #define SCENE_UBO_FLOATS 32          /* view_proj[16] + model[16] */
 
 /*
@@ -191,8 +277,12 @@ static void camera_get_eye(float out[3])
 
 static void camera_set_viewport(float width, float height)
 {
-	if (width > 0.0f && height > 0.0f)
+	if (width > 0.0f && height > 0.0f) {
 		g_cam.aspect = width / height;
+		/* Kept for sizing the outline pass's offscreen targets to the canvas. */
+		g_view_w = width;
+		g_view_h = height;
+	}
 }
 
 static const struct camera_api g_camera_api = {
@@ -481,6 +571,76 @@ static void build_pipeline(const struct gpu_api *gpu)
 			shader_material_block_size(src);
 		g_shader_pso_count++;
 	}
+}
+
+/*
+ * A pipeline for a full-screen pass: a single vec2 clip-space position at
+ * location 0, no depth, both stages from one DSL source. Used for the outline
+ * composite, which reads the offscreen scene and the mask and writes the
+ * backbuffer.
+ */
+static gpu_pipeline_t create_fullscreen_pso(const struct gpu_api *gpu,
+					    const char *src)
+{
+	struct gpu_pipeline_desc pd;
+
+	memset(&pd, 0, sizeof(pd));
+	pd.color_formats[0]   = GPU_FORMAT_RGBA8_UNORM;
+	pd.color_format_count = 1;
+	pd.depth_format       = GPU_FORMAT_UNKNOWN;
+	pd.topology           = GPU_TOPOLOGY_TRIANGLE_LIST;
+
+	pd.vertex_layout.attr_count = 1;
+	pd.vertex_layout.stride     = 2 * (uint32_t)sizeof(float);
+	pd.vertex_layout.attrs[0]   =
+		(struct gpu_vertex_attr){ 0, 0, GPU_FORMAT_RG32_FLOAT };
+
+	pd.vert.src     = src;
+	pd.vert.stage   = GPU_SHADER_STAGE_VERTEX;
+	pd.vert.dialect = GPU_SHADER_DIALECT_KRUDD;
+	pd.frag.src     = src;
+	pd.frag.stage   = GPU_SHADER_STAGE_FRAGMENT;
+	pd.frag.dialect = GPU_SHADER_DIALECT_KRUDD;
+
+	return gpu->pipeline_create(&pd);
+}
+
+/*
+ * Compile the selection-outline pipelines and their static buffers, off-frame.
+ * The mask pipeline reuses the scene vertex layout (create_pso); the outline
+ * pipeline is full-screen. A failure leaves the handles null and the tick falls
+ * back to the plain forward pass, so the outline is a pure add-on that never
+ * breaks ordinary rendering.
+ */
+static void build_outline_resources(const struct gpu_api *gpu)
+{
+	/* A full-screen triangle: three clip-space corners that cover [-1,1]^2. */
+	static const float    FS_TRI[6] = { -1.0f, -1.0f, 3.0f, -1.0f, -1.0f, 3.0f };
+	static const uint16_t FS_IDX[3] = { 0, 1, 2 };
+	struct gpu_buffer_desc bd;
+
+	g_mask_pso    = create_pso(gpu, MASK_SHADER_SRC);
+	g_outline_pso = create_fullscreen_pso(gpu, OUTLINE_SHADER_SRC);
+	if (!g_mask_pso || !g_outline_pso)
+		g_log->write(LOG_LEVEL_WARN,
+			     "scene_renderer: outline pipeline unavailable; "
+			     "selection outline disabled");
+
+	memset(&bd, 0, sizeof(bd));
+	bd.usage        = GPU_BUFFER_USAGE_VERTEX;
+	bd.size         = sizeof(FS_TRI);
+	bd.initial_data = FS_TRI;
+	g_fs_vbo = gpu->buffer_create(&bd);
+
+	bd.usage        = GPU_BUFFER_USAGE_INDEX;
+	bd.size         = sizeof(FS_IDX);
+	bd.initial_data = FS_IDX;
+	g_fs_ebo = gpu->buffer_create(&bd);
+
+	memset(&bd, 0, sizeof(bd));
+	bd.usage        = GPU_BUFFER_USAGE_UNIFORM;
+	bd.size         = OUTLINE_UBO_FLOATS * sizeof(float);
+	g_outline_ubo = gpu->buffer_create(&bd);
 }
 
 /*
@@ -1370,6 +1530,8 @@ static void scene_renderer_init(void)
 		g_material_ubo = gpu->buffer_create(&bd);
 	}
 
+	build_outline_resources(gpu);
+
 	/* A fixed camera framing the unit primitives at the origin. */
 	g_cam.eye[0]    = 2.5f; g_cam.eye[1]    = 2.0f; g_cam.eye[2]    = 4.0f;
 	g_cam.target[0] = 0.0f; g_cam.target[1] = 0.0f; g_cam.target[2] = 0.0f;
@@ -1537,12 +1699,123 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 	}
 }
 
+/*
+ * The selected entity's id when it is a live, drawable mesh worth outlining, or
+ * 0-return when there is no such selection. Selection is read through the scene
+ * api's get_selected (absent in headless test harnesses, which then never take
+ * the outline path).
+ */
+static int outline_selected_entity(const struct world *w, uint32_t *out_id)
+{
+	int32_t sel;
+
+	if (!g_scene || !g_scene->get_selected)
+		return 0;
+	sel = g_scene->get_selected();
+	if (sel < 0 || (uint32_t)sel >= w->count)
+		return 0;
+	if (!w->alive[sel] || !(w->mask[sel] & COMPONENT_RENDER))
+		return 0;
+	*out_id = (uint32_t)sel;
+	return 1;
+}
+
+/*
+ * Mask pass: draw the selected entity alone, flat white, into the silhouette
+ * target (cleared to black by the pass). No material, no texture, no depth —
+ * the union of its triangles is all the composite needs. Reuses the shared
+ * Camera UBO with the selected entity's transform.
+ */
+static void mask_pass(struct fg_pass_ctx *ctx, void *userdata)
+{
+	const struct gpu_api        *gpu = fg_ctx_gpu(ctx);
+	gpu_cmd_buf_t                 cmd = fg_ctx_cmd(ctx);
+	const struct world          *w;
+	uint32_t                     sel, plen = 0;
+	const uint8_t               *pbytes;
+	struct mesh_gpu             *m;
+	struct mat4                  model;
+	float                        ubo[SCENE_UBO_FLOATS];
+	struct gpu_draw_indexed_args draw;
+
+	(void)userdata;
+	if (!gpu || !g_scene || !g_mask_pso)
+		return;
+	w = g_scene->get_world();
+	if (!w || !outline_selected_entity(w, &sel))
+		return;
+	pbytes = entity_mesh_params(w, sel, &plen);
+	m = find_mesh(w->render_ref[sel], pbytes, plen);
+	if (!m)
+		return;
+
+	memcpy(&ubo[0], g_cam.view_proj.m, 16 * sizeof(float));
+	mat4_from_transform(&model, &w->world_xform[sel]);
+	memcpy(&ubo[16], model.m, 16 * sizeof(float));
+
+	gpu->cmd_set_pipeline(cmd, g_mask_pso);
+	gpu->buffer_update(g_ubo, 0, ubo, (uint32_t)sizeof(ubo));
+	gpu->cmd_bind_uniform_buffer(cmd, 0, g_ubo, 0, (uint32_t)sizeof(ubo));
+	gpu->cmd_bind_vertex_buffer(cmd, 0, m->vbo, 0);
+	gpu->cmd_bind_index_buffer(cmd, m->ebo, 0, GPU_INDEX_FORMAT_UINT16);
+
+	memset(&draw, 0, sizeof(draw));
+	draw.index_count    = m->index_count;
+	draw.instance_count = 1;
+	gpu->cmd_draw_indexed(cmd, &draw);
+}
+
+/*
+ * Composite pass: a full-screen triangle that samples the offscreen scene and
+ * the silhouette mask and writes the backbuffer, tinting red along the mask's
+ * outer edge. texel carries the per-tap offset (thickness / viewport), so the
+ * border width is resolution-independent.
+ */
+static void composite_pass(struct fg_pass_ctx *ctx, void *userdata)
+{
+	const struct gpu_api        *gpu = fg_ctx_gpu(ctx);
+	gpu_cmd_buf_t                 cmd = fg_ctx_cmd(ctx);
+	gpu_texture_t                 scene_tex, mask_tex;
+	float                        ubo[OUTLINE_UBO_FLOATS];
+	struct gpu_draw_indexed_args draw;
+
+	(void)userdata;
+	if (!gpu || !g_outline_pso)
+		return;
+	scene_tex = fg_ctx_resource(ctx, g_outline_frame.scene_color);
+	mask_tex  = fg_ctx_resource(ctx, g_outline_frame.mask);
+
+	memset(ubo, 0, sizeof(ubo));
+	ubo[0] = g_view_w > 0.0f ? OUTLINE_THICKNESS / g_view_w : 0.0f; /* texel.x */
+	ubo[1] = g_view_h > 0.0f ? OUTLINE_THICKNESS / g_view_h : 0.0f; /* texel.y */
+	ubo[4] = 1.0f; /* color.r */
+	ubo[7] = 1.0f; /* color.a — red, opaque */
+
+	gpu->cmd_set_pipeline(cmd, g_outline_pso);
+	gpu->buffer_update(g_outline_ubo, 0, ubo, (uint32_t)sizeof(ubo));
+	gpu->cmd_bind_uniform_buffer(cmd, 0, g_outline_ubo, 0, (uint32_t)sizeof(ubo));
+	/* Alphabetical unit rule: mask -> 0, scene -> 1 (see the backend). */
+	gpu->cmd_bind_texture(cmd, 0, mask_tex);
+	gpu->cmd_bind_texture(cmd, 1, scene_tex);
+	gpu->cmd_bind_vertex_buffer(cmd, 0, g_fs_vbo, 0);
+	gpu->cmd_bind_index_buffer(cmd, g_fs_ebo, 0, GPU_INDEX_FORMAT_UINT16);
+
+	memset(&draw, 0, sizeof(draw));
+	draw.index_count    = 3;
+	draw.instance_count = 1;
+	gpu->cmd_draw_indexed(cmd, &draw);
+}
+
 static void scene_renderer_tick(void)
 {
-	static const float CLEAR[4] = { 0.10f, 0.11f, 0.13f, 1.0f };
+	static const float  CLEAR[4]      = { 0.10f, 0.11f, 0.13f, 1.0f };
+	static const float  MASK_CLEAR[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 	struct fg          *fg;
 	fg_resource_t       bb;
 	fg_pass_t           pass;
+	const struct world *w;
+	uint32_t            sel = 0;
+	int                 outline;
 
 	if (!g_ready || !g_fg_api || !g_scene)
 		return;
@@ -1553,9 +1826,9 @@ static void scene_renderer_tick(void)
 	ensure_textures();
 	ensure_meshes();
 
-	if (g_camera_entity_id >= 0) {
-		const struct world *w = g_scene->get_world();
+	w = g_scene->get_world();
 
+	if (g_camera_entity_id >= 0) {
 		if (w && (uint32_t)g_camera_entity_id < w->count &&
 		    w->alive[g_camera_entity_id]) {
 			const struct transform *x =
@@ -1569,17 +1842,73 @@ static void scene_renderer_tick(void)
 
 	camera_update(&g_cam);
 
+	/*
+	 * The outline path adds two passes around the forward pass, so it only
+	 * runs when there is actually a selected mesh to outline, its pipelines
+	 * compiled, and the UI has reported a viewport to size the offscreen
+	 * targets to. Otherwise (every shipped game, and any frame with nothing
+	 * selected) the renderer stays the single forward-to-backbuffer pass it
+	 * has always been, at zero added cost.
+	 */
+	outline = w && g_mask_pso && g_outline_pso &&
+		  g_view_w > 0.0f && g_view_h > 0.0f &&
+		  outline_selected_entity(w, &sel);
+
 	fg = g_fg_api->create();
 	if (!fg)
 		return;
-	bb   = g_fg_api->import_backbuffer(fg);
-	pass = g_fg_api->pass_declare(fg, "forward", NULL, 0, &bb, 1);
-	if (pass) {
-		g_fg_api->pass_set_color_clear(pass, 0, CLEAR);
-		g_fg_api->pass_set_depth_clear(pass, 1.0f);
-		g_fg_api->pass_set_execute(pass, forward_pass, NULL);
-		g_fg_api->compile(fg);
-		g_fg_api->execute(fg);
+	bb = g_fg_api->import_backbuffer(fg);
+
+	if (!outline) {
+		pass = g_fg_api->pass_declare(fg, "forward", NULL, 0, &bb, 1);
+		if (pass) {
+			g_fg_api->pass_set_color_clear(pass, 0, CLEAR);
+			g_fg_api->pass_set_depth_clear(pass, 1.0f);
+			g_fg_api->pass_set_execute(pass, forward_pass, NULL);
+			g_fg_api->compile(fg);
+			g_fg_api->execute(fg);
+		}
+	} else {
+		uint32_t      vw = (uint32_t)g_view_w, vh = (uint32_t)g_view_h;
+		fg_tex_desc   cdesc, ddesc;
+		fg_resource_t scene_color, scene_depth, mask;
+		fg_resource_t fwrites[2], creads[2];
+		fg_pass_t     fpass, mpass, cpass;
+
+		memset(&cdesc, 0, sizeof(cdesc));
+		cdesc.format       = GPU_FORMAT_RGBA8_UNORM;
+		cdesc.width        = vw;
+		cdesc.height       = vh;
+		cdesc.mip_levels   = 1;
+		cdesc.sample_count = 1;
+		ddesc              = cdesc;
+		ddesc.format       = GPU_FORMAT_DEPTH32_FLOAT;
+
+		scene_color = g_fg_api->declare_transient(fg, "scene_color", cdesc);
+		scene_depth = g_fg_api->declare_transient(fg, "scene_depth", ddesc);
+		mask        = g_fg_api->declare_transient(fg, "sel_mask", cdesc);
+
+		g_outline_frame.scene_color = scene_color;
+		g_outline_frame.mask        = mask;
+
+		fwrites[0] = scene_color;
+		fwrites[1] = scene_depth;
+		fpass = g_fg_api->pass_declare(fg, "forward", NULL, 0, fwrites, 2);
+		mpass = g_fg_api->pass_declare(fg, "sel_mask", NULL, 0, &mask, 1);
+		creads[0] = scene_color;
+		creads[1] = mask;
+		cpass = g_fg_api->pass_declare(fg, "outline", creads, 2, &bb, 1);
+
+		if (fpass && mpass && cpass) {
+			g_fg_api->pass_set_color_clear(fpass, 0, CLEAR);
+			g_fg_api->pass_set_depth_clear(fpass, 1.0f);
+			g_fg_api->pass_set_execute(fpass, forward_pass, NULL);
+			g_fg_api->pass_set_color_clear(mpass, 0, MASK_CLEAR);
+			g_fg_api->pass_set_execute(mpass, mask_pass, NULL);
+			g_fg_api->pass_set_execute(cpass, composite_pass, NULL);
+			g_fg_api->compile(fg);
+			g_fg_api->execute(fg);
+		}
 	}
 	g_fg_api->destroy(fg);
 }
@@ -1602,6 +1931,16 @@ static void scene_renderer_shutdown(void)
 			gpu->buffer_destroy(g_ubo);
 		if (g_material_ubo)
 			gpu->buffer_destroy(g_material_ubo);
+		if (g_mask_pso)
+			gpu->pipeline_destroy(g_mask_pso);
+		if (g_outline_pso)
+			gpu->pipeline_destroy(g_outline_pso);
+		if (g_fs_vbo)
+			gpu->buffer_destroy(g_fs_vbo);
+		if (g_fs_ebo)
+			gpu->buffer_destroy(g_fs_ebo);
+		if (g_outline_ubo)
+			gpu->buffer_destroy(g_outline_ubo);
 		/*
 		 * The default pipeline is also cached (under the scene shader's
 		 * id), so destroy the distinct cache entries first, then it once.
@@ -1615,6 +1954,11 @@ static void scene_renderer_shutdown(void)
 			gpu->pipeline_destroy(g_default_pso);
 	}
 	g_default_pso      = 0;
+	g_mask_pso         = 0;
+	g_outline_pso      = 0;
+	g_fs_vbo           = 0;
+	g_fs_ebo           = 0;
+	g_outline_ubo      = 0;
 	g_shader_pso_count = 0;
 	g_mesh_count       = 0;
 	g_texture_count    = 0;

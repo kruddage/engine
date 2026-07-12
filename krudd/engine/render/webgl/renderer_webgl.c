@@ -266,6 +266,62 @@ webgl_pipeline_create(const struct gpu_pipeline_desc *desc)
 #undef WEBGL_MAX_UNIFORM_BLOCKS
 	}
 	/*
+	 * Assign every sampler2D uniform a distinct texture unit a consumer with
+	 * no GL access can predict, exactly as the uniform-block binding above
+	 * does for blocks. GLSL ES 3.00 (WebGL 2) has no `layout(binding=N)` for
+	 * samplers either, and an unassigned sampler defaults to unit 0 — so a
+	 * shader with two samplers would have both read unit 0 and sample the same
+	 * texture, silently, with no compile or link error. Sorting by uniform
+	 * name before handing out units 0, 1, ... makes the mapping deterministic
+	 * (the same arbitrary-but-fixed alphabetical tiebreak the blocks use), so
+	 * a consumer binds each texture to the unit its sampler's name sorts to.
+	 * A single-sampler shader is unaffected: its one sampler still lands on
+	 * unit 0. Setting a sampler uniform needs the program current, so bind it
+	 * here; a later cmd_set_pipeline rebinds before any draw.
+	 */
+	if (p->program) {
+#define WEBGL_MAX_SAMPLERS 8
+		GLint nuniforms = 0, a, b, ns = 0;
+		GLint sloc[WEBGL_MAX_SAMPLERS];
+		char  sname[WEBGL_MAX_SAMPLERS][64];
+
+		glGetProgramiv(p->program, GL_ACTIVE_UNIFORMS, &nuniforms);
+		for (a = 0; a < nuniforms && ns < WEBGL_MAX_SAMPLERS; a++) {
+			char    nm[64];
+			GLsizei len = 0;
+			GLint   sz  = 0;
+			GLenum  ty  = 0;
+
+			glGetActiveUniform(p->program, (GLuint)a,
+					   (GLsizei)sizeof(nm), &len,
+					   &sz, &ty, nm);
+			if (ty != GL_SAMPLER_2D)
+				continue;
+			memcpy(sname[ns], nm, sizeof(nm));
+			sloc[ns] = glGetUniformLocation(p->program, nm);
+			ns++;
+		}
+		for (a = 1; a < ns; a++) {
+			for (b = a; b > 0 &&
+			     strcmp(sname[b - 1], sname[b]) > 0; b--) {
+				char  tn[64];
+				GLint tl;
+
+				memcpy(tn, sname[b - 1], sizeof(tn));
+				memcpy(sname[b - 1], sname[b], sizeof(tn));
+				memcpy(sname[b], tn, sizeof(tn));
+				tl          = sloc[b - 1];
+				sloc[b - 1] = sloc[b];
+				sloc[b]     = tl;
+			}
+		}
+		glUseProgram(p->program);
+		for (a = 0; a < ns; a++)
+			if (sloc[a] >= 0)
+				glUniform1i(sloc[a], a);
+#undef WEBGL_MAX_SAMPLERS
+	}
+	/*
 	 * A VAO owns the pipeline's attribute state. WebGL 2 (GLES 3.0) has no
 	 * separate attrib-format API, so the attribute pointers are (re)specified
 	 * against the mesh's vertex buffer at bind time (see bind_vertex_buffer);

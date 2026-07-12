@@ -76,6 +76,12 @@
 ;;! speed over fidelity (the render layer bakes the shipped texture at full res).
 (define kruddboard-assets-tex-preview-res 128)
 
+;;! The mesh preview render-target edge — the square offscreen target the shaded
+;;! mesh renders into (via krudd-mesh-preview). Modest on purpose: it re-renders
+;;! live every frame the Preview fold is open (the thumbnail slowly spins), so it
+;;! trades a little fidelity for a cheap per-frame GPU pass.
+(define kruddboard-assets-mesh-preview-res 256)
+
 ;;! New Asset form state: visible?, the name field, and the type combo index
 ;;! (0 Text, 1 Shader, 2 Material, 3 Script, 4 Mesh).
 (define kruddboard-assets-naming #f)
@@ -699,6 +705,13 @@
   (imgui-separator)
   (when (imgui-collapsing-header "Declaration")
     (imgui-text "format: krudd-mesh"))
+  (imgui-separator)
+  ;;! A shaded, slowly spinning render of the mesh, drawn with the built-in
+  ;;! default material (material-ref 0) so it shows pure lit geometry. The bake
+  ;;! is a real GPU render pass into an offscreen target (krudd-mesh-preview),
+  ;;! not a CPU swatch like the texture Preview.
+  (when (imgui-collapsing-header "Preview")
+    (krudd-mesh-preview id 0 kruddboard-assets-mesh-preview-res))
   (imgui-separator)
   (when (imgui-collapsing-header "Source")
     (let ((r (imgui-input-text-multiline "##meshscript" kruddboard-assets-edit-text

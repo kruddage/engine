@@ -133,10 +133,50 @@
 (define (kruddboard-world-name id name)
   (if (string? name) name (format #f "entity ~D" id)))
 
-;;! (kruddboard-draw-world-header) draws the scene title. Scene saving is
-;;! handled elsewhere, so this no longer carries a "Save As..." placeholder.
+;;! The currently-loaded scene's asset id, or #f before the first draw's
+;;! auto-load has run. Kept here rather than asked of the engine because the
+;;! live world itself doesn't remember which asset it was ingested from.
+(define kruddboard-current-scene-id #f)
+
+;;! (kruddboard-find-scene-by-path path) -> the matching entry's id from
+;;! (krudd-scene-assets), or #f.
+(define (kruddboard-find-scene-by-path path)
+  (let loop ((lst (krudd-scene-assets)))
+    (cond ((null? lst) #f)
+	  ((string=? (cdr (car lst)) path) (car (car lst)))
+	  (else (loop (cdr lst))))))
+
+;;! (kruddboard-scene-label id) is the switcher combo's preview: the scene
+;;! asset's path, or "(none)" before anything has loaded.
+(define (kruddboard-scene-label id)
+  (if (not id)
+      "(none)"
+      (let ((path (krudd-asset-find id)))
+	(if (string? path) path "(none)"))))
+
+;;! (kruddboard-draw-world-header) draws the scene switcher: a combo listing
+;;! every .scene asset, in place of the old static "Untitled Scene" text. The
+;;! first draw with nothing loaded yet auto-loads the built-in default scene,
+;;! so the tab shows a live scene rather than an empty world; from then on,
+;;! switching is the user's own doing through the combo.
 (define (kruddboard-draw-world-header)
-  (imgui-text "Untitled Scene"))
+  (unless kruddboard-current-scene-id
+    (let ((id (kruddboard-find-scene-by-path "builtin://scene/default.scene")))
+      (when (and id (krudd-scene-load "builtin://scene/default.scene"))
+	(set! kruddboard-current-scene-id id))))
+  (imgui-set-next-item-width 240.0)
+  (when (imgui-begin-combo "##sceneswitch"
+			   (kruddboard-scene-label kruddboard-current-scene-id))
+    (for-each
+     (lambda (a)
+       (let ((cur (equal? (car a) kruddboard-current-scene-id)))
+	 (when (and (imgui-selectable (format #f "~A##sc~D" (cdr a) (car a))
+				      cur #f)
+		    (krudd-scene-load (cdr a)))
+	   (set! kruddboard-current-scene-id (car a)))
+	 (when cur (imgui-set-item-default-focus))))
+     (krudd-scene-assets))
+    (imgui-end-combo)))
 
 ;;! (kruddboard-draw-world-tree-entity row caps) draws one entity as a tree
 ;;! node: a plain click selects it, the right-aligned x destroys it (disabled

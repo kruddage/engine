@@ -1,6 +1,6 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
 ((library "asset_plugin"
-	(sources "asset_plugin.c" "asset_edit.c")
+	(sources "asset_plugin.c" "asset_edit.c" (root "entity/scene_blob.c"))
 	(public "." (root "abi"))
 	(link "log" "memory" "subsystem" "subsystem_manager" "m"))
  ;;! The mesh-script bridge (source -> mesh_blob) as a shared library, so both the

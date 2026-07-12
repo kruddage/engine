@@ -1,12 +1,13 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
 ((library "entity_plugin"
-	(sources "entity.c" "entity_plugin.c" "entity_script.c" "scene_edit.c")
+	(sources "entity.c" "entity_plugin.c" "entity_script.c" "scene_edit.c"
+		"scene_blob.c")
 	(public "." (root "abi") (root "core/include"))
 	(private (raw "../third_party"))
 	(link "memory" "subsystem_manager" "script"))
  (native-only
 	(executable "entity_test"
-		(sources "entity_test.c" "entity.c")
+		(sources "entity_test.c" "entity.c" "scene_blob.c")
 		(private "." (root "abi")
 			(root "core/include")
 			(root "memory/include"))

@@ -3,6 +3,7 @@
 #include "entity_api.h"
 #include "entity_script.h"
 #include "scene.h"
+#include "scene_blob.h"
 #include "scene_edit.h"
 #include "edit_api.h"
 #include "asset_api.h"
@@ -68,6 +69,32 @@ static int32_t scene_load(const char *path)
 	rc = world_ingest_scene(&g_world, s);
 	free_scene(s);
 	return rc;
+}
+
+/* The "scene" codec: decode wraps scene_blob_decode with the resolved
+ * allocator; encode sizes and allocates the buffer scene_blob_encode packs
+ * into, matching the codec API's no-allocator function pointer signatures. */
+static void *scene_codec_decode(const void *bytes, uint32_t size)
+{
+	return g_mem ? scene_blob_decode(bytes, size, g_mem) : NULL;
+}
+
+static void *scene_codec_encode(const void *typed, uint32_t *out_size)
+{
+	const struct scene *s = typed;
+	uint32_t             cap;
+	void                 *buf;
+
+	if (!g_mem)
+		return NULL;
+	cap = scene_blob_size(s);
+	buf = g_mem->alloc(cap);
+	if (!buf)
+		return NULL;
+	scene_blob_encode(s, buf, cap);
+	if (out_size)
+		*out_size = cap;
+	return buf;
 }
 
 static const struct world *scene_get_world(void)
@@ -323,5 +350,9 @@ void entity_plugin_entry(struct subsystem_manager *mgr)
 	g_mem   = subsystem_manager_get_api(mgr, "memory");
 	g_stats = subsystem_manager_get_api(mgr, "stats");
 	g_edit  = subsystem_manager_get_api(mgr, "edit");
+	if (g_codec) {
+		g_codec->register_codec("scene", scene_codec_decode);
+		g_codec->register_encoder("scene", scene_codec_encode);
+	}
 	subsystem_manager_register(mgr, &scene_desc);
 }

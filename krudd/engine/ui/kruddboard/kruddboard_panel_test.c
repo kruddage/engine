@@ -569,7 +569,9 @@ static void fw_reset(void)
 	g_assets[1].id = 102; g_assets[1].path = "sphere.mesh"; g_assets[1].type = 1;
 	g_assets[2].id = 201; g_assets[2].path = "red.mat";     g_assets[2].type = 3;
 	g_assets[3].id = 301; g_assets[3].path = "orbit.kscm";  g_assets[3].type = 8;
-	g_assets_n = 4;
+	g_assets[4].id = 401; g_assets[4].path = "builtin://scene/default.scene";
+	g_assets[4].type = 6; /* ASSET_TYPE_SCENE */
+	g_assets_n = 5;
 
 	g_click        = NULL;
 	g_dis_top      = 0;
@@ -694,6 +696,24 @@ static s7_pointer st_script_assets(s7_scheme *sc, s7_pointer a)
 	return assets_by_type(sc, 8);
 }
 
+static s7_pointer st_scene_assets(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	return assets_by_type(sc, 6); /* ASSET_TYPE_SCENE */
+}
+
+/* Fake load_scene: succeeds iff path names a known scene asset. */
+static s7_pointer st_scene_load(s7_scheme *sc, s7_pointer a)
+{
+	const char *path = s7_is_string(s7_car(a)) ? s7_string(s7_car(a)) : "";
+	int         i;
+
+	for (i = 0; i < g_assets_n; i++)
+		if (g_assets[i].type == 6 && strcmp(g_assets[i].path, path) == 0)
+			return s7_t(sc);
+	return s7_f(sc);
+}
+
 static s7_pointer st_asset_find(s7_scheme *sc, s7_pointer a)
 {
 	unsigned ref = (unsigned)s7_integer(s7_car(a));
@@ -809,7 +829,7 @@ static s7_pointer st_set_gizmo_mode(s7_scheme *sc, s7_pointer a)
 /* Fake authored asset catalog, driven by the mutating primitives. Mirrors
  * struct asset_info's shape closely enough for the Scheme logic under test:
  * type/kind/state/read_only/origin codes match asset_api.h. */
-#define FA_MAX 10
+#define FA_MAX 14
 
 struct fa_asset {
 	int         alive;
@@ -914,7 +934,17 @@ static void asset_reset(void)
 	strcpy(g_fa[8].data, "(mesh mine (generate () (cons (list) (list))))");
 	g_fa[8].data_len = (int)strlen(g_fa[8].data);
 
-	g_fa_n = 9;
+	/* id 1101: built-in scene — opaque bytes (no in-place editor), Clone
+	 * only. Real bytes would be a .scene wire blob; a placeholder string
+	 * is enough since clone just copies bytes verbatim. */
+	g_fa[9].alive = 1; g_fa[9].id = 1101;
+	strcpy(g_fa[9].path, "builtin://scene/default.scene");
+	g_fa[9].type = 6; g_fa[9].kind = 1; g_fa[9].state = 1;
+	g_fa[9].read_only = 1; g_fa[9].origin = 0;
+	strcpy(g_fa[9].data, "\x53\x43\x4e\x45-scene-bytes");
+	g_fa[9].data_len = (int)strlen(g_fa[9].data);
+
+	g_fa_n = 10;
 	g_have_asset_api = 1;
 	g_have_asset_mut = 1;
 	g_create_fail    = 0;
@@ -1540,6 +1570,23 @@ static s7_pointer st_asset_clone_mesh(s7_scheme *sc, s7_pointer a)
 	return s7_make_integer(sc, (s7_int)id);
 }
 
+/* (krudd-asset-clone-scene name id) -> new id or 0. Copies the source
+ * asset's fixture bytes verbatim, mirroring the real byte-copy clone. */
+static s7_pointer st_asset_clone_scene(s7_scheme *sc, s7_pointer a)
+{
+	const char      *name   = s7_is_string(s7_car(a)) ? s7_string(s7_car(a)) : "";
+	unsigned         src_id = (unsigned)s7_integer(s7_cadr(a));
+	struct fa_asset *src;
+	unsigned         id;
+
+	rec("clone-scene|%s|%u", name, src_id);
+	src = fa_find(src_id);
+	if (!src)
+		return s7_make_integer(sc, 0);
+	id = fa_create(name, 6, src->data, src->data_len, 0, 1);
+	return s7_make_integer(sc, (s7_int)id);
+}
+
 /* (krudd-asset-clone-material name shader-ref values) -> new id or 0. */
 static s7_pointer st_asset_clone_material(s7_scheme *sc, s7_pointer a)
 {
@@ -1733,6 +1780,8 @@ static s7_scheme *setup(void)
 	def(sc, "krudd-texture-assets", st_texture_assets, 0);
 	def(sc, "krudd-material-texture", st_material_texture, 1);
 	def(sc, "krudd-script-assets", st_script_assets, 0);
+	def(sc, "krudd-scene-assets", st_scene_assets, 0);
+	def(sc, "krudd-scene-load", st_scene_load, 1);
 	def(sc, "krudd-asset-find", st_asset_find, 1);
 	def(sc, "krudd-entity-create", st_entity_create, 0);
 	def(sc, "krudd-entity-destroy", st_entity_destroy, 1);
@@ -1794,6 +1843,7 @@ static s7_scheme *setup(void)
 	def(sc, "krudd-asset-save-mesh", st_asset_save_mesh, 2);
 	def(sc, "krudd-asset-create-mesh", st_asset_create_mesh, 1);
 	def(sc, "krudd-asset-clone-mesh", st_asset_clone_mesh, 2);
+	def(sc, "krudd-asset-clone-scene", st_asset_clone_scene, 2);
 	def(sc, "krudd-asset-clone-material", st_asset_clone_material, 3);
 	def(sc, "krudd-md-preview", st_md_preview, 2);
 
@@ -1953,14 +2003,16 @@ static void test_krudd_composition(void)
 	assert(rec_has("child-begin|##logscroll")); /* log drawn */
 }
 
-/* The scene header draws just the title; no Save As... placeholder. */
+/* The scene header draws a scene-switcher combo (auto-loading the built-in
+ * default scene the first time it draws), not a static title, and carries no
+ * Save As... placeholder. */
 static void test_world_header(void)
 {
 	fw_reset();
 	rec_reset();
 	script_eval("(kruddboard-draw-world-header)");
 
-	assert(rec_has("text|Untitled Scene"));
+	assert(rec_has("combo|##sceneswitch|builtin://scene/default.scene"));
 	assert(!rec_has("button|Save As..."));
 }
 
@@ -2395,8 +2447,9 @@ static void test_world_composition(void)
 	rec_reset();
 	script_eval("(kruddboard-draw-world)");
 
-	assert(rec_has("text|Untitled Scene"));
-	assert(rec_index("text|Untitled Scene") < rec_index("text|Tool"));
+	assert(rec_has("combo|##sceneswitch|builtin://scene/default.scene"));
+	assert(rec_index("combo|##sceneswitch|builtin://scene/default.scene")
+	       < rec_index("text|Tool"));
 	assert(rec_index("text|Tool")
 	       < rec_index("tree-node|ent0|Cube|folder|1"));
 	/* the node opened onto the inspector body in place */
@@ -2908,6 +2961,25 @@ static void test_assets_mesh_clone_conflict(void)
 	assert(assets_sel() == 501);
 }
 
+/* A built-in scene gets the Clone flow (a byte-copy, no text editor — scene
+ * bytes are opaque), seeded "<path>_copy" with the builtin:// scheme
+ * stripped, instead of Save/Delete. */
+static void test_assets_scene_clone(void)
+{
+	asset_reset();
+	assets_scheme_reset();
+	script_eval("(set! kruddboard-assets-sel 1101)");
+	script_eval("(kruddboard-draw-assets)"); /* seed the clone name */
+	g_click = "Clone";
+	rec_reset();
+	script_eval("(kruddboard-draw-assets)");
+	g_click = NULL;
+
+	assert(rec_has("input-enter|##clonename|scene/default_copy.scene"));
+	assert(rec_has("clone-scene|scene/default_copy.scene|1101"));
+	assert(assets_sel() != 1101 && assets_sel() != 0);
+}
+
 /* Picking "Mesh" from the type combo dispatches to the mesh creator. */
 static void test_assets_create_mesh(void)
 {
@@ -3193,6 +3265,7 @@ int main(void)
 	RUN(assets_mesh_save_fail);
 	RUN(assets_mesh_clone);
 	RUN(assets_mesh_clone_conflict);
+	RUN(assets_scene_clone);
 	RUN(assets_create_mesh);
 	RUN(assets_material_editor);
 	RUN(assets_material_range_param);

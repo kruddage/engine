@@ -76,6 +76,7 @@ static bool                            g_kbd_shown;
 static int                             g_panels_registered;
 static const struct entity_api        *g_entity_api;
 static int32_t                         g_entity_sel = -1; /* -1 = none */
+static uint32_t                        g_current_scene_id; /* 0 = none loaded */
 static const struct edit_api          *g_edit_api;  /* NULL = no history */
 static const struct camera_api        *g_camera_api; /* NULL = no viewport gizmo */
 
@@ -2956,6 +2957,58 @@ static s7_pointer sp_krudd_asset_clone_mesh(s7_scheme *sc, s7_pointer args)
 }
 
 /*
+ * (krudd-asset-clone-scene name id) -> the new id, or 0 on failure (e.g. a
+ * duplicate path) — the built-in scene "Clone" flow's whole commit. Unlike the
+ * text-based clones above, a scene asset's bytes are the opaque .scene wire
+ * format (no editable text buffer), so this just copies the source scene's
+ * current bytes verbatim into a new authored asset, then persists.
+ */
+static s7_pointer sp_krudd_asset_clone_scene(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer  name = s7_car(args);
+	const char *nm   = s7_is_string(name) ? s7_string(name) : "";
+	uint32_t    id   = (uint32_t)s7_integer(s7_cadr(args));
+	const void *bytes;
+	uint32_t    size = 0;
+	uint32_t    nid  = 0;
+
+	if (!g_asset_api)
+		return s7_make_integer(sc, 0);
+	bytes = g_asset_api->get_data(id, &size);
+	if (!bytes)
+		return s7_make_integer(sc, 0);
+	if (g_asset_mut)
+		nid = g_asset_mut->create(nm, ASSET_TYPE_SCENE, bytes, size);
+	if (nid != 0)
+		maybe_persist_asset(nid, ASSET_TYPE_SCENE, bytes, size);
+	return s7_make_integer(sc, (s7_int)nid);
+}
+
+/*
+ * (krudd-scene-assets) -> ((id . path) ...) for the Scene tab's switcher combo.
+ */
+static s7_pointer sp_krudd_scene_assets(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	return assets_of_type(sc, ASSET_TYPE_SCENE);
+}
+
+/*
+ * (krudd-scene-load path) -> #t on success, #f otherwise — replaces the live
+ * world's entities with the named .scene asset's, wholesale (no dirty-check,
+ * no merge; see entity_api.load_scene).
+ */
+static s7_pointer sp_krudd_scene_load(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer  path = s7_car(args);
+	const char *p    = s7_is_string(path) ? s7_string(path) : "";
+
+	if (!g_entity_api || g_entity_api->load_scene(p) != 0)
+		return s7_f(sc);
+	return s7_t(sc);
+}
+
+/*
  * (krudd-md-preview text h) -> unspecified. Parses text fresh every call
  * (cheap relative to a 16ms frame budget) and draws it in a bordered,
  * horizontally-scrolling child of height h — folding md_parse.h's block
@@ -3129,6 +3182,11 @@ static s7_scheme *ensure_panel_scm(void)
 	s7_define_function(sc, "krudd-script-assets", sp_krudd_script_assets,
 			   0, 0, false,
 			   "(krudd-script-assets) -> ((id . path) ...)");
+	s7_define_function(sc, "krudd-scene-assets", sp_krudd_scene_assets,
+			   0, 0, false,
+			   "(krudd-scene-assets) -> ((id . path) ...)");
+	s7_define_function(sc, "krudd-scene-load", sp_krudd_scene_load, 1, 0,
+			   false, "(krudd-scene-load path) -> #t/#f");
 	s7_define_function(sc, "krudd-texture-assets", sp_krudd_texture_assets,
 			   0, 0, false,
 			   "(krudd-texture-assets) -> ((id . path) ...)");
@@ -3301,6 +3359,9 @@ static s7_scheme *ensure_panel_scm(void)
 	s7_define_function(sc, "krudd-asset-clone-mesh",
 			   sp_krudd_asset_clone_mesh, 2, 0, false,
 			   "(krudd-asset-clone-mesh name text) -> new id or 0");
+	s7_define_function(sc, "krudd-asset-clone-scene",
+			   sp_krudd_asset_clone_scene, 2, 0, false,
+			   "(krudd-asset-clone-scene name id) -> new id or 0");
 	s7_define_function(sc, "krudd-asset-clone-material",
 			   sp_krudd_asset_clone_material, 3, 0, false,
 			   "(krudd-asset-clone-material name shader-ref values)"
@@ -4957,16 +5018,59 @@ static void draw_tab_world(void)
 	/* Selection lives in the scene subsystem; fall back if it's absent. */
 	sel = g_entity_api ? g_entity_api->get_selected() : g_entity_sel;
 
-	/* ---- Scene header ---- */
-	ImGui::TextUnformatted("Untitled Scene");
-	ImGui::SameLine();
-	ImGui::SetCursorPosX(ImGui::GetWindowWidth()
-		- ImGui::CalcTextSize("Save As...").x
-		- ImGui::GetStyle().FramePadding.x * 2.0f
-		- ImGui::GetStyle().WindowPadding.x);
-	ImGui::BeginDisabled();
-	ImGui::SmallButton("Save As...");
-	ImGui::EndDisabled();
+	/* ---- Scene header: a switcher combo over every .scene asset, in
+	 * place of the old static "Untitled Scene" text. Loads the built-in
+	 * default scene once, the first time this panel draws with nothing
+	 * loaded yet, so the tab shows a live scene rather than an empty
+	 * world. */
+	if (g_current_scene_id == 0 && g_asset_api && g_entity_api) {
+		struct asset_info info;
+		uint32_t          n = g_asset_api->count();
+		uint32_t          k;
+
+		for (k = 0; k < n; k++) {
+			if (g_asset_api->info(k, &info) == 0 && info.id != 0
+			    && strcmp(info.path, "builtin://scene/default.scene") == 0) {
+				if (g_entity_api->load_scene(info.path) == 0)
+					g_current_scene_id = info.id;
+				break;
+			}
+		}
+	}
+
+	{
+		struct asset_info current;
+		const char        *preview = "(none)";
+
+		if (g_current_scene_id != 0 && g_asset_api
+		    && g_asset_api->find(g_current_scene_id, &current) == 0)
+			preview = current.path;
+
+		ImGui::SetNextItemWidth(240.0f);
+		if (ImGui::BeginCombo("##sceneswitch", preview)) {
+			uint32_t n = g_asset_api ? g_asset_api->count() : 0;
+			uint32_t k;
+
+			for (k = 0; k < n; k++) {
+				struct asset_info mi;
+				char              label[300];
+				bool              cur;
+
+				if (!g_asset_api || g_asset_api->info(k, &mi) != 0
+				    || mi.type != ASSET_TYPE_SCENE || mi.id == 0)
+					continue;
+				cur = (mi.id == g_current_scene_id);
+				snprintf(label, sizeof(label), "%s##sc%u",
+					mi.path, mi.id);
+				if (ImGui::Selectable(label, cur) && g_entity_api
+				    && g_entity_api->load_scene(mi.path) == 0)
+					g_current_scene_id = mi.id;
+				if (cur)
+					ImGui::SetItemDefaultFocus();
+			}
+			ImGui::EndCombo();
+		}
+	}
 
 	ImGui::Separator();
 

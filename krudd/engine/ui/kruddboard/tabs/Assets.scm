@@ -680,6 +680,61 @@
 	  (kruddboard-assets-do-delete id)))
       (kruddboard-draw-asset-mesh-clone id path)))
 
+;;! (kruddboard-scene-copy-name path) is the default Clone name for a scene:
+;;! "_copy" inserted before the ".scene" extension rather than appended after
+;;! it (unlike the other clone flows' plain suffix), so the clone keeps the
+;;! extension entity_api.load_scene's codec lookup resolves by.
+(define (kruddboard-scene-copy-name path)
+  (let* ((stripped (kruddboard-strip-builtin-prefix path))
+	 (n        (string-length stripped))
+	 (ext      ".scene")
+	 (ext-len  (string-length ext)))
+    (if (and (>= n ext-len)
+	     (string=? (substring stripped (- n ext-len) n) ext))
+	(string-append (substring stripped 0 (- n ext-len)) "_copy" ext)
+	(string-append stripped "_copy"))))
+
+;;! The name field + Clone button for a read-only (built-in) scene — the scene
+;;! analogue of kruddboard-draw-asset-mesh-clone. Scene bytes are opaque (no
+;;! editable text buffer), so cloning is a straight byte copy of the source
+;;! scene's current bytes via krudd-asset-clone-scene, not a re-encode of
+;;! edited text.
+(define (kruddboard-draw-asset-scene-clone id path)
+  (unless (= kruddboard-assets-clone-src id)
+    (set! kruddboard-assets-clone-src id)
+    (set! kruddboard-assets-clone-name (kruddboard-scene-copy-name path))
+    (set! kruddboard-assets-clone-conflict #f))
+  (imgui-set-next-item-width 240.0)
+  (let ((r (imgui-input-text-enter "##clonename" kruddboard-assets-clone-name)))
+    (set! kruddboard-assets-clone-name (car r))
+    (imgui-same-line)
+    (let* ((clone-clicked (imgui-button "Clone"))
+	   (confirm (or (cdr r) clone-clicked)))
+      (when (and confirm (not (string=? kruddboard-assets-clone-name "")))
+	(let ((nid (krudd-asset-clone-scene kruddboard-assets-clone-name id)))
+	  (if (= nid 0)
+	      (set! kruddboard-assets-clone-conflict #t)
+	      (begin
+		(set! kruddboard-assets-clone-conflict #f)
+		(set! kruddboard-assets-sel nid)))))
+      (when kruddboard-assets-clone-conflict
+	(imgui-same-line)
+	(imgui-text-colored 1.0 0.3 0.3 1.0
+			    (format #f "\"~A\" already exists"
+				    kruddboard-assets-clone-name))))))
+
+;;! Scene inspector: no in-place editor yet (a scene's bytes are opaque, and
+;;! editing happens by loading it in the Scene tab, not here) — just Delete for
+;;! an authored scene, or the built-in Clone row.
+(define (kruddboard-draw-asset-scene-editor id path editable)
+  (imgui-separator)
+  (imgui-text-disabled "(no in-place editor — load it in the Scene tab)")
+  (imgui-separator)
+  (if editable
+      (when (imgui-button "Delete")
+	(kruddboard-assets-do-delete id))
+      (kruddboard-draw-asset-scene-clone id path)))
+
 ;;! The combo preview label for a material's shader: the shader asset's path, or
 ;;! "(missing #ref)" when it no longer resolves (a material always names one).
 (define (kruddboard-assets-shader-label ref)
@@ -824,8 +879,8 @@
 
 ;;! Read-only fallback for every asset type without a dedicated editor: the
 ;;! declaration table (from describe()) and the full catalog snapshot — the
-;;! old draw_asset_inspector generic tail, reached by every non-text/shader/
-;;! material asset (meshes, textures, fonts, scenes).
+;;! old draw_asset_inspector generic tail, reached by every type without one
+;;! of the dispatch cases above (textures, fonts).
 (define (kruddboard-draw-asset-generic id info)
   (imgui-separator)
   (imgui-text "Declaration")
@@ -876,6 +931,7 @@
      ((= type 4) (kruddboard-draw-asset-shader-editor id path (not read-only)))
      ((= type 3) (kruddboard-draw-asset-material-editor id path (not read-only)))
      ((= type 8) (kruddboard-draw-asset-script-editor id path (not read-only)))
+     ((= type 6) (kruddboard-draw-asset-scene-editor id path (not read-only)))
      (else (kruddboard-draw-asset-generic id info)))))
 
 ;;! (kruddboard-draw-asset-inspector id) is the whole inspector screen: the

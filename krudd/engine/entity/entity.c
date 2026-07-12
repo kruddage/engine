@@ -366,9 +366,10 @@ int32_t world_ingest_scene(struct world *w, const struct scene *s)
 				    ? se->material_ref : 0;
 		w->script_ref[i]  = (se->mask & COMPONENT_SCRIPT)
 				    ? se->script_ref : 0;
-		/* Per-entity script-, material-, and mesh-param overrides are not
-		 * carried by the .scene transfer format yet (its codec is
-		 * unwritten); ingest starts each entity with no override. */
+		/* Per-entity script-, material-, and mesh-param overrides are
+		 * not carried by struct scene_entity itself, so a decoded
+		 * scene never has any; ingest starts each entity with no
+		 * override. */
 		w->script_param_len[i] = 0;
 		w->material_param_len[i] = 0;
 		w->mesh_param_len[i] = 0;

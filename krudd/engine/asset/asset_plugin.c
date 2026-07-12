@@ -7,6 +7,8 @@
 #include "builtin_texture_scripts.h"
 #include "asset_edit.h"
 #include "edit_api.h"
+#include "scene.h"
+#include "scene_blob.h"
 #include "subsystem.h"
 #include "subsystem_manager.h"
 #include "log_api.h"
@@ -292,20 +294,20 @@ static uint32_t seed_shader(const char *path, const char *src)
  * derives its widgets from the referenced shader, so a material carries no schema
  * of its own; shutdown frees the bytes like any other asset.
  */
-static void seed_material(const char *path, uint32_t shader_ref,
-			  const float rgba[4])
+static uint32_t seed_material(const char *path, uint32_t shader_ref,
+			      const float rgba[4])
 {
 	struct asset_entry *e;
 	uint32_t            n;
 
 	e = alloc_entry(path);
 	if (!e)
-		return;
+		return 0;
 	n = (uint32_t)(sizeof(uint32_t) + 4 * sizeof(float));
 	e->data = g_mem->alloc(n);
 	if (!e->data) {
 		e->state = ASSET_ERROR;
-		return;
+		return 0;
 	}
 	memcpy(e->data, &shader_ref, sizeof(shader_ref));
 	memcpy((unsigned char *)e->data + sizeof(shader_ref), rgba,
@@ -315,6 +317,7 @@ static void seed_material(const char *path, uint32_t shader_ref,
 	e->kind      = ASSET_KIND_PRIMITIVE;
 	e->read_only = 1;
 	e->type      = ASSET_TYPE_MATERIAL;
+	return e->id;
 }
 
 /*
@@ -400,19 +403,19 @@ static void seed_script(const char *path, const char *src)
  * no separate "mesh script" type: every ASSET_TYPE_MESH asset is one of
  * these, full stop.
  */
-static void seed_mesh(const char *path, const char *src)
+static uint32_t seed_mesh(const char *path, const char *src)
 {
 	struct asset_entry *e;
 	uint32_t            n;
 
 	e = alloc_entry(path);
 	if (!e)
-		return;
+		return 0;
 	n = (uint32_t)strlen(src) + 1;
 	e->data = g_mem->alloc(n);
 	if (!e->data) {
 		e->state = ASSET_ERROR;
-		return;
+		return 0;
 	}
 	memcpy(e->data, src, n);
 	e->size      = n;
@@ -420,6 +423,7 @@ static void seed_mesh(const char *path, const char *src)
 	e->kind      = ASSET_KIND_PRIMITIVE;
 	e->read_only = 1;
 	e->type      = ASSET_TYPE_MESH;
+	return e->id;
 }
 
 /*
@@ -453,8 +457,66 @@ static uint32_t seed_texture(const char *path, const char *src)
 	return e->id;
 }
 
+/*
+ * Seed the built-in default scene: a single named entity ("Cube") bound to
+ * the built-in cube mesh and default material, packed into the .scene wire
+ * format via scene_blob_encode — the "hot" starting point a user sees in the
+ * Scene tab before ever touching it, and what Clone (the Assets tab) copies to
+ * produce a second scene asset. A zero mesh_ref or material_ref (either
+ * builtin failed to seed) makes this a no-op, matching seed_textured_material.
+ */
+static void seed_scene(const char *path, uint32_t mesh_ref,
+		       uint32_t material_ref)
+{
+	static char          names[] = "Cube";
+	struct scene_entity  ent;
+	struct scene         s;
+	struct asset_entry  *e;
+	unsigned char        buf[sizeof(struct scene_blob_header)
+				  + sizeof(struct scene_entity)
+				  + sizeof(names)];
+	uint32_t             len;
+
+	if (!mesh_ref || !material_ref)
+		return;
+
+	memset(&ent, 0, sizeof(ent));
+	ent.mask         = COMPONENT_NAME | COMPONENT_RENDER | COMPONENT_MATERIAL;
+	ent.parent       = -1;
+	ent.rotation.w   = 1.0f;
+	ent.scale.x = ent.scale.y = ent.scale.z = 1.0f;
+	ent.name_off     = 0;
+	ent.render_ref   = mesh_ref;
+	ent.material_ref = material_ref;
+
+	s.count    = 1;
+	s.entities = &ent;
+	s.names    = names;
+
+	len = scene_blob_encode(&s, buf, sizeof(buf));
+	if (!len)
+		return;
+
+	e = alloc_entry(path);
+	if (!e)
+		return;
+	e->data = g_mem->alloc(len);
+	if (!e->data) {
+		e->state = ASSET_ERROR;
+		return;
+	}
+	memcpy(e->data, buf, len);
+	e->size      = len;
+	e->state     = ASSET_LOADED;
+	e->kind      = ASSET_KIND_PRIMITIVE;
+	e->read_only = 1;
+	e->type      = ASSET_TYPE_SCENE;
+}
+
 static void seed_builtins(void)
 {
+	uint32_t cube_mesh;
+
 	if (builtins_seeded)
 		return;
 	builtins_seeded = 1;
@@ -464,9 +526,10 @@ static void seed_builtins(void)
 	 * authored the same way — there is no hardcoded C mesh generator.
 	 * seed_mesh stores each (mesh NAME (generate () ...)) source
 	 * verbatim; a consumer resolves it to a real mesh_blob on demand via
-	 * mesh_script_generate().
+	 * mesh_script_generate(). The cube's id is captured for the default
+	 * scene seeded below.
 	 */
-	seed_mesh("builtin://mesh/cube",    CUBE_MESH_SCRIPT_SRC);
+	cube_mesh = seed_mesh("builtin://mesh/cube", CUBE_MESH_SCRIPT_SRC);
 	seed_mesh("builtin://mesh/box",     BOX_MESH_SCRIPT_SRC);
 	seed_mesh("builtin://mesh/sphere",  SPHERE_MESH_SCRIPT_SRC);
 	seed_mesh("builtin://mesh/plane",   PLANE_MESH_SCRIPT_SRC);
@@ -476,9 +539,17 @@ static void seed_builtins(void)
 	{
 		uint32_t scene_shader =
 			seed_shader("builtin://shader/scene", SCENE_SHADER_SRC);
+		uint32_t default_material =
+			seed_material("builtin://material/default", scene_shader,
+				      DEFAULT_MATERIAL_COLOR);
 
-		seed_material("builtin://material/default", scene_shader,
-			      DEFAULT_MATERIAL_COLOR);
+		/*
+		 * The built-in default scene: one Cube entity on the mesh and
+		 * material just seeded above, so a user sees something the
+		 * moment they open the Scene tab rather than an empty world.
+		 */
+		seed_scene("builtin://scene/default.scene", cube_mesh,
+			  default_material);
 	}
 
 	seed_script("builtin://script/spinner", SPINNER_SCRIPT_SRC);

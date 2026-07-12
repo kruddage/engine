@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "world.h"
 #include "scene.h"
+#include "scene_blob.h"
 #include "memory_api.h"
 #include "memory.h"
 
@@ -623,6 +624,66 @@ static void test_texture_params_snapshot(void)
 	world_snapshot_free(snap, &test_mem);
 }
 
+/*
+ * scene_blob_encode/scene_blob_decode round-trip a struct scene byte-for-
+ * byte: counts, transforms, refs, and names all survive the wire format, a
+ * too-small buffer is rejected rather than written short, and a corrupted
+ * header (bad magic or a truncated buffer) is rejected rather than read out
+ * of bounds.
+ */
+static void test_scene_blob_roundtrip(void)
+{
+	static char          names[] = "root\0child";
+	struct scene_entity  ents[3];
+	struct scene         s0;
+	struct scene        *s1;
+	unsigned char        buf[512];
+	uint32_t             len;
+
+	make_entity(&ents[0], -1, COMPONENT_NAME, 0.0f, 0.0f, 0.0f, 1.0f);
+	ents[0].name_off = 0;
+	make_entity(&ents[1], 0, COMPONENT_NAME, 1.0f, 0.0f, 0.0f, 1.0f);
+	ents[1].name_off = 5;
+	make_entity(&ents[2], 1, COMPONENT_RENDER | COMPONENT_MATERIAL,
+		    2.0f, 3.0f, 4.0f, 2.0f);
+	ents[2].render_ref   = 42u;
+	ents[2].material_ref = 5u;
+
+	s0.count    = 3;
+	s0.entities = ents;
+	s0.names    = names;
+
+	len = scene_blob_size(&s0);
+	assert(len > 0 && len <= sizeof(buf));
+	assert(scene_blob_encode(&s0, buf, len) == len);
+	assert(scene_blob_encode(&s0, buf, len - 1) == 0);
+
+	s1 = scene_blob_decode(buf, len, &test_mem);
+	assert(s1 != NULL && s1->count == 3);
+	assert(s1->entities[0].parent == -1);
+	assert(s1->entities[1].parent == 0);
+	assert(s1->entities[2].parent == 1);
+	assert(s1->entities[2].render_ref == 42u);
+	assert(s1->entities[2].material_ref == 5u);
+	assert(feq(s1->entities[2].position.z, 4.0f));
+	assert(strcmp(s1->names + s1->entities[0].name_off, "root") == 0);
+	assert(strcmp(s1->names + s1->entities[1].name_off, "child") == 0);
+
+	test_mem.free(s1->entities);
+	test_mem.free(s1->names);
+	test_mem.free(s1);
+
+	{
+		unsigned char bad[512];
+
+		memcpy(bad, buf, len);
+		bad[0] ^= 0xFF;                    /* corrupt the magic */
+		assert(scene_blob_decode(bad, len, &test_mem) == NULL);
+	}
+
+	assert(scene_blob_decode(buf, len - 1, &test_mem) == NULL);
+}
+
 int main(void)
 {
 	mem_init();
@@ -644,6 +705,7 @@ int main(void)
 	test_material_params_snapshot();
 	test_mesh_params_snapshot();
 	test_texture_params_snapshot();
+	test_scene_blob_roundtrip();
 
 	mem_shutdown();
 	printf("entity tests passed\n");

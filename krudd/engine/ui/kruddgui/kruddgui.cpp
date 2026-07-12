@@ -27,6 +27,7 @@ extern "C" {
 #include "log_api.h"
 #include "log_level.h"
 #include "kgui_batch.h"
+#include "kgui_input.h"
 }
 
 #ifdef __EMSCRIPTEN__
@@ -189,13 +190,19 @@ static void gl_init(void)
 }
 
 /*
- * Upload and draw the accumulated batch as one triangle list. Sets every piece
- * of GL state it needs (blend, no depth/cull/scissor, viewport, program, VAO,
- * atlas texture) so it is independent of whatever ImGui left bound; it runs at
- * the end of the frame and the next frame's renderers set their own state.
+ * Upload and draw the accumulated batch. Sets every piece of GL state it needs
+ * (blend, no depth/cull, viewport, program, VAO, atlas texture) so it is
+ * independent of whatever ImGui left bound; it runs at the end of the frame and
+ * the next frame's renderers set their own state. The batch is one VBO but is
+ * issued as one draw per clip command so a scroll body can be scissored: a
+ * command's CSS-pixel clip is converted to a physical-pixel, y-up GL scissor.
  */
 static void gl_flush(GLuint atlas)
 {
+	float scale_x = (s_css_w > 0.0f) ? (float)s_phys_w / s_css_w : 1.0f;
+	float scale_y = (s_css_h > 0.0f) ? (float)s_phys_h / s_css_h : 1.0f;
+	int   i;
+
 	if (!s_gl_ready || s_batch.count <= 0 || !atlas)
 		return;
 
@@ -218,8 +225,27 @@ static void gl_flush(GLuint atlas)
 	glBufferData(GL_ARRAY_BUFFER,
 		     (GLsizeiptr)(s_batch.count * sizeof(struct kgui_vertex)),
 		     s_verts, GL_STREAM_DRAW);
-	glDrawArrays(GL_TRIANGLES, 0, s_batch.count);
 
+	for (i = 0; i < s_batch.cmd_count; i++) {
+		const struct kgui_clip_cmd *c = &s_batch.cmds[i];
+
+		if (c->count <= 0)
+			continue;
+		if (c->clipped) {
+			int sx = (int)(c->x * scale_x + 0.5f);
+			int sw = (int)(c->w * scale_x + 0.5f);
+			int sh = (int)(c->h * scale_y + 0.5f);
+			int sy = s_phys_h - (int)((c->y + c->h) * scale_y + 0.5f);
+
+			glEnable(GL_SCISSOR_TEST);
+			glScissor(sx, sy, sw < 0 ? 0 : sw, sh < 0 ? 0 : sh);
+		} else {
+			glDisable(GL_SCISSOR_TEST);
+		}
+		glDrawArrays(GL_TRIANGLES, c->first, c->count);
+	}
+
+	glDisable(GL_SCISSOR_TEST);
 	glBindVertexArray(0);
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
@@ -288,167 +314,142 @@ static void refresh_atlas(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* Pointer state + mode-bar hit region                                 */
+/* Pointer router — the multi-touch hit-test registry (#489)           */
 /* ------------------------------------------------------------------ */
 
 /*
- * Input ownership for v0 is scoped (the general panel hit-test + multi-touch
- * model is #489): kruddgui owns the Emscripten pointer callbacks, consumes the
- * gesture only when it starts on the mode-bar, and forwards everything else to
- * ImGui verbatim. The bar's footprint is the union of the button rects the
- * Scheme image lays out; it is rebuilt every tick and read by the async
- * callbacks between ticks, which is safe because the callbacks never fire
+ * kruddgui owns the Emscripten pointer callbacks and routes every event
+ * through kgui_input: a down that lands on a declared panel region is captured
+ * by that region for its whole gesture, and everything else is forwarded to
+ * ImGui with the exact translation imgui_plugin used before input moved here.
+ * The router is GL- and ImGui-free (host-tested in kgui_input_test.c); this
+ * file is only the thin Emscripten/ImGui adapter over it.
+ *
+ * s_input's region set is (re)declared by the Scheme image each tick
+ * (kgui-panel-begin) and committed at the end of the tick; the async callbacks
+ * route against the committed set between ticks, safe because they never fire
  * mid-tick (single-threaded).
  */
-static float s_bar_x0, s_bar_y0, s_bar_x1, s_bar_y1;
-static bool  s_bar_valid;
+static struct kgui_input s_input;
 
-static float s_ptr_x, s_ptr_y;
-static bool  s_gesture_active;   /* a button / touch is currently down     */
-static bool  s_gesture_owned;    /* that gesture started inside the bar    */
-
-static bool  s_tap_pending;      /* a completed bar tap awaiting a consumer */
-static float s_tap_x, s_tap_y;
+/* The region the image is currently drawing into (kgui-panel-begin/end). */
+static struct kgui_region_io *s_cur_io;
 
 static bool s_touch_device;
 
-static void bar_reset(void)
-{
-	s_bar_valid = false;
-	s_bar_x0 = s_bar_y0 = s_bar_x1 = s_bar_y1 = 0.0f;
-}
-
-static void bar_add_rect(float x, float y, float w, float h)
-{
-	float x1 = x + w;
-	float y1 = y + h;
-
-	if (!s_bar_valid) {
-		s_bar_x0 = x;  s_bar_y0 = y;
-		s_bar_x1 = x1; s_bar_y1 = y1;
-		s_bar_valid = true;
-		return;
-	}
-	if (x  < s_bar_x0) s_bar_x0 = x;
-	if (y  < s_bar_y0) s_bar_y0 = y;
-	if (x1 > s_bar_x1) s_bar_x1 = x1;
-	if (y1 > s_bar_y1) s_bar_y1 = y1;
-}
-
-static bool in_bar(float x, float y)
-{
-	return s_bar_valid &&
-	       x >= s_bar_x0 && x <= s_bar_x1 &&
-	       y >= s_bar_y0 && y <= s_bar_y1;
-}
-
 /* ------------------------------------------------------------------ */
-/* Input callbacks — take over from imgui_plugin, forward the rest     */
+/* Input callbacks — route through the registry, forward the rest      */
 /* ------------------------------------------------------------------ */
 
-static void pointer_move(float x, float y)
+/*
+ * The forward path — the exact io translation imgui_plugin did before input
+ * ownership moved here. Positions come from targetX/targetY (element-relative
+ * CSS pixels), not the deprecated canvasX/canvasY (which read 0 on current
+ * Emscripten), so the router's hit-test and ImGui's io share one CSS-pixel
+ * space with imgui_tick's DisplaySize.
+ */
+static void forward_button(float x, float y, bool down)
 {
-	s_ptr_x = x;
-	s_ptr_y = y;
-	/* A bar-owned drag is consumed whole; otherwise the move is ImGui's. */
-	if (s_gesture_active && s_gesture_owned)
-		return;
-	ImGui::GetIO().AddMousePosEvent(x, y);
+	ImGuiIO &io = ImGui::GetIO();
+
+	io.AddMousePosEvent(x, y);
+	io.AddMouseButtonEvent(0, down);
 }
 
-static void pointer_down(float x, float y)
+static void pointer_down(int32_t id, float x, float y)
 {
-	s_ptr_x = x;
-	s_ptr_y = y;
-	s_gesture_active = true;
-
-	if (in_bar(x, y)) {
-		s_gesture_owned = true;	/* consume: not forwarded to ImGui */
-		return;
-	}
-	s_gesture_owned = false;
-	ImGui::GetIO().AddMousePosEvent(x, y);
-	ImGui::GetIO().AddMouseButtonEvent(0, true);
+	if (kgui_input_pointer_down(&s_input, id, x, y) == KGUI_ROUTE_FORWARD)
+		forward_button(x, y, true);
 }
 
-static void pointer_up(float x, float y, bool is_touch)
+static void pointer_move(int32_t id, float x, float y)
 {
-	bool owned = s_gesture_owned;
+	if (kgui_input_pointer_move(&s_input, id, x, y) == KGUI_ROUTE_FORWARD)
+		ImGui::GetIO().AddMousePosEvent(x, y);
+}
 
-	s_ptr_x = x;
-	s_ptr_y = y;
-
-	if (owned) {
-		/* A tap is a press and release both on the bar. */
-		if (in_bar(x, y)) {
-			s_tap_pending = true;
-			s_tap_x = x;
-			s_tap_y = y;
-		}
-		/* consume: no button event reaches ImGui */
-	} else {
-		ImGuiIO &io = ImGui::GetIO();
-
-		io.AddMousePosEvent(x, y);
-		io.AddMouseButtonEvent(0, false);
+static void pointer_up(int32_t id, float x, float y, bool is_touch)
+{
+	if (kgui_input_pointer_up(&s_input, id, x, y) == KGUI_ROUTE_FORWARD) {
+		forward_button(x, y, false);
 		if (is_touch)
 			imgui_soft_keyboard_touch_hint();
 	}
-	s_gesture_active = false;
-	s_gesture_owned  = false;
 }
 
-/*
- * Pointer coordinates come from targetX/targetY (element-relative CSS pixels),
- * not the deprecated canvasX/canvasY — the latter read 0 on current Emscripten.
- * This is the same field the touch path and ImGui's own backend use, so the
- * bar hit-test and the forwarded io positions share one CSS-pixel space with
- * imgui_tick's DisplaySize.
- */
 static EM_BOOL on_mouse_move(int /*type*/, const EmscriptenMouseEvent *e,
 			     void * /*ud*/)
 {
-	pointer_move((float)e->targetX, (float)e->targetY);
+	pointer_move(KGUI_MOUSE_ID, (float)e->targetX, (float)e->targetY);
 	return EM_FALSE;
 }
 
 static EM_BOOL on_mouse_button(int type, const EmscriptenMouseEvent *e,
 			       void * /*ud*/)
 {
-	bool pressed = (type == EMSCRIPTEN_EVENT_MOUSEDOWN);
+	bool  pressed = (type == EMSCRIPTEN_EVENT_MOUSEDOWN);
+	float x       = (float)e->targetX;
+	float y       = (float)e->targetY;
 
-	/* Only the left button participates in bar taps; forward the rest. */
+	/* Only the left button routes to panels; forward the rest verbatim. */
 	if ((int)e->button == 0) {
 		if (pressed)
-			pointer_down((float)e->targetX, (float)e->targetY);
+			pointer_down(KGUI_MOUSE_ID, x, y);
 		else
-			pointer_up((float)e->targetX, (float)e->targetY, false);
+			pointer_up(KGUI_MOUSE_ID, x, y, false);
 	} else if ((int)e->button < 5) {
 		ImGuiIO &io = ImGui::GetIO();
 
-		io.AddMousePosEvent((float)e->targetX, (float)e->targetY);
+		io.AddMousePosEvent(x, y);
 		io.AddMouseButtonEvent((int)e->button, pressed);
 	}
 	return EM_FALSE;
 }
 
+/*
+ * Every changed touch point is routed by its identifier, so several fingers on
+ * different panels each drive their own region and one never steals another.
+ */
 static EM_BOOL on_touch(int type, const EmscriptenTouchEvent *e, void * /*ud*/)
 {
-	const EmscriptenTouchPoint *t;
+	int i;
 
-	if (e->numTouches < 1)
-		return EM_FALSE;
+	for (i = 0; i < e->numTouches; i++) {
+		const EmscriptenTouchPoint *t = &e->touches[i];
+		int32_t id = (int32_t)t->identifier;
+		float   x  = (float)t->targetX;
+		float   y  = (float)t->targetY;
 
-	t = &e->touches[0];
+		if (!t->isChanged)
+			continue;
 
-	if (type == EMSCRIPTEN_EVENT_TOUCHSTART)
-		pointer_down((float)t->targetX, (float)t->targetY);
-	else if (type == EMSCRIPTEN_EVENT_TOUCHEND ||
-		 type == EMSCRIPTEN_EVENT_TOUCHCANCEL)
-		pointer_up((float)t->targetX, (float)t->targetY, true);
-	else
-		pointer_move((float)t->targetX, (float)t->targetY);
+		if (type == EMSCRIPTEN_EVENT_TOUCHSTART)
+			pointer_down(id, x, y);
+		else if (type == EMSCRIPTEN_EVENT_TOUCHEND ||
+			 type == EMSCRIPTEN_EVENT_TOUCHCANCEL)
+			pointer_up(id, x, y, true);
+		else
+			pointer_move(id, x, y);
+	}
+	return EM_TRUE;
+}
 
+/*
+ * Wheel routes to a region under the pointer as a scroll delta (a scrollable
+ * panel reads it via kgui-region-wheel); otherwise it becomes ImGui's wheel.
+ * DOM deltaY is positive-down and roughly one notch per 100 px; ImGui's wheel
+ * is positive-up, so the forwarded value is negated and scaled to notches.
+ */
+static EM_BOOL on_wheel(int /*type*/, const EmscriptenWheelEvent *e,
+			void * /*ud*/)
+{
+	float x = (float)e->mouse.targetX;
+	float y = (float)e->mouse.targetY;
+
+	if (kgui_input_wheel(&s_input, x, y, (float)e->deltaY) ==
+	    KGUI_ROUTE_FORWARD)
+		ImGui::GetIO().AddMouseWheelEvent(0.0f,
+						  -(float)e->deltaY / 100.0f);
 	return EM_TRUE;
 }
 
@@ -510,10 +511,41 @@ static s7_pointer sp_kgui_text_metrics(s7_scheme *sc, s7_pointer args)
 }
 
 /*
- * (kgui-button x y w h) -> #t if a bar tap landed in this rect this frame.
- * The button does not draw — the image draws its own background and label — it
- * only registers the rect as part of the bar's hit footprint and reports the
- * trapped tap, consuming it so a single tap fires exactly one button.
+ * (kgui-panel-begin name x y w h) -> unspecified. Declare an input region and
+ * enter it: the region captures any gesture whose down lands inside its rect,
+ * and subsequent kgui-button / kgui-region-* calls read its trapped input.
+ * The rect must enclose the panel's buttons and scroll body so their gestures
+ * are captured. Panels are declared in draw order; a later one is on top.
+ */
+static s7_pointer sp_kgui_panel_begin(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer  p    = args;
+	s7_pointer  nm   = s7_car(p);                     p = s7_cdr(p);
+	double      x    = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double      y    = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double      w    = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double      h    = s7_number_to_real(sc, s7_car(p));
+	const char *name = s7_is_string(nm) ? s7_string(nm) : "";
+
+	s_cur_io = kgui_input_region(&s_input, kgui_name_hash(name),
+				     (float)x, (float)y, (float)w, (float)h);
+	return s7_unspecified(sc);
+}
+
+/* (kgui-panel-end) -> unspecified. Leave the current input region. */
+static s7_pointer sp_kgui_panel_end(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	s_cur_io = NULL;
+	return s7_unspecified(sc);
+}
+
+/*
+ * (kgui-button x y w h) -> #t if a tap landed in this rect this frame. A
+ * button is a hit-target inside the current panel region: the region captures
+ * the gesture and this reports and consumes its trapped tap when it falls in
+ * the rect, so one tap fires exactly one button. The button does not draw —
+ * the image draws its own background and label.
  */
 static s7_pointer sp_kgui_button(s7_scheme *sc, s7_pointer args)
 {
@@ -524,15 +556,67 @@ static s7_pointer sp_kgui_button(s7_scheme *sc, s7_pointer args)
 	double h = s7_number_to_real(sc, s7_car(p));
 	bool   hit = false;
 
-	bar_add_rect((float)x, (float)y, (float)w, (float)h);
-
-	if (s_tap_pending &&
-	    s_tap_x >= x && s_tap_x <= x + w &&
-	    s_tap_y >= y && s_tap_y <= y + h) {
+	if (s_cur_io && s_cur_io->tapped &&
+	    s_cur_io->tap_x >= x && s_cur_io->tap_x <= x + w &&
+	    s_cur_io->tap_y >= y && s_cur_io->tap_y <= y + h) {
 		hit = true;
-		s_tap_pending = false;
+		s_cur_io->tapped = 0; /* consume: one tap, one button */
 	}
 	return s7_make_boolean(sc, hit);
+}
+
+/*
+ * (kgui-region-drag) -> (dx dy): the captured pointer motion in the current
+ * panel this frame (CSS px), or (0 0) outside a panel. A scroll body adds -dy
+ * to its offset each frame to drag its contents.
+ */
+static s7_pointer sp_kgui_region_drag(s7_scheme *sc, s7_pointer args)
+{
+	double dx = s_cur_io ? (double)s_cur_io->drag_dx : 0.0;
+	double dy = s_cur_io ? (double)s_cur_io->drag_dy : 0.0;
+
+	(void)args;
+	return s7_list(sc, 2, s7_make_real(sc, (s7_double)dx),
+		       s7_make_real(sc, (s7_double)dy));
+}
+
+/* (kgui-region-wheel) -> wheel delta over the current panel this frame. */
+static s7_pointer sp_kgui_region_wheel(s7_scheme *sc, s7_pointer args)
+{
+	double w = s_cur_io ? (double)s_cur_io->wheel : 0.0;
+
+	(void)args;
+	return s7_make_real(sc, (s7_double)w);
+}
+
+/* (kgui-region-pressed) -> #t while a pointer is held on the current panel. */
+static s7_pointer sp_kgui_region_pressed(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	return s7_make_boolean(sc, s_cur_io && s_cur_io->pressed);
+}
+
+/*
+ * (kgui-clip x y w h) clip subsequent draws to a rect (CSS px);
+ * (kgui-clip-none) clears it. Used to scissor a scroll body to its viewport.
+ */
+static s7_pointer sp_kgui_clip(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer p = args;
+	double x = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double y = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double w = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double h = s7_number_to_real(sc, s7_car(p));
+
+	kgui_batch_set_clip(&s_batch, (float)x, (float)y, (float)w, (float)h);
+	return s7_unspecified(sc);
+}
+
+static s7_pointer sp_kgui_clip_none(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	kgui_batch_clear_clip(&s_batch);
+	return s7_unspecified(sc);
 }
 
 /* (kgui-viewport-size) -> (w h) in CSS pixels, for responsive layout. */
@@ -555,6 +639,20 @@ static void register_primitives(s7_scheme *sc)
 			   false, "(kgui-text-metrics str) -> (w h) px");
 	s7_define_function(sc, "kgui-button", sp_kgui_button, 4, 0, false,
 			   "(kgui-button x y w h) -> #t on tap this frame");
+	s7_define_function(sc, "kgui-panel-begin", sp_kgui_panel_begin, 5, 0,
+			   false, "(kgui-panel-begin name x y w h) input region");
+	s7_define_function(sc, "kgui-panel-end", sp_kgui_panel_end, 0, 0, false,
+			   "(kgui-panel-end) leave the current input region");
+	s7_define_function(sc, "kgui-region-drag", sp_kgui_region_drag, 0, 0,
+			   false, "(kgui-region-drag) -> (dx dy) this frame");
+	s7_define_function(sc, "kgui-region-wheel", sp_kgui_region_wheel, 0, 0,
+			   false, "(kgui-region-wheel) -> wheel delta");
+	s7_define_function(sc, "kgui-region-pressed", sp_kgui_region_pressed, 0,
+			   0, false, "(kgui-region-pressed) -> #t while held");
+	s7_define_function(sc, "kgui-clip", sp_kgui_clip, 4, 0, false,
+			   "(kgui-clip x y w h) clip subsequent draws");
+	s7_define_function(sc, "kgui-clip-none", sp_kgui_clip_none, 0, 0, false,
+			   "(kgui-clip-none) clear the clip");
 	s7_define_function(sc, "kgui-viewport-size", sp_kgui_viewport_size, 0, 0,
 			   false, "(kgui-viewport-size) -> (w h) CSS px");
 }
@@ -598,6 +696,7 @@ static void kruddgui_init(void)
 {
 #ifdef __EMSCRIPTEN__
 	kgui_batch_init(&s_batch, s_verts, KGUI_MAX_VERTS);
+	kgui_input_init(&s_input);
 	gl_init();
 
 	/* Take over the pointer callbacks from imgui_plugin. */
@@ -608,6 +707,7 @@ static void kruddgui_init(void)
 	emscripten_set_touchmove_callback("#canvas",   nullptr, 0, on_touch);
 	emscripten_set_touchend_callback("#canvas",    nullptr, 0, on_touch);
 	emscripten_set_touchcancel_callback("#canvas", nullptr, 0, on_touch);
+	emscripten_set_wheel_callback("#canvas",       nullptr, 0, on_wheel);
 
 	s_touch_device = krudd_is_touch_device() != 0;
 #endif
@@ -630,16 +730,19 @@ static void kruddgui_tick(void)
 	refresh_atlas();
 
 	kgui_batch_reset(&s_batch);
-	bar_reset();
+	kgui_input_frame_begin(&s_input);
+	s_cur_io = NULL;
 
 	call_scm_panel("kruddgui-draw");
 
 	/*
-	 * A tap gets exactly one frame to be claimed by a button. Clearing it
-	 * here (never before the eval, which is what consumes it) stops a tap
-	 * that missed every chip from lingering into a later frame.
+	 * Commit the regions the image just declared as the set the async
+	 * callbacks route against, and clear the one-frame results (taps, drag,
+	 * wheel) the image consumed. Doing it after the eval — which is what
+	 * reads them — stops an unclaimed tap lingering into a later frame.
 	 */
-	s_tap_pending = false;
+	s_cur_io = NULL;
+	kgui_input_frame_commit(&s_input);
 
 	gl_flush(atlas_texture());
 #endif

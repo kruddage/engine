@@ -57,68 +57,15 @@
 	  (for-each kruddboard-draw-subsystem-row rows)
 	  (imgui-end-table)))))
 
-;;! Log view state persists across frames the way the old C statics did: the
-;;! active level filter (a log_level integer, DEBUG=0) and whether the view
-;;! auto-scrolls to the newest line.
-(define kruddboard-log-filter 0)
-(define kruddboard-log-autoscroll #t)
-
-;;! Per-level text colours indexed by log_level: DEBUG grey, INFO white, WARN
-;;! yellow, ERROR red — the same RGBA the old level_colors table carried.
-(define kruddboard-log-colors
-  (vector (list 0.6 0.6 0.6 1.0)
-	  (list 1.0 1.0 1.0 1.0)
-	  (list 1.0 0.8 0.2 1.0)
-	  (list 1.0 0.3 0.3 1.0)))
-
-;;! (kruddboard-draw-log-line m) draws one history entry: skip it when its
-;;! level is below the active filter, otherwise draw the text in the level's
-;;! colour. m is a (level . text) pair.
-(define (kruddboard-draw-log-line m)
-  (let ((level (car m))
-	(text  (cdr m)))
-    (when (>= level kruddboard-log-filter)
-      (let ((c (vector-ref kruddboard-log-colors level)))
-	(imgui-text-colored (car c) (cadr c) (caddr c) (cadddr c) text)))))
-
-;;! (kruddboard-draw-log) draws the level-filter buttons, the auto-scroll
-;;! toggle, and the scrolling history child — the C draw_tab_log ported whole.
-;;! (krudd-log-history) hands back a list of (level . text) pairs oldest-first,
-;;! or #f when the log subsystem is absent; the #f branch mirrors the old null
-;;! check. The scroll region caps at ~88% of the viewport height minus the
-;;! controls, floored at 80px, as the C computed it.
-(define (kruddboard-draw-log)
-  (let ((hist (krudd-log-history)))
-    (if (not hist)
-	(imgui-text-disabled "(log unavailable)")
-	(begin
-	  (when (imgui-small-button "DEBUG") (set! kruddboard-log-filter 0))
-	  (imgui-same-line)
-	  (when (imgui-small-button "INFO")  (set! kruddboard-log-filter 1))
-	  (imgui-same-line)
-	  (when (imgui-small-button "WARN")  (set! kruddboard-log-filter 2))
-	  (imgui-same-line)
-	  (when (imgui-small-button "ERROR") (set! kruddboard-log-filter 3))
-	  (imgui-same-line)
-	  (set! kruddboard-log-autoscroll
-		(imgui-checkbox "Auto-scroll" kruddboard-log-autoscroll))
-	  (imgui-separator)
-	  (let ((scroll-h (max 80.0
-			       (- (* (imgui-viewport-work-height) 0.88)
-				  120.0))))
-	    (imgui-begin-child "##logscroll" 0.0 scroll-h)
-	    (for-each kruddboard-draw-log-line hist)
-	    (when kruddboard-log-autoscroll (imgui-set-scroll-here-y 1.0))
-	    (imgui-end-child))))))
-
-;;! (kruddboard-draw-krudd) is the whole KRUDD tab: frame stats, subsystems,
-;;! and log, each under its own collapsing header — the Scheme composition
-;;! that replaces the C draw_tab_krudd. Frame Stats and Log default open;
-;;! Subsystems starts rolled up since its table is rarely needed at a glance.
+;;! (kruddboard-draw-krudd) is the KRUDD tab: frame stats and subsystems, each
+;;! under its own collapsing header — the Scheme composition that replaces the C
+;;! draw_tab_krudd. Frame Stats defaults open; Subsystems starts rolled up since
+;;! its table is rarely needed at a glance. The Log section is gone from here:
+;;! it was lifted out of ImGui into the kruddgui Log console (kruddgui.scm),
+;;! which draws it over the editor with kruddgui's own quads.
 (define (kruddboard-draw-krudd)
   (when (imgui-collapsing-header "Frame Stats") (kruddboard-draw-stats))
-  (when (imgui-collapsing-header "Subsystems" #f) (kruddboard-draw-subsystems))
-  (when (imgui-collapsing-header "Log")         (kruddboard-draw-log)))
+  (when (imgui-collapsing-header "Subsystems" #f) (kruddboard-draw-subsystems)))
 
 ;;! World tab — the entity list and inspector, ported from the C draw_tab_world.
 ;;! This is the first tab that mutates engine state: it creates and destroys

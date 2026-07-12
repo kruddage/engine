@@ -28,15 +28,39 @@ struct kgui_vertex {
 };
 
 /*
+ * One draw command: a contiguous run of vertices sharing a clip rectangle. A
+ * batch is split into commands only where the clip changes, so a panel with a
+ * scroll region flushes as a couple of scissored draws out of the one VBO
+ * (`clipped` 0 means "no scissor — the whole viewport"). Coordinates are the
+ * same CSS pixels as the vertices.
+ */
+struct kgui_clip_cmd {
+	int   clipped;
+	float x, y, w, h;
+	int   first; /* first vertex of the run */
+	int   count; /* vertices in the run    */
+};
+
+#define KGUI_BATCH_MAX_CMDS 32
+
+/*
  * A fixed-capacity vertex batch over caller-owned storage. `overflow` latches
  * when a push would exceed `cap` so the renderer can size its buffer up; the
- * batch never writes past `storage[cap]`.
+ * batch never writes past `storage[cap]`. The clip-command list is tracked
+ * inline: quads append to the run of the current clip, and kgui_batch_set_clip
+ * starts a new run when the clip changes.
  */
 struct kgui_batch {
 	struct kgui_vertex *verts;
 	int                 cap;
 	int                 count;
 	int                 overflow;
+
+	struct kgui_clip_cmd cmds[KGUI_BATCH_MAX_CMDS];
+	int                  cmd_count;
+
+	int   clip_on;             /* clip currently applied to new quads */
+	float clip_x, clip_y, clip_w, clip_h;
 };
 
 void kgui_batch_init(struct kgui_batch *b, struct kgui_vertex *storage,
@@ -52,6 +76,16 @@ void kgui_batch_quad(struct kgui_batch *b,
 		     float x, float y, float w, float h,
 		     float u0, float v0, float u1, float v1,
 		     float r, float g, float bl, float a);
+
+/*
+ * Clip subsequent quads to a rectangle (CSS pixels), or clear the clip so they
+ * fill the viewport again. A change opens a new draw command; quads pushed
+ * while a clip is set land in that command, which the renderer scissors. Text
+ * and rects both honour the current clip, since both go through kgui_batch_quad.
+ */
+void kgui_batch_set_clip(struct kgui_batch *b,
+			 float x, float y, float w, float h);
+void kgui_batch_clear_clip(struct kgui_batch *b);
 
 /*
  * One glyph as reported by a font source: a pen-relative box and its atlas UVs.

@@ -176,10 +176,25 @@
           (hash-table-set! *entity-script-begun* id #f)
           hooks))))
 
+;;! Render a caught s7 error as the one-line message the interpreter itself
+;;! would have printed. A catch #t handler is handed (TYPE (FORMAT-STRING .
+;;! FORMAT-ARGS)) for an engine error — a read of an undeclared (param ...) that
+;;! reaches arithmetic, say, arrives as ("~A ~:D argument, ~S, is ~A ..." ...) —
+;;! so rebuilding the message is just applying format to that pair. Anything
+;;! that does not fit the shape (a raw throw carrying a non-standard payload)
+;;! falls back to its printed form, so the detail is never empty.
+(define (entity-script-error->string args)
+  (if (and (pair? args) (pair? (cdr args)) (pair? (cadr args))
+           (string? (caadr args)))
+      (apply format #f (caadr args) (cdadr args))
+      (object->string args)))
+
 ;;! Run one frame for entity ID bound to script source SRC at clock T. Fires
 ;;! on-begin the first frame, then on-tick every frame. A fault in one entity's
-;;! script is caught and logged, never taking the frame down (mirrors the
-;;! graceful-degradation contract of the krudd-log primitive).
+;;! script is caught and logged — with the interpreter's own error message, so
+;;! the log says WHAT threw, not merely that something did — never taking the
+;;! frame down (mirrors the graceful-degradation contract of the krudd-log
+;;! primitive).
 (define (entity-script-tick id src t params)
   (catch #t
     (lambda ()
@@ -196,7 +211,8 @@
     (lambda args
       (set! *params* '())
       (krudd-log 2 (string-append "entity-script: fault on entity "
-                                  (number->string id)))
+                                  (number->string id) ": "
+                                  (entity-script-error->string args)))
       #f)))
 
 ;;! Run the on-destroy hook (if any) for entity ID and forget its cached

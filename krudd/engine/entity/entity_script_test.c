@@ -55,6 +55,11 @@ static const void *fake_get_data(uint32_t id, uint32_t *out_size)
 		      " (entity-set-position! self 5 0 0)))"; break;
 	case 6: src = PULSE_SCRIPT_SRC; break;   /* the parameterized built-in */
 	case 7: src = ORBIT_CAMERA_SCRIPT_SRC; break;
+	/* A script that faults on tick: it reads a param it never declares, so
+	 * (param 'nope) is #f and the arithmetic throws — the shape of a real
+	 * fault (a saved entity whose script references a renamed/removed param). */
+	case 8: src = "(script boom (on-tick (self t)"
+		      " (entity-set-position! self (* t (param 'nope)) 0 0)))"; break;
 	default: break;
 	}
 	if (src && out_size)
@@ -381,6 +386,53 @@ static void test_orbit_camera_params(void)
 	assert(feq(w.world_xform[e].position[2], 10.0f * (float)sin(0.5 + 1.5f)));
 }
 
+/*
+ * A faulting script must degrade gracefully AND leave a diagnosable trace: the
+ * catch handler logs one WARN naming the entity and carrying the interpreter's
+ * own error message, so "fault on entity 8" is answerable from the log alone
+ * rather than being a dead end. Regression test for the fault line that used to
+ * report only the id.
+ */
+static void test_fault_message(void)
+{
+	struct log_message hist[LOG_HISTORY_CAP];
+	int32_t            e;
+	uint32_t           n, i;
+	int                found = 0;
+
+	world_reset(&w);
+	e = spawn(0.0f, 0.0f, 0.0f);
+	world_set_script_ref(&w, e, 8);          /* the boom script */
+
+	world_tick(&w, 16.0f);
+	entity_script_tick(&w, &fake_asset, 0.5f);
+
+	/* The fault names this entity, and it carries error detail past the id —
+	 * not just "fault on entity N" but the interpreter's message after it. */
+	n = log_get_history(hist, LOG_HISTORY_CAP);
+	for (i = 0; i < n; i++) {
+		char        needle[64];
+		const char *hit;
+
+		if (hist[i].level != LOG_LEVEL_WARN)
+			continue;
+		snprintf(needle, sizeof(needle),
+			 "entity-script: fault on entity %d: ", (int)e);
+		hit = strstr(hist[i].text, needle);
+		if (!hit)
+			continue;
+		/* Something concrete follows the ": " — the s7 error message,
+		 * not an empty tail. */
+		assert(strlen(hit + strlen(needle)) > 0);
+		found = 1;
+	}
+	assert(found);
+
+	/* Degraded, not crashed: the faulting write never landed, so the pose
+	 * holds at the rest transform the tick propagated. */
+	assert(feq(w.world_xform[e].position[0], 0.0f));
+}
+
 int main(void)
 {
 	log_init();
@@ -394,6 +446,7 @@ int main(void)
 	test_script_params_introspection();
 	test_param_override();
 	test_orbit_camera_params();
+	test_fault_message();
 
 	printf("entity_script_test: ok\n");
 	return 0;

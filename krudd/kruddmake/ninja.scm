@@ -166,11 +166,15 @@
 			 "-sEXPORTED_FUNCTIONS=_main")
 	  ""
 	  "rule cc"
-	  "  command = $cc $cflags $includes -c $in -o $out"
+	  "  command = $cc $cflags $includes -MMD -MF $out.d -c $in -o $out"
+	  "  depfile = $out.d"
+	  "  deps = gcc"
 	  "  description = CC $out"
 	  ""
 	  "rule cxx"
-	  "  command = $cxx $cxxflags $includes -c $in -o $out"
+	  "  command = $cxx $cxxflags $includes -MMD -MF $out.d -c $in -o $out"
+	  "  depfile = $out.d"
+	  "  deps = gcc"
 	  "  description = CXX $out"
 	  ""
 	  "rule ar"
@@ -194,11 +198,15 @@
 	  "  description = TEST $out"
 	  ""
 	  "rule emcc_c"
-	  "  command = $emcc $emcflags $includes -c $in -o $out"
+	  "  command = $emcc $emcflags $includes -MMD -MF $out.d -c $in -o $out"
+	  "  depfile = $out.d"
+	  "  deps = gcc"
 	  "  description = EMCC $out"
 	  ""
 	  "rule emcc_cxx"
-	  "  command = $empp -O2 $emcxxflags $includes -c $in -o $out"
+	  "  command = $empp -O2 $emcxxflags $includes -MMD -MF $out.d -c $in -o $out"
+	  "  depfile = $out.d"
+	  "  deps = gcc"
 	  "  description = EMCXX $out"
 	  ""
 	  "rule emar"
@@ -208,6 +216,16 @@
 	  "rule main_module"
 	  "  command = $empp $mainflags $extraflags $in -o $out"
 	  "  description = LINK(wasm) $out"
+	  ""
+	  ; Re-run the generator so that editing a `.scm`/`.in` input (a build
+	  ; spec, or any Scheme module embedded into a `*_scm.h`) regenerates
+	  ; build.ninja and the codegen outputs before the rest of the build. The
+	  ; regenerated headers then flow to their consumers through the gcc
+	  ; depfiles on the compile rules above.
+	  "rule regen"
+	  "  command = $regen_cmd"
+	  "  generator = 1"
+	  "  description = REGEN $out"
 	  ""))
 
 (define (ninja-build-libmap manifest)
@@ -338,8 +356,52 @@
 		  rendscm
 		  (string-append gen "/renderer.h"))))
 
+; The `.scm`/`.in` inputs that feed code generation. When any of these change
+; the `regen` edge below re-runs the generator, which rewrites build.ninja and
+; the codegen outputs (`generated/*`). Kept a deliberate superset so a stale
+; header can never outlive an edit to its source.
+(define (ninja-generator-inputs manifest srcroot)
+	(append
+	  (map (lambda (p) (string-append srcroot "/" p))
+	       (list "core/version.h.in"
+		     "core/shell.html.in"
+		     "core/runtime.scm"
+		     "core/entity_script.scm"
+		     "core/mesh_script.scm"
+		     "core/texture_script.scm"
+		     "ui/kruddboard/kruddboard.scm"
+		     "ui/kruddboard/tabs/Assets.scm"
+		     "ui/kruddgui/kruddgui.scm"
+		     "ui/kruddboard/md_parse.scm"
+		     "math/math.scm"
+		     "shader/shader.scm"
+		     "render/renderer.scm"))
+	  (map (lambda (p) (string-append (krudd-repo-root)
+					  "/krudd/kruddmake/" p))
+	       (list "ninja.scm" "introspect.scm" "resolve.scm"
+		     "build.scm" "manifest.scm"))
+	  (map (lambda (pair)
+		 (string-append srcroot "/" (car pair) "/build.scm"))
+	       manifest)))
+
+; Emit the generator edge. `regen-cmd` is the exact shell command that
+; regenerates this build.ninja (and, as a side effect, the codegen outputs);
+; each entry point supplies its own, since the build dir and interpreter
+; differ between `krudd build` and the kruddmake test harness.
+(define (ninja-emit-regen manifest srcroot regen-cmd)
+	(if (and (string? regen-cmd) (> (string-length regen-cmd) 0))
+	    (begin
+	      (ninja-emit (string-append
+			    "build build.ninja: regen "
+			    (ninja-join " "
+			      (ninja-generator-inputs manifest srcroot))))
+	      (ninja-emit (string-append "  regen_cmd = " regen-cmd))
+	      (ninja-emit ""))))
+
 (define (ninja-synthesize manifest srcroot . rest)
-	(let ((builddir (if (pair? rest) (car rest) #f)))
+	(let ((builddir (if (pair? rest) (car rest) #f))
+	      (regen-cmd (if (and (pair? rest) (pair? (cdr rest)))
+			     (cadr rest) #f)))
 		(set! ninja-lines '())
 		(set! ninja-native '())
 		(set! ninja-wasm '())
@@ -347,6 +409,7 @@
 		      (libmap (ninja-build-libmap manifest)))
 			(resolve-check-all table)
 			(ninja-emit* (ninja-preamble srcroot))
+			(ninja-emit-regen manifest srcroot regen-cmd)
 			(for-each
 			  (lambda (pair)
 			    (for-each (lambda (form)

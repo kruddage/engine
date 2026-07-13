@@ -8,15 +8,20 @@
 ;;! quad batch or queries the pointer router for the panel it is drawing, so
 ;;! these procedures must run at draw time — never at load time.
 ;;!
-;;! Two independent panels, each owning its own input region (#489, #491):
+;;! Independent panels, each owning its own input region (#489, #491, #492):
 ;;!
 ;;!   - the MOVE / ROTATE / SCALE mode-bar (#490), wired to the shared gizmo
-;;!     tool via (krudd-gizmo-mode) / (krudd-set-gizmo-mode); and
+;;!     tool via (krudd-gizmo-mode) / (krudd-set-gizmo-mode);
 ;;!
 ;;!   - the Log console — the first kruddboard tab lifted out of ImGui. It is
 ;;!     drawn entirely with kruddgui's own quads and font-atlas text over the
 ;;!     engine log (krudd-log-history), with tap-to-filter level chips and a
-;;!     drag/wheel-scrolled, scissor-clipped body. Its ImGui draw path is gone.
+;;!     drag/wheel-scrolled, scissor-clipped body. Its ImGui draw path is gone; and
+;;!
+;;!   - the board console — the KRUDD tab (frame stats, startup profile, and the
+;;!     subsystem table) lifted out of ImGui (#492), a collapsible read view over
+;;!     the same krudd-stats / krudd-startup / krudd-subsystems accessors. Its
+;;!     ImGui draw path (draw_tab_krudd and the Scene tab's Perf roll-up) is gone.
 ;;!
 ;;! Each panel is bracketed by (kgui-panel-begin name x y w h) / (kgui-panel-end):
 ;;! the named region captures any gesture whose down lands inside it, so taps
@@ -304,9 +309,209 @@
       (set! kruddgui-log-open #t))
     (kgui-panel-end)))
 
+;; ------------------------------------------------------------------
+;; Board panel — the lifted KRUDD tab (#492): frame stats, startup, subsystems
+;; ------------------------------------------------------------------
+
+;;! The KRUDD tab's three read-only sections — live frame stats, the one-time
+;;! startup profile, and the subsystem manager table — re-authored as a single
+;;! kruddgui console. It reads the same shared accessors the ImGui tab did
+;;! (krudd-stats / krudd-startup / krudd-subsystems, registered by kruddboard on
+;;! the shared s7), draws them with kruddgui's own quads and font-atlas text, and
+;;! owns its own input region — so its ImGui draw path (draw_tab_krudd and the
+;;! Scene tab's Perf roll-up) is gone. The panel anchors top-right so it never
+;;! overlaps the top-left Log console; both are dismissable read views over the
+;;! editor. Geometry mirrors the Log console so the two consoles read as a set.
+(define kruddgui-board-max-w 380)
+(define kruddgui-board-header-h 36)
+(define kruddgui-board-row-pad 6)
+(define kruddgui-board-col-pad 8)
+
+(define kruddgui-board-panel-bg '(0.08 0.09 0.11 0.95))
+(define kruddgui-board-body-bg  '(0.04 0.05 0.06 0.96))
+(define kruddgui-board-head-fg  '(0.62 0.80 0.98 1.0))
+(define kruddgui-board-rule     '(0.24 0.26 0.30 1.0))
+
+;;! Console state held across frames: whether it is expanded, and the content
+;;! scroll offset. The offset is <= 0 — the pixels the list is shifted up, so 0
+;;! pins the first row to the body's top and a drag/wheel walks down into the
+;;! rest. It is clamped against the content each frame in kruddgui-board-draw-body.
+(define kruddgui-board-open #f)
+(define kruddgui-board-scroll 0.0)
+
+;;! One list row's height at the current font size, plus a little leading.
+(define (kruddgui-board-line-height)
+  (+ kruddgui-board-row-pad (cadr (kgui-text-metrics "Ag"))))
+
+;;! (kruddgui-board-cell x y lh str c) draws STR left-aligned at x, vertically
+;;! centred in a row of height LH, in colour c.
+(define (kruddgui-board-cell x y lh str c)
+  (let* ((m  (kgui-text-metrics str))
+	 (th (cadr m))
+	 (ty (+ y (/ (- lh th) 2))))
+    (kgui-text x ty str (car c) (cadr c) (caddr c) (cadddr c))))
+
+;;! Row descriptors are little tagged lists so the layout is data, not control
+;;! flow: (head TITLE) a section header with an underline rule; (dim TEXT) a
+;;! greyed "unavailable" line; (kv LABEL VALUE) a two-column label/value line;
+;;! (cols A B C) a three-column table row. kruddgui-board-draw-row renders one at
+;;! the given (rx ry rw lh).
+(define (kruddgui-board-draw-row row rx ry rw lh)
+  (let ((kind (car row))
+	(x0   (+ rx kruddgui-board-col-pad)))
+    (cond
+     ((eq? kind 'head)
+      (kruddgui-board-cell x0 ry lh (cadr row) kruddgui-board-head-fg)
+      (kruddgui-rect* (list rx (+ ry lh -2) rw 1) kruddgui-board-rule))
+     ((eq? kind 'dim)
+      (kruddgui-board-cell x0 ry lh (cadr row) kruddgui-idle-fg))
+     ((eq? kind 'kv)
+      (kruddgui-board-cell x0 ry lh (cadr row) kruddgui-idle-fg)
+      (kruddgui-board-cell (+ rx (* rw 0.46)) ry lh (caddr row)
+			   kruddgui-idle-fg))
+     ((eq? kind 'cols)
+      (kruddgui-board-cell x0 ry lh (cadr row) kruddgui-idle-fg)
+      (kruddgui-board-cell (+ rx (* rw 0.60)) ry lh (caddr row)
+			   kruddgui-idle-fg)
+      (kruddgui-board-cell (+ rx (* rw 0.80)) ry lh (cadddr row)
+			   kruddgui-idle-fg)))))
+
+;;! (kruddgui-board-stat-rows) the live frame stats, or a dimmed line when the
+;;! stats subsystem is absent — the #f branch mirrors the old C null check.
+;;! (krudd-stats) -> (fps frame-ms frame-count).
+(define (kruddgui-board-stat-rows)
+  (let ((s (krudd-stats)))
+    (if (not s)
+	(list (list 'dim "(stats unavailable)"))
+	(list (list 'kv "FPS (avg)" (format #f "~,1F" (car s)))
+	      (list 'kv "Frame ms"  (format #f "~,2F" (cadr s)))
+	      (list 'kv "Frame"     (format #f "~D"   (caddr s)))))))
+
+;;! (kruddgui-board-startup-rows) the one-time boot profile: init total, time to
+;;! first frame, then a per-phase breakdown. (krudd-startup) -> (init-ms
+;;! first-frame-ms (name . ms) ...) or #f when stats are absent.
+(define (kruddgui-board-startup-rows)
+  (let ((s (krudd-startup)))
+    (if (not s)
+	(list (list 'dim "(startup timings unavailable)"))
+	(let ((init  (car s))
+	      (first (cadr s))
+	      (phases (cddr s)))
+	  (append
+	   (list (list 'kv "Init total" (format #f "~,1F ms" init))
+		 (list 'kv "1st frame"  (format #f "~,1F ms" first)))
+	   (map (lambda (p)
+		  (list 'kv (car p) (format #f "~,2F ms" (cdr p))))
+		phases))))))
+
+;;! (kruddgui-board-subsystem-rows) the subsystem manager's entries as Name / API
+;;! / Tick rows under a header row, or a dimmed line when the manager is absent.
+;;! (krudd-subsystems) -> ((name api? tick? size) ...) or #f; size is unused here.
+(define (kruddgui-board-subsystem-rows)
+  (let ((rows (krudd-subsystems)))
+    (if (not rows)
+	(list (list 'dim "(subsystem manager unavailable)"))
+	(cons (list 'cols "Name" "API" "Tick")
+	      (map (lambda (r)
+		     (list 'cols (car r)
+			   (if (cadr r) "yes" "-")
+			   (if (caddr r) "yes" "-")))
+		   rows)))))
+
+;;! (kruddgui-board-rows) the whole panel body as one flat row list: the three
+;;! sections, each under its own header row.
+(define (kruddgui-board-rows)
+  (append (list (list 'head "FRAME STATS")) (kruddgui-board-stat-rows)
+	  (list (list 'head "STARTUP"))     (kruddgui-board-startup-rows)
+	  (list (list 'head "SUBSYSTEMS"))  (kruddgui-board-subsystem-rows)))
+
+;;! (kruddgui-board-draw-header x y w hdr) draws the title and the close box.
+;;! The close tap is trapped by the console region, so it never reaches ImGui.
+(define (kruddgui-board-draw-header x y w hdr)
+  (let* ((bs 26)
+	 (bx (- (+ x w) 8 bs))
+	 (by (+ y (/ (- hdr bs) 2))))
+    (kruddgui-label x y 96 hdr "ENGINE" kruddgui-idle-fg)
+    (kruddgui-rect* (list bx by bs bs) kruddgui-idle-bg)
+    (kruddgui-label bx by bs bs "x" kruddgui-idle-fg)
+    (when (kgui-button bx by bs bs)
+      (set! kruddgui-board-open #f))))
+
+;;! (kruddgui-board-draw-body x y w h rows lh) draws the scrolling list, anchored
+;;! to the top: at scroll 0 the first row sits at the body's top edge and a drag
+;;! (or wheel) walks down into the rest. The offset is clamped to the content
+;;! here and written back. Only rows overlapping the viewport are emitted, and
+;;! kgui-clip scissors the body so a partial row at either edge is cut cleanly.
+(define (kruddgui-board-draw-body x y w h rows lh)
+  (let* ((n       (length rows))
+	 (total   (* n lh))
+	 (min-off (min 0.0 (- h total)))
+	 (off     (max min-off (min 0.0 kruddgui-board-scroll))))
+    (set! kruddgui-board-scroll off)
+    (kruddgui-rect* (list x y w h) kruddgui-board-body-bg)
+    (kgui-clip x y w h)
+    (let loop ((rs rows) (i 0))
+      (when (pair? rs)
+	(let ((ry (+ y off (* i lh))))
+	  (cond
+	   ((>= ry (+ y h)) #t)			   ; below the body: stop
+	   ((<= (+ ry lh) y)			   ; above the body: skip
+	    (loop (cdr rs) (+ i 1)))
+	   (else
+	    (kruddgui-board-draw-row (car rs) x ry w lh)
+	    (loop (cdr rs) (+ i 1)))))))
+    (kgui-clip-none)))
+
+;;! (kruddgui-board-draw-panel vw vh) the expanded console. It anchors top-right
+;;! and stops short of the mode-bar's reserved band at the bottom, so it never
+;;! overlaps the bottom mode-bar or the top-left Log console; while open it does
+;;! cover the ImGui board's right-hand controls (Show KB) beneath — a deliberate,
+;;! dismissable read view — and its region traps every tap so nothing leaks to
+;;! the editor under it. A drag/wheel accumulated on the region this frame scrolls
+;;! the body before it is redrawn (then re-clamped there).
+(define (kruddgui-board-draw-panel vw vh)
+  (let* ((m      kruddgui-log-margin)
+	 (avail  (- vh m (kruddgui-modebar-reserve vw vh) kruddgui-gap))
+	 (w      (min kruddgui-board-max-w (- vw (* 2 m))))
+	 (h      (max 140.0 (min (* vh 0.6) avail)))
+	 (x      (- vw m w))
+	 (y      m)
+	 (hdr    kruddgui-board-header-h)
+	 (body-y (+ y hdr))
+	 (body-h (- h hdr)))
+    (kgui-panel-begin "kgui-board" x y w h)
+    (kruddgui-rect* (list x y w h) kruddgui-board-panel-bg)
+    (kruddgui-board-draw-header x y w hdr)
+    (set! kruddgui-board-scroll
+	  (+ kruddgui-board-scroll
+	     (cadr (kgui-region-drag))
+	     (kgui-region-wheel)))
+    (kruddgui-board-draw-body x body-y w body-h
+			      (kruddgui-board-rows)
+			      (kruddgui-board-line-height))
+    (kgui-panel-end)))
+
+;;! (kruddgui-board-draw-handle vw vh) the collapsed console: a small pill in the
+;;! bottom-left corner, stacked directly above the Log handle so the two consoles
+;;! share a tidy corner clear of both the ImGui board header (top) and the mode-
+;;! bar (bottom-right / centre). Tap expands the console; its own captured region.
+(define (kruddgui-board-draw-handle vw vh)
+  (let* ((m  kruddgui-log-margin)
+	 (hw kruddgui-log-handle-w)
+	 (hh kruddgui-log-handle-h)
+	 (x  m)
+	 (y  (- vh m hh hh kruddgui-gap)))
+    (kgui-panel-begin "kgui-board" x y hw hh)
+    (kruddgui-rect* (list x y hw hh) kruddgui-board-panel-bg)
+    (kruddgui-label x y hw hh "STATS" kruddgui-idle-fg)
+    (when (kgui-button x y hw hh)
+      (set! kruddgui-board-open #t))
+    (kgui-panel-end)))
+
 ;;! (kruddgui-draw) the whole layer — the host's per-tick entry point. Draw the
-;;! mode-bar (row or column by orientation), then the Log console (expanded or
-;;! collapsed). Two panels, two regions, each owning its own input.
+;;! mode-bar (row or column by orientation), then the Log console and the board
+;;! console (each expanded or collapsed). Four regions in all, each owning its
+;;! own input; drawn in order, so a later panel wins any overlap.
 (define (kruddgui-draw)
   (let* ((vp (kgui-viewport-size))
 	 (vw (car vp))
@@ -317,4 +522,7 @@
 	  (kruddgui-draw-col vw vh))
       (if kruddgui-log-open
 	  (kruddgui-log-draw-panel vw vh)
-	  (kruddgui-log-draw-handle vw vh)))))
+	  (kruddgui-log-draw-handle vw vh))
+      (if kruddgui-board-open
+	  (kruddgui-board-draw-panel vw vh)
+	  (kruddgui-board-draw-handle vw vh)))))

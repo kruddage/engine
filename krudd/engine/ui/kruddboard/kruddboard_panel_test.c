@@ -90,10 +90,8 @@ static int rec_index(const char *needle)
 /* Simulated frame state                                               */
 /* ------------------------------------------------------------------ */
 
-/* Label of the button/checkbox "clicked" this frame (NULL = nothing). */
+/* Label of the button "clicked" this frame (NULL = nothing). */
 static const char *g_click;
-static int         g_subsys_absent;
-static int         g_log_absent;
 
 static int clicked(const char *label)
 {
@@ -158,17 +156,6 @@ static s7_pointer st_same_line(s7_scheme *sc, s7_pointer a)
 	return s7_unspecified(sc);
 }
 
-static s7_pointer st_checkbox(s7_scheme *sc, s7_pointer a)
-{
-	const char *l     = s7_string(s7_car(a));
-	int         state = s7_boolean(sc, s7_cadr(a));
-
-	rec("checkbox|%s|%d", l, state);
-	if (clicked(l))
-		state = !state;
-	return s7_make_boolean(sc, state);
-}
-
 static s7_pointer st_separator(s7_scheme *sc, s7_pointer a)
 {
 	(void)a;
@@ -225,91 +212,6 @@ static s7_pointer st_end_table(s7_scheme *sc, s7_pointer a)
 	(void)a;
 	rec("table-end");
 	return s7_unspecified(sc);
-}
-
-static s7_pointer st_begin_child(s7_scheme *sc, s7_pointer a)
-{
-	rec("child-begin|%s", s7_string(s7_car(a)));
-	return s7_unspecified(sc);
-}
-
-static s7_pointer st_end_child(s7_scheme *sc, s7_pointer a)
-{
-	(void)a;
-	rec("child-end");
-	return s7_unspecified(sc);
-}
-
-static s7_pointer st_scroll_here(s7_scheme *sc, s7_pointer a)
-{
-	rec("scrollhere|%.2f", s7_number_to_real(sc, s7_car(a)));
-	return s7_unspecified(sc);
-}
-
-static s7_pointer st_work_height(s7_scheme *sc, s7_pointer a)
-{
-	(void)a;
-	return s7_make_real(sc, 1000.0);
-}
-
-static s7_pointer st_stats(s7_scheme *sc, s7_pointer a)
-{
-	(void)a;
-	return s7_list(sc, 3, s7_make_real(sc, 60.0),
-		       s7_make_real(sc, 16.5), s7_make_integer(sc, 42));
-}
-
-/*
- * Fixture: (init-ms first-frame-ms (name . ms) ...) — the shape sp_krudd_startup
- * hands back, with two phases so the Scene tab's Perf bar has a breakdown to
- * lay out.
- */
-static s7_pointer st_startup(s7_scheme *sc, s7_pointer a)
-{
-	(void)a;
-	return s7_cons(sc, s7_make_real(sc, 12.5),
-		s7_cons(sc, s7_make_real(sc, 30.0),
-			s7_list(sc, 2,
-				s7_cons(sc, s7_make_string(sc, "script_init"),
-					s7_make_real(sc, 4.0)),
-				s7_cons(sc, s7_make_string(sc, "asset"),
-					s7_make_real(sc, 6.0)))));
-}
-
-/*
- * Fixture: three subsystems exercising every cell shape —
- *   log        api=yes tick=yes size=1024
- *   memory     api=yes tick=-   size=- (zero)
- *   kruddboard api=-   tick=yes size=- (zero)
- */
-static s7_pointer st_subsystems(s7_scheme *sc, s7_pointer a)
-{
-	(void)a;
-	if (g_subsys_absent)
-		return s7_f(sc);
-	return s7_list(sc, 3,
-		s7_list(sc, 4, s7_make_string(sc, "log"),
-			s7_make_boolean(sc, 1), s7_make_boolean(sc, 1),
-			s7_make_integer(sc, 1024)),
-		s7_list(sc, 4, s7_make_string(sc, "memory"),
-			s7_make_boolean(sc, 1), s7_make_boolean(sc, 0),
-			s7_make_integer(sc, 0)),
-		s7_list(sc, 4, s7_make_string(sc, "kruddboard"),
-			s7_make_boolean(sc, 0), s7_make_boolean(sc, 1),
-			s7_make_integer(sc, 0)));
-}
-
-/* Fixture: one history line per level, oldest-first (DEBUG..ERROR). */
-static s7_pointer st_log_history(s7_scheme *sc, s7_pointer a)
-{
-	(void)a;
-	if (g_log_absent)
-		return s7_f(sc);
-	return s7_list(sc, 4,
-		s7_cons(sc, s7_make_integer(sc, 0), s7_make_string(sc, "dbg line")),
-		s7_cons(sc, s7_make_integer(sc, 1), s7_make_string(sc, "info line")),
-		s7_cons(sc, s7_make_integer(sc, 2), s7_make_string(sc, "warn line")),
-		s7_cons(sc, s7_make_integer(sc, 3), s7_make_string(sc, "err line")));
 }
 
 /* ------------------------------------------------------------------ */
@@ -958,8 +860,7 @@ static void asset_reset(void)
 }
 
 /* Reset the persistent Scheme-side Assets view state (kruddboard-assets-*)
- * between tests, the same job reset_state() does for the KRUDD tab's Scheme
- * state below. */
+ * between tests. */
 static void assets_scheme_reset(void)
 {
 	script_eval("(set! kruddboard-assets-sel 0)");
@@ -1764,7 +1665,6 @@ static s7_scheme *setup(void)
 	def(sc, "imgui-text-colored", st_text_colored, 5);
 	def(sc, "imgui-small-button", st_small_button, 1);
 	def(sc, "imgui-same-line", st_same_line, 0);
-	def(sc, "imgui-checkbox", st_checkbox, 2);
 	def(sc, "imgui-separator", st_separator, 0);
 	s7_define_function(sc, "imgui-collapsing-header",
 			   st_collapsing_header, 1, 1, false, "stub");
@@ -1774,14 +1674,6 @@ static s7_scheme *setup(void)
 	def(sc, "imgui-table-next-row", st_next_row, 0);
 	def(sc, "imgui-table-next-column", st_next_column, 0);
 	def(sc, "imgui-end-table", st_end_table, 0);
-	def(sc, "imgui-begin-child", st_begin_child, 3);
-	def(sc, "imgui-end-child", st_end_child, 0);
-	def(sc, "imgui-set-scroll-here-y", st_scroll_here, 1);
-	def(sc, "imgui-viewport-work-height", st_work_height, 0);
-	def(sc, "krudd-stats", st_stats, 0);
-	def(sc, "krudd-startup", st_startup, 0);
-	def(sc, "krudd-subsystems", st_subsystems, 0);
-	def(sc, "krudd-log-history", st_log_history, 0);
 
 	def(sc, "imgui-begin-disabled", st_begin_disabled, 1);
 	def(sc, "imgui-end-disabled", st_end_disabled, 0);
@@ -1891,32 +1783,6 @@ static s7_scheme *setup(void)
 	return sc;
 }
 
-/* Call a nullary panel procedure the image defines. */
-static void draw(const char *proc)
-{
-	s7_scheme *sc = script_s7();
-	s7_pointer fn = s7_name_to_value(sc, proc);
-
-	assert(s7_is_procedure(fn));
-	s7_call(sc, fn, s7_nil(sc));
-}
-
-/* Reset the persistent Scheme view state between frames. */
-static void reset_state(void)
-{
-	script_eval("(set! kruddboard-log-filter 0)");
-	script_eval("(set! kruddboard-log-autoscroll #t)");
-	g_click         = NULL;
-	g_subsys_absent = 0;
-	g_log_absent    = 0;
-}
-
-static int log_filter(void)
-{
-	return (int)s7_integer(
-		s7_name_to_value(script_s7(), "kruddboard-log-filter"));
-}
-
 static int assets_sel(void)
 {
 	return (int)s7_integer(
@@ -1933,120 +1799,14 @@ static int world_sel(void)
 /* Tests                                                               */
 /* ------------------------------------------------------------------ */
 
-/* The subsystems table lays out header + one row per subsystem, in order. */
-static void test_subsystems_table(void)
-{
-	reset_state();
-	rec_reset();
-	draw("kruddboard-draw-subsystems");
-
-	assert(rec_has("table-begin|##subsys|3"));
-	assert(rec_has("col|Name") && !rec_has("col|WASM Size"));
-	assert(rec_has("headers"));
-	assert(rec_count("row") == 3);
-	assert(rec_has("text|log"));
-	assert(rec_has("text|memory"));
-	assert(rec_has("text|kruddboard"));
-	assert(rec_has("table-end"));
-}
-
-/* yes/- for API and Tick; no WASM size column is drawn. */
-static void test_subsystems_cells(void)
-{
-	reset_state();
-	rec_reset();
-	draw("kruddboard-draw-subsystems");
-
-	assert(rec_has("text|yes"));      /* an API/Tick that is present */
-	assert(rec_has("text|-"));        /* an API/Tick that is absent   */
-	assert(!rec_has("text|1024"));    /* WASM size no longer drawn    */
-	assert(rec_count("disabled|-") == 0); /* no dimmed size cells     */
-}
-
-/* No manager -> the dimmed unavailable line, and no table. */
-static void test_subsystems_absent(void)
-{
-	reset_state();
-	g_subsys_absent = 1;
-	rec_reset();
-	draw("kruddboard-draw-subsystems");
-
-	assert(rec_has("disabled|(subsystem manager unavailable)"));
-	assert(!rec_has("table-begin"));
-}
-
-/* Default filter (DEBUG) shows every line, each in its level colour. */
-static void test_log_all_levels_colored(void)
-{
-	reset_state();
-	rec_reset();
-	draw("kruddboard-draw-log");
-
-	assert(rec_count("colored|") == 4);
-	assert(rec_has("colored|0.60,0.60,0.60,1.00|dbg line"));  /* grey  */
-	assert(rec_has("colored|1.00,1.00,1.00,1.00|info line")); /* white */
-	assert(rec_has("colored|1.00,0.80,0.20,1.00|warn line")); /* yellow*/
-	assert(rec_has("colored|1.00,0.30,0.30,1.00|err line"));  /* red   */
-	assert(rec_has("child-begin|##logscroll"));
-	assert(rec_has("scrollhere|1.00"));   /* autoscroll on by default */
-	assert(rec_has("child-end"));
-}
-
-/* Clicking ERROR raises the filter, and only error+ lines draw that frame. */
-static void test_log_filter_click(void)
-{
-	reset_state();
-	g_click = "ERROR";
-	rec_reset();
-	draw("kruddboard-draw-log");
-	g_click = NULL;
-
-	assert(log_filter() == 3);
-	assert(rec_count("colored|") == 1);
-	assert(rec_has("colored|1.00,0.30,0.30,1.00|err line"));
-}
-
-/* Toggling Auto-scroll off suppresses the scroll-to-bottom that frame. */
-static void test_log_autoscroll_toggle(void)
-{
-	reset_state();
-	g_click = "Auto-scroll";
-	rec_reset();
-	draw("kruddboard-draw-log");
-	g_click = NULL;
-
-	assert(!rec_has("scrollhere|"));
-}
-
-/* No log subsystem -> the dimmed unavailable line, no controls or child. */
-static void test_log_absent(void)
-{
-	reset_state();
-	g_log_absent = 1;
-	rec_reset();
-	draw("kruddboard-draw-log");
-
-	assert(rec_has("disabled|(log unavailable)"));
-	assert(!rec_has("child-begin"));
-	assert(!rec_has("button|DEBUG"));
-}
-
-/* The KRUDD tab composes the three sections under headers, in order. */
-static void test_krudd_composition(void)
-{
-	reset_state();
-	rec_reset();
-	draw("kruddboard-draw-krudd");
-
-	assert(rec_index("header|Frame Stats") >= 0);
-	assert(rec_index("header|Frame Stats") < rec_index("header|Subsystems"));
-	assert(rec_index("header|Subsystems") < rec_index("header|Log"));
-	assert(rec_has("header|Frame Stats|1")); /* defaults open   */
-	assert(rec_has("header|Subsystems|0"));  /* starts rolled up */
-	assert(rec_has("header|Log|1"));         /* defaults open   */
-	assert(rec_has("table-begin|##subsys|3")); /* subsystems drawn */
-	assert(rec_has("child-begin|##logscroll")); /* log drawn */
-}
+/*
+ * The KRUDD tab's panels — frame stats, the startup profile, the subsystem
+ * table — and the Log console were lifted out of ImGui into kruddgui (#491,
+ * #492); kruddboard.scm no longer defines kruddboard-draw-stats / -subsystems /
+ * -krudd / -log, so their tests moved out with them. The kruddgui board and Log
+ * consoles are pure-kruddgui panels (kgui-* primitives) and are exercised by
+ * browser verification rather than this ImGui-stub harness.
+ */
 
 /* The scene header draws just the title; no Save As... placeholder. */
 static void test_world_header(void)
@@ -3367,14 +3127,6 @@ int main(void)
 {
 	setup();
 
-	RUN(subsystems_table);
-	RUN(subsystems_cells);
-	RUN(subsystems_absent);
-	RUN(log_all_levels_colored);
-	RUN(log_filter_click);
-	RUN(log_autoscroll_toggle);
-	RUN(log_absent);
-	RUN(krudd_composition);
 
 	RUN(world_header);
 	RUN(world_entity_list);

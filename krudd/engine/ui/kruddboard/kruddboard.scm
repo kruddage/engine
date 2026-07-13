@@ -13,102 +13,15 @@
 ;;! C draw_tab_stats this replaces read three fields off the stats subsystem and
 ;;! laid them out with ImGui::Text; the labels and spacing are preserved here.
 
-;;! (krudd-stats) hands back #f when the stats subsystem is absent, otherwise the
-;;! list (fps frame-ms frame-count). The #f branch mirrors the old C null check.
-(define (kruddboard-draw-stats)
-  (let ((s (krudd-stats)))
-    (if (not s)
-	(imgui-text-disabled "(stats unavailable)")
-	(begin
-	  (imgui-text (format #f "FPS (avg): ~,1F" (car s)))
-	  (imgui-text (format #f "Frame ms:  ~,2F" (cadr s)))
-	  (imgui-text (format #f "Frame:     ~D"   (caddr s)))))))
-
-;;! (kruddboard-draw-startup-row p) draws one boot phase as a Phase / ms table
-;;! row. p is a (name . ms) pair from (krudd-startup)'s phase list.
-(define (kruddboard-draw-startup-row p)
-  (imgui-table-next-row)
-  (imgui-table-next-column)
-  (imgui-text (car p))
-  (imgui-table-next-column)
-  (imgui-text (format #f "~,2F" (cdr p))))
-
-;;! (kruddboard-draw-startup) shows the one-time boot profile: the total
-;;! engine_init time, the time to the first frame, then a per-phase breakdown
-;;! of where init went (one row per plugin, plus the script_init / runtime
-;;! bookends). This is the "profile startup" view — a plugin bakes its textures
-;;! and lowers its shaders at register time, so a costly texture shows up as its
-;;! plugin's row. (krudd-startup) hands back #f when the stats subsystem is
-;;! absent (the #f branch mirrors the frame-stats null check) and, on a native
-;;! build with no boot timing, an all-zero profile.
-(define (kruddboard-draw-startup)
-  (let ((s (krudd-startup)))
-    (if (not s)
-	(imgui-text-disabled "(startup timings unavailable)")
-	(let ((init-ms  (car s))
-	      (first-ms (cadr s))
-	      (phases   (cddr s)))
-	  (imgui-text (format #f "Init total: ~,1F ms" init-ms))
-	  (imgui-text (format #f "1st frame:  ~,1F ms" first-ms))
-	  (when (pair? phases)
-	    (when (imgui-begin-table "##startup" 2)
-	      (imgui-table-setup-column "Phase")
-	      (imgui-table-setup-column "ms")
-	      (imgui-table-headers-row)
-	      (for-each kruddboard-draw-startup-row phases)
-	      (imgui-end-table)))))))
-
-;;! (kruddboard-draw-perf) is the Scene tab's roll-up perf bar body: the live
-;;! frame stats up top, then the one-time startup profile under its own
-;;! separator. Composed here so the Scene tab just folds one "Perf" header over
-;;! it (see kruddboard-draw-world).
-(define (kruddboard-draw-perf)
-  (kruddboard-draw-stats)
-  (imgui-separator)
-  (kruddboard-draw-startup))
-
-;;! (kruddboard-draw-subsystem-row r) draws one subsystem: its name, then
-;;! yes/- for whether it exposes an API and a tick. r is a (name api? tick?
-;;! wasm-size) list; wasm-size is no longer shown (#kruddboard, WASM Size
-;;! column removed) but stays in the row shape since krudd-subsystems is a
-;;! shared data accessor.
-(define (kruddboard-draw-subsystem-row r)
-  (let ((name     (car r))
-	(has-api  (cadr r))
-	(has-tick (caddr r)))
-    (imgui-table-next-row)
-    (imgui-table-next-column)
-    (imgui-text name)
-    (imgui-table-next-column)
-    (imgui-text (if has-api "yes" "-"))
-    (imgui-table-next-column)
-    (imgui-text (if has-tick "yes" "-"))))
-
-;;! (kruddboard-draw-subsystems) renders the subsystem manager's entries as a
-;;! Name / API / Tick table. (krudd-subsystems) returns one (name api? tick?
-;;! wasm-size) row per subsystem in table order (static then dynamic), or #f
-;;! when the manager is absent; the #f branch mirrors the old null check.
-(define (kruddboard-draw-subsystems)
-  (let ((rows (krudd-subsystems)))
-    (if (not rows)
-	(imgui-text-disabled "(subsystem manager unavailable)")
-	(when (imgui-begin-table "##subsys" 3)
-	  (imgui-table-setup-column "Name")
-	  (imgui-table-setup-column "API")
-	  (imgui-table-setup-column "Tick")
-	  (imgui-table-headers-row)
-	  (for-each kruddboard-draw-subsystem-row rows)
-	  (imgui-end-table)))))
-
-;;! (kruddboard-draw-krudd) is the KRUDD tab: frame stats and subsystems, each
-;;! under its own collapsing header — the Scheme composition that replaces the C
-;;! draw_tab_krudd. Frame Stats defaults open; Subsystems starts rolled up since
-;;! its table is rarely needed at a glance. The Log section is gone from here:
-;;! it was lifted out of ImGui into the kruddgui Log console (kruddgui.scm),
-;;! which draws it over the editor with kruddgui's own quads.
-(define (kruddboard-draw-krudd)
-  (when (imgui-collapsing-header "Frame Stats") (kruddboard-draw-stats))
-  (when (imgui-collapsing-header "Subsystems" #f) (kruddboard-draw-subsystems)))
+;;! The KRUDD tab — frame stats, the startup profile, and the subsystem table —
+;;! was lifted out of ImGui into the kruddgui board console (kruddgui.scm, #492),
+;;! which draws all three sections over the editor with kruddgui's own quads off
+;;! the same krudd-stats / krudd-startup / krudd-subsystems accessors. The Scene
+;;! tab's Perf roll-up drew the same frame stats and startup profile; it went
+;;! with them, so those accessors now have exactly one drawer. The ImGui draw
+;;! paths — kruddboard-draw-stats / -startup / -perf / -subsystems / -krudd here,
+;;! and draw_tab_krudd / draw_tab_stats / draw_tab_subsystems in kruddboard.cpp —
+;;! are gone.
 
 ;;! World tab — the entity list and inspector, ported from the C draw_tab_world.
 ;;! This is the first tab that mutates engine state: it creates and destroys
@@ -589,11 +502,10 @@
 ;;! entity's editable guts) instead of unrolling it in place. The transform
 ;;! gizmo still tracks (krudd-selected), which a list-row click drives alongside
 ;;! the drill-in, so the gizmo mode set from the list keeps acting on the entity
-;;! being inspected. Above both screens sits the roll-up Perf bar, folded away by
-;;! default (the #f) so it stays out of the way, and drawn before the branch so
-;;! it's present whether the list or an inspector is showing.
+;;! being inspected. The roll-up Perf bar that used to sit above both screens
+;;! moved into the kruddgui board console with the frame stats and startup
+;;! profile it drew (#492).
 (define (kruddboard-draw-world)
-  (when (imgui-collapsing-header "Perf" #f) (kruddboard-draw-perf))
   (let ((caps (krudd-world-caps)))
     (if (not (= kruddboard-world-sel -1))
 	(kruddboard-draw-world-detail kruddboard-world-sel caps)

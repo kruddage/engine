@@ -30,6 +30,37 @@ updating the version/commit above.
 
 ---
 
+# Inter (kruddgui's UI font) — vendored
+
+`../engine/ui/kruddgui/assets/ui_font.ttf` is **Inter** (`InterVariable.ttf`),
+the UI font kruddgui bakes its glyph atlas from at build time. It is
+third-party, **not** engine-authored, and keeps its own SIL Open Font License
+1.1 (`../engine/ui/kruddgui/assets/OFL.txt`) — it is **not** stamped with the
+project's `GPL-2.0-or-later` line. OFL bundling into a GPL work is the standard
+permissive-inbound case: the font is data, not linked code, so there is nothing
+to reconcile, and OFL poses no obstacle to the commercial build.
+
+It is embedded **unmodified** (rasterised at runtime, never edited or renamed),
+so the OFL's Reserved-Font-Name and Modified-Version clauses do not apply. See
+`../engine/ui/kruddgui/assets/README.md` for the baking notes (kerning is
+GPOS-only in Inter, so inert through stb_truetype; the file is the full
+multi-script face and a Latin subset would shrink the embed).
+
+## Pin (Inter)
+
+| Field    | Value |
+|----------|-------|
+| Version  | Inter **4.001** (`InterVariable.ttf`) |
+| License  | SIL Open Font License 1.1 |
+| Copyright| Copyright 2016 The Inter Project Authors |
+| Upstream | https://rsms.me/inter/ |
+| Source   | https://rsms.me/inter/font-files/InterVariable.ttf |
+
+Re-vendoring means replacing `ui_font.ttf`, refreshing `OFL.txt`, and bumping
+the version above.
+
+---
+
 # s7 Scheme (krudd's build interpreter) — vendored
 
 `s7.c` / `s7.h` are third-party source, **not** engine-authored code, and are

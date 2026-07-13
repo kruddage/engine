@@ -1231,6 +1231,75 @@
     (cons (append nrgb alpha) changed)))
 
 ;;! ------------------------------------------------------------------
+;;! Shared layout vocabulary — a fold header and a button row (#492, PR6b)
+;;! ------------------------------------------------------------------
+;;! The layout gaps the Assets lift needs that the Scene tab never grew: ImGui's
+;;! collapsing-header and its same-line button strips. Both build on the layout
+;;! cursor and the tap-button/one-open-keyed-by-id shapes above, so the Assets
+;;! port (and any later tab) shares one vocabulary instead of re-deriving it.
+
+;;! Open fold ids as an assoc list (id . open?). Folds toggle independently —
+;;! unlike the one-at-a-time combos and colour picker — so this is a set, not a
+;;! single id. A fold absent from the list takes the caller's default.
+(define kruddgui-fold-state '())
+
+(define (kruddgui-fold-open? id default)
+  (let ((p (assoc id kruddgui-fold-state)))
+    (if p (cdr p) default)))
+
+(define (kruddgui-fold-set! id open?)
+  (let loop ((l kruddgui-fold-state) (acc '()))
+    (cond ((null? l) (set! kruddgui-fold-state (cons (cons id open?) acc)))
+	  ((equal? (caar l) id) (loop (cdr l) acc))
+	  (else (loop (cdr l) (cons (car l) acc))))))
+
+;;! (kruddgui-fold L id label default) a full-width collapsing header: a marker
+;;! (v open / > closed — the atlas is ASCII, so a letter stands in for the
+;;! triangle) and the label, tapping toggles the id's open flag. Returns #t when
+;;! open, so the caller draws the section body only then. Culled headers keep the
+;;! stored state and return it, so an off-body fold still gates its body.
+(define (kruddgui-fold L id label default)
+  (let* ((x    (kruddgui-lay-x L))
+	 (w    (kruddgui-lay-w L))
+	 (y    (kruddgui-lay-cy L))
+	 (h    kruddgui-scene-row-h)
+	 (open (kruddgui-fold-open? id default)))
+    (when (kruddgui-lay-vis? L h)
+      (kruddgui-rect* (list x y w h) kruddgui-idle-bg)
+      (kruddgui-board-cell (+ x 8) y h (if open "v" ">") kruddgui-scene-label-fg)
+      (kruddgui-board-cell (+ x 26) y h label kruddgui-scene-label-fg)
+      (when (kgui-button x y w h)
+	(set! open (not open))
+	(kruddgui-fold-set! id open)))
+    (kruddgui-lay-adv! L (+ h kruddgui-scene-gap))
+    open))
+
+;;! (kruddgui-button-row L labels) lay one tap button per label across the row
+;;! width — the kruddgui answer to ImGui's same-line button strips (the cursor
+;;! has no implicit x, so the cells are packed here). Returns the tapped label,
+;;! or #f when none was tapped this frame. Culled rows draw nothing, return #f.
+(define (kruddgui-button-row L labels)
+  (let* ((x   (kruddgui-lay-x L))
+	 (w   (kruddgui-lay-w L))
+	 (y   (kruddgui-lay-cy L))
+	 (h   kruddgui-scene-row-h)
+	 (n   (length labels))
+	 (g   kruddgui-scene-gap)
+	 (cw  (if (> n 0) (/ (- w (* (- n 1) g)) n) w))
+	 (hit #f))
+    (when (and (> n 0) (kruddgui-lay-vis? L h))
+      (let loop ((ls labels) (i 0))
+	(when (pair? ls)
+	  (let ((cx (+ x (* i (+ cw g)))))
+	    (kruddgui-rect* (list cx y cw h) kruddgui-idle-bg)
+	    (kruddgui-label cx y cw h (car ls) kruddgui-idle-fg)
+	    (when (kgui-button cx y cw h)
+	      (set! hit (car ls))))
+	  (loop (cdr ls) (+ i 1)))))
+    (kruddgui-lay-adv! L (+ h kruddgui-scene-gap))
+    hit))
+
+;;! ------------------------------------------------------------------
 ;;! Assets console shell — the Assets tab's kruddgui home (#492, PR6a)
 ;;! ------------------------------------------------------------------
 
@@ -1252,10 +1321,12 @@
 (define kruddgui-demo-rough 0.3)
 (define kruddgui-demo-color (list 0.95 0.55 0.15))
 
-;;! (kruddgui-assets-body x y w h) the scrolling foundations demo: two sliders and
-;;! a colour swatch drawn through the layout cursor, each writing its value back to
-;;! the demo state. Scroll, clip and culling mirror the Scene body; the widget
-;;! regions declared inside sit on top of this body's region.
+;;! (kruddgui-assets-body x y w h) the scrolling foundations demo: a "Material"
+;;! fold holding two sliders and a colour swatch, then a preset button row — the
+;;! collapsing-header, same-line and slider/swatch shapes the ported editors will
+;;! reuse, each writing its value back to the demo state. Scroll, clip and culling
+;;! mirror the Scene body; the widget regions declared inside sit on top of this
+;;! body's region.
 (define (kruddgui-assets-body x y w h)
   (let* ((min-off (min 0.0 (- h kruddgui-assets-total)))
 	 (off     (max min-off (min 0.0 kruddgui-assets-scroll)))
@@ -1267,16 +1338,27 @@
     (kgui-clip x y w h)
     (kruddgui-scene-label L "Widget foundations (PR6a)")
     (kruddgui-scene-rule L)
-    (let ((mr (kruddgui-slider L "demo-metallic" "Metallic"
-			       kruddgui-demo-metallic 0.0 1.0)))
-      (when (cdr mr) (set! kruddgui-demo-metallic (car mr))))
-    (let ((rr (kruddgui-slider L "demo-rough" "Roughness"
-			       kruddgui-demo-rough 0.0 1.0)))
-      (when (cdr rr) (set! kruddgui-demo-rough (car rr))))
+    (when (kruddgui-fold L "demo-material" "Material" #t)
+      (let ((mr (kruddgui-slider L "demo-metallic" "Metallic"
+				 kruddgui-demo-metallic 0.0 1.0)))
+	(when (cdr mr) (set! kruddgui-demo-metallic (car mr))))
+      (let ((rr (kruddgui-slider L "demo-rough" "Roughness"
+				 kruddgui-demo-rough 0.0 1.0)))
+	(when (cdr rr) (set! kruddgui-demo-rough (car rr))))
+      (kruddgui-scene-rule L)
+      (let ((cr (kruddgui-color-swatch L "demo-color" "Base Color"
+				       kruddgui-demo-color)))
+	(when (cdr cr) (set! kruddgui-demo-color (car cr)))))
     (kruddgui-scene-rule L)
-    (let ((cr (kruddgui-color-swatch L "demo-color" "Base Color"
-				     kruddgui-demo-color)))
-      (when (cdr cr) (set! kruddgui-demo-color (car cr))))
+    (let ((pick (kruddgui-button-row L (list "Reset" "Warm"))))
+      (cond ((equal? pick "Reset")
+	     (set! kruddgui-demo-metallic 0.5)
+	     (set! kruddgui-demo-rough 0.3)
+	     (set! kruddgui-demo-color (list 0.95 0.55 0.15)))
+	    ((equal? pick "Warm")
+	     (set! kruddgui-demo-metallic 0.2)
+	     (set! kruddgui-demo-rough 0.8)
+	     (set! kruddgui-demo-color (list 0.90 0.40 0.10)))))
     (kgui-clip-none)
     (set! kruddgui-assets-total (- (kruddgui-lay-cy L) (+ y off)))))
 

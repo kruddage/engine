@@ -18,6 +18,7 @@
 #include "kruddgui_scm.h"
 
 #include <assert.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -73,9 +74,23 @@ static int rec_has(const char *needle)
 static float g_tap_x, g_tap_y;
 static int   g_tap_live;
 
+/* A simulated field commit: kgui-field with this id returns committed VALUE. */
+static char g_field_id[64];
+static char g_field_val[64];
+
+/*
+ * A simulated captured pointer: kgui-region whose name contains g_region_id
+ * returns pressed with its press point at (frac_x, frac_y) across the region's
+ * own rect, so a test can steer a slider / picker drag geometry-free.
+ */
+static char  g_region_id[64];
+static int   g_region_live;
+static float g_region_fx, g_region_fy;
+
 /* Fixtures a test can flip. */
-static int g_has_api;  /* krudd-assets returns #f when 0 */
-static int g_mut;      /* krudd-asset-mut? */
+static int g_has_api;      /* krudd-assets returns #f when 0 */
+static int g_mut;          /* krudd-asset-mut? */
+static int g_mat_texture;  /* krudd-material-texture binds a texture when set */
 
 static void setup(void)
 {
@@ -84,8 +99,14 @@ static void setup(void)
 	g_rec_n        = 0;
 	g_tap_live     = 0;
 	g_tap_x = g_tap_y = 0.0f;
+	g_field_id[0]  = '\0';
+	g_field_val[0] = '\0';
+	g_region_id[0] = '\0';
+	g_region_live  = 0;
+	g_region_fx = g_region_fy = 0.0f;
 	g_has_api      = 1;
 	g_mut          = 1;
+	g_mat_texture  = 0;
 
 	/* Reset the overlay + browser state a prior test may have left set. */
 	s7_eval_c_string(sc, "(set! kruddgui-assets-open #t)");
@@ -96,6 +117,13 @@ static void setup(void)
 	s7_eval_c_string(sc, "(set! kruddgui-assets-new-name \"\")");
 	s7_eval_c_string(sc, "(set! kruddgui-assets-new-type 0)");
 	s7_eval_c_string(sc, "(set! kruddgui-fold-state '())");
+
+	/* Reset the material editor + shared combo/picker state too. */
+	s7_eval_c_string(sc, "(set! kruddgui-assets-mat-id 0)");
+	s7_eval_c_string(sc, "(set! kruddgui-assets-clone-src 0)");
+	s7_eval_c_string(sc, "(set! kruddgui-assets-clone-conflict #f)");
+	s7_eval_c_string(sc, "(set! kruddgui-scene-open-combo #f)");
+	s7_eval_c_string(sc, "(set! kruddgui-open-picker #f)");
 }
 
 /* ------------------------------------------------------------------ */
@@ -168,10 +196,34 @@ static s7_pointer st_button(s7_scheme *sc, s7_pointer a)
 /* (kgui-field id x y w h text mode) -> (display active? committed? caret-px). */
 static s7_pointer st_field(s7_scheme *sc, s7_pointer a)
 {
+	s7_pointer  id  = s7_car(a);
 	s7_pointer  txt = s7_list_ref(sc, a, 5);
+	const char *sid = s7_is_string(id) ? s7_string(id) : "";
 	const char *cur = s7_is_string(txt) ? s7_string(txt) : "";
 
+	if (g_field_id[0] && strcmp(sid, g_field_id) == 0)
+		return s7_list(sc, 4, s7_make_string(sc, g_field_val), s7_f(sc),
+			       s7_t(sc), s7_make_real(sc, 0.0));
 	return s7_list(sc, 4, s7_make_string(sc, cur), s7_f(sc), s7_f(sc),
+		       s7_make_real(sc, 0.0));
+}
+
+/* (kgui-region name x y w h) -> (pressed press-x press-y). */
+static s7_pointer st_region(s7_scheme *sc, s7_pointer a)
+{
+	s7_pointer  nm = s7_car(a);
+	const char *id = s7_is_string(nm) ? s7_string(nm) : "";
+	double      x  = num(sc, s7_list_ref(sc, a, 1));
+	double      y  = num(sc, s7_list_ref(sc, a, 2));
+	double      w  = num(sc, s7_list_ref(sc, a, 3));
+	double      h  = num(sc, s7_list_ref(sc, a, 4));
+
+	rec("region %s", id);
+	if (g_region_live && g_region_id[0] && strstr(id, g_region_id))
+		return s7_list(sc, 3, s7_t(sc),
+			       s7_make_real(sc, x + g_region_fx * w),
+			       s7_make_real(sc, y + g_region_fy * h));
+	return s7_list(sc, 3, s7_f(sc), s7_make_real(sc, 0.0),
 		       s7_make_real(sc, 0.0));
 }
 
@@ -233,6 +285,11 @@ static s7_pointer st_asset_info(s7_scheme *sc, s7_pointer a)
 	if (id == 1)
 		return ainfo(sc, "builtin://shader/scene-textured",
 			     4, 1, 1, 0, 0, 1, 0);
+	/* An authored material (mutable) and a read-only built-in material. */
+	if (id == 20)
+		return ainfo(sc, "mat/brass", 3, 0, 1, 0, 0, 0, 1);
+	if (id == 21)
+		return ainfo(sc, "builtin://material/scene", 3, 1, 1, 0, 0, 1, 0);
 	return s7_f(sc);
 }
 
@@ -273,6 +330,108 @@ static s7_pointer st_create_mesh(s7_scheme *sc, s7_pointer a)
 	return s7_make_integer(sc, 42);
 }
 
+/* ---- material editor accessor stubs ---- */
+
+/* (aid . path) list for the shader / texture combos. */
+static s7_pointer st_shader_assets(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	return s7_list(sc, 1,
+		s7_cons(sc, s7_make_integer(sc, 30),
+			s7_make_string(sc, "shader/scene")));
+}
+
+static s7_pointer st_texture_assets(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	return s7_list(sc, 1,
+		s7_cons(sc, s7_make_integer(sc, 40),
+			s7_make_string(sc, "tex/wood")));
+}
+
+/* (krudd-asset-find ref) -> path for the combo preview labels. */
+static s7_pointer st_asset_find(s7_scheme *sc, s7_pointer a)
+{
+	int ref = (int)s7_integer(s7_car(a));
+
+	if (ref == 30)
+		return s7_make_string(sc, "shader/scene");
+	if (ref == 40)
+		return s7_make_string(sc, "tex/wood");
+	return s7_f(sc);
+}
+
+/* (krudd-asset-shader-ref id) -> the material's shader asset id. */
+static s7_pointer st_shader_ref(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	return s7_make_integer(sc, 30);
+}
+
+/*
+ * (krudd-material-texture id) -> (tex-ref w h) when a texture is bound (steered
+ * by g_mat_texture), else () for the "(none)" binding.
+ */
+static s7_pointer st_material_texture(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	if (!g_mat_texture)
+		return s7_nil(sc);
+	return s7_list(sc, 3, s7_make_integer(sc, 40), s7_make_integer(sc, 512),
+		       s7_make_integer(sc, 512));
+}
+
+/*
+ * (krudd-shader-material-params shader-ref) -> two fields: a 4-component "color"
+ * (routes to the swatch) and a 1-component "range" (routes to the slider), so a
+ * test sees both interactive param kinds. Each is (name type off size comps kind
+ * min max), the shape kruddgui-assets-param-widget reads.
+ */
+static s7_pointer st_material_params(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	return s7_list(sc, 2,
+		s7_list(sc, 8, s7_make_string(sc, "tint"),
+			s7_make_symbol(sc, "vec4"), s7_make_integer(sc, 0),
+			s7_make_integer(sc, 16), s7_make_integer(sc, 4),
+			s7_make_string(sc, "color"), s7_make_real(sc, 0.0),
+			s7_make_real(sc, 0.0)),
+		s7_list(sc, 8, s7_make_string(sc, "metal"),
+			s7_make_symbol(sc, "float"), s7_make_integer(sc, 16),
+			s7_make_integer(sc, 4), s7_make_integer(sc, 1),
+			s7_make_string(sc, "range"), s7_make_real(sc, 0.0),
+			s7_make_real(sc, 1.0)));
+}
+
+/* (krudd-material-values mat-id shader-ref) -> one value list per param. */
+static s7_pointer st_material_values(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	return s7_list(sc, 2,
+		s7_list(sc, 4, s7_make_real(sc, 0.9), s7_make_real(sc, 0.5),
+			s7_make_real(sc, 0.1), s7_make_real(sc, 1.0)),
+		s7_list(sc, 1, s7_make_real(sc, 0.5)));
+}
+
+static s7_pointer st_save_material(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	rec("save-material");
+	return s7_unspecified(sc);
+}
+
+static s7_pointer st_clone_material(s7_scheme *sc, s7_pointer a)
+{
+	rec("clone-material %s", arg1_str(sc, a));
+	return s7_make_integer(sc, 99);
+}
+
+static s7_pointer st_asset_delete(s7_scheme *sc, s7_pointer a)
+{
+	rec("asset-delete %d", (int)s7_integer(s7_car(a)));
+	return s7_unspecified(sc);
+}
+
 static void def(s7_scheme *sc, const char *name, s7_function fn, int req)
 {
 	s7_define_function(sc, name, fn, req, 0, false, "stub");
@@ -291,6 +450,7 @@ static s7_scheme *setup_interp(void)
 	def(sc, "kgui-panel-end", st_nullary, 0);
 	def(sc, "kgui-button", st_button, 4);
 	def(sc, "kgui-field", st_field, 7);
+	def(sc, "kgui-region", st_region, 5);
 	def(sc, "kgui-clip", st_nullary, 4);
 	def(sc, "kgui-clip-none", st_nullary, 0);
 	def(sc, "kgui-region-drag", st_region_drag, 0);
@@ -305,6 +465,21 @@ static s7_scheme *setup_interp(void)
 	def(sc, "krudd-asset-create-material", st_create_material, 1);
 	def(sc, "krudd-asset-create-script", st_create_script, 1);
 	def(sc, "krudd-asset-create-mesh", st_create_mesh, 1);
+
+	/* Accessors the material editor reads / writes. */
+	def(sc, "krudd-shader-assets", st_shader_assets, 0);
+	def(sc, "krudd-texture-assets", st_texture_assets, 0);
+	def(sc, "krudd-asset-find", st_asset_find, 1);
+	def(sc, "krudd-asset-shader-ref", st_shader_ref, 1);
+	def(sc, "krudd-material-texture", st_material_texture, 1);
+	def(sc, "krudd-shader-material-params", st_material_params, 1);
+	def(sc, "krudd-material-values", st_material_values, 2);
+	/* Save / clone take (id/name shader values [tex-ref w h]) — 3 + 3. */
+	s7_define_function(sc, "krudd-asset-save-material", st_save_material,
+			   3, 3, false, "stub");
+	s7_define_function(sc, "krudd-asset-clone-material", st_clone_material,
+			   3, 3, false, "stub");
+	def(sc, "krudd-asset-delete", st_asset_delete, 1);
 
 	assert(script_eval(KRUDDGUI_SCM) == 0);
 	return sc;
@@ -351,6 +526,45 @@ static void tap(float x, float y)
 static s7_pointer eval(const char *src)
 {
 	return s7_eval_c_string(script_s7(), src);
+}
+
+static int close_to(double a, double b)
+{
+	return fabs(a - b) < 1e-3;
+}
+
+static int is_true(s7_pointer p)
+{
+	return p == s7_t(script_s7());
+}
+
+/* nth (0-based) real of a scheme list. */
+static double nth_real(s7_pointer lst, int n)
+{
+	return s7_real(s7_list_ref(script_s7(), lst, n));
+}
+
+static void press_region(const char *id, float fx, float fy)
+{
+	snprintf(g_region_id, sizeof(g_region_id), "%s", id);
+	g_region_fx   = fx;
+	g_region_fy   = fy;
+	g_region_live = 1;
+}
+
+/*
+ * A layout cursor with a wide-open clip band, so a widget called directly is
+ * always visible: origin x 10, width 380, running y 0 — the same geometry-free
+ * harness kgui_widgets_test drives its widgets through.
+ */
+#define TEST_LAY "(kruddgui-lay 0.0 -1000.0 2000.0 10.0 380.0)"
+
+/* The name of the currently open colour picker, or "" when none. */
+static const char *open_picker(void)
+{
+	s7_pointer p = s7_name_to_value(script_s7(), "kruddgui-open-picker");
+
+	return s7_is_string(p) ? s7_string(p) : "";
 }
 
 /* ------------------------------------------------------------------ */
@@ -475,6 +689,126 @@ static void test_path_segments(void)
 	assert(strcmp(s7_string(s7_list_ref(sc, r, 0)), "hero") == 0);
 }
 
+/* ------------------------------------------------------------------ */
+/* Material editor (#492, PR6c)                                        */
+/* ------------------------------------------------------------------ */
+
+static void test_material_editor_renders(void)
+{
+	/* Drilling into a material (type 3) draws the editor, not the kv view. */
+	set_sel(20);
+	draw();
+	assert(rec_has("< Back"));
+	assert(rec_has("text Shader"));       /* the Shader fold / combo    */
+	assert(rec_has("text Parameters"));   /* the Parameters fold        */
+	assert(rec_has("text Texture"));      /* the Texture fold           */
+	assert(rec_has("text tint"));         /* the colour param (swatch)  */
+	assert(rec_has("text metal"));        /* the range param (slider)   */
+	/* The slider (param index 1) declares its drag region; the swatch's
+	 * regions only declare once its picker is open. */
+	assert(rec_has("region mp-1"));
+}
+
+static void test_material_param_slider_routes(void)
+{
+	s7_pointer r;
+
+	/* A "range" 1-comp field routes to the draggable slider; a press 75%
+	 * across it maps to 0.75 and flags the change. */
+	press_region("mp-0", 0.75f, 0.5f);
+	r = eval("(kruddgui-assets-param-widget " TEST_LAY " \"mp-0\" "
+		 "(list \"metal\" 'float 16 4 1 \"range\" 0.0 1.0) (list 0.5))");
+	assert(close_to(nth_real(s7_car(r), 0), 0.75));
+	assert(is_true(s7_cdr(r)));
+	assert(rec_has("region mp-0"));
+}
+
+static void test_material_param_swatch_routes(void)
+{
+	/* A "color" field with >=3 comps routes to the colour swatch; a tap on
+	 * its cell (label row 26 then swatch cell) opens the picker. */
+	tap(100.0f, 40.0f);
+	g_rec_n = 0;
+	eval("(kruddgui-assets-param-widget " TEST_LAY " \"mp-0\" "
+	     "(list \"tint\" 'vec4 0 16 4 \"color\" 0.0 0.0) "
+	     "(list 0.9 0.5 0.1 1.0))");
+	assert(strcmp(open_picker(), "mp-0") == 0);
+	assert(rec_has("region mp-0-sv"));    /* the picker's regions declare */
+	assert(rec_has("region mp-0-hue"));
+}
+
+static void test_material_param_numeric_routes(void)
+{
+	s7_pointer r;
+
+	/* A field with neither hint routes to plain numeric fields; committing
+	 * component 0 writes the parsed value back. */
+	strcpy(g_field_id, "mp-00");
+	strcpy(g_field_val, "1.5");
+	r = eval("(kruddgui-assets-param-widget " TEST_LAY " \"mp-0\" "
+		 "(list \"uv\" 'vec2 0 8 2 \"float\" 0.0 0.0) (list 0.0 0.0))");
+	assert(close_to(nth_real(s7_car(r), 0), 1.5));
+	assert(is_true(s7_cdr(r)));
+}
+
+/* Close the three editor folds so the action row sits at a known y. */
+static void close_material_folds(void)
+{
+	eval("(set! kruddgui-fold-state "
+	     "(list (cons \"mat-shader-fold\" #f) "
+	     "(cons \"mat-params-fold\" #f) (cons \"mat-tex-fold\" #f)))");
+}
+
+static void test_material_save(void)
+{
+	/*
+	 * Body at 48: Back (->94), path (->120), rule (->128), three closed folds
+	 * (46 each: ->174 ->220 ->266), rule (->274), then the Save/Delete row at
+	 * y 274. Save is the left half (x 22..197).
+	 */
+	set_sel(20);
+	close_material_folds();
+	tap(100.0f, 288.0f);
+	draw();
+	assert(rec_has("save-material"));
+}
+
+static void test_material_delete(void)
+{
+	/* Delete is the right half of the button-row (x 203..378, y 274..314). */
+	set_sel(20);
+	close_material_folds();
+	tap(250.0f, 288.0f);
+	draw();
+	assert(rec_has("asset-delete 20"));
+	assert(get_sel() == 0);
+}
+
+static void test_material_clone(void)
+{
+	/*
+	 * A read-only material shows the Clone row instead: after the rule at 274,
+	 * "Clone as" label (->300), the name field (46 ->346), then the Clone
+	 * button at y 346..386.
+	 */
+	set_sel(21);
+	close_material_folds();
+	tap(100.0f, 360.0f);
+	draw();
+	assert(rec_has("clone-material"));
+	assert(get_sel() == 99);
+}
+
+static void test_material_texture_resolution(void)
+{
+	/* A bound texture previews its path and reveals the Resolution combo. */
+	g_mat_texture = 1;
+	set_sel(20);
+	draw();
+	assert(rec_has("text tex/wood"));
+	assert(rec_has("text Resolution"));
+}
+
 int main(void)
 {
 	setup_interp();
@@ -490,6 +824,14 @@ int main(void)
 	RUN(new_form_opens);
 	RUN(create_dispatch);
 	RUN(path_segments);
+	RUN(material_editor_renders);
+	RUN(material_param_slider_routes);
+	RUN(material_param_swatch_routes);
+	RUN(material_param_numeric_routes);
+	RUN(material_save);
+	RUN(material_delete);
+	RUN(material_clone);
+	RUN(material_texture_resolution);
 
 	printf("\n%d/%d kgui assets tests passed\n", tests_passed, tests_run);
 	return tests_passed == tests_run ? 0 : 1;

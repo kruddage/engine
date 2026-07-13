@@ -1609,14 +1609,288 @@
 	      (unless (= nid 0) (set! kruddgui-assets-sel nid))
 	      (set! kruddgui-assets-naming #f))))))))
 
-;;! (kruddgui-asset-inspector L id) the drilled-in read view: a "< Back" row, the
-;;! asset path, then its catalog fields (type / kind / state / size / refs / read-
-;;! only). This is the browser's landing screen for a tapped asset; the per-type
-;;! material / texture / source editors land on top of it in 6c (dispatching by
-;;! type ahead of this generic view). Back returns to the browser; a stale id (the
-;;! asset deleted elsewhere) falls back to it too, the guard the ImGui inspector
-;;! used. (krudd-asset-info id) -> (path type kind state size refs read-only?
-;;! origin) or #f.
+;;! ------------------------------------------------------------------
+;;! Asset inspector — per-type editors: the material editor (#492, PR6c)
+;;! ------------------------------------------------------------------
+;;! PR6b landed the browser and a read-only landing view for a tapped asset; 6c
+;;! gives the inspector a per-type seam (kruddgui-asset-body, mirroring Assets.scm's
+;;! kruddboard-draw-asset-body) and fills in the first real editor: the material
+;;! editor. A material carries no schema of its own — it names a shader, and that
+;;! shader's Material block (krudd-shader-material-params) is the parameter set the
+;;! editor draws — so the editor is a shader picker, the derived parameters as
+;;! sliders / swatches / numeric fields, an optional texture binding, and Save /
+;;! Delete (or, for a read-only built-in, Clone). The source editors, markdown
+;;! preview and image-baked previews stay on the ImGui Assets tab until their own
+;;! primitives land (a multiline field, an md_draw->kgui_batch port, an image
+;;! primitive); every other asset type still falls through to the generic view.
+
+;;! Material editor model — the kruddgui twins of Assets.scm's material statics,
+;;! keyed by the material id they were loaded for. A material has no fields of its
+;;! own: -shader is the shader it names, -params the shader's Material descriptor
+;;! list, -values the current value per field (in order). -texture / -tex-res are
+;;! its optional texture binding (0 = none) and the square bake edge.
+(define kruddgui-assets-mat-id 0)
+(define kruddgui-assets-mat-shader 0)
+(define kruddgui-assets-mat-params '())
+(define kruddgui-assets-mat-values '())
+(define kruddgui-assets-mat-texture 0)
+(define kruddgui-assets-mat-tex-res 256)
+
+;;! The bake resolutions the texture resolution combo offers — square, power-of-two
+;;! (Assets.scm's kruddboard-assets-tex-resolutions).
+(define kruddgui-assets-tex-resolutions '(64 128 256 512 1024 2048))
+
+;;! Built-in Clone form state: the source id the default name was seeded from, the
+;;! proposed name, and whether the last Clone hit a duplicate path. Mirrors
+;;! Assets.scm's clone-src / clone-name / clone-conflict — only one inspector is
+;;! open at a time, so a single set serves whichever built-in is being cloned.
+(define kruddgui-assets-clone-src 0)
+(define kruddgui-assets-clone-name "")
+(define kruddgui-assets-clone-conflict #f)
+
+;;! (kruddgui-assets-refresh-material) re-derives the parameter descriptors and
+;;! current values for the loaded material against its selected shader — run on
+;;! load and whenever the shader changes (krudd-material-values returns the shader's
+;;! defaults when the material doesn't yet target it). The twin of Assets.scm's
+;;! kruddboard-assets-refresh-material.
+(define (kruddgui-assets-refresh-material)
+  (set! kruddgui-assets-mat-params
+	(krudd-shader-material-params kruddgui-assets-mat-shader))
+  (set! kruddgui-assets-mat-values
+	(krudd-material-values kruddgui-assets-mat-id
+			       kruddgui-assets-mat-shader)))
+
+;;! (kruddgui-assets-maybe-reload-material id) loads the material model when the
+;;! selection changes: its stored shader-ref and texture binding, then the derived
+;;! params/values. Keyed by id so an in-progress edit is never clobbered mid-frame,
+;;! the twin of Assets.scm's kruddboard-assets-maybe-reload-material.
+(define (kruddgui-assets-maybe-reload-material id)
+  (unless (= kruddgui-assets-mat-id id)
+    (set! kruddgui-assets-mat-id id)
+    (set! kruddgui-assets-mat-shader (krudd-asset-shader-ref id))
+    (let ((tx (krudd-material-texture id)))
+      (if (pair? tx)
+	  (begin (set! kruddgui-assets-mat-texture (car tx))
+		 (set! kruddgui-assets-mat-tex-res (cadr tx)))
+	  (begin (set! kruddgui-assets-mat-texture 0)
+		 (set! kruddgui-assets-mat-tex-res 256))))
+    (kruddgui-assets-refresh-material)))
+
+;;! (kruddgui-assets-do-delete id) deletes the asset, clears the material model
+;;! keyed to it, and returns to the browser — the twin of Assets.scm's
+;;! kruddboard-assets-do-delete.
+(define (kruddgui-assets-do-delete id)
+  (krudd-asset-delete id)
+  (set! kruddgui-assets-mat-id 0)
+  (set! kruddgui-assets-sel 0))
+
+;;! (kruddgui-assets-numeric-row L id label comps value) a labelled row of COMPS
+;;! numeric fields packed across the row width — the fallback branch of the Assets
+;;! param widget, for a field with neither a colour nor a range hint. Returns
+;;! (values . changed?): the per-component values and whether any component
+;;! committed. Culled rows return the values unchanged.
+(define (kruddgui-assets-numeric-row L id label comps value)
+  (kruddgui-scene-label L label)
+  (let* ((x  (kruddgui-lay-x L))
+	 (w  (kruddgui-lay-w L))
+	 (y  (kruddgui-lay-cy L))
+	 (g  kruddgui-scene-gap)
+	 (fw (if (> comps 0) (/ (- w (* (- comps 1) g)) comps) w))
+	 (res
+	  (if (and (> comps 0) (kruddgui-lay-vis? L kruddgui-scene-row-h))
+	      (let loop ((i 0) (vs value) (acc '()))
+		(if (or (null? vs) (>= i comps))
+		    (reverse acc)
+		    (let ((cx (+ x (* i (+ fw g)))))
+		      (loop (+ i 1) (cdr vs)
+			    (cons (kruddgui-scene-numeric
+				   cx y fw (format #f "~A~D" id i) (car vs))
+				  acc)))))
+	      (map (lambda (v) (cons v #f)) value))))
+    (kruddgui-lay-adv! L (+ kruddgui-scene-row-h kruddgui-scene-gap))
+    (cons (map car res)
+	  (let anyc ((r res)) (cond ((null? r) #f)
+				    ((cdr (car r)) #t)
+				    (else (anyc (cdr r))))))))
+
+;;! (kruddgui-assets-param-widget L id param value) draws one shader-derived
+;;! parameter and returns its (values . changed?). Unlike the Scene tab's numeric-
+;;! only kruddgui-scene-param-widget, this Assets variant routes on the field's edit
+;;! hint the way Assets.scm's kruddboard-draw-material-param does: a "color" hint
+;;! with three or more components becomes a draggable colour swatch, a "range" hint
+;;! on a single component a draggable slider (its min / max are param fields 6 and
+;;! 7), and anything else plain numeric fields. value stays a list so the save path
+;;! packs every kind uniformly. param is (name type off size comps kind min max).
+(define (kruddgui-assets-param-widget L id param value)
+  (let ((name  (list-ref param 0))
+	(comps (list-ref param 4))
+	(kind  (list-ref param 5))
+	(mn    (list-ref param 6))
+	(mx    (list-ref param 7)))
+    (cond
+     ((and (string=? kind "color") (>= comps 3))
+      (kruddgui-color-swatch L id name value))
+     ((and (string=? kind "range") (= comps 1))
+      (let ((r (kruddgui-slider L id name (car value) mn mx)))
+	(cons (list (car r)) (cdr r))))
+     (else
+      (kruddgui-assets-numeric-row L id name comps value)))))
+
+;;! (kruddgui-assets-material-params L) draws every material parameter widget in
+;;! order and, if any committed this frame, writes the packed values back into the
+;;! editor model. The write-back is what makes a slider drag or picker edit persist
+;;! frame to frame; the asset itself is only touched by the explicit Save row below,
+;;! unlike the Scene param menu's save-on-change (a material's shader / texture /
+;;! resolution are coupled, so they batch behind one Save).
+(define (kruddgui-assets-material-params L)
+  (if (null? kruddgui-assets-mat-params)
+      (kruddgui-scene-label L "(no material parameters)")
+      (let* ((results
+	      (map (lambda (p v pidx)
+		     (kruddgui-assets-param-widget L
+			 (format #f "mp-~D" pidx) p v))
+		   kruddgui-assets-mat-params
+		   kruddgui-assets-mat-values
+		   (kruddgui-scene-iota (length kruddgui-assets-mat-params))))
+	     (new-vals (map car results))
+	     (changed  (let anyc ((r results))
+			 (cond ((null? r) #f)
+			       ((cdr (car r)) #t)
+			       (else (anyc (cdr r)))))))
+	(when changed
+	  (set! kruddgui-assets-mat-values new-vals)))))
+
+;;! (kruddgui-assets-material-texture L) the material's Texture binding: a texture-
+;;! asset combo (with the shared combo's "(none)" unbind row) and, once a texture is
+;;! bound, a square bake-resolution combo. Both edit the editor model the Save row
+;;! packs into the material's texture trailer; ported from Assets.scm's
+;;! kruddboard-draw-material-texture. The resolution combo reuses the same ref combo
+;;! over (res . "N x N") options, its setter guarding the shared "(none)" row to a
+;;! no-op since a bound texture always has a resolution.
+(define (kruddgui-assets-material-texture L)
+  (kruddgui-scene-combo L "mat-tex" "Texture"
+      (kruddgui-binding-label #t kruddgui-assets-mat-texture)
+      (krudd-texture-assets) kruddgui-assets-mat-texture #t
+      (lambda (ignored aid) (set! kruddgui-assets-mat-texture aid))
+      0)
+  (when (> kruddgui-assets-mat-texture 0)
+    (kruddgui-scene-combo L "mat-res" "Resolution"
+	(format #f "~D x ~D" kruddgui-assets-mat-tex-res
+		kruddgui-assets-mat-tex-res)
+	(map (lambda (r) (cons r (format #f "~D x ~D" r r)))
+	     kruddgui-assets-tex-resolutions)
+	kruddgui-assets-mat-tex-res #t
+	(lambda (ignored r)
+	  (when (> r 0) (set! kruddgui-assets-mat-tex-res r)))
+	0)))
+
+;;! (kruddgui-asset-material-clone L id path) the read-only material's Clone row: a
+;;! name field seeded "<path>_copy" on first view and a Clone button that packs the
+;;! current shader / values / texture / resolution into a new authored material
+;;! (krudd-asset-clone-material) and drills into it, or flags a name clash. Mirrors
+;;! Assets.scm's kruddboard-draw-asset-material-clone.
+(define (kruddgui-asset-material-clone L id path)
+  (unless (= kruddgui-assets-clone-src id)
+    (set! kruddgui-assets-clone-src id)
+    (set! kruddgui-assets-clone-name
+	  (string-append (kruddgui-strip-builtin-prefix path) "_copy"))
+    (set! kruddgui-assets-clone-conflict #f))
+  (kruddgui-scene-label L "Clone as")
+  (let ((nf (kruddgui-scene-field L "mat-clone-name"
+				  kruddgui-assets-clone-name 0)))
+    (set! kruddgui-assets-clone-name (car nf)))
+  (when (and (kruddgui-scene-btn L "Clone" #t)
+	     (not (string=? kruddgui-assets-clone-name "")))
+    (let ((nid (krudd-asset-clone-material
+		kruddgui-assets-clone-name
+		kruddgui-assets-mat-shader
+		kruddgui-assets-mat-values
+		kruddgui-assets-mat-texture
+		kruddgui-assets-mat-tex-res
+		kruddgui-assets-mat-tex-res)))
+      (if (= nid 0)
+	  (set! kruddgui-assets-clone-conflict #t)
+	  (begin
+	    (set! kruddgui-assets-clone-conflict #f)
+	    (set! kruddgui-assets-sel nid)))))
+  (when kruddgui-assets-clone-conflict
+    (kruddgui-scene-label L
+	(format #f "(\"~A\" already exists)" kruddgui-assets-clone-name))))
+
+;;! (kruddgui-asset-material-editor L id path editable?) the material inspector: a
+;;! Shader picker, the shader-derived Parameters, and the Texture binding — each
+;;! under its own fold — then Save/Delete, or the built-in Clone row. Ported from
+;;! Assets.scm's kruddboard-draw-asset-material-editor. kruddgui has no disable
+;;! primitive, so a read-only built-in's shader / params / texture stay live for
+;;! preview-editing; only Save is withheld (Clone captures whatever you set), where
+;;! the ImGui editor greyed the controls out. Save is explicit — the coupled shader
+;;! / texture / resolution batch behind one Save, not the Scene menu's save-on-change.
+(define (kruddgui-asset-material-editor L id path editable?)
+  (kruddgui-assets-maybe-reload-material id)
+  (when (kruddgui-fold L "mat-shader-fold" "Shader" #t)
+    (kruddgui-scene-combo L "mat-shader" "Shader"
+	(kruddgui-binding-label #t kruddgui-assets-mat-shader)
+	(krudd-shader-assets) kruddgui-assets-mat-shader #t
+	(lambda (ignored aid)
+	  (unless (= aid kruddgui-assets-mat-shader)
+	    (set! kruddgui-assets-mat-shader aid)
+	    (kruddgui-assets-refresh-material)))
+	0))
+  (when (kruddgui-fold L "mat-params-fold" "Parameters" #t)
+    (kruddgui-assets-material-params L))
+  (when (kruddgui-fold L "mat-tex-fold" "Texture" #t)
+    (kruddgui-assets-material-texture L))
+  (kruddgui-scene-rule L)
+  (if editable?
+      (let ((act (kruddgui-button-row L (list "Save" "Delete"))))
+	(cond
+	 ((equal? act "Save")
+	  (krudd-asset-save-material id
+	      kruddgui-assets-mat-shader kruddgui-assets-mat-values
+	      kruddgui-assets-mat-texture kruddgui-assets-mat-tex-res
+	      kruddgui-assets-mat-tex-res))
+	 ((equal? act "Delete")
+	  (kruddgui-assets-do-delete id))))
+      (kruddgui-asset-material-clone L id path)))
+
+;;! (kruddgui-asset-generic L info) the read-only catalog view — the browser's
+;;! landing screen for any asset without a dedicated editor yet, and the tail of the
+;;! type dispatch. The Type / Kind / State / Size / Refs / Read-only rows off
+;;! (krudd-asset-info id).
+(define (kruddgui-asset-generic L info)
+  (kruddgui-scene-kv L "Type"
+		     (kruddgui-asset-type-label (list-ref info 1)))
+  (kruddgui-scene-kv L "Kind"
+		     (kruddgui-asset-kind-label (list-ref info 2)))
+  (kruddgui-scene-kv L "State"
+		     (kruddgui-asset-state-label (list-ref info 3)))
+  (kruddgui-scene-kv L "Size"
+		     (let ((sz (list-ref info 4)))
+		       (if (> sz 0) (number->string sz) "-")))
+  (kruddgui-scene-kv L "Refs" (number->string (list-ref info 5)))
+  (kruddgui-scene-kv L "Read-only"
+		     (if (list-ref info 6) "yes" "no")))
+
+;;! (kruddgui-asset-body L id info) dispatches to the per-type editor by asset type
+;;! ahead of the generic catalog view — the twin of Assets.scm's
+;;! kruddboard-draw-asset-body. ASSET_TYPE_MATERIAL = 3 (mirroring asset_api.h); 6c
+;;! fills in the material branch, the remaining per-type editors slot in here as
+;;! they land. read-only? (info field 6) drives the material editor's Save-vs-Clone
+;;! row.
+(define (kruddgui-asset-body L id info)
+  (let ((type      (list-ref info 1))
+	(read-only (list-ref info 6)))
+    (cond
+     ((= type 3)
+      (kruddgui-asset-material-editor L id (list-ref info 0) (not read-only)))
+     (else (kruddgui-asset-generic L info)))))
+
+;;! (kruddgui-asset-inspector L id) the drilled-in inspector: a "< Back" row, the
+;;! asset path, then the per-type body (kruddgui-asset-body) — the material editor
+;;! for a material, the read-only catalog view otherwise. Back returns to the
+;;! browser; a stale id (the asset deleted elsewhere) falls back to it too, the
+;;! guard the ImGui inspector used. (krudd-asset-info id) -> (path type kind state
+;;! size refs read-only? origin) or #f.
 (define (kruddgui-asset-inspector L id)
   (let ((info (krudd-asset-info id)))
     (if (not info)
@@ -1626,18 +1900,7 @@
 	    (set! kruddgui-assets-sel 0))
 	  (kruddgui-scene-label L (list-ref info 0))
 	  (kruddgui-scene-rule L)
-	  (kruddgui-scene-kv L "Type"
-			     (kruddgui-asset-type-label (list-ref info 1)))
-	  (kruddgui-scene-kv L "Kind"
-			     (kruddgui-asset-kind-label (list-ref info 2)))
-	  (kruddgui-scene-kv L "State"
-			     (kruddgui-asset-state-label (list-ref info 3)))
-	  (kruddgui-scene-kv L "Size"
-			     (let ((sz (list-ref info 4)))
-			       (if (> sz 0) (number->string sz) "-")))
-	  (kruddgui-scene-kv L "Refs" (number->string (list-ref info 5)))
-	  (kruddgui-scene-kv L "Read-only"
-			     (if (list-ref info 6) "yes" "no"))))))
+	  (kruddgui-asset-body L id info)))))
 
 ;;! (kruddgui-asset-browser L) the package browser: the New Asset form (when the
 ;;! mutation api is present), then the engine and project package sections — or a

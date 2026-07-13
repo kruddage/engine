@@ -1,14 +1,19 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
- * Native test for the Scheme-authored widget foundations (the draggable slider
- * and 2D colour picker in kruddgui.scm, #492 PR6a). Like kgui_scene_test it
+ * Native test for the Scheme-authored widget foundations and shared layout
+ * vocabulary (the draggable slider, the 2D colour picker, the fold header and
+ * the button row in kruddgui.scm, #492 PR6a/6b). Like kgui_scene_test it
  * registers *stub* kgui-* primitives — here with a steerable kgui-region so a
  * test can simulate a captured pointer at a fraction across a named widget's
- * rect — loads the same image the WASM host loads (KRUDDGUI_SCM), drives the
- * Assets foundations panel, and asserts on the values the widgets write back and
- * the geometry they emit. It verifies the portable logic — the press-to-value
- * mapping and clamping, the HSV round-trip, and the one-picker-open discipline —
- * leaving pixel layout to browser verification.
+ * rect, and a steerable tap — loads the same image the WASM host loads
+ * (KRUDDGUI_SCM), and drives each widget *directly*: it builds a layout cursor
+ * with a wide-open clip band and calls the widget, then reads the value it
+ * returns and the state it writes. Driving the helpers directly (rather than
+ * through a panel body) keeps the tests geometry-free, so inserting a row above a
+ * widget can't shift a hard-coded y out from under it. It verifies the portable
+ * logic — the press-to-value mapping and clamping, the HSV round-trip, the
+ * one-picker-open discipline, and the fold's independent open state — leaving
+ * pixel layout to browser verification.
  */
 #include "script.h"
 
@@ -92,15 +97,9 @@ static void setup(void)
 	g_region_live  = 0;
 	g_region_fx    = g_region_fy = 0.0f;
 
-	/* Reset the overlay + demo state a previous test may have left set. */
-	s7_eval_c_string(sc, "(set! kruddgui-assets-open #t)");
-	s7_eval_c_string(sc, "(set! kruddgui-assets-scroll 0.0)");
-	s7_eval_c_string(sc, "(set! kruddgui-assets-total 0.0)");
+	/* Reset the one-open-at-a-time picker and the fold set a prior test set. */
 	s7_eval_c_string(sc, "(set! kruddgui-open-picker #f)");
 	s7_eval_c_string(sc, "(set! kruddgui-fold-state '())");
-	s7_eval_c_string(sc, "(set! kruddgui-demo-metallic 0.5)");
-	s7_eval_c_string(sc, "(set! kruddgui-demo-rough 0.3)");
-	s7_eval_c_string(sc, "(set! kruddgui-demo-color (list 0.95 0.55 0.15))");
 }
 
 /* ------------------------------------------------------------------ */
@@ -140,18 +139,6 @@ static s7_pointer st_nullary(s7_scheme *sc, s7_pointer a)
 {
 	(void)a;
 	return s7_unspecified(sc);
-}
-
-static s7_pointer st_region_drag(s7_scheme *sc, s7_pointer a)
-{
-	(void)a;
-	return s7_list(sc, 2, s7_make_real(sc, 0.0), s7_make_real(sc, 0.0));
-}
-
-static s7_pointer st_region_wheel(s7_scheme *sc, s7_pointer a)
-{
-	(void)a;
-	return s7_make_real(sc, 0.0);
 }
 
 /* (kgui-button x y w h) -> #t if the live tap falls in the rect (once). */
@@ -207,41 +194,15 @@ static s7_scheme *setup_interp(void)
 	def(sc, "kgui-button", st_button, 4);
 	def(sc, "kgui-clip", st_nullary, 4);
 	def(sc, "kgui-clip-none", st_nullary, 0);
-	def(sc, "kgui-region-drag", st_region_drag, 0);
-	def(sc, "kgui-region-wheel", st_region_wheel, 0);
 	def(sc, "kgui-region", st_region, 5);
 
 	assert(script_eval(KRUDDGUI_SCM) == 0);
 	return sc;
 }
 
-/* Draw the whole Assets foundations panel with the current steering. */
-static void draw(void)
-{
-	s7_scheme *sc = script_s7();
-	s7_pointer fn = s7_name_to_value(sc, "kruddgui-assets-draw-panel");
-
-	assert(s7_is_procedure(fn));
-	s7_call(sc, fn, s7_list(sc, 2, s7_make_real(sc, 400.0),
-				s7_make_real(sc, 800.0)));
-}
-
-static double get_real(const char *name)
-{
-	return s7_real(s7_name_to_value(script_s7(), name));
-}
-
 static int close_to(double a, double b)
 {
 	return fabs(a - b) < 1e-3;
-}
-
-/* nth (0-based) real of a scheme list-valued global. */
-static double get_nth(const char *name, int n)
-{
-	s7_scheme *sc = script_s7();
-
-	return s7_real(s7_list_ref(sc, s7_name_to_value(sc, name), n));
 }
 
 static void tap(float x, float y)
@@ -270,44 +231,17 @@ static int is_true(s7_pointer p)
 	return p == s7_t(script_s7());
 }
 
+/* nth (0-based) real of a scheme list. */
+static double nth_real(s7_pointer lst, int n)
+{
+	return s7_real(s7_list_ref(script_s7(), lst, n));
+}
+
 /*
  * A layout cursor with a wide-open clip band, so a widget called directly is
  * always visible: origin x 10, width 380, running y 0.
  */
 #define TEST_LAY "(kruddgui-lay 0.0 -1000.0 2000.0 10.0 380.0)"
-
-/* ------------------------------------------------------------------ */
-/* Tests                                                               */
-/* ------------------------------------------------------------------ */
-
-static void test_panel_renders(void)
-{
-	draw();
-	assert(rec_has("text ASSETS"));
-	assert(rec_has("text Material"));   /* the fold header  */
-	assert(rec_has("text Metallic"));   /* its body (open)  */
-	assert(rec_has("text Base Color"));
-	assert(rec_has("text Reset"));      /* the button row   */
-	assert(rec_has("region demo-metallic"));
-}
-
-static void test_slider_maps_press_to_value(void)
-{
-	/* Held 75% across the metallic slider (range 0..1) -> 0.75. */
-	press_region("demo-metallic", 0.75f, 0.5f);
-	draw();
-	assert(close_to(get_real("kruddgui-demo-metallic"), 0.75));
-	/* The other slider, untouched, keeps its value. */
-	assert(close_to(get_real("kruddgui-demo-rough"), 0.3));
-}
-
-static void test_slider_clamps_past_the_end(void)
-{
-	/* A press past the right edge clamps to the max, not beyond. */
-	press_region("demo-rough", 1.5f, 0.5f);
-	draw();
-	assert(close_to(get_real("kruddgui-demo-rough"), 1.0));
-}
 
 /* The name of the currently open picker, or "" when none. */
 static const char *open_picker(void)
@@ -317,48 +251,124 @@ static const char *open_picker(void)
 	return s7_is_string(p) ? s7_string(p) : "";
 }
 
+/* ------------------------------------------------------------------ */
+/* Tests                                                               */
+/* ------------------------------------------------------------------ */
+
+static void test_slider_maps_press_to_value(void)
+{
+	s7_pointer r;
+
+	/* Held 75% across a slider over range 0..1 -> 0.75, and flagged changed. */
+	press_region("s1", 0.75f, 0.5f);
+	r = eval("(kruddgui-slider " TEST_LAY " \"s1\" \"S1\" 0.5 0.0 1.0)");
+	assert(close_to(s7_real(s7_car(r)), 0.75));
+	assert(is_true(s7_cdr(r)));
+}
+
+static void test_slider_clamps_past_the_end(void)
+{
+	s7_pointer r;
+
+	/* A press past the right edge clamps to the max, not beyond. */
+	press_region("s1", 1.5f, 0.5f);
+	r = eval("(kruddgui-slider " TEST_LAY " \"s1\" \"S1\" 0.5 0.0 1.0)");
+	assert(close_to(s7_real(s7_car(r)), 1.0));
+}
+
+static void test_slider_untouched_holds_value(void)
+{
+	s7_pointer r;
+
+	/* A press on a *different* widget leaves this slider unchanged. */
+	press_region("other", 0.9f, 0.5f);
+	r = eval("(kruddgui-slider " TEST_LAY " \"s1\" \"S1\" 0.3 0.0 1.0)");
+	assert(close_to(s7_real(s7_car(r)), 0.3));
+	assert(!is_true(s7_cdr(r)));
+}
+
 static void test_swatch_tap_toggles_picker(void)
 {
 	/*
-	 * The swatch row sits below the label, a rule, the (open) Material fold
-	 * header, two sliders and a rule:
-	 * body-y 48 + 26 + 8 + 46 (fold) + 72 + 72 + 8 + 26 = 306, a 40px row. A
-	 * tap on it opens the picker; nothing is open before, its regions draw.
+	 * The swatch draws a label line first (26px) then the swatch cell, so its
+	 * tappable rect is x10 y26 w380 h40 in TEST_LAY; a tap on it toggles the
+	 * picker.
 	 */
-	draw();
-	assert(strcmp(open_picker(), "") == 0);
-	assert(!rec_has("region demo-color-sv"));
+	const char *mk =
+		"(kruddgui-color-swatch " TEST_LAY " \"c1\" \"C1\" "
+		"(list 0.9 0.5 0.1))";
 
-	tap(200.0f, 326.0f);
+	assert(strcmp(open_picker(), "") == 0);
+	assert(!rec_has("region c1-sv"));
+
+	tap(100.0f, 40.0f);
 	g_rec_n = 0;
-	draw();
-	assert(strcmp(open_picker(), "demo-color") == 0);
-	assert(rec_has("region demo-color-sv"));
-	assert(rec_has("region demo-color-hue"));
+	eval(mk);
+	assert(strcmp(open_picker(), "c1") == 0);
+	assert(rec_has("region c1-sv"));   /* the picker's regions now declare */
+	assert(rec_has("region c1-hue"));
 
 	/* A second tap on the swatch closes it again (one open at a time). */
-	tap(200.0f, 326.0f);
-	draw();
+	tap(100.0f, 40.0f);
+	eval(mk);
 	assert(strcmp(open_picker(), "") == 0);
 }
 
-static void test_fold_collapses(void)
+static void test_picker_hue_changes_colour(void)
 {
-	/*
-	 * The Material fold is open by default, so its body draws. Its header is
-	 * the first row after the section label + rule: body-y 48 + 26 + 8 = 82,
-	 * a 40px row. Tapping it collapses the fold — the body no longer draws.
-	 */
-	draw();
-	assert(rec_has("text Material"));
-	assert(rec_has("text Metallic"));
+	s7_pointer r, rgb;
 
-	tap(200.0f, 100.0f);
-	g_rec_n = 0;
-	draw();
-	assert(rec_has("text Material"));       /* header still there */
-	assert(!rec_has("text Metallic"));      /* body gated off     */
-	assert(!rec_has("region demo-metallic"));
+	eval("(set! kruddgui-open-picker \"c1\")");
+	/* Drag the hue strip to its top (hue 0 -> the pure-red family). */
+	press_region("c1-hue", 0.5f, 0.0f);
+	r = eval("(kruddgui-color-swatch " TEST_LAY " \"c1\" \"C1\" "
+		 "(list 0.2 0.5 0.9))");
+	rgb = s7_car(r);
+	/* Red is now the dominant channel, and the swatch flags the change. */
+	assert(nth_real(rgb, 0) >= nth_real(rgb, 1));
+	assert(nth_real(rgb, 0) >= nth_real(rgb, 2));
+	assert(is_true(s7_cdr(r)));
+}
+
+static void test_picker_sv_corner_is_white(void)
+{
+	s7_pointer rgb;
+
+	/* Top-left of the SV square is saturation 0, value 1 -> white. */
+	eval("(set! kruddgui-open-picker \"c1\")");
+	press_region("c1-sv", 0.0f, 0.0f);
+	rgb = s7_car(eval("(kruddgui-color-swatch " TEST_LAY " \"c1\" \"C1\" "
+			  "(list 0.2 0.5 0.9))"));
+	assert(close_to(nth_real(rgb, 0), 1.0));
+	assert(close_to(nth_real(rgb, 1), 1.0));
+	assert(close_to(nth_real(rgb, 2), 1.0));
+}
+
+static void test_picker_sv_bottom_is_black(void)
+{
+	s7_pointer rgb;
+
+	/* Bottom of the SV square is value 0 -> black, whatever the hue/sat. */
+	eval("(set! kruddgui-open-picker \"c1\")");
+	press_region("c1-sv", 1.0f, 1.0f);
+	rgb = s7_car(eval("(kruddgui-color-swatch " TEST_LAY " \"c1\" \"C1\" "
+			  "(list 0.2 0.5 0.9))"));
+	assert(close_to(nth_real(rgb, 0), 0.0));
+	assert(close_to(nth_real(rgb, 1), 0.0));
+	assert(close_to(nth_real(rgb, 2), 0.0));
+}
+
+static void test_swatch_preserves_alpha(void)
+{
+	s7_pointer rgb;
+
+	/* A 4th (alpha) component survives an edit through the picker. */
+	eval("(set! kruddgui-open-picker \"c1\")");
+	press_region("c1-sv", 0.0f, 0.0f);
+	rgb = s7_car(eval("(kruddgui-color-swatch " TEST_LAY " \"c1\" \"C1\" "
+			  "(list 0.2 0.5 0.9 0.25))"));
+	assert(s7_list_length(script_s7(), rgb) == 4);
+	assert(close_to(nth_real(rgb, 3), 0.25));
 }
 
 static void test_fold_toggle(void)
@@ -399,65 +409,18 @@ static void test_button_row_selects(void)
 	assert(s7_is_string(r) && strcmp(s7_string(r), "Warm") == 0);
 }
 
-static void test_picker_hue_changes_colour(void)
-{
-	double r0, g0, b0, r1;
-
-	s7_eval_c_string(script_s7(),
-			 "(set! kruddgui-open-picker \"demo-color\")");
-	r0 = get_nth("kruddgui-demo-color", 0);
-	g0 = get_nth("kruddgui-demo-color", 1);
-	b0 = get_nth("kruddgui-demo-color", 2);
-
-	/* Drag the hue strip to its top (hue 0 -> pure-red family). */
-	press_region("demo-color-hue", 0.5f, 0.0f);
-	draw();
-	r1 = get_nth("kruddgui-demo-color", 0);
-
-	/* The colour moved, stays a valid triple, and reddened. */
-	assert(!(close_to(get_nth("kruddgui-demo-color", 0), r0) &&
-		 close_to(get_nth("kruddgui-demo-color", 1), g0) &&
-		 close_to(get_nth("kruddgui-demo-color", 2), b0)));
-	assert(r1 >= get_nth("kruddgui-demo-color", 1)); /* red is the max */
-	assert(r1 >= get_nth("kruddgui-demo-color", 2));
-}
-
-static void test_picker_sv_corner_is_white(void)
-{
-	/* Top-left of the SV square is saturation 0, value 1 -> white. */
-	s7_eval_c_string(script_s7(),
-			 "(set! kruddgui-open-picker \"demo-color\")");
-	press_region("demo-color-sv", 0.0f, 0.0f);
-	draw();
-	assert(close_to(get_nth("kruddgui-demo-color", 0), 1.0));
-	assert(close_to(get_nth("kruddgui-demo-color", 1), 1.0));
-	assert(close_to(get_nth("kruddgui-demo-color", 2), 1.0));
-}
-
-static void test_picker_sv_bottom_is_black(void)
-{
-	/* Bottom of the SV square is value 0 -> black, whatever the hue/sat. */
-	s7_eval_c_string(script_s7(),
-			 "(set! kruddgui-open-picker \"demo-color\")");
-	press_region("demo-color-sv", 1.0f, 1.0f);
-	draw();
-	assert(close_to(get_nth("kruddgui-demo-color", 0), 0.0));
-	assert(close_to(get_nth("kruddgui-demo-color", 1), 0.0));
-	assert(close_to(get_nth("kruddgui-demo-color", 2), 0.0));
-}
-
 int main(void)
 {
 	setup_interp();
 
-	RUN(panel_renders);
 	RUN(slider_maps_press_to_value);
 	RUN(slider_clamps_past_the_end);
+	RUN(slider_untouched_holds_value);
 	RUN(swatch_tap_toggles_picker);
 	RUN(picker_hue_changes_colour);
 	RUN(picker_sv_corner_is_white);
 	RUN(picker_sv_bottom_is_black);
-	RUN(fold_collapses);
+	RUN(swatch_preserves_alpha);
 	RUN(fold_toggle);
 	RUN(button_row_selects);
 

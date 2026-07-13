@@ -2312,31 +2312,31 @@ static uint32_t tex_prev_hash(const uint8_t *b, uint32_t n)
 }
 
 /*
- * (krudd-texture-preview texture-ref field-values res) draws a live res x res
- * bake of the texture as an inline image. field-values is the per-field list the
- * Parameters sliders edit; it is packed into the texture's tight params layout
- * (the same packing the entity texture-param save does, minus the world write)
- * and fed to texture_script_generate, so a slider drag re-bakes the swatch. res
- * is clamped to a preview-sized edge. Draws a disabled note instead when the
- * source is gone, the memory api is absent, or the shade clause faults.
+ * bake_texture_preview(sc, tex_ref, values, res) -> the GL texture id holding a
+ * live res x res bake of the texture, or 0 when it can't be baked (source gone,
+ * memory api absent, or the shade clause faults). field-values is the per-field
+ * list the Parameters sliders edit; it is packed into the texture's tight params
+ * layout (the same packing the entity texture-param save does, minus the world
+ * write) and fed to texture_script_generate, so a slider drag re-bakes. res is
+ * clamped to a preview-sized edge. The one cached GL texture is re-uploaded only
+ * when (ref, res, packed-params) changes, so a still frame costs nothing.
+ *
+ * Shared by the ImGui inline preview (sp_krudd_texture_preview) and the kruddgui
+ * image-primitive path (sp_krudd_texture_bake): both want the same pixels, they
+ * only differ in how they present the resulting handle.
  */
-static s7_pointer sp_krudd_texture_preview(s7_scheme *sc, s7_pointer args)
+static GLuint bake_texture_preview(s7_scheme *sc, uint32_t tex_ref,
+				   s7_pointer values, uint32_t res)
 {
-	s7_pointer          a       = args;
-	uint32_t            tex_ref = (uint32_t)s7_integer(s7_car(a)); a = s7_cdr(a);
-	s7_pointer          values  = s7_car(a);                      a = s7_cdr(a);
-	uint32_t            res     = (uint32_t)s7_integer(s7_car(a));
-	const char         *src     = shader_src_cstr(tex_ref);
+	const char         *src = shader_src_cstr(tex_ref);
 	struct shader_param p[MATERIAL_MAX_PARAMS];
 	uint8_t             bytes[WORLD_TEXTURE_PARAM_CAP];
 	uint32_t            total = 0, len, hash;
 	int                 n, i;
 	s7_pointer          fv = values;
 
-	if (!src || res == 0) {
-		ImGui::TextDisabled("(no preview)");
-		return s7_unspecified(sc);
-	}
+	if (!src || res == 0)
+		return 0;
 	if (res > 256)
 		res = 256;
 
@@ -2398,12 +2398,45 @@ static s7_pointer sp_krudd_texture_preview(s7_scheme *sc, s7_pointer args)
 		}
 	}
 
-	if (g_tex_prev_valid && g_tex_prev_gl)
-		ImGui::Image((ImTextureID)(intptr_t)g_tex_prev_gl,
-			     ImVec2(128.0f, 128.0f));
+	return (g_tex_prev_valid && g_tex_prev_gl) ? g_tex_prev_gl : 0;
+}
+
+/*
+ * (krudd-texture-preview texture-ref field-values res) draws the live bake as an
+ * inline ImGui image (the Assets tab's texture inspector), or a disabled note when
+ * it can't be baked.
+ */
+static s7_pointer sp_krudd_texture_preview(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer a       = args;
+	uint32_t   tex_ref = (uint32_t)s7_integer(s7_car(a)); a = s7_cdr(a);
+	s7_pointer values  = s7_car(a);                      a = s7_cdr(a);
+	uint32_t   res     = (uint32_t)s7_integer(s7_car(a));
+	GLuint     tex     = bake_texture_preview(sc, tex_ref, values, res);
+
+	if (tex)
+		ImGui::Image((ImTextureID)(intptr_t)tex, ImVec2(128.0f, 128.0f));
 	else
-		ImGui::TextDisabled("(bake failed)");
+		ImGui::TextDisabled("(no preview)");
 	return s7_unspecified(sc);
+}
+
+/*
+ * (krudd-texture-bake texture-ref field-values res) -> the GL texture id of the
+ * live bake, or 0 when it can't be baked. The kruddgui twin of the ImGui inline
+ * preview: kruddgui draws the returned handle itself with kgui-image, so the same
+ * baked pixels present through its own quad batch instead of ImGui::Image.
+ */
+static s7_pointer sp_krudd_texture_bake(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer a       = args;
+	uint32_t   tex_ref = (uint32_t)s7_integer(s7_car(a)); a = s7_cdr(a);
+	s7_pointer values  = s7_car(a);                      a = s7_cdr(a);
+	uint32_t   res     = (uint32_t)s7_integer(s7_car(a));
+
+	return s7_make_integer(sc,
+			       (s7_int)bake_texture_preview(sc, tex_ref, values,
+							    res));
 }
 
 /*
@@ -3258,6 +3291,10 @@ static s7_scheme *ensure_panel_scm(void)
 			   3, 0, false,
 			   "(krudd-texture-preview texture-ref values res) draw a "
 			   "live bake as an inline image");
+	s7_define_function(sc, "krudd-texture-bake", sp_krudd_texture_bake,
+			   3, 0, false,
+			   "(krudd-texture-bake texture-ref values res) -> "
+			   "GL texture id of the live bake, or 0");
 	s7_define_function(sc, "krudd-mesh-preview", sp_krudd_mesh_preview,
 			   3, 0, false,
 			   "(krudd-mesh-preview mesh-ref material-ref res) draw a "

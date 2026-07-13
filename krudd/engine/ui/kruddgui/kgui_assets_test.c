@@ -91,6 +91,7 @@ static float g_region_fx, g_region_fy;
 static int g_has_api;      /* krudd-assets returns #f when 0 */
 static int g_mut;          /* krudd-asset-mut? */
 static int g_mat_texture;  /* krudd-material-texture binds a texture when set */
+static int g_tex_bake_ok;  /* krudd-texture-bake returns 0 when clear */
 
 static void setup(void)
 {
@@ -107,6 +108,7 @@ static void setup(void)
 	g_has_api      = 1;
 	g_mut          = 1;
 	g_mat_texture  = 0;
+	g_tex_bake_ok  = 1;
 
 	/* Reset the overlay + browser state a prior test may have left set. */
 	s7_eval_c_string(sc, "(set! kruddgui-assets-open #t)");
@@ -118,8 +120,9 @@ static void setup(void)
 	s7_eval_c_string(sc, "(set! kruddgui-assets-new-type 0)");
 	s7_eval_c_string(sc, "(set! kruddgui-fold-state '())");
 
-	/* Reset the material editor + shared combo/picker state too. */
+	/* Reset the material + texture editors and shared combo/picker state. */
 	s7_eval_c_string(sc, "(set! kruddgui-assets-mat-id 0)");
+	s7_eval_c_string(sc, "(set! kruddgui-assets-tex-id 0)");
 	s7_eval_c_string(sc, "(set! kruddgui-assets-clone-src 0)");
 	s7_eval_c_string(sc, "(set! kruddgui-assets-clone-conflict #f)");
 	s7_eval_c_string(sc, "(set! kruddgui-scene-open-combo #f)");
@@ -290,6 +293,9 @@ static s7_pointer st_asset_info(s7_scheme *sc, s7_pointer a)
 		return ainfo(sc, "mat/brass", 3, 0, 1, 0, 0, 0, 1);
 	if (id == 21)
 		return ainfo(sc, "builtin://material/scene", 3, 1, 1, 0, 0, 1, 0);
+	/* An authored (mutable) texture. */
+	if (id == 25)
+		return ainfo(sc, "tex/wood", 2, 0, 1, 0, 0, 0, 1);
 	return s7_f(sc);
 }
 
@@ -432,6 +438,35 @@ static s7_pointer st_asset_delete(s7_scheme *sc, s7_pointer a)
 	return s7_unspecified(sc);
 }
 
+/* ---- texture editor accessor stubs ---- */
+
+/* (krudd-texture-params id) -> the same two-param shape the material uses. */
+static s7_pointer st_texture_params(s7_scheme *sc, s7_pointer a)
+{
+	return st_material_params(sc, a);
+}
+
+/* (krudd-texture-values id) -> one value list per param (1-arg). */
+static s7_pointer st_texture_values(s7_scheme *sc, s7_pointer a)
+{
+	return st_material_values(sc, a);
+}
+
+/* (krudd-texture-bake ref values res) -> a GL texture handle, or 0 when clear. */
+static s7_pointer st_texture_bake(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	rec("texture-bake");
+	return s7_make_integer(sc, g_tex_bake_ok ? 55 : 0);
+}
+
+/* (kgui-image x y w h tex [u0 v0 u1 v1] [r g b a]) -> unspecified. */
+static s7_pointer st_image(s7_scheme *sc, s7_pointer a)
+{
+	rec("image tex=%d", (int)s7_integer(s7_list_ref(sc, a, 4)));
+	return s7_unspecified(sc);
+}
+
 static void def(s7_scheme *sc, const char *name, s7_function fn, int req)
 {
 	s7_define_function(sc, name, fn, req, 0, false, "stub");
@@ -480,6 +515,12 @@ static s7_scheme *setup_interp(void)
 	s7_define_function(sc, "krudd-asset-clone-material", st_clone_material,
 			   3, 3, false, "stub");
 	def(sc, "krudd-asset-delete", st_asset_delete, 1);
+
+	/* Accessors + primitive the texture editor reads / draws. */
+	def(sc, "krudd-texture-params", st_texture_params, 1);
+	def(sc, "krudd-texture-values", st_texture_values, 1);
+	def(sc, "krudd-texture-bake", st_texture_bake, 3);
+	s7_define_function(sc, "kgui-image", st_image, 5, 8, false, "stub");
 
 	assert(script_eval(KRUDDGUI_SCM) == 0);
 	return sc;
@@ -809,6 +850,51 @@ static void test_material_texture_resolution(void)
 	assert(rec_has("text Resolution"));
 }
 
+/* ------------------------------------------------------------------ */
+/* Texture editor (#492, PR6e)                                         */
+/* ------------------------------------------------------------------ */
+
+static void test_texture_editor_renders(void)
+{
+	/* Drilling into a texture (type 2) draws the texture editor. */
+	set_sel(25);
+	draw();
+	assert(rec_has("< Back"));
+	assert(rec_has("text Declaration"));
+	assert(rec_has("text Parameters"));
+	assert(rec_has("text Preview"));
+	assert(rec_has("text metal"));       /* a generation param (slider) */
+	assert(rec_has("region tp-1"));      /* its drag region declares    */
+	assert(rec_has("image tex=55"));     /* the live bake blits         */
+}
+
+static void test_texture_preview_unavailable(void)
+{
+	/* When the bake returns 0, a note stands in for the image. */
+	g_tex_bake_ok = 0;
+	set_sel(25);
+	draw();
+	assert(rec_has("(preview unavailable)"));
+	assert(!rec_has("image tex="));
+}
+
+static void test_texture_delete(void)
+{
+	/*
+	 * With the three folds closed the Delete row sits at a known y: Back
+	 * (->94), path (->120), rule (->128), decl / params / preview folds (46
+	 * each: ->174 ->220 ->266), rule (->274), Delete at y 274..314.
+	 */
+	set_sel(25);
+	eval("(set! kruddgui-fold-state "
+	     "(list (cons \"tex-decl-fold\" #f) "
+	     "(cons \"tex-params-fold\" #f) (cons \"tex-preview-fold\" #f)))");
+	tap(100.0f, 288.0f);
+	draw();
+	assert(rec_has("asset-delete 25"));
+	assert(get_sel() == 0);
+}
+
 int main(void)
 {
 	setup_interp();
@@ -832,6 +918,9 @@ int main(void)
 	RUN(material_delete);
 	RUN(material_clone);
 	RUN(material_texture_resolution);
+	RUN(texture_editor_renders);
+	RUN(texture_preview_unavailable);
+	RUN(texture_delete);
 
 	printf("\n%d/%d kgui assets tests passed\n", tests_passed, tests_run);
 	return tests_passed == tests_run ? 0 : 1;

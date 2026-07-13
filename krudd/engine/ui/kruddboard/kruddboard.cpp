@@ -2471,6 +2471,30 @@ static s7_pointer sp_krudd_mesh_preview(s7_scheme *sc, s7_pointer args)
 }
 
 /*
+ * (krudd-mesh-bake mesh-ref material-ref res) -> the GL texture id of a shaded
+ * offscreen render of the mesh, or 0 when the preview service is absent or the
+ * render fails. The kruddgui twin of the ImGui inline mesh preview: it runs the
+ * same scene_renderer preview pass (spinning by the same GetTime-derived yaw) but
+ * returns the render-target handle for kruddgui to blit with kgui-image instead of
+ * drawing it through ImGui::Image. material-ref 0 uses the built-in default
+ * material, so the mesh inspector shows pure lit geometry.
+ */
+static s7_pointer sp_krudd_mesh_bake(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer a        = args;
+	uint32_t   mesh_ref = (uint32_t)s7_integer(s7_car(a)); a = s7_cdr(a);
+	uint32_t   mat_ref  = (uint32_t)s7_integer(s7_car(a)); a = s7_cdr(a);
+	uint32_t   res      = (uint32_t)s7_integer(s7_car(a));
+	float      yaw      = (float)ImGui::GetTime() * 0.5f;
+
+	if (!g_preview_api || !g_preview_api->render_mesh || res == 0)
+		return s7_make_integer(sc, 0);
+	return s7_make_integer(sc,
+			       (s7_int)g_preview_api->render_mesh(mesh_ref, mat_ref,
+								  res, yaw));
+}
+
+/*
  * Override flags — the per-field twin of the *-values accessors above, one
  * boolean per param: is this entity's value an override that differs from the
  * baseline it would draw without one? The World tree lights a dot beside a
@@ -3299,6 +3323,10 @@ static s7_scheme *ensure_panel_scm(void)
 			   3, 0, false,
 			   "(krudd-mesh-preview mesh-ref material-ref res) draw a "
 			   "shaded offscreen render as an inline image");
+	s7_define_function(sc, "krudd-mesh-bake", sp_krudd_mesh_bake,
+			   3, 0, false,
+			   "(krudd-mesh-bake mesh-ref material-ref res) -> "
+			   "GL texture id of the shaded render, or 0");
 	s7_define_function(sc, "krudd-entity-script-overrides",
 			   sp_krudd_entity_script_overrides, 2, 0, false,
 			   "(krudd-entity-script-overrides id script-ref) -> "

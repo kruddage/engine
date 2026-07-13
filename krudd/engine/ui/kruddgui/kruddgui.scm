@@ -1610,13 +1610,14 @@
 	      (set! kruddgui-assets-naming #f))))))))
 
 ;;! ------------------------------------------------------------------
-;;! Asset inspector — per-type editors: material + texture (#492, PR6c/6d/6e)
+;;! Asset inspector — per-type editors: material/texture/mesh (#492, PR6c-6f)
 ;;! ------------------------------------------------------------------
 ;;! PR6b landed the browser and a read-only landing view for a tapped asset; 6c
 ;;! gives the inspector a per-type seam (kruddgui-asset-body, mirroring Assets.scm's
 ;;! kruddboard-draw-asset-body) and fills in the material editor; 6e adds the texture
-;;! editor over the image primitive PR6d landed. A material carries no schema of its
-;;! own — it names a shader, and that shader's Material block
+;;! editor and 6f the mesh editor, both over the image primitive PR6d landed (their
+;;! live previews blit a baked texture / render target). A material carries no schema
+;;! of its own — it names a shader, and that shader's Material block
 ;;! (krudd-shader-material-params) is the parameter set the editor draws — so the
 ;;! editor is a shader picker, the derived parameters as sliders / swatches / numeric
 ;;! fields, an optional texture binding, and Save / Delete (or, for a read-only
@@ -1653,6 +1654,12 @@
 (define kruddgui-assets-tex-values '())
 (define kruddgui-assets-tex-preview-res 128)
 (define kruddgui-assets-tex-preview-side 160)
+
+;;! The mesh preview render-target edge — a modest square the shaded mesh renders
+;;! into every frame the Preview fold is open (the thumbnail slowly spins), so it
+;;! trades a little fidelity for a cheap per-frame GPU pass (Assets.scm's
+;;! kruddboard-assets-mesh-preview-res).
+(define kruddgui-assets-mesh-preview-res 256)
 
 ;;! Built-in Clone form state: the source id the default name was seeded from, the
 ;;! proposed name, and whether the last Clone hit a duplicate path. Mirrors
@@ -1947,6 +1954,72 @@
     (when (kruddgui-scene-btn L "Delete" #t)
       (kruddgui-assets-do-delete id))))
 
+;;! (kruddgui-assets-mesh-preview L id) blits a shaded, slowly spinning render of
+;;! the mesh through the kgui-image primitive: krudd-mesh-bake runs the scene
+;;! renderer's preview pass (material-ref 0 = the built-in default material, so it
+;;! shows pure lit geometry) and returns the render-target handle, which kgui-image
+;;! draws into the panel (a disabled note stands in when the preview service is
+;;! absent). Unlike the texture bake this re-renders every frame the fold is open —
+;;! that is what makes the thumbnail spin — so it lives inside the Preview fold.
+(define (kruddgui-assets-mesh-preview L id)
+  (let* ((x    (kruddgui-lay-x L))
+	 (w    (kruddgui-lay-w L))
+	 (side (min w kruddgui-assets-tex-preview-side)))
+    (when (kruddgui-lay-vis? L side)
+      (let ((y   (kruddgui-lay-cy L))
+	    (tex (krudd-mesh-bake id 0 kruddgui-assets-mesh-preview-res)))
+	(if (and (integer? tex) (> tex 0))
+	    (kgui-image x y side side tex)
+	    (kruddgui-board-cell (+ x 2) y kruddgui-scene-line
+				 "(preview unavailable)" kruddgui-idle-fg))))
+    (kruddgui-lay-adv! L (+ side kruddgui-scene-gap))))
+
+;;! (kruddgui-asset-mesh-clone L id path) the read-only mesh's Clone row: a name
+;;! field seeded "<path>_copy" and a Clone button that copies the built-in's source
+;;! verbatim into a new authored mesh (krudd-asset-clone-mesh over krudd-asset-data,
+;;! since kruddgui has no source editor to carry edits) and drills into it, or flags
+;;! a name clash. Shares the clone-src/name/conflict state with the material clone —
+;;! only one inspector is open at a time.
+(define (kruddgui-asset-mesh-clone L id path)
+  (unless (= kruddgui-assets-clone-src id)
+    (set! kruddgui-assets-clone-src id)
+    (set! kruddgui-assets-clone-name
+	  (string-append (kruddgui-strip-builtin-prefix path) "_copy"))
+    (set! kruddgui-assets-clone-conflict #f))
+  (kruddgui-scene-label L "Clone as")
+  (let ((nf (kruddgui-scene-field L "mesh-clone-name"
+				  kruddgui-assets-clone-name 0)))
+    (set! kruddgui-assets-clone-name (car nf)))
+  (when (and (kruddgui-scene-btn L "Clone" #t)
+	     (not (string=? kruddgui-assets-clone-name "")))
+    (let ((nid (krudd-asset-clone-mesh kruddgui-assets-clone-name
+				       (krudd-asset-data id))))
+      (if (= nid 0)
+	  (set! kruddgui-assets-clone-conflict #t)
+	  (begin
+	    (set! kruddgui-assets-clone-conflict #f)
+	    (set! kruddgui-assets-sel nid)))))
+  (when kruddgui-assets-clone-conflict
+    (kruddgui-scene-label L
+	(format #f "(\"~A\" already exists)" kruddgui-assets-clone-name))))
+
+;;! (kruddgui-asset-mesh-editor L id path editable?) the mesh inspector: the derived
+;;! Declaration and the live shaded Preview, then Delete when the mesh is mutable, or
+;;! the Clone row for a read-only built-in. Ported (in part) from Assets.scm's
+;;! kruddboard-draw-asset-mesh-editor: the read-only Source view and the Save that
+;;! persists edited source stay on the ImGui tab until a multiline field lands, so a
+;;! mutable mesh here is preview + Delete (there is no editable surface to Save yet).
+(define (kruddgui-asset-mesh-editor L id path editable?)
+  (when (kruddgui-fold L "mesh-decl-fold" "Declaration" #f)
+    (kruddgui-scene-kv L "Format" "krudd-mesh"))
+  (when (kruddgui-fold L "mesh-preview-fold" "Preview" #t)
+    (kruddgui-assets-mesh-preview L id))
+  (kruddgui-scene-rule L)
+  (if editable?
+      (when (kruddgui-scene-btn L "Delete" #t)
+	(kruddgui-assets-do-delete id))
+      (kruddgui-asset-mesh-clone L id path)))
+
 ;;! (kruddgui-asset-generic L info) the read-only catalog view — the browser's
 ;;! landing screen for any asset without a dedicated editor yet, and the tail of the
 ;;! type dispatch. The Type / Kind / State / Size / Refs / Read-only rows off
@@ -1967,14 +2040,17 @@
 
 ;;! (kruddgui-asset-body L id info) dispatches to the per-type editor by asset type
 ;;! ahead of the generic catalog view — the twin of Assets.scm's
-;;! kruddboard-draw-asset-body. ASSET_TYPE_TEXTURE = 2, ASSET_TYPE_MATERIAL = 3
-;;! (mirroring asset_api.h); the material and texture editors are filled in, the
-;;! remaining per-type editors slot in here as they land. read-only? (info field 6)
-;;! drives the material editor's Save-vs-Clone row and gates the texture Delete.
+;;! kruddboard-draw-asset-body. ASSET_TYPE_MESH = 1, TEXTURE = 2, MATERIAL = 3
+;;! (mirroring asset_api.h); the mesh, texture and material editors are filled in,
+;;! the remaining per-type editors slot in here as they land. read-only? (info field
+;;! 6) drives the material's Save-vs-Clone and the mesh's Delete-vs-Clone rows and
+;;! gates the texture Delete.
 (define (kruddgui-asset-body L id info)
   (let ((type      (list-ref info 1))
 	(read-only (list-ref info 6)))
     (cond
+     ((= type 1)
+      (kruddgui-asset-mesh-editor L id (list-ref info 0) (not read-only)))
      ((= type 2)
       (kruddgui-asset-texture-editor L id (not read-only)))
      ((= type 3)

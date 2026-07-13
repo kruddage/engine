@@ -92,6 +92,7 @@ static int g_has_api;      /* krudd-assets returns #f when 0 */
 static int g_mut;          /* krudd-asset-mut? */
 static int g_mat_texture;  /* krudd-material-texture binds a texture when set */
 static int g_tex_bake_ok;  /* krudd-texture-bake returns 0 when clear */
+static int g_mesh_bake_ok; /* krudd-mesh-bake returns 0 when clear */
 
 static void setup(void)
 {
@@ -109,6 +110,7 @@ static void setup(void)
 	g_mut          = 1;
 	g_mat_texture  = 0;
 	g_tex_bake_ok  = 1;
+	g_mesh_bake_ok = 1;
 
 	/* Reset the overlay + browser state a prior test may have left set. */
 	s7_eval_c_string(sc, "(set! kruddgui-assets-open #t)");
@@ -296,6 +298,12 @@ static s7_pointer st_asset_info(s7_scheme *sc, s7_pointer a)
 	/* An authored (mutable) texture. */
 	if (id == 25)
 		return ainfo(sc, "tex/wood", 2, 0, 1, 0, 0, 0, 1);
+	/* A font — no per-type editor, so it exercises the generic catalog view. */
+	if (id == 26)
+		return ainfo(sc, "font/lato", 5, 0, 1, 0, 0, 1, 0);
+	/* A read-only built-in mesh, for the Clone row. */
+	if (id == 28)
+		return ainfo(sc, "builtin://mesh/cube", 1, 1, 1, 0, 0, 1, 0);
 	return s7_f(sc);
 }
 
@@ -467,6 +475,30 @@ static s7_pointer st_image(s7_scheme *sc, s7_pointer a)
 	return s7_unspecified(sc);
 }
 
+/* ---- mesh editor accessor stubs ---- */
+
+/* (krudd-mesh-bake mesh-ref material-ref res) -> a GL handle, or 0 when clear. */
+static s7_pointer st_mesh_bake(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	rec("mesh-bake");
+	return s7_make_integer(sc, g_mesh_bake_ok ? 66 : 0);
+}
+
+/* (krudd-asset-data id) -> the asset's source bytes as a string. */
+static s7_pointer st_asset_data(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	return s7_make_string(sc, "(mesh cube ...)");
+}
+
+/* (krudd-asset-clone-mesh name text) -> new id (records the name). */
+static s7_pointer st_clone_mesh(s7_scheme *sc, s7_pointer a)
+{
+	rec("clone-mesh %s", arg1_str(sc, a));
+	return s7_make_integer(sc, 88);
+}
+
 static void def(s7_scheme *sc, const char *name, s7_function fn, int req)
 {
 	s7_define_function(sc, name, fn, req, 0, false, "stub");
@@ -521,6 +553,11 @@ static s7_scheme *setup_interp(void)
 	def(sc, "krudd-texture-values", st_texture_values, 1);
 	def(sc, "krudd-texture-bake", st_texture_bake, 3);
 	s7_define_function(sc, "kgui-image", st_image, 5, 8, false, "stub");
+
+	/* Accessors the mesh editor reads. */
+	def(sc, "krudd-mesh-bake", st_mesh_bake, 3);
+	def(sc, "krudd-asset-data", st_asset_data, 1);
+	def(sc, "krudd-asset-clone-mesh", st_clone_mesh, 2);
 
 	assert(script_eval(KRUDDGUI_SCM) == 0);
 	return sc;
@@ -667,12 +704,13 @@ static void test_select_leaf_via_tap(void)
 
 static void test_inspector_renders(void)
 {
-	set_sel(10);
+	/* A font has no per-type editor, so it shows the generic catalog view. */
+	set_sel(26);
 	draw();
 	assert(rec_has("< Back"));
-	assert(rec_has("text hero"));   /* the asset path        */
-	assert(rec_has("text Type"));   /* a catalog field label */
-	assert(rec_has("text Mesh"));   /* its value (type 1)    */
+	assert(rec_has("text font/lato")); /* the asset path        */
+	assert(rec_has("text Type"));      /* a catalog field label */
+	assert(rec_has("text Font"));      /* its value (type 5)    */
 	assert(rec_has("text Read-only"));
 }
 
@@ -895,6 +933,68 @@ static void test_texture_delete(void)
 	assert(get_sel() == 0);
 }
 
+/* ------------------------------------------------------------------ */
+/* Mesh editor (#492, PR6f)                                            */
+/* ------------------------------------------------------------------ */
+
+static void test_mesh_editor_renders(void)
+{
+	/* Drilling into a mesh (type 1) draws the mesh editor with a live blit. */
+	set_sel(10);
+	draw();
+	assert(rec_has("< Back"));
+	assert(rec_has("text Declaration"));
+	assert(rec_has("text Preview"));
+	assert(rec_has("image tex=66")); /* the shaded render blits */
+}
+
+static void test_mesh_preview_unavailable(void)
+{
+	/* When the preview service returns 0, a note stands in for the image. */
+	g_mesh_bake_ok = 0;
+	set_sel(10);
+	draw();
+	assert(rec_has("(preview unavailable)"));
+	assert(!rec_has("image tex="));
+}
+
+/* Close the mesh editor's two folds so the action row sits at a known y. */
+static void close_mesh_folds(void)
+{
+	eval("(set! kruddgui-fold-state "
+	     "(list (cons \"mesh-decl-fold\" #f) "
+	     "(cons \"mesh-preview-fold\" #f)))");
+}
+
+static void test_mesh_delete(void)
+{
+	/*
+	 * Folds closed: Back (->94), path (->120), rule (->128), decl / preview
+	 * folds (46 each: ->174 ->220), rule (->228), Delete at y 228..268.
+	 */
+	set_sel(10);
+	close_mesh_folds();
+	tap(100.0f, 245.0f);
+	draw();
+	assert(rec_has("asset-delete 10"));
+	assert(get_sel() == 0);
+}
+
+static void test_mesh_clone(void)
+{
+	/*
+	 * A read-only mesh shows the Clone row: after the rule at 228, "Clone as"
+	 * label (->254), the name field (46 ->300), then the Clone button at y
+	 * 300..340. Clone copies the source verbatim into a new authored mesh.
+	 */
+	set_sel(28);
+	close_mesh_folds();
+	tap(100.0f, 315.0f);
+	draw();
+	assert(rec_has("clone-mesh"));
+	assert(get_sel() == 88);
+}
+
 int main(void)
 {
 	setup_interp();
@@ -921,6 +1021,10 @@ int main(void)
 	RUN(texture_editor_renders);
 	RUN(texture_preview_unavailable);
 	RUN(texture_delete);
+	RUN(mesh_editor_renders);
+	RUN(mesh_preview_unavailable);
+	RUN(mesh_delete);
+	RUN(mesh_clone);
 
 	printf("\n%d/%d kgui assets tests passed\n", tests_passed, tests_run);
 	return tests_passed == tests_run ? 0 : 1;

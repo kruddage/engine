@@ -517,9 +517,10 @@
 	 (vw (car vp))
 	 (vh (cadr vp)))
     (when (and (> vw 0) (> vh 0))
-      (if (>= vw vh)
-	  (kruddgui-draw-row vw vh)
-	  (kruddgui-draw-col vw vh))
+      (when (>= (krudd-selected) 0)
+	(if (>= vw vh)
+	    (kruddgui-draw-row vw vh)
+	    (kruddgui-draw-col vw vh)))
       (if kruddgui-log-open
 	  (kruddgui-log-draw-panel vw vh)
 	  (kruddgui-log-draw-handle vw vh))

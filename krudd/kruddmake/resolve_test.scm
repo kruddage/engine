@@ -104,11 +104,28 @@
 		      (else (loop (- i 1))))))
 
 (define ninja-out (getenv "KRUDD_NINJA_OUT"))
+
+;;! When the harness gives us an s7 interpreter path, wire the generator edge to
+;;! re-run this very script, so a `.scm` edit under raw `ninja` regenerates the
+;;! codegen headers before recompiling their consumers. Without it the emitted
+;;! build.ninja simply has no `regen` edge (fine for the string checks below).
+(define s7bin (getenv "KRUDD_S7BIN"))
+(define regen-cmd
+	(if (and s7bin (> (string-length s7bin) 0)
+		 ninja-out (> (string-length ninja-out) 0))
+	    (string-append "env KRUDD_ROOT=" krudd-root
+			   " KRUDD_NINJA_OUT=" ninja-out
+			   " KRUDD_S7BIN=" s7bin " "
+			   s7bin " " krudd-root
+			   "/krudd/kruddmake/resolve_test.scm")
+	    #f))
+
 (define ninja-text
 	(if (and ninja-out (> (string-length ninja-out) 0))
 	    (ninja-synthesize manifest
 			      (string-append krudd-root "/krudd/engine")
-			      (dirname ninja-out))
+			      (dirname ninja-out)
+			      regen-cmd)
 	    (ninja-synthesize manifest
 			      (string-append krudd-root "/krudd/engine"))))
 
@@ -153,6 +170,16 @@
        (contains? ninja-text "build index.html | index.js index.wasm: main_module"))
 (check "wasm target present"
        (contains? ninja-text "build wasm: phony "))
+(check "compile rules track headers via gcc depfiles"
+       (and (contains? ninja-text "deps = gcc")
+	    (contains? ninja-text "depfile = $out.d")))
+(if regen-cmd
+    (begin
+      (check "regen generator edge present"
+	     (and (contains? ninja-text "build build.ninja: regen ")
+		  (contains? ninja-text "generator = 1")))
+      (check "regen edge lists an embedded .scm source as an input"
+	     (contains? ninja-text "ui/kruddboard/tabs/Assets.scm"))))
 
 (if (and ninja-out (> (string-length ninja-out) 0))
     (begin

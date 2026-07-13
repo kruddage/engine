@@ -47,8 +47,11 @@ fi
 # Stage 0: s7-only bootstrap checks (codegen/embed helpers).
 "$s7bin" "$root/krudd/kruddmake/introspect_test.scm"
 
-# Stage 1: resolver/emitter checks; render build.ninja for stage 2.
+# Stage 1: resolver/emitter checks; render build.ninja for stage 2. KRUDD_S7BIN
+# lets resolve_test.scm bake a self-contained `regen` command into build.ninja
+# so a later raw `ninja` run regenerates codegen when a `.scm` input changes.
 export KRUDD_NINJA_OUT="$work/build.ninja"
+export KRUDD_S7BIN="$s7bin"
 "$s7bin" "$root/krudd/kruddmake/resolve_test.scm"
 
 # Stage 1b: the monolang reference oracle — evaluate math.scm's (define-c-fn)

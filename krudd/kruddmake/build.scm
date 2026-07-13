@@ -38,9 +38,17 @@
 
 (sh (string-append "mkdir -p " build-dir))
 
+;;! The command ninja re-runs (via the `regen` generator edge) when a codegen
+;;! input changes: regenerate build.ninja + codegen, but stop short of driving
+;;! ninja again — KRUDD_GENERATE_ONLY breaks that recursion.
+(define regen-cmd
+  (string-append "env KRUDD_ROOT=" krudd-root " KRUDD_GENERATE_ONLY=1 "
+		 krudd-root "/krudd/krudd build"))
+
 (display (string-append "krudd: generate " build-dir "/build.ninja\n"))
 (write-file (string-append build-dir "/build.ninja")
-	    (ninja-synthesize manifest src-root build-dir))
+	    (ninja-synthesize manifest src-root build-dir regen-cmd))
 
-(sh (string-append "ninja -C " build-dir " -f build.ninja "
-		   (if wasm-build? "wasm" "native")))
+(if (not (getenv "KRUDD_GENERATE_ONLY"))
+    (sh (string-append "ninja -C " build-dir " -f build.ninja "
+		       (if wasm-build? "wasm" "native"))))

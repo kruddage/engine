@@ -46,5 +46,12 @@ if [ -d "$BUILD_DIR/assets" ]; then
 	cp -r "$BUILD_DIR/assets" "$OUT_DIR"/
 fi
 
+# PWA static assets — plain copies from core/, not hashed like the JS/WASM
+# above (see sw.js for why that's safe).
+cp "$BUILD_DIR/manifest.webmanifest" "$OUT_DIR/"
+cp "$BUILD_DIR/sw.js" "$OUT_DIR/"
+cp "$BUILD_DIR/icon-192.png" "$OUT_DIR/"
+cp "$BUILD_DIR/icon-512.png" "$OUT_DIR/"
+
 printf "Staged site into %s (hash %s):\n" "$OUT_DIR" "$HASH"
 ls -1 "$OUT_DIR"

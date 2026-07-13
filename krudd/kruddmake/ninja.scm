@@ -217,6 +217,10 @@
 	  "  command = $empp $mainflags $extraflags $in -o $out"
 	  "  description = LINK(wasm) $out"
 	  ""
+	  "rule copy"
+	  "  command = cp $in $out"
+	  "  description = COPY $out"
+	  ""
 	  ;;! Re-run the generator so that editing a `.scm`/`.in` input (a build
 	  ;;! spec, or any Scheme module embedded into a `*_scm.h`) regenerates
 	  ;;! build.ninja and the codegen outputs before the rest of the build. The
@@ -303,6 +307,20 @@
 			      "--shell-file generated/shell.html"))
 		(ninja-emit "")
 		(ninja-wasm! "index.html")))
+
+;;! PWA static assets served alongside index.html — plain copies from
+;;! core/ into the build root, so GitHub Pages (and stage-site.sh) can pick
+;;! them up next to the hashed JS/WASM outputs. Unlike those, these filenames
+;;! aren't content-hashed, so the service worker itself must tolerate that
+;;! (see sw.js).
+(define (ninja-emit-static-assets srcroot)
+	(for-each
+	  (lambda (name)
+	    (ninja-emit (string-append "build " name ": copy "
+				       (string-append srcroot "/core/" name)))
+	    (ninja-wasm! name))
+	  (list "manifest.webmanifest" "sw.js" "icon-192.png" "icon-512.png"))
+	(ninja-emit ""))
 
 (define (ninja-generate-codegen srcroot builddir)
 	(let ((gen      (string-append builddir "/generated"))
@@ -419,6 +437,7 @@
 			(ninja-emit "# --- WASM (Emscripten) main module ---")
 			(ninja-emit "")
 			(if builddir (ninja-generate-codegen srcroot builddir))
+			(ninja-emit-static-assets srcroot)
 			(ninja-emit-main-module table libmap)
 			(ninja-emit (string-append "build native: phony "
 					   (ninja-join " " (reverse ninja-native))))

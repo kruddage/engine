@@ -51,13 +51,16 @@ jobs:
       # its preview is uniquely identifiable and can never be mistaken for a
       # real release — mirroring the prerelease suffix the old label-fold job
       # produced.
+      # This runs under `sh` (dash) inside the emsdk container, so keep it
+      # POSIX: printf '%.7s' truncates to 7 chars where bash would use the
+      # non-portable ${sha:0:7}.
       - name: Determine version
         id: version
         run: |
           base=$(cat version.txt)
           if [ "${{ github.event_name }}" = pull_request ]; then
-            sha=${{ github.event.pull_request.head.sha }}
-            echo "version=${base}-pr${{ github.event.pull_request.number }}+${sha:0:7}" >> "$GITHUB_OUTPUT"
+            short=$(printf '%.7s' "${{ github.event.pull_request.head.sha }}")
+            echo "version=${base}-pr${{ github.event.pull_request.number }}+${short}" >> "$GITHUB_OUTPUT"
           else
             echo "version=${base}" >> "$GITHUB_OUTPUT"
           fi

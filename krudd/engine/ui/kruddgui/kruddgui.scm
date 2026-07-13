@@ -1610,19 +1610,21 @@
 	      (set! kruddgui-assets-naming #f))))))))
 
 ;;! ------------------------------------------------------------------
-;;! Asset inspector — per-type editors: the material editor (#492, PR6c)
+;;! Asset inspector — per-type editors: material + texture (#492, PR6c/6d/6e)
 ;;! ------------------------------------------------------------------
 ;;! PR6b landed the browser and a read-only landing view for a tapped asset; 6c
 ;;! gives the inspector a per-type seam (kruddgui-asset-body, mirroring Assets.scm's
-;;! kruddboard-draw-asset-body) and fills in the first real editor: the material
-;;! editor. A material carries no schema of its own — it names a shader, and that
-;;! shader's Material block (krudd-shader-material-params) is the parameter set the
-;;! editor draws — so the editor is a shader picker, the derived parameters as
-;;! sliders / swatches / numeric fields, an optional texture binding, and Save /
-;;! Delete (or, for a read-only built-in, Clone). The source editors, markdown
-;;! preview and image-baked previews stay on the ImGui Assets tab until their own
-;;! primitives land (a multiline field, an md_draw->kgui_batch port, an image
-;;! primitive); every other asset type still falls through to the generic view.
+;;! kruddboard-draw-asset-body) and fills in the material editor; 6e adds the texture
+;;! editor over the image primitive PR6d landed. A material carries no schema of its
+;;! own — it names a shader, and that shader's Material block
+;;! (krudd-shader-material-params) is the parameter set the editor draws — so the
+;;! editor is a shader picker, the derived parameters as sliders / swatches / numeric
+;;! fields, an optional texture binding, and Save / Delete (or, for a read-only
+;;! built-in, Clone). The texture editor is the generation parameters as live sliders
+;;! plus the live baked Preview (kgui-image over krudd-texture-bake). The source
+;;! editors and the markdown preview stay on the ImGui Assets tab until their own
+;;! primitives land (a multiline field, an md_draw->kgui_batch port); every other
+;;! asset type still falls through to the generic view.
 
 ;;! Material editor model — the kruddgui twins of Assets.scm's material statics,
 ;;! keyed by the material id they were loaded for. A material has no fields of its
@@ -1639,6 +1641,18 @@
 ;;! The bake resolutions the texture resolution combo offers — square, power-of-two
 ;;! (Assets.scm's kruddboard-assets-tex-resolutions).
 (define kruddgui-assets-tex-resolutions '(64 128 256 512 1024 2048))
+
+;;! Texture editor model — the kruddgui twins of Assets.scm's texture statics,
+;;! keyed by the texture id they were loaded for. -params is the texture's declared
+;;! generation parameters, -values the live value per field (reseeded from the
+;;! declared defaults on every reload, since these are a live-preview scratchpad,
+;;! never persisted back to the asset). -preview-res is the small square bake edge
+;;! the swatch renders at — speed over fidelity for a live inspector view.
+(define kruddgui-assets-tex-id 0)
+(define kruddgui-assets-tex-params '())
+(define kruddgui-assets-tex-values '())
+(define kruddgui-assets-tex-preview-res 128)
+(define kruddgui-assets-tex-preview-side 160)
 
 ;;! Built-in Clone form state: the source id the default name was seeded from, the
 ;;! proposed name, and whether the last Clone hit a duplicate path. Mirrors
@@ -1676,12 +1690,13 @@
 		 (set! kruddgui-assets-mat-tex-res 256))))
     (kruddgui-assets-refresh-material)))
 
-;;! (kruddgui-assets-do-delete id) deletes the asset, clears the material model
-;;! keyed to it, and returns to the browser — the twin of Assets.scm's
-;;! kruddboard-assets-do-delete.
+;;! (kruddgui-assets-do-delete id) deletes the asset, clears the material and
+;;! texture models keyed to it, and returns to the browser — the twin of
+;;! Assets.scm's kruddboard-assets-do-delete.
 (define (kruddgui-assets-do-delete id)
   (krudd-asset-delete id)
   (set! kruddgui-assets-mat-id 0)
+  (set! kruddgui-assets-tex-id 0)
   (set! kruddgui-assets-sel 0))
 
 ;;! (kruddgui-assets-numeric-row L id label comps value) a labelled row of COMPS
@@ -1853,6 +1868,85 @@
 	  (kruddgui-assets-do-delete id))))
       (kruddgui-asset-material-clone L id path)))
 
+;;! (kruddgui-assets-maybe-reload-texture id) loads the texture editor model when
+;;! the selection changes: its declared generation params, then their default
+;;! values. Reseeding the values from the defaults on every reload is deliberate —
+;;! the sliders are a live-preview scratchpad, not persisted state, so a reopened
+;;! texture starts fresh (the twin of Assets.scm's kruddboard-assets-maybe-reload-
+;;! texture).
+(define (kruddgui-assets-maybe-reload-texture id)
+  (unless (= kruddgui-assets-tex-id id)
+    (set! kruddgui-assets-tex-id id)
+    (set! kruddgui-assets-tex-params (krudd-texture-params id))
+    (set! kruddgui-assets-tex-values (krudd-texture-values id))))
+
+;;! (kruddgui-assets-texture-params L) draws every generation-parameter widget
+;;! through the shared Assets param widget (a range hint -> slider, a colour hint ->
+;;! swatch, else numeric) and writes any edit back into the live values. Unlike the
+;;! material params these are never saved: the write-back only keeps the slider
+;;! position across frames so it can drive the preview bake, which the asset's own
+;;! authored defaults remain the source of truth for.
+(define (kruddgui-assets-texture-params L)
+  (if (null? kruddgui-assets-tex-params)
+      (kruddgui-scene-label L "(this texture declares no parameters)")
+      (let* ((results
+	      (map (lambda (p v pidx)
+		     (kruddgui-assets-param-widget L
+			 (format #f "tp-~D" pidx) p v))
+		   kruddgui-assets-tex-params
+		   kruddgui-assets-tex-values
+		   (kruddgui-scene-iota (length kruddgui-assets-tex-params))))
+	     (new-vals (map car results))
+	     (changed  (let anyc ((r results))
+			 (cond ((null? r) #f)
+			       ((cdr (car r)) #t)
+			       (else (anyc (cdr r)))))))
+	(when changed
+	  (set! kruddgui-assets-tex-values new-vals)))))
+
+;;! (kruddgui-assets-texture-preview L id) blits the live bake as a square image
+;;! through the kgui-image primitive: krudd-texture-bake bakes id at the current
+;;! slider values into a GL texture and returns its handle, which kgui-image draws
+;;! into the panel (a disabled note stands in when the bake is unavailable). This is
+;;! the payoff of the image primitive — the texture editor's whole point is the live
+;;! Preview, so a slider drag re-bakes and the swatch tracks it, no longer an
+;;! invisible bake. The bake sits inside the Preview fold, so a closed fold costs
+;;! nothing.
+(define (kruddgui-assets-texture-preview L id)
+  (let* ((x    (kruddgui-lay-x L))
+	 (w    (kruddgui-lay-w L))
+	 (side (min w kruddgui-assets-tex-preview-side)))
+    (when (kruddgui-lay-vis? L side)
+      (let ((y   (kruddgui-lay-cy L))
+	    (tex (krudd-texture-bake id kruddgui-assets-tex-values
+				     kruddgui-assets-tex-preview-res)))
+	(if (and (integer? tex) (> tex 0))
+	    (kgui-image x y side side tex)
+	    (kruddgui-board-cell (+ x 2) y kruddgui-scene-line
+				 "(preview unavailable)" kruddgui-idle-fg))))
+    (kruddgui-lay-adv! L (+ side kruddgui-scene-gap))))
+
+;;! (kruddgui-asset-texture-editor L id editable?) the texture inspector: the
+;;! derived Declaration, the generation Parameters as live sliders / swatches, and
+;;! the live Preview baked from them, then Delete when the texture is mutable. Ported
+;;! from Assets.scm's kruddboard-draw-asset-texture-editor. The read-only Source view
+;;! stays on the ImGui tab — kruddgui has no multiline field yet — so this editor is
+;;! params + preview, the two pieces the image primitive now makes portable.
+(define (kruddgui-asset-texture-editor L id editable?)
+  (kruddgui-assets-maybe-reload-texture id)
+  (when (kruddgui-fold L "tex-decl-fold" "Declaration" #f)
+    (kruddgui-scene-kv L "Format" "krudd-texture")
+    (kruddgui-scene-kv L "Parameters"
+		       (number->string (length kruddgui-assets-tex-params))))
+  (when (kruddgui-fold L "tex-params-fold" "Parameters" #t)
+    (kruddgui-assets-texture-params L))
+  (when (kruddgui-fold L "tex-preview-fold" "Preview" #t)
+    (kruddgui-assets-texture-preview L id))
+  (when editable?
+    (kruddgui-scene-rule L)
+    (when (kruddgui-scene-btn L "Delete" #t)
+      (kruddgui-assets-do-delete id))))
+
 ;;! (kruddgui-asset-generic L info) the read-only catalog view — the browser's
 ;;! landing screen for any asset without a dedicated editor yet, and the tail of the
 ;;! type dispatch. The Type / Kind / State / Size / Refs / Read-only rows off
@@ -1873,14 +1967,16 @@
 
 ;;! (kruddgui-asset-body L id info) dispatches to the per-type editor by asset type
 ;;! ahead of the generic catalog view — the twin of Assets.scm's
-;;! kruddboard-draw-asset-body. ASSET_TYPE_MATERIAL = 3 (mirroring asset_api.h); 6c
-;;! fills in the material branch, the remaining per-type editors slot in here as
-;;! they land. read-only? (info field 6) drives the material editor's Save-vs-Clone
-;;! row.
+;;! kruddboard-draw-asset-body. ASSET_TYPE_TEXTURE = 2, ASSET_TYPE_MATERIAL = 3
+;;! (mirroring asset_api.h); the material and texture editors are filled in, the
+;;! remaining per-type editors slot in here as they land. read-only? (info field 6)
+;;! drives the material editor's Save-vs-Clone row and gates the texture Delete.
 (define (kruddgui-asset-body L id info)
   (let ((type      (list-ref info 1))
 	(read-only (list-ref info 6)))
     (cond
+     ((= type 2)
+      (kruddgui-asset-texture-editor L id (not read-only)))
      ((= type 3)
       (kruddgui-asset-material-editor L id (list-ref info 0) (not read-only)))
      (else (kruddgui-asset-generic L info)))))

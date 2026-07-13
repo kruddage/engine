@@ -12,7 +12,11 @@
  * Tabs:
  *   Scene      — entity list, create/delete, inspector
  *   Assets     — asset browser and markdown editor
- *   KRUDD      — frame stats, subsystems, log (collapsible sections)
+ *
+ * The KRUDD tab (frame stats, subsystems) and its Log section moved out of
+ * ImGui into the kruddgui console panels (kruddgui.scm, #491/#492); the shared
+ * krudd-stats / krudd-startup / krudd-subsystems / krudd-log-history accessors
+ * they read are still registered here.
  */
 
 extern "C" {
@@ -264,21 +268,6 @@ static s7_pointer sp_imgui_same_line(s7_scheme *sc, s7_pointer args)
 	return s7_unspecified(sc);
 }
 
-/*
- * (imgui-checkbox label state) -> the (possibly toggled) boolean. s7 has no
- * out-parameter, so the image passes the current state and stores the result,
- * which flips on a click.
- */
-static s7_pointer sp_imgui_checkbox(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer label = s7_car(args);
-	bool       state = s7_boolean(sc, s7_cadr(args));
-
-	if (s7_is_string(label))
-		ImGui::Checkbox(s7_string(label), &state);
-	return s7_make_boolean(sc, state);
-}
-
 /* (imgui-separator) -> unspecified. */
 static s7_pointer sp_imgui_separator(s7_scheme *sc, s7_pointer args)
 {
@@ -374,46 +363,12 @@ static s7_pointer sp_imgui_end_table(s7_scheme *sc, s7_pointer args)
 }
 
 /*
- * (imgui-begin-child id w h) -> unspecified. A fixed-size scroll region with a
- * horizontal scrollbar, as the log view used. Always paired with
- * imgui-end-child. A zero width/height means "fill the available axis".
+ * imgui-begin-child / imgui-end-child / imgui-set-scroll-here-y /
+ * imgui-viewport-work-height were the scroll-region primitives the ImGui Log tab
+ * used; they were orphaned when the Log moved to the kruddgui console (#491) and
+ * are removed here (#492), the first ImGui bindings retired as the strangler
+ * migration removes their last consumer.
  */
-static s7_pointer sp_imgui_begin_child(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer p  = args;
-	s7_pointer id = s7_car(p); p = s7_cdr(p);
-	double     w  = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
-	double     h  = s7_number_to_real(sc, s7_car(p));
-
-	if (s7_is_string(id))
-		ImGui::BeginChild(s7_string(id),
-				  ImVec2((float)w, (float)h), false,
-				  ImGuiWindowFlags_HorizontalScrollbar);
-	return s7_unspecified(sc);
-}
-
-/* (imgui-end-child) -> unspecified. */
-static s7_pointer sp_imgui_end_child(s7_scheme *sc, s7_pointer args)
-{
-	(void)args;
-	ImGui::EndChild();
-	return s7_unspecified(sc);
-}
-
-/* (imgui-set-scroll-here-y ratio) -> unspecified. Snap the scroll to ratio. */
-static s7_pointer sp_imgui_set_scroll_here_y(s7_scheme *sc, s7_pointer args)
-{
-	ImGui::SetScrollHereY((float)s7_number_to_real(sc, s7_car(args)));
-	return s7_unspecified(sc);
-}
-
-/* (imgui-viewport-work-height) -> the main viewport's usable height in px. */
-static s7_pointer sp_imgui_viewport_work_height(s7_scheme *sc, s7_pointer args)
-{
-	(void)args;
-	return s7_make_real(sc,
-			    (s7_double)ImGui::GetMainViewport()->WorkSize.y);
-}
 
 /* One (name api? tick? wasm-size) row for the subsystems table. */
 static s7_pointer subsystem_row(s7_scheme *sc, const struct subsystem *s)
@@ -762,30 +717,10 @@ static s7_pointer sp_imgui_pop_style_color(s7_scheme *sc, s7_pointer args)
 }
 
 /*
- * (imgui-push-id str) -> unspecified. Open an id scope: every widget id drawn
- * until the matching imgui-pop-id is hashed against str, so two draws of the
- * same panel under different ids (the World tree opens one inspector body per
- * entity, all sharing "##ename" / "##pos" / "##sp") never collide. Pairs with
- * imgui-pop-id exactly as ImGui::PushID/PopID do.
+ * imgui-push-id / imgui-pop-id were an id-scope pair no migrated panel ended up
+ * needing (the World inspector disambiguates with per-entity id suffixes
+ * instead); removed here (#492) with the other now-unused ImGui bindings.
  */
-static s7_pointer sp_imgui_push_id(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer id = s7_car(args);
-
-	if (s7_is_string(id))
-		ImGui::PushID(s7_string(id));
-	else
-		ImGui::PushID((int)s7_integer(id));
-	return s7_unspecified(sc);
-}
-
-/* (imgui-pop-id) -> unspecified. Close one imgui-push-id scope. */
-static s7_pointer sp_imgui_pop_id(s7_scheme *sc, s7_pointer args)
-{
-	(void)args;
-	ImGui::PopID();
-	return s7_unspecified(sc);
-}
 
 /*
  * (imgui-dot r g b a) -> unspecified. Draw a small filled circle inline at the
@@ -3244,8 +3179,6 @@ static s7_scheme *ensure_panel_scm(void)
 			   "(imgui-small-button label) -> #t when clicked");
 	s7_define_function(sc, "imgui-same-line", sp_imgui_same_line, 0, 0,
 			   false, "(imgui-same-line) stay on this line");
-	s7_define_function(sc, "imgui-checkbox", sp_imgui_checkbox, 2, 0, false,
-			   "(imgui-checkbox label state) -> new state");
 	s7_define_function(sc, "imgui-separator", sp_imgui_separator, 0, 0,
 			   false, "(imgui-separator) horizontal rule");
 	s7_define_function(sc, "imgui-collapsing-header",
@@ -3266,16 +3199,6 @@ static s7_scheme *ensure_panel_scm(void)
 			   "(imgui-table-next-column) advance to the next cell");
 	s7_define_function(sc, "imgui-end-table", sp_imgui_end_table, 0, 0,
 			   false, "(imgui-end-table) close the table");
-	s7_define_function(sc, "imgui-begin-child", sp_imgui_begin_child, 3, 0,
-			   false, "(imgui-begin-child id w h) scroll region");
-	s7_define_function(sc, "imgui-end-child", sp_imgui_end_child, 0, 0,
-			   false, "(imgui-end-child) close the scroll region");
-	s7_define_function(sc, "imgui-set-scroll-here-y",
-			   sp_imgui_set_scroll_here_y, 1, 0, false,
-			   "(imgui-set-scroll-here-y ratio) snap the scroll");
-	s7_define_function(sc, "imgui-viewport-work-height",
-			   sp_imgui_viewport_work_height, 0, 0, false,
-			   "(imgui-viewport-work-height) -> usable height px");
 	s7_define_function(sc, "krudd-subsystems", sp_krudd_subsystems, 0, 0,
 			   false,
 			   "(krudd-subsystems) -> rows of (name api? tick? size)");
@@ -3337,10 +3260,6 @@ static s7_scheme *ensure_panel_scm(void)
 	s7_define_function(sc, "imgui-pop-style-color", sp_imgui_pop_style_color,
 			   0, 0, false,
 			   "(imgui-pop-style-color) undo a pushed colour");
-	s7_define_function(sc, "imgui-push-id", sp_imgui_push_id, 1, 0, false,
-			   "(imgui-push-id str) open a widget-id scope");
-	s7_define_function(sc, "imgui-pop-id", sp_imgui_pop_id, 0, 0, false,
-			   "(imgui-pop-id) close one imgui-push-id scope");
 	s7_define_function(sc, "imgui-dot", sp_imgui_dot, 4, 0, false,
 			   "(imgui-dot r g b a) inline filled circle");
 	s7_define_function(sc, "krudd-world-caps", sp_krudd_world_caps, 0, 0,
@@ -3562,7 +3481,7 @@ static s7_scheme *ensure_panel_scm(void)
 }
 
 /*
- * Call a nullary panel procedure the image defines (e.g. kruddboard-draw-stats)
+ * Call a nullary panel procedure the image defines (e.g. kruddboard-draw-world)
  * inside the current frame. Returns true if it ran, false if the interpreter
  * is down or the image never defined it, so the caller can fall back.
  */
@@ -3581,94 +3500,16 @@ static bool call_scm_panel(const char *proc)
 }
 #endif /* __EMSCRIPTEN__ */
 
-/* ------------------------------------------------------------------ */
-/* Tab: Frame Stats                                                    */
-/* ------------------------------------------------------------------ */
-
-static void draw_tab_stats(void)
-{
-#ifdef __EMSCRIPTEN__
-	/* Ported to Scheme (kruddboard.scm). Fall back only if the image
-	 * can't run at all — an empty panel would read as "no stats". */
-	if (call_scm_panel("kruddboard-draw-stats"))
-		return;
-	ImGui::TextDisabled("(stats unavailable)");
-#else
-	if (!g_stats) {
-		ImGui::TextDisabled("(stats unavailable)");
-		return;
-	}
-	ImGui::Text("FPS (avg): %.1f", (double)g_stats->fps_avg);
-	ImGui::Text("Frame ms:  %.2f", (double)g_stats->last_frame_ms);
-	ImGui::Text("Frame:     %u",   g_stats->frame_count);
-#endif
-}
-
 /*
- * The Log tab was lifted out of ImGui (#491): the kruddgui Log console
- * (kruddgui.scm) now draws the engine log over the editor with kruddgui's own
- * quads and font-atlas text, reading the same krudd-log-history accessor. Its
- * ImGui draw path — the draw_tab_log that lived here and the "Log" section of
- * draw_tab_krudd — is gone.
+ * The KRUDD tab — Frame Stats, the startup profile, and the Subsystems table —
+ * was lifted out of ImGui into the kruddgui board console (kruddgui.scm, #492),
+ * which draws all three sections over the editor with kruddgui's own quads off
+ * the same krudd-stats / krudd-startup / krudd-subsystems accessors (still
+ * registered below). draw_tab_stats / draw_tab_subsystems / draw_tab_krudd and
+ * the KRUDD tab item are gone with it, as is the Scene tab's Perf roll-up, which
+ * drew the same frame stats and startup profile. (The Log tab moved the same way
+ * in #491.) g_stats / g_mgr / g_startup live on: the accessors read them.
  */
-
-/* ------------------------------------------------------------------ */
-/* Tab: Subsystems                                                     */
-/* ------------------------------------------------------------------ */
-
-static void draw_tab_subsystems(void)
-{
-#ifdef __EMSCRIPTEN__
-	/* Ported to Scheme (kruddboard.scm). Fall back only if the image can't
-	 * run at all — an empty panel would read as "no subsystems". */
-	if (call_scm_panel("kruddboard-draw-subsystems"))
-		return;
-	ImGui::TextDisabled("(subsystem manager unavailable)");
-#else
-	int i;
-
-	if (!g_mgr) {
-		ImGui::TextDisabled("(subsystem manager unavailable)");
-		return;
-	}
-
-	if (ImGui::BeginTable("##subsys", 3,
-			      ImGuiTableFlags_Borders        |
-			      ImGuiTableFlags_RowBg          |
-			      ImGuiTableFlags_SizingStretchProp)) {
-		ImGui::TableSetupColumn("Name");
-		ImGui::TableSetupColumn("API");
-		ImGui::TableSetupColumn("Tick");
-		ImGui::TableHeadersRow();
-
-		for (i = 0; g_mgr->static_table[i].name; i++) {
-			ImGui::TableNextRow();
-			ImGui::TableSetColumnIndex(0);
-			ImGui::TextUnformatted(g_mgr->static_table[i].name);
-			ImGui::TableSetColumnIndex(1);
-			ImGui::TextUnformatted(
-				g_mgr->static_table[i].api  ? "yes" : "-");
-			ImGui::TableSetColumnIndex(2);
-			ImGui::TextUnformatted(
-				g_mgr->static_table[i].tick ? "yes" : "-");
-		}
-
-		for (i = 0; i < g_mgr->dynamic_count; i++) {
-			ImGui::TableNextRow();
-			ImGui::TableSetColumnIndex(0);
-			ImGui::TextUnformatted(g_mgr->dynamic[i].name);
-			ImGui::TableSetColumnIndex(1);
-			ImGui::TextUnformatted(
-				g_mgr->dynamic[i].api  ? "yes" : "-");
-			ImGui::TableSetColumnIndex(2);
-			ImGui::TextUnformatted(
-				g_mgr->dynamic[i].tick ? "yes" : "-");
-		}
-
-		ImGui::EndTable();
-	}
-#endif
-}
 
 /* ------------------------------------------------------------------ */
 /* Tab: Assets                                                         */
@@ -4477,32 +4318,6 @@ static void draw_tab_assets(void)
 #else
 	draw_tab_assets_native();
 #endif
-}
-
-/* ------------------------------------------------------------------ */
-/* Tab: KRUDD — frame stats, subsystems                               */
-/* ------------------------------------------------------------------ */
-
-static void draw_tab_krudd(void)
-{
-#ifdef __EMSCRIPTEN__
-	/*
-	 * The tab — the two sections and their headers — is composed in Scheme
-	 * (kruddboard-draw-krudd), whose (imgui-collapsing-header ...) calls
-	 * render red instead of the native blue (see sp_imgui_collapsing_header)
-	 * — that's the tab's Scheme-driven marker. Fall back to the C
-	 * composition below only if the image can't run at all. (The Log section
-	 * moved to the kruddgui Log console — see kruddgui.scm.)
-	 */
-	if (call_scm_panel("kruddboard-draw-krudd"))
-		return;
-#endif
-	if (ImGui::CollapsingHeader("Frame Stats",
-				    ImGuiTreeNodeFlags_DefaultOpen))
-		draw_tab_stats();
-
-	if (ImGui::CollapsingHeader("Subsystems"))
-		draw_tab_subsystems();
 }
 
 /* ------------------------------------------------------------------ */
@@ -5579,10 +5394,6 @@ static void draw_board(void * /*userdata*/)
 			}
 			if (ImGui::BeginTabItem("Assets")) {
 				draw_tab_assets();
-				ImGui::EndTabItem();
-			}
-			if (ImGui::BeginTabItem("KRUDD")) {
-				draw_tab_krudd();
 				ImGui::EndTabItem();
 			}
 			ImGui::EndTabBar();

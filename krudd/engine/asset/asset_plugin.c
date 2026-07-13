@@ -401,6 +401,13 @@ static void seed_builtins(void)
 	seed_mesh("builtin://mesh/plane",   PLANE_MESH_SCRIPT_SRC);
 	seed_mesh("builtin://mesh/pyramid", PYRAMID_MESH_SCRIPT_SRC);
 	seed_mesh("builtin://mesh/grid",    GRID_MESH_SCRIPT_SRC);
+	seed_mesh("builtin://mesh/cylinder",     CYLINDER_MESH_SCRIPT_SRC);
+	seed_mesh("builtin://mesh/cone",         CONE_MESH_SCRIPT_SRC);
+	seed_mesh("builtin://mesh/disc",         DISC_MESH_SCRIPT_SRC);
+	seed_mesh("builtin://mesh/capsule",      CAPSULE_MESH_SCRIPT_SRC);
+	seed_mesh("builtin://mesh/torus",        TORUS_MESH_SCRIPT_SRC);
+	seed_mesh("builtin://mesh/superquadric", SUPERQUADRIC_MESH_SCRIPT_SRC);
+	seed_mesh("builtin://mesh/heightfield",  HEIGHTFIELD_MESH_SCRIPT_SRC);
 
 	seed_script("builtin://script/spinner", SPINNER_SCRIPT_SRC);
 	seed_script("builtin://script/bounce",  BOUNCE_SCRIPT_SRC);
@@ -857,6 +864,83 @@ static const struct asset_decl_field grid_mesh_decl[] = {
 };
 
 /*
+ * The revolved primitives — cylinder/cone/disc/capsule/torus — advertise the
+ * meridian profile they sweep and the sector count, the way sphere advertises
+ * its rings/sectors: metadata an inspector shows, not something the generator
+ * reads back.
+ */
+static const struct asset_decl_field cylinder_mesh_decl[] = {
+	{ "format",     "krudd-mesh"            },
+	{ "topology",   "triangles"             },
+	{ "segments",   "sectors 24"            },
+	{ "vertices",   "150"                   },
+	{ "indices",    "432"                   },
+	{ "attributes", "position, normal, uv0" },
+};
+
+static const struct asset_decl_field cone_mesh_decl[] = {
+	{ "format",     "krudd-mesh"            },
+	{ "topology",   "triangles"             },
+	{ "segments",   "sectors 24"            },
+	{ "vertices",   "100"                   },
+	{ "indices",    "288"                   },
+	{ "attributes", "position, normal, uv0" },
+};
+
+static const struct asset_decl_field disc_mesh_decl[] = {
+	{ "format",     "krudd-mesh"            },
+	{ "topology",   "triangles"             },
+	{ "segments",   "sectors 24"            },
+	{ "vertices",   "50"                    },
+	{ "indices",    "144"                   },
+	{ "attributes", "position, normal, uv0" },
+};
+
+static const struct asset_decl_field capsule_mesh_decl[] = {
+	{ "format",     "krudd-mesh"            },
+	{ "topology",   "triangles"             },
+	{ "segments",   "sectors 24, cap 8"     },
+	{ "vertices",   "450"                   },
+	{ "indices",    "2448"                  },
+	{ "attributes", "position, normal, uv0" },
+};
+
+static const struct asset_decl_field torus_mesh_decl[] = {
+	{ "format",     "krudd-mesh"                },
+	{ "topology",   "triangles"                 },
+	{ "segments",   "sectors 24, tube 16"       },
+	{ "vertices",   "425"                       },
+	{ "indices",    "2304"                      },
+	{ "attributes", "position, normal, uv0"     },
+	{ "radius",     "major 0.35, minor 0.15"    },
+};
+
+/*
+ * The parametric surfaces advertise their grid resolution and the params that
+ * reshape them, the way the box advertises width/height/depth — the geometry
+ * twin of a shader's uniforms.
+ */
+static const struct asset_decl_field superquadric_mesh_decl[] = {
+	{ "format",     "krudd-mesh"            },
+	{ "topology",   "triangles"             },
+	{ "segments",   "u 32, v 24"            },
+	{ "vertices",   "825"                   },
+	{ "indices",    "4608"                  },
+	{ "attributes", "position, normal, uv0" },
+	{ "params",     "e1, e2"                },
+};
+
+static const struct asset_decl_field heightfield_mesh_decl[] = {
+	{ "format",     "krudd-mesh"            },
+	{ "topology",   "triangles"             },
+	{ "segments",   "u 24, v 24"            },
+	{ "vertices",   "625"                   },
+	{ "indices",    "3456"                  },
+	{ "attributes", "position, normal, uv0" },
+	{ "params",     "amp, freq"             },
+};
+
+/*
  * A texture asset is one (texture NAME (shade (u v) ...)) Scheme form. It
  * advertises its source format and its authored params — resolution-independent,
  * so it reports no fixed dimensions (the material picks the bake size), the way a
@@ -906,6 +990,20 @@ static const struct builtin_desc builtin_descs[] = {
 	  ARRAY_SIZE(orbit_camera_script_decl) },
 	{ "builtin://mesh/grid", grid_mesh_decl,
 	  ARRAY_SIZE(grid_mesh_decl) },
+	{ "builtin://mesh/cylinder", cylinder_mesh_decl,
+	  ARRAY_SIZE(cylinder_mesh_decl) },
+	{ "builtin://mesh/cone", cone_mesh_decl,
+	  ARRAY_SIZE(cone_mesh_decl) },
+	{ "builtin://mesh/disc", disc_mesh_decl,
+	  ARRAY_SIZE(disc_mesh_decl) },
+	{ "builtin://mesh/capsule", capsule_mesh_decl,
+	  ARRAY_SIZE(capsule_mesh_decl) },
+	{ "builtin://mesh/torus", torus_mesh_decl,
+	  ARRAY_SIZE(torus_mesh_decl) },
+	{ "builtin://mesh/superquadric", superquadric_mesh_decl,
+	  ARRAY_SIZE(superquadric_mesh_decl) },
+	{ "builtin://mesh/heightfield", heightfield_mesh_decl,
+	  ARRAY_SIZE(heightfield_mesh_decl) },
 	{ "builtin://texture/checker", checker_texture_decl,
 	  ARRAY_SIZE(checker_texture_decl) },
 	{ "builtin://texture/gradient", gradient_texture_decl,

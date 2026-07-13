@@ -571,6 +571,11 @@
 (define (kruddgui-lay-x  L) (vector-ref L 3))
 (define (kruddgui-lay-w  L) (vector-ref L 4))
 (define (kruddgui-lay-adv! L dh) (vector-set! L 0 (+ (vector-ref L 0) dh)))
+;;! Retarget the cursor's row origin/width — for a nested subtree that indents
+;;! its rows (folder depth) while keeping the running y and clip band. The
+;;! browser's folder tree narrows x/w around each level and restores them after.
+(define (kruddgui-lay-set-x! L x) (vector-set! L 3 x))
+(define (kruddgui-lay-set-w! L w) (vector-set! L 4 w))
 
 ;;! A row at the cursor is visible when it overlaps the body's clip band; an
 ;;! off-body row is culled (no draw, no input — it cannot be tapped anyway).
@@ -1041,10 +1046,11 @@
 ;;! Both are built here on the per-widget drag-capture seam (kgui-region): each
 ;;! declares a small input region at its own rect, on TOP of the enclosing scroll
 ;;! body, so a down inside it is captured and mapped to a value while a down
-;;! elsewhere still scrolls the body. They are exercised below by the Assets
-;;! console shell — the tab's kruddgui home, which PR6b/6c fill in with the ported
-;;! browser and editors. Per touch convention a drag that starts on a slider does
-;;! not also start a scroll (the slider's region ate the down); note it.
+;;! elsewhere still scrolls the body. The material / texture editors the Assets
+;;! browser drills into (6c) bind these to real params; until then they are covered
+;;! by the widget host test (kgui_widgets_test) driving them directly. Per touch
+;;! convention a drag that starts on a slider does not also start a scroll (the
+;;! slider's region ate the down); note it.
 
 (define kruddgui-slider-track-h 8)
 (define kruddgui-slider-knob-w 14)
@@ -1300,33 +1306,366 @@
     hit))
 
 ;;! ------------------------------------------------------------------
-;;! Assets console shell — the Assets tab's kruddgui home (#492, PR6a)
+;;! Assets console — the Assets tab lifted onto kruddgui (#492, PR6b)
 ;;! ------------------------------------------------------------------
 
-;;! The Assets tab starts its lift out of ImGui with a home of its own: a top-right
-;;! console and a bottom-left handle, matching the Log / board / Scene consoles. In
-;;! PR6a its body is a foundations demo — the slider and colour picker the material
-;;! and texture editors will use — so the new widgets can be eyeballed on the touch
-;;! preview and covered by host tests before the browser grid and the editors land
-;;! in PR6b/6c. State is held across frames like the other consoles.
+;;! The Assets tab — the heaviest ImGui board consumer — lifts onto kruddgui's own
+;;! widgets here, matching the Log / board / Scene consoles: a top-left console, a
+;;! bottom-left handle, its own input region. PR6a landed the foundations (slider,
+;;! colour picker) and the shared vocabulary (fold, button row); PR6b (this) ports
+;;! the asset *browser* — the package sections, the folder tree and the leaf grid,
+;;! plus the New Asset form — over that vocabulary, replacing PR6a's demo body. The
+;;! per-type material / texture / source editors the browser drills into land in
+;;! 6c; until then a tapped asset shows a read-only catalog view. The still-live
+;;! ImGui Assets tab (kruddboard-draw-assets over Assets.scm) coexists until it is
+;;! retired. State is held across frames like the other consoles.
 (define kruddgui-assets-open #f)
 (define kruddgui-assets-scroll 0.0)
 (define kruddgui-assets-total 0.0)
 (define kruddgui-assets-max-w 400)
 (define kruddgui-assets-header-h 36)
 
-;;! Demo values the foundations panel drives, standing in for the material params
-;;! PR6c will bind these widgets to.
-(define kruddgui-demo-metallic 0.5)
-(define kruddgui-demo-rough 0.3)
-(define kruddgui-demo-color (list 0.95 0.55 0.15))
+;;! Browser selection: 0 = the package browser, else the drilled-in asset id.
+;;! Asset ids are >= 1, so 0 is a safe "no selection" sentinel (the same
+;;! convention Assets.scm's kruddboard-assets-sel uses).
+(define kruddgui-assets-sel 0)
 
-;;! (kruddgui-assets-body x y w h) the scrolling foundations demo: a "Material"
-;;! fold holding two sliders and a colour swatch, then a preset button row — the
-;;! collapsing-header, same-line and slider/swatch shapes the ported editors will
-;;! reuse, each writing its value back to the demo state. Scroll, clip and culling
-;;! mirror the Scene body; the widget regions declared inside sit on top of this
-;;! body's region.
+;;! New Asset form state: whether the name/type editor is showing, the name
+;;! field's live text, and the selected type index (0 Text 1 Shader 2 Material
+;;! 3 Script 4 Mesh — the order Assets.scm's type combo uses).
+(define kruddgui-assets-naming #f)
+(define kruddgui-assets-new-name "")
+(define kruddgui-assets-new-type 0)
+(define kruddgui-assets-new-types '("Text" "Shader" "Material" "Script" "Mesh"))
+
+;;! ------------------------------------------------------------------
+;;! Asset browser — path-tree helpers (lifted from Assets.scm)
+;;! ------------------------------------------------------------------
+;;! The browser groups rows into a folder tree by splitting each asset path on
+;;! "/", the virtual-filesystem convention builtin:// paths already use
+;;! ("builtin://shader/scene-textured" -> folder "shader", leaf "scene-textured").
+;;! These are Assets.scm's pure tree-builder helpers, lifted here under kruddgui-
+;;! names (both images load into the one shared s7, so the names must not clash) so
+;;! the kruddgui browser can build the same tree without reaching into kruddboard's
+;;! module. This s7 carries no core `filter`, so the splits are spelled by hand.
+
+;;! (kruddgui-string-split str ch) splits STR at each CH, dropping empty pieces —
+;;! so a leading "/" or a doubled "//" makes no blank segment.
+(define (kruddgui-string-split str ch)
+  (let loop ((start 0) (acc '()))
+    (let ((pos (char-position ch str start)))
+      (if pos
+	  (loop (+ pos 1)
+		(let ((seg (substring str start pos)))
+		  (if (string=? seg "") acc (cons seg acc))))
+	  (let ((seg (substring str start (string-length str))))
+	    (reverse (if (string=? seg "") acc (cons seg acc))))))))
+
+;;! (kruddgui-strip-builtin-prefix path) drops a leading "builtin://" scheme so
+;;! "shader"/"material" read as folders, not URI noise.
+(define (kruddgui-strip-builtin-prefix path)
+  (let ((prefix "builtin://"))
+    (if (and (>= (string-length path) (string-length prefix))
+	     (string=? (substring path 0 (string-length prefix)) prefix))
+	(substring path (string-length prefix) (string-length path))
+	path)))
+
+;;! (kruddgui-asset-path-segments path) the folder segments the tree groups by:
+;;! the scheme prefix dropped, then a split on "/"; a path with no "/" comes back
+;;! as its own single-element list (a top-level leaf).
+(define (kruddgui-asset-path-segments path)
+  (let ((segs (kruddgui-string-split (kruddgui-strip-builtin-prefix path) #\/)))
+    (if (null? segs) (list path) segs)))
+
+;;! (kruddgui-asset-rows->entries rows) turns a flat ROWS list (one group as
+;;! krudd-assets returns it) into (segments row) entries, the shape the tree
+;;! groups and recurses on.
+(define (kruddgui-asset-rows->entries rows)
+  (map (lambda (row)
+	 (list (kruddgui-asset-path-segments (list-ref row 1)) row))
+       rows))
+
+;;! (kruddgui-asset-entries-at-depth entries want-folders?) splits ENTRIES by
+;;! whether their segment list still nests (> 1 element, under a folder) or has
+;;! bottomed out at one (a leaf); WANT-FOLDERS? selects which half comes back.
+(define (kruddgui-asset-entries-at-depth entries want-folders?)
+  (cond ((null? entries) '())
+	(else
+	 (let* ((e (car entries))
+		(segs (list-ref e 0))
+		(is-folder (pair? (cdr segs)))
+		(rest (kruddgui-asset-entries-at-depth
+		       (cdr entries) want-folders?)))
+	   (if (eq? is-folder want-folders?) (cons e rest) rest)))))
+
+;;! (kruddgui-asset-entries-with-head entries head) the ENTRIES whose next path
+;;! segment is HEAD.
+(define (kruddgui-asset-entries-with-head entries head)
+  (cond ((null? entries) '())
+	(else
+	 (let* ((e (car entries))
+		(segs (list-ref e 0))
+		(rest (kruddgui-asset-entries-with-head (cdr entries) head)))
+	   (if (string=? (car segs) head) (cons e rest) rest)))))
+
+;;! (kruddgui-uniq lst) LST's elements in first-appearance order, later
+;;! duplicates dropped (compared with equal?, via member).
+(define (kruddgui-uniq lst)
+  (let loop ((lst lst) (seen '()))
+    (cond ((null? lst) (reverse seen))
+	  ((member (car lst) seen) (loop (cdr lst) seen))
+	  (else (loop (cdr lst) (cons (car lst) seen))))))
+
+;;! (kruddgui-asset-group-by-head entries) partitions ENTRIES — all segment lists
+;;! length > 1 — into one (head . child-entries) bucket per distinct first
+;;! segment, in first-appearance order, each child stripped of the head segment,
+;;! ready to recurse one level deeper.
+(define (kruddgui-asset-group-by-head entries)
+  (map (lambda (head)
+	 (cons head
+	       (map (lambda (e) (list (cdr (list-ref e 0)) (list-ref e 1)))
+		    (kruddgui-asset-entries-with-head entries head))))
+       (kruddgui-uniq (map (lambda (e) (car (list-ref e 0))) entries))))
+
+;;! Asset type / kind / state labels — the integer codes mirror asset_api.h, the
+;;! same raw-int-from-C convention Assets.scm's label helpers use.
+(define (kruddgui-asset-type-label t)
+  (cond ((= t 1) "Mesh") ((= t 2) "Texture") ((= t 3) "Material")
+	((= t 4) "Shader") ((= t 5) "Font") ((= t 6) "Scene")
+	((= t 7) "Text") ((= t 8) "Script") (else "?")))
+
+(define (kruddgui-asset-kind-label k) (if (= k 1) "Primitive" "Normal"))
+
+(define (kruddgui-asset-state-label s)
+  (cond ((= s 0) "Pending") ((= s 1) "Loaded") (else "Error")))
+
+;;! ------------------------------------------------------------------
+;;! Asset browser — the package sections, folder tree and leaf grid
+;;! ------------------------------------------------------------------
+
+;;! Grid columns: the Type and State cells are pinned to the row's right edge at a
+;;! fixed width, the Name cell (indented by folder depth) takes the rest. The
+;;! ImGui table's Kind, Size and Flags columns drop to the inspector — the package
+;;! section already names the lock state, so a per-row Flags column would only
+;;! repeat it — keeping the touch grid to three columns that fit the panel width.
+(define kruddgui-asset-col-type 64)
+(define kruddgui-asset-col-state 60)
+(define kruddgui-asset-indent 16)
+
+;;! (kruddgui-asset-grid-header L) the column-label row drawn once under an open
+;;! package, its Type/State labels pinned to the same right edge as the leaf rows.
+(define (kruddgui-asset-grid-header L)
+  (let* ((x  (kruddgui-lay-x L))
+	 (w  (kruddgui-lay-w L))
+	 (y  (kruddgui-lay-cy L))
+	 (h  kruddgui-scene-line)
+	 (rx (+ x w))
+	 (sx (- rx kruddgui-asset-col-state))
+	 (tx (- sx kruddgui-asset-col-type)))
+    (when (kruddgui-lay-vis? L h)
+      (kruddgui-board-cell (+ x 8) y h "Name" kruddgui-scene-label-fg)
+      (kruddgui-board-cell tx y h "Type" kruddgui-scene-label-fg)
+      (kruddgui-board-cell sx y h "State" kruddgui-scene-label-fg))
+    (kruddgui-lay-adv! L h)))
+
+;;! (kruddgui-asset-row L row name) one leaf row: the Name / Type / State cells
+;;! over a tappable full-width background; a tap drills into the asset's inspector.
+;;! ROW is (id path type kind state size refs); NAME is the leaf path segment (the
+;;! ancestor folders are already drawn as the enclosing folds). Only a tap drives
+;;! it — no per-row drag region — so a package of many rows never nears
+;;! KGUI_MAX_REGIONS.
+(define (kruddgui-asset-row L row name)
+  (let* ((id    (list-ref row 0))
+	 (type  (list-ref row 2))
+	 (state (list-ref row 4))
+	 (x  (kruddgui-lay-x L))
+	 (w  (kruddgui-lay-w L))
+	 (y  (kruddgui-lay-cy L))
+	 (h  kruddgui-scene-row-h)
+	 (rx (+ x w))
+	 (sx (- rx kruddgui-asset-col-state))
+	 (tx (- sx kruddgui-asset-col-type)))
+    (when (kruddgui-lay-vis? L h)
+      (kruddgui-rect* (list x y w h) kruddgui-idle-bg)
+      (kruddgui-board-cell (+ x 8) y h name kruddgui-idle-fg)
+      (kruddgui-board-cell tx y h (kruddgui-asset-type-label type)
+			   kruddgui-idle-fg)
+      (kruddgui-board-cell sx y h (kruddgui-asset-state-label state)
+			   kruddgui-idle-fg)
+      (when (kgui-button x y w h)
+	(set! kruddgui-assets-sel id)))
+    (kruddgui-lay-adv! L (+ h kruddgui-scene-gap))))
+
+;;! (kruddgui-asset-tree L entries prefix) draws one tree level: a nested
+;;! kruddgui-fold per distinct first path segment (recursing into it when open),
+;;! then a leaf row per entry already down to one segment — folders before leaves,
+;;! VS-Code-Explorer-style. PREFIX threads the ancestor id so folder folds keyed by
+;;! the same name under different parents stay distinct. Children draw indented by
+;;! narrowing the cursor's x/w for the subtree — the right edge stays put, so the
+;;! Type/State columns stay aligned across depths — restored after.
+(define (kruddgui-asset-tree L entries prefix)
+  (let ((folders (kruddgui-asset-group-by-head
+		  (kruddgui-asset-entries-at-depth entries #t)))
+	(leaves  (kruddgui-asset-entries-at-depth entries #f))
+	(x       (kruddgui-lay-x L))
+	(w       (kruddgui-lay-w L)))
+    (for-each
+     (lambda (bucket)
+       (let* ((name     (car bucket))
+	      (children (cdr bucket))
+	      (id       (string-append prefix "/" name)))
+	 (when (kruddgui-fold L id name #f)
+	   (kruddgui-lay-set-x! L (+ x kruddgui-asset-indent))
+	   (kruddgui-lay-set-w! L (- w kruddgui-asset-indent))
+	   (kruddgui-asset-tree L children id)
+	   (kruddgui-lay-set-x! L x)
+	   (kruddgui-lay-set-w! L w))))
+     folders)
+    (for-each
+     (lambda (e)
+       (kruddgui-asset-row L (list-ref e 1) (car (list-ref e 0))))
+     leaves)))
+
+;;! (kruddgui-asset-package L name origin locked prefix rows open-default) one
+;;! collapsible package section: a fold naming the package, its origin, lock state
+;;! and (dynamic) asset count, over the folder tree its rows live in. Engine
+;;! built-ins start collapsed (reference, not your working set), the project
+;;! package open. The fold id pins to the prefix so the open state survives the
+;;! changing count in the label; open-default only seeds the first frame.
+(define (kruddgui-asset-package L name origin locked prefix rows open-default)
+  (unless (null? rows)
+    (when (kruddgui-fold L (string-append "pkg-" prefix)
+			 (format #f "~A  (~A~A, ~D)" name origin
+				 (if locked ", locked" "") (length rows))
+			 open-default)
+      (kruddgui-asset-grid-header L)
+      (kruddgui-asset-tree L (kruddgui-asset-rows->entries rows) prefix))))
+
+;;! (kruddgui-asset-type-picker L types sel) a segmented type-chip row: one chip
+;;! per label, the selected index highlighted; returns the tapped index (a number,
+;;! so 0 is a live result), or #f when none. The ref-combo kruddgui-scene-combo
+;;! binds an asset id through a setter and always offers a "(none)" row — neither
+;;! fits a fixed 0..N type choice — so the New Asset form gets this instead.
+(define (kruddgui-asset-type-picker L types sel)
+  (let* ((x   (kruddgui-lay-x L))
+	 (w   (kruddgui-lay-w L))
+	 (y   (kruddgui-lay-cy L))
+	 (h   kruddgui-scene-row-h)
+	 (n   (length types))
+	 (g   kruddgui-scene-gap)
+	 (cw  (if (> n 0) (/ (- w (* (- n 1) g)) n) w))
+	 (hit #f))
+    (when (and (> n 0) (kruddgui-lay-vis? L h))
+      (let loop ((ls types) (i 0))
+	(when (pair? ls)
+	  (let ((cx     (+ x (* i (+ cw g))))
+		(active (= i sel)))
+	    (kruddgui-rect* (list cx y cw h)
+			    (if active kruddgui-active-bg kruddgui-idle-bg))
+	    (kruddgui-label cx y cw h (car ls)
+			    (if active kruddgui-active-fg kruddgui-idle-fg))
+	    (when (kgui-button cx y cw h)
+	      (set! hit i)))
+	  (loop (cdr ls) (+ i 1)))))
+    (kruddgui-lay-adv! L (+ h kruddgui-scene-gap))
+    hit))
+
+;;! (kruddgui-asset-create-of-type type name) dispatch to the typed create
+;;! primitive the New Asset type index selected — the Assets.scm twin.
+(define (kruddgui-asset-create-of-type type name)
+  (cond ((= type 1) (krudd-asset-create-shader name))
+	((= type 2) (krudd-asset-create-material name))
+	((= type 3) (krudd-asset-create-script name))
+	((= type 4) (krudd-asset-create-mesh name))
+	(else (krudd-asset-create-text name))))
+
+;;! (kruddgui-asset-new-form L) the New Asset control: a "+ New Asset" button that
+;;! opens into a name field, a type picker and a Create/Cancel row. Create (with a
+;;! non-empty name) makes the asset through the typed primitive and drills into it;
+;;! Cancel closes the form. Only drawn when the mutation api is present.
+(define (kruddgui-asset-new-form L)
+  (if (not kruddgui-assets-naming)
+      (when (kruddgui-scene-btn L "+ New Asset" #t)
+	(set! kruddgui-assets-naming #t)
+	(set! kruddgui-assets-new-name "")
+	(set! kruddgui-assets-new-type 0))
+      (begin
+	(kruddgui-scene-label L "Name")
+	(let ((nf (kruddgui-scene-field L "asset-new-name"
+					kruddgui-assets-new-name 0)))
+	  (set! kruddgui-assets-new-name (car nf)))
+	(kruddgui-scene-label L "Type")
+	(let ((pick (kruddgui-asset-type-picker L kruddgui-assets-new-types
+						kruddgui-assets-new-type)))
+	  (when pick (set! kruddgui-assets-new-type pick)))
+	(let ((act (kruddgui-button-row L (list "Create" "Cancel"))))
+	  (cond
+	   ((equal? act "Cancel")
+	    (set! kruddgui-assets-naming #f))
+	   ((and (equal? act "Create")
+		 (not (string=? kruddgui-assets-new-name "")))
+	    (let ((nid (kruddgui-asset-create-of-type
+			kruddgui-assets-new-type kruddgui-assets-new-name)))
+	      (unless (= nid 0) (set! kruddgui-assets-sel nid))
+	      (set! kruddgui-assets-naming #f))))))))
+
+;;! (kruddgui-asset-inspector L id) the drilled-in read view: a "< Back" row, the
+;;! asset path, then its catalog fields (type / kind / state / size / refs / read-
+;;! only). This is the browser's landing screen for a tapped asset; the per-type
+;;! material / texture / source editors land on top of it in 6c (dispatching by
+;;! type ahead of this generic view). Back returns to the browser; a stale id (the
+;;! asset deleted elsewhere) falls back to it too, the guard the ImGui inspector
+;;! used. (krudd-asset-info id) -> (path type kind state size refs read-only?
+;;! origin) or #f.
+(define (kruddgui-asset-inspector L id)
+  (let ((info (krudd-asset-info id)))
+    (if (not info)
+	(set! kruddgui-assets-sel 0)
+	(begin
+	  (when (kruddgui-scene-btn L "< Back" #t)
+	    (set! kruddgui-assets-sel 0))
+	  (kruddgui-scene-label L (list-ref info 0))
+	  (kruddgui-scene-rule L)
+	  (kruddgui-scene-kv L "Type"
+			     (kruddgui-asset-type-label (list-ref info 1)))
+	  (kruddgui-scene-kv L "Kind"
+			     (kruddgui-asset-kind-label (list-ref info 2)))
+	  (kruddgui-scene-kv L "State"
+			     (kruddgui-asset-state-label (list-ref info 3)))
+	  (kruddgui-scene-kv L "Size"
+			     (let ((sz (list-ref info 4)))
+			       (if (> sz 0) (number->string sz) "-")))
+	  (kruddgui-scene-kv L "Refs" (number->string (list-ref info 5)))
+	  (kruddgui-scene-kv L "Read-only"
+			     (if (list-ref info 6) "yes" "no"))))))
+
+;;! (kruddgui-asset-browser L) the package browser: the New Asset form (when the
+;;! mutation api is present), then the engine and project package sections — or a
+;;! placeholder when the asset api is absent or empty. (krudd-assets) ->
+;;! (engine-rows project-rows) split by read_only, so the two groups already are
+;;! the two packages.
+(define (kruddgui-asset-browser L)
+  (let ((groups (krudd-assets)))
+    (if (not groups)
+	(kruddgui-scene-label L "(assets unavailable)")
+	(begin
+	  (when (krudd-asset-mut?)
+	    (kruddgui-asset-new-form L)
+	    (kruddgui-scene-rule L))
+	  (let ((engine  (car groups))
+		(project (cadr groups)))
+	    (if (and (null? engine) (null? project))
+		(kruddgui-scene-label L "(no assets)")
+		(begin
+		  (kruddgui-asset-package L "krudd:engine" "engine" #t
+					  "builtin" engine #f)
+		  (kruddgui-asset-package L "pkg:project" "project" #f
+					  "project" project #t))))))))
+
+;;! (kruddgui-assets-body x y w h) the scrolling Assets body: the package browser,
+;;! or the drilled-in asset inspector once one is selected. Scroll, clip and
+;;! culling mirror the Scene body; the widget regions any 6c editor declares inside
+;;! sit on top of this body's region.
 (define (kruddgui-assets-body x y w h)
   (let* ((min-off (min 0.0 (- h kruddgui-assets-total)))
 	 (off     (max min-off (min 0.0 kruddgui-assets-scroll)))
@@ -1336,29 +1675,9 @@
     (set! kruddgui-assets-scroll off)
     (kruddgui-rect* (list x y w h) kruddgui-scene-body-bg)
     (kgui-clip x y w h)
-    (kruddgui-scene-label L "Widget foundations (PR6a)")
-    (kruddgui-scene-rule L)
-    (when (kruddgui-fold L "demo-material" "Material" #t)
-      (let ((mr (kruddgui-slider L "demo-metallic" "Metallic"
-				 kruddgui-demo-metallic 0.0 1.0)))
-	(when (cdr mr) (set! kruddgui-demo-metallic (car mr))))
-      (let ((rr (kruddgui-slider L "demo-rough" "Roughness"
-				 kruddgui-demo-rough 0.0 1.0)))
-	(when (cdr rr) (set! kruddgui-demo-rough (car rr))))
-      (kruddgui-scene-rule L)
-      (let ((cr (kruddgui-color-swatch L "demo-color" "Base Color"
-				       kruddgui-demo-color)))
-	(when (cdr cr) (set! kruddgui-demo-color (car cr)))))
-    (kruddgui-scene-rule L)
-    (let ((pick (kruddgui-button-row L (list "Reset" "Warm"))))
-      (cond ((equal? pick "Reset")
-	     (set! kruddgui-demo-metallic 0.5)
-	     (set! kruddgui-demo-rough 0.3)
-	     (set! kruddgui-demo-color (list 0.95 0.55 0.15)))
-	    ((equal? pick "Warm")
-	     (set! kruddgui-demo-metallic 0.2)
-	     (set! kruddgui-demo-rough 0.8)
-	     (set! kruddgui-demo-color (list 0.90 0.40 0.10)))))
+    (if (= kruddgui-assets-sel 0)
+	(kruddgui-asset-browser L)
+	(kruddgui-asset-inspector L kruddgui-assets-sel))
     (kgui-clip-none)
     (set! kruddgui-assets-total (- (kruddgui-lay-cy L) (+ y off)))))
 

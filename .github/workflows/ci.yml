@@ -20,31 +20,7 @@ jobs:
       - name: Lint .scm comments
         run: python3 .github/scripts/lint-scm-comments.py $(git ls-files '*.scm')
 
-  version:
-    # Skip on PR-close events — nothing downstream needs a version then.
-    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: read
-    outputs:
-      version: ${{ steps.compute.outputs.version }}
-    steps:
-      - uses: actions/checkout@v7
-
-      # Folds every merged PR's release:{breaking,feature,fix,chore} label
-      # into an X.Y.Z version — no VERSION file, no git tag. See the script
-      # for the full explanation, including how a not-yet-merged PR build gets
-      # a prerelease version instead of a final one.
-      - name: Compute version
-        id: compute
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const compute = require("./.github/scripts/compute-version.js");
-            await compute({ github, context, core });
-
   build:
-    needs: version
     # Skip the build on PR-close events — there is nothing to publish, the
     # preview job only needs to remove the stale directory.
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
@@ -69,14 +45,31 @@ jobs:
       - name: Install a host compiler and ninja for krudd
         run: apt-get update && apt-get install -y clang gcc ninja-build curl
 
+      # The released version is the single line in version.txt, maintained by
+      # release-please (see .github/workflows/release-please.yml). A push/main
+      # build stamps that version verbatim. A PR build appends -pr<N>+<sha> so
+      # its preview is uniquely identifiable and can never be mistaken for a
+      # real release — mirroring the prerelease suffix the old label-fold job
+      # produced.
+      - name: Determine version
+        id: version
+        run: |
+          base=$(cat version.txt)
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            sha=${{ github.event.pull_request.head.sha }}
+            echo "version=${base}-pr${{ github.event.pull_request.number }}+${sha:0:7}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${base}" >> "$GITHUB_OUTPUT"
+          fi
+
       # krudd generates a build.ninja from the directory specs and drives ninja
       # with emcc/em++ directly — no cmake, no emcmake. KRUDD_TARGET=wasm selects
       # the WASM output (the single index.html/.js/.wasm module). KRUDD_VERSION
-      # comes from the version job — see introspect.scm.
+      # comes from the version step above — see introspect.scm.
       - name: Build
         env:
           KRUDD_TARGET: wasm
-          KRUDD_VERSION: ${{ needs.version.outputs.version }}
+          KRUDD_VERSION: ${{ steps.version.outputs.version }}
         run: ./krudd.sh build
 
       - name: Stage site

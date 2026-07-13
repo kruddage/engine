@@ -16,5 +16,9 @@
 /krudd/                 @joshcoyne
 /.github/               @joshcoyne
 
-# Version source.
-/VERSION                @joshcoyne
+# Version source — maintained by release-please, but guard it so a manual edit
+# still routes a review. version.txt is what CI stamps into the build; the
+# manifest and config drive release-please itself.
+/version.txt                    @joshcoyne
+/.release-please-manifest.json  @joshcoyne
+/release-please-config.json     @joshcoyne

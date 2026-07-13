@@ -13,6 +13,17 @@
  *
  * Kept here as one shared source of truth so the asset seeder and the native
  * mesh_script oracle test compile the exact same script text.
+ *
+ * Beyond the original five, two families lean on the shared shape "engines" in
+ * core/mesh_script.scm rather than hand-listing vertices:
+ *
+ *   - cylinder/cone/capsule/disc/torus are each a meridian PROFILE swept around
+ *     the Y axis by mesh-revolve — a lathe. A profile point is (r y nr ny v);
+ *     mesh-arc-profile emits the circular runs (hemisphere caps, torus tube).
+ *   - superquadric/heightfield are each a (u,v)->(x y z) position function
+ *     sampled over a grid by mesh-param-surface, which derives normals from the
+ *     surface tangents. Both carry a (params ...) clause, so one source draws a
+ *     family of shapes (box<->sphere<->star; calm<->jagged terrain).
  */
 
 /*
@@ -141,5 +152,131 @@
 	"                                                 (list k1 (+ k1 1) (+ k2 1)\n" \
 	"                                                       k1 (+ k2 1) k2)))))))))))\n" \
 	"      (cons verts indices))))\n"
+
+/*
+ * cylinder — a six-point meridian profile swept around Y by mesh-revolve
+ * (core/mesh_script.scm), 24 sectors: bottom cap (down normals), the side wall
+ * (radial normals), top cap (up normals), with the rim doubled at each cap so
+ * the cap/side crease stays hard. Radius 0.5, height 1 (y in ±0.5). 150 verts /
+ * 432 indices; the two zero-height crease rings emit no triangles.
+ */
+#define CYLINDER_MESH_SCRIPT_SRC \
+	"(mesh cylinder\n" \
+	"  (generate ()\n" \
+	"    (mesh-revolve\n" \
+	"      (list (list 0.0 -0.5 0.0 -1.0 0.0)\n" \
+	"            (list 0.5 -0.5 0.0 -1.0 0.0)\n" \
+	"            (list 0.5 -0.5 1.0 0.0 0.0)\n" \
+	"            (list 0.5 0.5 1.0 0.0 1.0)\n" \
+	"            (list 0.5 0.5 0.0 1.0 1.0)\n" \
+	"            (list 0.0 0.5 0.0 1.0 1.0))\n" \
+	"      24)))\n"
+
+/*
+ * cone — the cylinder's profile with the top rim collapsed to an apex at r=0.
+ * The side normal is the unit (2,1)/sqrt(5) tilt of a 45-degree-ish slope,
+ * shared by the base rim and the apex. Base radius 0.5, height 1. 100 verts /
+ * 288 indices.
+ */
+#define CONE_MESH_SCRIPT_SRC \
+	"(mesh cone\n" \
+	"  (generate ()\n" \
+	"    (let* ((nl (sqrt 5.0)) (nr (/ 2.0 nl)) (ny (/ 1.0 nl)))\n" \
+	"      (mesh-revolve\n" \
+	"        (list (list 0.0 -0.5 0.0 -1.0 0.0)\n" \
+	"              (list 0.5 -0.5 0.0 -1.0 0.0)\n" \
+	"              (list 0.5 -0.5 nr ny 0.0)\n" \
+	"              (list 0.0 0.5 nr ny 1.0))\n" \
+	"        24))))\n"
+
+/*
+ * disc — the simplest lathe: a two-point profile (centre, rim) swept into a
+ * flat circle on the XZ plane facing +Y. Radius 0.5. 50 verts / 144 indices.
+ */
+#define DISC_MESH_SCRIPT_SRC \
+	"(mesh disc\n" \
+	"  (generate ()\n" \
+	"    (mesh-revolve\n" \
+	"      (list (list 0.0 0.0 0.0 1.0 0.0)\n" \
+	"            (list 0.5 0.0 0.0 1.0 1.0))\n" \
+	"      24)))\n"
+
+/*
+ * capsule — two hemisphere caps (mesh-arc-profile quarter turns) joined by a
+ * cylindrical wall; the caps' equator normals are already radial, so the whole
+ * profile is smooth (no crease). Radius 0.5, cylinder length 1, total height 2
+ * (y in ±1). 450 verts / 2448 indices.
+ */
+#define CAPSULE_MESH_SCRIPT_SRC \
+	"(mesh capsule\n" \
+	"  (generate ()\n" \
+	"    (mesh-revolve\n" \
+	"      (append (mesh-arc-profile 0.0 -0.5 0.5 (* -0.5 pi) 0.0 8 0.0 0.4)\n" \
+	"              (mesh-arc-profile 0.0 0.5 0.5 0.0 (* 0.5 pi) 8 0.6 1.0))\n" \
+	"      24)))\n"
+
+/*
+ * torus — a full-circle tube profile (mesh-arc-profile, 0..2pi) offset from the
+ * axis and swept around it. Major radius 0.35, minor 0.15 (outer radius 0.5,
+ * inner 0.2). No poles, so the cleanest lathe of all. 425 verts / 2304 indices.
+ */
+#define TORUS_MESH_SCRIPT_SRC \
+	"(mesh torus\n" \
+	"  (generate ()\n" \
+	"    (mesh-revolve\n" \
+	"      (mesh-arc-profile 0.35 0.0 0.15 0.0 (* 2.0 pi) 16 0.0 1.0)\n" \
+	"      24)))\n"
+
+/*
+ * superquadric — the parametric showcase: a superellipsoid sampled over a
+ * 32x24 (u,v) grid by mesh-param-surface, which takes normals from the surface
+ * tangents. The two exponents morph one source across a family — e1=e2=1 is the
+ * radius-0.5 ellipsoid, e1=e2->0 a box, larger values pinch toward a star. sp
+ * is the signed power |b|^e that keeps the surface real for negative b. 825
+ * verts / 4608 indices.
+ */
+#define SUPERQUADRIC_MESH_SCRIPT_SRC \
+	"(mesh superquadric\n" \
+	"  (params\n" \
+	"    (e1 float (edit range 0.1 3.0) (default 1.0))\n" \
+	"    (e2 float (edit range 0.1 3.0) (default 1.0)))\n" \
+	"  (generate ()\n" \
+	"    (let ((e1 (or (param 'e1) 1.0))\n" \
+	"          (e2 (or (param 'e2) 1.0)))\n" \
+	"      (define (sp b e) (* (if (< b 0.0) -1.0 1.0) (expt (abs b) e)))\n" \
+	"      (mesh-param-surface\n" \
+	"        (lambda (u v)\n" \
+	"          (let* ((lon (* (- (* 2.0 u) 1.0) pi))\n" \
+	"                 (lat (* (- v 0.5) pi))\n" \
+	"                 (cl (cos lat)) (sl (sin lat))\n" \
+	"                 (co (cos lon)) (so (sin lon)))\n" \
+	"            (list (* 0.5 (sp cl e1) (sp co e2))\n" \
+	"                  (* 0.5 (sp sl e1))\n" \
+	"                  (* 0.5 (sp cl e1) (sp so e2)))))\n" \
+	"        32 24))))\n"
+
+/*
+ * heightfield — a unit patch on XZ (x,z in ±0.5) displaced in Y by a two-octave
+ * sum of sines, sampled over a 24x24 grid by mesh-param-surface so its normals
+ * follow the terrain. amp scales the relief, freq its wavelength — a calm swell
+ * or choppy ground from one source. 625 verts / 3456 indices.
+ */
+#define HEIGHTFIELD_MESH_SCRIPT_SRC \
+	"(mesh heightfield\n" \
+	"  (params\n" \
+	"    (amp  float (edit range 0.0 0.5) (default 0.15))\n" \
+	"    (freq float (edit range 0.25 4.0) (default 1.0)))\n" \
+	"  (generate ()\n" \
+	"    (let ((amp (or (param 'amp) 0.15))\n" \
+	"          (freq (or (param 'freq) 1.0)))\n" \
+	"      (mesh-param-surface\n" \
+	"        (lambda (u v)\n" \
+	"          (let* ((x (- u 0.5)) (z (- v 0.5))\n" \
+	"                 (fx (* freq 6.2831853 x)) (fz (* freq 6.2831853 z))\n" \
+	"                 (h (* amp (+ (* 0.6 (sin fx) (cos fz))\n" \
+	"                              (* 0.4 (sin (+ (* 2.0 fx) 1.3))\n" \
+	"                                     (cos (+ (* 2.1 fz) 0.7)))))))\n" \
+	"            (list x h z)))\n" \
+	"        24 24))))\n"
 
 #endif /* BUILTIN_MESH_SCRIPTS_H */

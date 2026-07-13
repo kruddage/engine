@@ -32,10 +32,10 @@ Planned rollout:
 
 1. **krudd drives the build.** The engine builds through krudd's own build (Ninja +
    Emscripten) documented above, inside CI. The gates around it (`.scm` comment lint,
-   release-label versioning, per-PR previews) still live as plain YAML jobs in `ci.yml`
-   (see below); sanitizer/coverage gates aren't wired back up yet. The direction is to
-   move that scaffolding into Scheme as the tooling exists, rather than growing it as a
-   bolt-on to the old pipeline.
+   Conventional-Commit versioning via release-please, per-PR previews) still live as plain
+   YAML workflows (see below); sanitizer/coverage gates aren't wired back up yet. The
+   direction is to move that scaffolding into Scheme as the tooling exists, rather than
+   growing it as a bolt-on to the old pipeline.
 2. **krudd eats the build graph, piece by piece.** Asset codecs, plugin registration,
    and scene compilation move from C into Scheme one at a time — the C build tree shrinks
    as the Scheme grows, rather than a rewrite landing in one PR.
@@ -114,18 +114,39 @@ engine loop; the test stamps run the suite, so a green build is a green test run
 
 ## CI
 
-A single `ci.yml` workflow runs on every pull request and on push to `main`:
+`ci.yml` runs on every pull request and on push to `main`, alongside two release workflows:
 
-| Job | What it does |
+| Workflow · job | What it does |
 |---|---|
-| **lint** | Style-checks `.scm` comments (`lint-scm-comments.py`) |
-| **version** | Folds each merged PR's `release:{breaking,feature,fix,chore}` label into an X.Y.Z version |
-| **build** | Builds the WASM module via Emscripten (`emsdk` container) through krudd's own Ninja build |
-| **deploy** | On push to `main`, publishes the staged site to GitHub Pages |
-| **preview** | Deploys each PR's build to a `pr-preview/pr-<N>/` URL and tears it down on close |
+| **ci · lint** | Style-checks `.scm` comments (`lint-scm-comments.py`) |
+| **ci · build** | Builds the WASM module via Emscripten (`emsdk` container) through krudd's own Ninja build |
+| **ci · deploy** | On push to `main`, publishes the staged site to GitHub Pages |
+| **ci · preview** | Deploys each PR's build to a `pr-preview/pr-<N>/` URL and tears it down on close |
+| **pr-title** | Checks the PR title is a valid Conventional Commit (it becomes the squashed commit) |
+| **release-please** | On push to `main`, maintains the release PR that versions, tags, and releases |
 
 Sanitizer and coverage gates aren't wired up yet; the plan is to bring them back through
 `kruddmake` (see Roadmap above) rather than as separate bolt-on workflows.
+
+## Versioning and releases
+
+Versioning is handled by [release-please](https://github.com/googleapis/release-please),
+driven by [Conventional Commits](https://www.conventionalcommits.org/). We squash-merge, so a
+PR's title *is* its commit message and the **pr-title** check enforces the format:
+
+- `feat: …` → minor bump &nbsp;·&nbsp; `fix:`/`perf: …` → patch bump &nbsp;·&nbsp; `feat!:` or a `BREAKING CHANGE:` footer → major bump
+- `chore:`/`docs:`/`ci:`/`refactor:`/`test:`/`build: …` → no version bump, but still recorded in `CHANGELOG.md`
+
+On each push to `main`, release-please opens or updates a single **release PR** that rolls up
+the unreleased commits: it bumps [`version.txt`](version.txt), regenerates `CHANGELOG.md`, and
+updates `.release-please-manifest.json`. Merging that PR tags `vX.Y.Z` and cuts a GitHub
+Release. CI reads `version.txt` and stamps it into the build (`KRUDD_VERSION`); PR/preview
+builds append a `-pr<N>+<sha>` suffix so they never collide with a real release.
+
+> This replaced an earlier scheme that derived the version by folding per-PR `release:*`
+> labels on every build, with no tags or changelog. `version.txt` was seeded at the label-fold
+> value (`17.11.3`) as of the cutover commit so numbering continues unbroken, and
+> `bootstrap-sha` in the config keeps that pre-cutover history out of the first changelog.
 
 ## License
 

@@ -30,7 +30,7 @@ jobs:
       # That is fine here — the release PR only edits version.txt/CHANGELOG.md,
       # which need no build. If we later want CI to run on the release PR,
       # swap `token` for a PAT or GitHub App token.
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json

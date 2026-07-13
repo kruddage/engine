@@ -28,6 +28,7 @@ extern "C" {
 #include "log_level.h"
 #include "kgui_batch.h"
 #include "kgui_input.h"
+#include "kgui_text_edit.h"
 }
 
 #ifdef __EMSCRIPTEN__
@@ -37,6 +38,7 @@ extern "C" {
 #include <GLES3/gl3.h>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 extern "C" {
 #include "s7.h"			/* self-guards for C++ linkage */
@@ -52,6 +54,18 @@ int    krudd_is_touch_device(void);
  * in its tick); kruddgui pokes it when it forwards a touch to ImGui.
  */
 void imgui_soft_keyboard_touch_hint(void);
+
+/*
+ * The web text-input bridge (plugin_abi.c, main module). kruddgui drives it
+ * directly for its own focused field — the text-input twin of owning the
+ * pointer callbacks. krudd_text_input_set_capture tells imgui_plugin to leave
+ * the bridge alone while a kruddgui field holds focus (see imgui_tick).
+ */
+void krudd_text_input_show(void);
+void krudd_text_input_hide(void);
+int  krudd_text_input_drain_chars(char *buf, int cap);
+int  krudd_text_input_pop_key(void);
+void krudd_text_input_set_capture(int on);
 }
 #endif
 
@@ -337,6 +351,9 @@ static struct kgui_region_io *s_cur_io;
 
 static bool s_touch_device;
 
+/* A touch consumed by a field raises the keyboard from the gesture (below). */
+static int point_in_field(float x, float y);
+
 /* ------------------------------------------------------------------ */
 /* Input callbacks — route through the registry, forward the rest      */
 /* ------------------------------------------------------------------ */
@@ -374,6 +391,14 @@ static void pointer_up(int32_t id, float x, float y, bool is_touch)
 		forward_button(x, y, false);
 		if (is_touch)
 			imgui_soft_keyboard_touch_hint();
+	} else if (is_touch && point_in_field(x, y)) {
+		/*
+		 * A touch consumed by a kruddgui field: raise the soft keyboard
+		 * from inside this gesture handler, which iOS Safari requires —
+		 * field_sync's focus-driven show() runs in the later rAF tick,
+		 * outside the gesture, where iOS ignores it.
+		 */
+		krudd_text_input_show();
 	}
 }
 
@@ -451,6 +476,205 @@ static EM_BOOL on_wheel(int /*type*/, const EmscriptenWheelEvent *e,
 		ImGui::GetIO().AddMouseWheelEvent(0.0f,
 						  -(float)e->deltaY / 100.0f);
 	return EM_TRUE;
+}
+
+/* ------------------------------------------------------------------ */
+/* Text field — the first interactive widget, backed by the soft keyboard */
+/* ------------------------------------------------------------------ */
+
+/*
+ * kruddgui's field is the touch-keyboard model ImGui never had: exactly one
+ * field owns focus and a caret at a time, and the hidden-<input> bridge feeds
+ * it. The editable buffer is the GL-free kgui_text_edit (host-tested); this
+ * layer adds focus, the per-tick char/key drain (field_pump), the show/hide +
+ * capture reconcile (field_sync), and the tap-to-focus / commit reported to the
+ * Scheme image through (kgui-field).
+ *
+ * Focus is keyed by the field's name hash, not its position, so a focused field
+ * keeps its buffer while the panel scrolls it off-screen. Committing (Enter,
+ * Tab, or focus moving to another field) latches the final text for one read;
+ * Escape abandons the edit. Only an actually-edited field reports committed?,
+ * so tapping in and out without typing records no undo step.
+ */
+static struct kgui_text_edit s_field_edit;
+static uint32_t s_field_id;           /* focused field's name hash, 0 = none */
+static int      s_field_numeric;      /* focused field filters to numeric input */
+static int      s_field_dirty;        /* buffer edited since focus */
+static int      s_field_committed;    /* latched commit awaiting a Scheme read */
+static uint32_t s_field_committed_id; /* which field the latch is for */
+static char     s_field_commit_buf[KGUI_TEXT_EDIT_CAP]; /* the committed text */
+static int      s_field_shown;        /* the soft keyboard is up for our field */
+
+/*
+ * Field rects declared this tick, committed for the async touch callbacks (the
+ * same "built this tick, read between ticks" discipline as the input regions).
+ * A touch-up inside one raises the soft keyboard from within the gesture, which
+ * iOS Safari requires — focus() from the later rAF tick would be ignored.
+ */
+#define KGUI_MAX_FIELD_RECTS 48
+struct kgui_field_rect {
+	float x0, y0, x1, y1;
+};
+static struct kgui_field_rect s_fr_build[KGUI_MAX_FIELD_RECTS];
+static int                    s_fr_build_n;
+static struct kgui_field_rect s_fr_committed[KGUI_MAX_FIELD_RECTS];
+static int                    s_fr_committed_n;
+
+static void field_rect_add(float x, float y, float w, float h)
+{
+	struct kgui_field_rect *r;
+
+	if (s_fr_build_n >= KGUI_MAX_FIELD_RECTS)
+		return;
+	r     = &s_fr_build[s_fr_build_n++];
+	r->x0 = x;
+	r->y0 = y;
+	r->x1 = x + w;
+	r->y1 = y + h;
+}
+
+static void field_rects_commit(void)
+{
+	int i;
+
+	for (i = 0; i < s_fr_build_n; i++)
+		s_fr_committed[i] = s_fr_build[i];
+	s_fr_committed_n = s_fr_build_n;
+}
+
+static int point_in_field(float x, float y)
+{
+	int i;
+
+	for (i = 0; i < s_fr_committed_n; i++) {
+		const struct kgui_field_rect *r = &s_fr_committed[i];
+
+		if (x >= r->x0 && x <= r->x1 && y >= r->y0 && y <= r->y1)
+			return 1;
+	}
+	return 0;
+}
+
+/*
+ * Copy the focused field's final text into the commit slot and latch it for one
+ * Scheme read. Kept separate from the live edit buffer so moving focus to a new
+ * field (which re-seeds s_field_edit) does not clobber the text the old field is
+ * about to hand back.
+ */
+static void field_latch_commit(void)
+{
+	memcpy(s_field_commit_buf, s_field_edit.buf,
+	       (size_t)s_field_edit.len + 1);
+	s_field_committed    = 1;
+	s_field_committed_id = s_field_id;
+}
+
+/* Commit the focused field (only an actual edit latches) and drop focus. */
+static void field_commit(void)
+{
+	if (s_field_dirty)
+		field_latch_commit();
+	s_field_id = 0;
+}
+
+/* Keep only the bytes a numeric field admits (digits, sign, dot, exponent). */
+static int numeric_filter(char *buf, int n)
+{
+	int i, w = 0;
+
+	for (i = 0; i < n; i++) {
+		char c = buf[i];
+
+		if ((c >= '0' && c <= '9') || c == '.' || c == '-' ||
+		    c == '+' || c == 'e' || c == 'E')
+			buf[w++] = c;
+	}
+	buf[w] = '\0';
+	return w;
+}
+
+/*
+ * Drain the keyboard bridge into the focused field. Runs at the top of the tick
+ * (before the image reads the field) so a typed character shows the same frame.
+ * Only runs while a field is focused, which is exactly when kruddgui holds the
+ * capture flag and imgui_plugin has stepped aside.
+ */
+static void field_pump(void)
+{
+	char buf[256];
+	int  n, k;
+
+	if (!s_field_id)
+		return;
+
+	n = krudd_text_input_drain_chars(buf, (int)sizeof(buf));
+	if (s_field_numeric)
+		n = numeric_filter(buf, n);
+	if (n > 0 && kgui_text_edit_insert(&s_field_edit, buf, n) > 0)
+		s_field_dirty = 1;
+
+	while ((k = krudd_text_input_pop_key()) != 0) {
+		switch (k) {
+		case 1: /* Backspace */
+			kgui_text_edit_backspace(&s_field_edit);
+			s_field_dirty = 1;
+			break;
+		case 4: /* Delete */
+			kgui_text_edit_delete_fwd(&s_field_edit);
+			s_field_dirty = 1;
+			break;
+		case 5: /* LeftArrow */
+			kgui_text_edit_left(&s_field_edit);
+			break;
+		case 6: /* RightArrow */
+			kgui_text_edit_right(&s_field_edit);
+			break;
+		case 9: /* Home */
+			kgui_text_edit_home(&s_field_edit);
+			break;
+		case 10: /* End */
+			kgui_text_edit_end(&s_field_edit);
+			break;
+		case 2: /* Enter */
+		case 3: /* Tab */
+			field_commit();
+			return;
+		case 11: /* Escape: abandon the edit */
+			s_field_id = 0;
+			return;
+		default: /* Up / Down: no caret model on a single line */
+			break;
+		}
+	}
+}
+
+/* Reconcile the soft keyboard + capture flag with our focus, once per tick. */
+static void field_sync(void)
+{
+	int active = (s_field_id != 0);
+
+	krudd_text_input_set_capture(active);
+	if (active && !s_field_shown) {
+		krudd_text_input_show();
+		s_field_shown = 1;
+	} else if (!active && s_field_shown) {
+		krudd_text_input_hide();
+		s_field_shown = 0;
+	}
+}
+
+/* Pixel width of the first `caret` bytes of `s`, for placing the caret bar. */
+static float field_caret_px(const char *s, int caret)
+{
+	char tmp[KGUI_TEXT_EDIT_CAP];
+
+	if (caret <= 0)
+		return 0.0f;
+	if (caret > (int)sizeof(tmp) - 1)
+		caret = (int)sizeof(tmp) - 1;
+	memcpy(tmp, s, (size_t)caret);
+	tmp[caret] = '\0';
+	return kgui_text_width(tmp, s_text_size, glyph_source, atlas_font());
 }
 
 /* ------------------------------------------------------------------ */
@@ -566,6 +790,70 @@ static s7_pointer sp_kgui_button(s7_scheme *sc, s7_pointer args)
 }
 
 /*
+ * (kgui-field id x y w h text mode) -> (display active? committed? caret-px).
+ *
+ * The soft-keyboard text field. `text` is the caller's current value; `mode` is
+ * 0 for free text or 1 for numeric (the drain filters to numeric bytes). A tap
+ * in the rect focuses the field, seeding the edit buffer from `text`; while
+ * focused it returns the live edit buffer as `display`, `active?` #t, and the
+ * caret's pixel offset for drawing a caret bar. On the frame the edit commits
+ * (Enter / Tab / focus moving away), `committed?` is #t and `display` is the
+ * final text — the caller writes it back through its undo-recording setter. The
+ * field draws nothing itself; the image draws the box, text and caret.
+ */
+static s7_pointer sp_kgui_field(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer  p    = args;
+	s7_pointer  nm   = s7_car(p);                        p = s7_cdr(p);
+	double      x    = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double      y    = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double      w    = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double      h    = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	s7_pointer  txt  = s7_car(p);                        p = s7_cdr(p);
+	double      mode = s7_number_to_real(sc, s7_car(p));
+	const char *id   = s7_is_string(nm) ? s7_string(nm) : "";
+	const char *cur  = s7_is_string(txt) ? s7_string(txt) : "";
+	uint32_t    hash = kgui_name_hash(id);
+	int         active = 0;
+	int         committed = 0;
+	const char *disp = cur;
+	float       caret_px = 0.0f;
+
+	field_rect_add((float)x, (float)y, (float)w, (float)h);
+
+	if (hash == s_field_id) {
+		active = 1;
+		disp   = s_field_edit.buf;
+	} else if (hash == s_field_committed_id) {
+		committed            = s_field_committed;
+		disp                 = s_field_commit_buf;
+		s_field_committed    = 0;
+		s_field_committed_id = 0;
+	} else if (s_cur_io && s_cur_io->tapped &&
+		   s_cur_io->tap_x >= x && s_cur_io->tap_x <= x + w &&
+		   s_cur_io->tap_y >= y && s_cur_io->tap_y <= y + h) {
+		s_cur_io->tapped = 0; /* consume: the tap focuses this field */
+		/* Moving focus off an edited field commits it (read next frame). */
+		if (s_field_id && s_field_dirty)
+			field_latch_commit();
+		kgui_text_edit_set(&s_field_edit, cur);
+		s_field_id      = hash;
+		s_field_dirty   = 0;
+		s_field_numeric = (mode != 0.0);
+		active          = 1;
+		disp            = s_field_edit.buf;
+	}
+
+	if (active)
+		caret_px = field_caret_px(disp, s_field_edit.caret);
+
+	return s7_list(sc, 4, s7_make_string(sc, disp),
+		       s7_make_boolean(sc, active),
+		       s7_make_boolean(sc, committed),
+		       s7_make_real(sc, (s7_double)caret_px));
+}
+
+/*
  * (kgui-region-drag) -> (dx dy): the captured pointer motion in the current
  * panel this frame (CSS px), or (0 0) outside a panel. A scroll body adds -dy
  * to its offset each frame to drag its contents.
@@ -639,6 +927,9 @@ static void register_primitives(s7_scheme *sc)
 			   false, "(kgui-text-metrics str) -> (w h) px");
 	s7_define_function(sc, "kgui-button", sp_kgui_button, 4, 0, false,
 			   "(kgui-button x y w h) -> #t on tap this frame");
+	s7_define_function(sc, "kgui-field", sp_kgui_field, 7, 0, false,
+			   "(kgui-field id x y w h text mode) -> "
+			   "(display active? committed? caret-px)");
 	s7_define_function(sc, "kgui-panel-begin", sp_kgui_panel_begin, 5, 0,
 			   false, "(kgui-panel-begin name x y w h) input region");
 	s7_define_function(sc, "kgui-panel-end", sp_kgui_panel_end, 0, 0, false,
@@ -729,9 +1020,17 @@ static void kruddgui_tick(void)
 
 	refresh_atlas();
 
+	/*
+	 * Apply this tick's typed input to the focused field before the image
+	 * reads it, so a keystroke shows the same frame. No-op unless a field
+	 * holds focus (and thus kruddgui holds the keyboard-capture flag).
+	 */
+	field_pump();
+
 	kgui_batch_reset(&s_batch);
 	kgui_input_frame_begin(&s_input);
-	s_cur_io = NULL;
+	s_cur_io     = NULL;
+	s_fr_build_n = 0;
 
 	call_scm_panel("kruddgui-draw");
 
@@ -743,6 +1042,10 @@ static void kruddgui_tick(void)
 	 */
 	s_cur_io = NULL;
 	kgui_input_frame_commit(&s_input);
+	field_rects_commit();
+
+	/* Reconcile the soft keyboard + capture flag with the field focus. */
+	field_sync();
 
 	gl_flush(atlas_texture());
 #endif

@@ -129,9 +129,9 @@
 	(loop (cdr ms) (+ i 1))))
     (kgui-panel-end)))
 
-;; ------------------------------------------------------------------
-;; Log console — the lifted kruddboard tab (#491)
-;; ------------------------------------------------------------------
+;;! ------------------------------------------------------------------
+;;! Log console — the lifted kruddboard tab (#491)
+;;! ------------------------------------------------------------------
 
 ;;! Console geometry. The panel anchors to the top-right so it never overlaps
 ;;! the bottom mode-bar; the header carries the title, level-filter chips and a
@@ -232,8 +232,10 @@
       (when (pair? rs)
 	(let ((ry (+ y (- (* i line-h) scroll-top))))
 	  (cond
-	   ((>= ry (+ y h)) #t)			   ; below the body: stop
-	   ((<= (+ ry line-h) y)		   ; above the body: skip
+	   ;;! below the body: stop
+	   ((>= ry (+ y h)) #t)
+	   ;;! above the body: skip
+	   ((<= (+ ry line-h) y)
 	    (loop (cdr rs) (+ i 1)))
 	   (else
 	    (let* ((row (car rs))
@@ -309,9 +311,9 @@
       (set! kruddgui-log-open #t))
     (kgui-panel-end)))
 
-;; ------------------------------------------------------------------
-;; Board panel — the lifted KRUDD tab (#492): frame stats, startup, subsystems
-;; ------------------------------------------------------------------
+;;! ------------------------------------------------------------------
+;;! Board panel — the lifted KRUDD tab (#492): frame stats, startup, subsystems
+;;! ------------------------------------------------------------------
 
 ;;! The KRUDD tab's three read-only sections — live frame stats, the one-time
 ;;! startup profile, and the subsystem manager table — re-authored as a single
@@ -459,8 +461,10 @@
       (when (pair? rs)
 	(let ((ry (+ y off (* i lh))))
 	  (cond
-	   ((>= ry (+ y h)) #t)			   ; below the body: stop
-	   ((<= (+ ry lh) y)			   ; above the body: skip
+	   ;;! below the body: stop
+	   ((>= ry (+ y h)) #t)
+	   ;;! above the body: skip
+	   ((<= (+ ry lh) y)
 	    (loop (cdr rs) (+ i 1)))
 	   (else
 	    (kruddgui-board-draw-row (car rs) x ry w lh)

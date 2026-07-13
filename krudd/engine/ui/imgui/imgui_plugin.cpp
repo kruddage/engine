@@ -50,6 +50,13 @@ extern "C" void krudd_text_input_hide(void);
 extern "C" int  krudd_text_input_drain_chars(char *buf, int cap);
 extern "C" int  krudd_text_input_pop_key(void);
 extern "C" int  krudd_is_touch_device(void);
+
+/*
+ * True while a kruddgui field owns text input (plugin_abi.c).  When set, the
+ * keyboard bridge is kruddgui's to drain, so imgui_plugin leaves it alone for
+ * the frame — see the reconcile / drain block in imgui_tick.
+ */
+extern "C" int  krudd_text_input_capture(void);
 #endif
 
 static const struct log_api   *g_log;
@@ -227,7 +234,14 @@ static void imgui_tick(void)
 	 *   5=LeftArrow  6=RightArrow  7=UpArrow    8=DownArrow
 	 *   9=Home       10=End        11=Escape
 	 */
-	{
+	/*
+	 * Skip the whole bridge when a kruddgui field owns text input: the
+	 * hidden <input> and its char / key queues are kruddgui's to drain this
+	 * frame, and its own focus manages show / hide.  Draining here too would
+	 * steal the typed characters (kruddgui's tick runs after this one) and
+	 * fight kruddgui over the keyboard.
+	 */
+	if (!krudd_text_input_capture()) {
 		/*
 		 * Auto-focus reconciliation is desktop-only.  On a touch device
 		 * the hidden <input>'s focus is owned entirely by kruddboard's

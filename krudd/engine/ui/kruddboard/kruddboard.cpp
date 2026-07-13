@@ -463,38 +463,6 @@ static s7_pointer real_list(s7_scheme *sc, const float *v, int n)
 }
 
 /*
- * (imgui-begin-table-plain id ncols) -> #t when the table opened. Proportional-
- * stretch but borderless and unstriped — the layout-only tables the inspector
- * used (transform, details, bindings), distinct from the bordered
- * imgui-begin-table. A #t result must be paired with imgui-end-table.
- */
-static s7_pointer sp_imgui_begin_table_plain(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer id     = s7_car(args);
-	s7_pointer ncols  = s7_cadr(args);
-	bool       opened = false;
-
-	if (s7_is_string(id) && s7_is_integer(ncols) && s7_integer(ncols) > 0)
-		opened = ImGui::BeginTable(s7_string(id),
-					   (int)s7_integer(ncols),
-					   ImGuiTableFlags_SizingStretchProp);
-	return s7_make_boolean(sc, opened);
-}
-
-/* (imgui-table-setup-column-fixed label width) -> unspecified. Fixed px width. */
-static s7_pointer sp_imgui_table_setup_column_fixed(s7_scheme *sc,
-						    s7_pointer args)
-{
-	s7_pointer label = s7_car(args);
-	float      width = (float)s7_number_to_real(sc, s7_cadr(args));
-
-	if (s7_is_string(label))
-		ImGui::TableSetupColumn(s7_string(label),
-					ImGuiTableColumnFlags_WidthFixed, width);
-	return s7_unspecified(sc);
-}
-
-/*
  * (imgui-begin-disabled flag) -> unspecified. Grey out and swallow input for
  * every widget until imgui-end-disabled — the BeginDisabled/EndDisabled pairs
  * the World tab wrapped its create/edit widgets in when the scene api is absent.
@@ -518,31 +486,6 @@ static s7_pointer sp_imgui_set_next_item_width(s7_scheme *sc, s7_pointer args)
 {
 	ImGui::SetNextItemWidth((float)s7_number_to_real(sc, s7_car(args)));
 	return s7_unspecified(sc);
-}
-
-/*
- * (imgui-input-text id text) -> (current-text . committed?). Seeds a single-line
- * field from text each frame; ImGui keeps the in-progress edit alive while the
- * field is focused, so re-seeding from the model is a no-op mid-edit. committed?
- * is #t only on the frame focus is lost after an edit — the "commit once, on
- * deactivate" the C name field used so the name blob doesn't churn per keystroke.
- */
-static s7_pointer sp_imgui_input_text(s7_scheme *sc, s7_pointer args)
-{
-	static char buf[256];
-	s7_pointer  id   = s7_car(args);
-	s7_pointer  text = s7_cadr(args);
-	bool        done;
-
-	buf[0] = '\0';
-	if (s7_is_string(text)) {
-		strncpy(buf, s7_string(text), sizeof(buf) - 1);
-		buf[sizeof(buf) - 1] = '\0';
-	}
-	if (s7_is_string(id))
-		ImGui::InputText(s7_string(id), buf, sizeof(buf));
-	done = ImGui::IsItemDeactivatedAfterEdit();
-	return s7_cons(sc, s7_make_string(sc, buf), s7_make_boolean(sc, done));
 }
 
 /* (imgui-input-float3 id (x y z)) -> ((x y z) . changed?). */
@@ -672,88 +615,14 @@ static s7_pointer sp_imgui_set_item_default_focus(s7_scheme *sc, s7_pointer args
 	return s7_unspecified(sc);
 }
 
-/* (imgui-calc-text-width str) -> the rendered width of str in pixels. */
-static s7_pointer sp_imgui_calc_text_width(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer str = s7_car(args);
-	float      w   = 0.0f;
-
-	if (s7_is_string(str))
-		w = ImGui::CalcTextSize(s7_string(str)).x;
-	return s7_make_real(sc, (s7_double)w);
-}
-
 /*
- * (imgui-same-line-right px) -> unspecified. Place the next widget flush to the
- * window's right edge, reserving px for its own width — the CalcTextSize-based
- * right alignment the C scene header used for the "Save As..." button.
+ * The World tab's ImGui-only helper bindings — imgui-calc-text-width,
+ * imgui-same-line-right, imgui-push-style-color-button / -pop-style-color,
+ * imgui-dot, imgui-begin-table-plain, imgui-table-setup-column-fixed and the
+ * plain imgui-input-text — were pruned here when the World tab was lifted onto
+ * kruddgui's own widgets (#492); the Assets tab, the last ImGui consumer, uses
+ * none of them.
  */
-static s7_pointer sp_imgui_same_line_right(s7_scheme *sc, s7_pointer args)
-{
-	float       px = (float)s7_number_to_real(sc, s7_car(args));
-	ImGuiStyle &st = ImGui::GetStyle();
-
-	ImGui::SameLine();
-	ImGui::SetCursorPosX(ImGui::GetWindowWidth() - px
-			     - st.FramePadding.x * 2.0f - st.WindowPadding.x);
-	return s7_unspecified(sc);
-}
-
-/* (imgui-push-style-color-button r g b a) -> unspecified. Tint the button fill. */
-static s7_pointer sp_imgui_push_style_color_button(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer p = args;
-	double     r = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
-	double     g = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
-	double     b = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
-	double     a = s7_number_to_real(sc, s7_car(p));
-
-	ImGui::PushStyleColor(ImGuiCol_Button,
-			      ImVec4((float)r, (float)g, (float)b, (float)a));
-	return s7_unspecified(sc);
-}
-
-/* (imgui-pop-style-color) -> unspecified. Undo one imgui-push-style-color-*. */
-static s7_pointer sp_imgui_pop_style_color(s7_scheme *sc, s7_pointer args)
-{
-	(void)args;
-	ImGui::PopStyleColor();
-	return s7_unspecified(sc);
-}
-
-/*
- * imgui-push-id / imgui-pop-id were an id-scope pair no migrated panel ended up
- * needing (the World inspector disambiguates with per-entity id suffixes
- * instead); removed here (#492) with the other now-unused ImGui bindings.
- */
-
-/*
- * (imgui-dot r g b a) -> unspecified. Draw a small filled circle inline at the
- * cursor and advance past it, so a caller can same-line one after a widget as
- * an "overridden" marker. Uses the window draw list, not a font glyph — the
- * built-in ProggyClean face has no bullet, so text "*" would be all that is
- * available; a draw-list circle reads as the mockup's dot on any font.
- */
-static s7_pointer sp_imgui_dot(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer p = args;
-	double     r = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
-	double     g = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
-	double     b = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
-	double     a = s7_number_to_real(sc, s7_car(p));
-
-	ImDrawList *dl  = ImGui::GetWindowDrawList();
-	ImVec2      pos = ImGui::GetCursorScreenPos();
-	float       lh  = ImGui::GetTextLineHeight();
-	float       rad = lh * 0.28f;
-	ImVec2      c(pos.x + rad + 2.0f, pos.y + lh * 0.5f);
-
-	dl->AddCircleFilled(c, rad,
-			    ImGui::GetColorU32(ImVec4((float)r, (float)g,
-						      (float)b, (float)a)), 12);
-	ImGui::Dummy(ImVec2(rad * 2.0f + 4.0f, lh));
-	return s7_unspecified(sc);
-}
 
 /* Selection id honouring the api / g_entity_sel fallback the World tab uses. */
 static int32_t world_sel(void)
@@ -3218,9 +3087,6 @@ static s7_scheme *ensure_panel_scm(void)
 	s7_define_function(sc, "imgui-set-next-item-width",
 			   sp_imgui_set_next_item_width, 1, 0, false,
 			   "(imgui-set-next-item-width w) width the next widget");
-	s7_define_function(sc, "imgui-input-text", sp_imgui_input_text, 2, 0,
-			   false,
-			   "(imgui-input-text id text) -> (text . committed?)");
 	s7_define_function(sc, "imgui-input-float3", sp_imgui_input_float3, 2, 0,
 			   false,
 			   "(imgui-input-float3 id vec) -> (vec . changed?)");
@@ -3253,20 +3119,6 @@ static s7_scheme *ensure_panel_scm(void)
 	s7_define_function(sc, "imgui-set-item-default-focus",
 			   sp_imgui_set_item_default_focus, 0, 0, false,
 			   "(imgui-set-item-default-focus) focus the last item");
-	s7_define_function(sc, "imgui-calc-text-width",
-			   sp_imgui_calc_text_width, 1, 0, false,
-			   "(imgui-calc-text-width str) -> width px");
-	s7_define_function(sc, "imgui-same-line-right", sp_imgui_same_line_right,
-			   1, 0, false,
-			   "(imgui-same-line-right px) right-align the next item");
-	s7_define_function(sc, "imgui-push-style-color-button",
-			   sp_imgui_push_style_color_button, 4, 0, false,
-			   "(imgui-push-style-color-button r g b a) tint button");
-	s7_define_function(sc, "imgui-pop-style-color", sp_imgui_pop_style_color,
-			   0, 0, false,
-			   "(imgui-pop-style-color) undo a pushed colour");
-	s7_define_function(sc, "imgui-dot", sp_imgui_dot, 4, 0, false,
-			   "(imgui-dot r g b a) inline filled circle");
 	s7_define_function(sc, "krudd-world-caps", sp_krudd_world_caps, 0, 0,
 			   false,
 			   "(krudd-world-caps) -> (entity-api? asset-api?)");
@@ -3318,12 +3170,6 @@ static s7_scheme *ensure_panel_scm(void)
 	s7_define_function(sc, "krudd-entity-set-script-ref",
 			   sp_krudd_entity_set_script_ref, 2, 0, false,
 			   "(krudd-entity-set-script-ref id ref) bind script");
-	s7_define_function(sc, "imgui-begin-table-plain",
-			   sp_imgui_begin_table_plain, 2, 0, false,
-			   "(imgui-begin-table-plain id ncols) borderless table");
-	s7_define_function(sc, "imgui-table-setup-column-fixed",
-			   sp_imgui_table_setup_column_fixed, 2, 0, false,
-			   "(imgui-table-setup-column-fixed label w) fixed column");
 	s7_define_function(sc, "krudd-gizmo-mode", sp_krudd_gizmo_mode, 0, 0,
 			   false, "(krudd-gizmo-mode) -> 0 move 1 rotate 2 scale");
 	s7_define_function(sc, "krudd-set-gizmo-mode", sp_krudd_set_gizmo_mode,
@@ -3486,7 +3332,7 @@ static s7_scheme *ensure_panel_scm(void)
 }
 
 /*
- * Call a nullary panel procedure the image defines (e.g. kruddboard-draw-world)
+ * Call a nullary panel procedure the image defines (e.g. kruddboard-draw-assets)
  * inside the current frame. Returns true if it ran, false if the interpreter
  * is down or the image never defined it, so the caller can fall back.
  */
@@ -3524,9 +3370,9 @@ static bool call_scm_panel(const char *proc)
  * Pre-port native fallback for the whole Assets tab (#402).  This library
  * only ever builds wasm-only (see build.scm), so __EMSCRIPTEN__ is always
  * defined in the one configuration that actually compiles; everything in
- * this #ifndef block is dead code kept for the same reason draw_tab_world's
- * native fallback was (#401) — a hypothetical native ImGui build would fall
- * through to this instead of the Scheme-driven browser path below.
+ * this #ifndef block is dead code kept as the established native-fallback
+ * convention (#401) — a hypothetical native ImGui build would fall through to
+ * this instead of the Scheme-driven browser path below.
  */
 #ifndef __EMSCRIPTEN__
 static uint32_t g_asset_sel; /* 0 = none */
@@ -4326,214 +4172,6 @@ static void draw_tab_assets(void)
 }
 
 /* ------------------------------------------------------------------ */
-/* Tab: World — entity list, create/delete, inspector                 */
-/* ------------------------------------------------------------------ */
-
-#ifndef __EMSCRIPTEN__
-/*
- * The inspector rows below are the native fallback for draw_tab_world; the live
- * (WASM) path draws them from Scheme (kruddboard.scm). kruddboard compiles only
- * for WASM, so this block never builds — it is kept as the established fallback
- * convention (see the #else in draw_tab_world).
- *
- * Read-only identity / hierarchy / component summary for the selected entity.
- * The world exposes more per-entity state than the editable name+transform —
- * the dense id, the parent link, and the component mask — so surface it here.
- */
-static void draw_inspector_details(const struct world *w, uint32_t e)
-{
-	char comps[64];
-	char parent_buf[64];
-
-	snprintf(comps, sizeof(comps), "Transform%s%s%s",
-		 (w->mask[e] & COMPONENT_NAME)     ? ", Name"     : "",
-		 (w->mask[e] & COMPONENT_RENDER)   ? ", Render"   : "",
-		 (w->mask[e] & COMPONENT_MATERIAL) ? ", Material" : "");
-
-	if (w->parent[e] < 0) {
-		snprintf(parent_buf, sizeof(parent_buf), "(root)");
-	} else {
-		uint32_t    p  = (uint32_t)w->parent[e];
-		const char *pn = NULL;
-
-		if ((w->mask[p] & COMPONENT_NAME) &&
-		    w->name_off[p] != SCENE_NO_NAME)
-			pn = w->names + w->name_off[p];
-		if (pn)
-			snprintf(parent_buf, sizeof(parent_buf), "%s (#%u)",
-				 pn, p);
-		else
-			snprintf(parent_buf, sizeof(parent_buf), "entity %u", p);
-	}
-
-	if (!ImGui::BeginTable("##edetails", 2,
-			       ImGuiTableFlags_SizingStretchProp))
-		return;
-	ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 80.0f);
-	ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthStretch);
-
-	ImGui::TableNextRow();
-	ImGui::TableSetColumnIndex(0);
-	ImGui::TextUnformatted("Entity ID");
-	ImGui::TableSetColumnIndex(1);
-	ImGui::Text("%u", e);
-
-	ImGui::TableNextRow();
-	ImGui::TableSetColumnIndex(0);
-	ImGui::TextUnformatted("Parent");
-	ImGui::TableSetColumnIndex(1);
-	ImGui::TextUnformatted(parent_buf);
-
-	ImGui::TableNextRow();
-	ImGui::TableSetColumnIndex(0);
-	ImGui::TextUnformatted("Components");
-	ImGui::TableSetColumnIndex(1);
-	ImGui::TextUnformatted(comps);
-
-	ImGui::EndTable();
-}
-
-/*
- * Mesh binding row: shows the asset the entity's render_ref resolves to and a
- * dropdown to rebind it to any mesh asset (or "(none)" to unbind). Reads the
- * binding straight off render_ref[e] (valid iff COMPONENT_RENDER) and writes it
- * back through the scene api's set_render_ref, which records an undo step.
- */
-static void draw_inspector_mesh(const struct world *w, uint32_t e)
-{
-	bool     has_render = (w->mask[e] & COMPONENT_RENDER) != 0;
-	uint32_t cur_ref    = has_render ? w->render_ref[e] : 0u;
-	char     cur_label[160];
-	bool     can_edit;
-
-	if (!has_render) {
-		snprintf(cur_label, sizeof(cur_label), "(none)");
-	} else {
-		struct asset_info bi;
-
-		if (g_asset_api && g_asset_api->find &&
-		    g_asset_api->find(cur_ref, &bi) == 0)
-			snprintf(cur_label, sizeof(cur_label), "%s", bi.path);
-		else
-			snprintf(cur_label, sizeof(cur_label),
-				 "(missing #%u)", cur_ref);
-	}
-
-	can_edit = g_entity_api && g_entity_api->set_render_ref && g_asset_api;
-
-	if (!ImGui::BeginTable("##emesh", 2, ImGuiTableFlags_SizingStretchProp))
-		return;
-	ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 80.0f);
-	ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthStretch);
-
-	ImGui::TableNextRow();
-	ImGui::TableSetColumnIndex(0);
-	ImGui::TextUnformatted("Mesh");
-	ImGui::TableSetColumnIndex(1);
-	ImGui::SetNextItemWidth(-1.0f);
-	ImGui::BeginDisabled(!can_edit);
-	if (ImGui::BeginCombo("##meshsel", cur_label)) {
-		uint32_t k, n;
-
-		/* "(none)" unbinds — render_ref 0 clears COMPONENT_RENDER. */
-		if (ImGui::Selectable("(none)", !has_render) && can_edit)
-			g_entity_api->set_render_ref((int32_t)e, 0u);
-
-		n = g_asset_api ? g_asset_api->count() : 0u;
-		for (k = 0; k < n; k++) {
-			struct asset_info mi;
-			char              row[176];
-			bool              is_cur;
-
-			if (g_asset_api->info(k, &mi) != 0 ||
-			    mi.type != ASSET_TYPE_MESH || mi.id == 0)
-				continue;
-			snprintf(row, sizeof(row), "%s##m%u", mi.path, mi.id);
-			is_cur = has_render && mi.id == cur_ref;
-			if (ImGui::Selectable(row, is_cur) && can_edit)
-				g_entity_api->set_render_ref((int32_t)e, mi.id);
-			if (is_cur)
-				ImGui::SetItemDefaultFocus();
-		}
-		ImGui::EndCombo();
-	}
-	ImGui::EndDisabled();
-
-	ImGui::EndTable();
-}
-
-/*
- * Material binding row: the entity-inspector counterpart of
- * draw_inspector_mesh, for the material asset that tints the entity's draw
- * (see the Material uniform block in SCENE_SHADER_SRC / scene_renderer.c).
- * Reads material_ref[e] (valid iff COMPONENT_MATERIAL) and writes it back
- * through the scene api's set_material_ref, which records an undo step.
- */
-static void draw_inspector_material(const struct world *w, uint32_t e)
-{
-	bool     has_material = (w->mask[e] & COMPONENT_MATERIAL) != 0;
-	uint32_t cur_ref      = has_material ? w->material_ref[e] : 0u;
-	char     cur_label[160];
-	bool     can_edit;
-
-	if (!has_material) {
-		snprintf(cur_label, sizeof(cur_label), "(none)");
-	} else {
-		struct asset_info bi;
-
-		if (g_asset_api && g_asset_api->find &&
-		    g_asset_api->find(cur_ref, &bi) == 0)
-			snprintf(cur_label, sizeof(cur_label), "%s", bi.path);
-		else
-			snprintf(cur_label, sizeof(cur_label),
-				 "(missing #%u)", cur_ref);
-	}
-
-	can_edit = g_entity_api && g_entity_api->set_material_ref && g_asset_api;
-
-	if (!ImGui::BeginTable("##ematerial", 2, ImGuiTableFlags_SizingStretchProp))
-		return;
-	ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 80.0f);
-	ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthStretch);
-
-	ImGui::TableNextRow();
-	ImGui::TableSetColumnIndex(0);
-	ImGui::TextUnformatted("Material");
-	ImGui::TableSetColumnIndex(1);
-	ImGui::SetNextItemWidth(-1.0f);
-	ImGui::BeginDisabled(!can_edit);
-	if (ImGui::BeginCombo("##materialsel", cur_label)) {
-		uint32_t k, n;
-
-		/* "(none)" unbinds — material_ref 0 clears COMPONENT_MATERIAL. */
-		if (ImGui::Selectable("(none)", !has_material) && can_edit)
-			g_entity_api->set_material_ref((int32_t)e, 0u);
-
-		n = g_asset_api ? g_asset_api->count() : 0u;
-		for (k = 0; k < n; k++) {
-			struct asset_info mi;
-			char              row[176];
-			bool              is_cur;
-
-			if (g_asset_api->info(k, &mi) != 0 ||
-			    mi.type != ASSET_TYPE_MATERIAL || mi.id == 0)
-				continue;
-			snprintf(row, sizeof(row), "%s##m%u", mi.path, mi.id);
-			is_cur = has_material && mi.id == cur_ref;
-			if (ImGui::Selectable(row, is_cur) && can_edit)
-				g_entity_api->set_material_ref((int32_t)e, mi.id);
-			if (is_cur)
-				ImGui::SetItemDefaultFocus();
-		}
-		ImGui::EndCombo();
-	}
-	ImGui::EndDisabled();
-
-	ImGui::EndTable();
-}
-#endif /* !__EMSCRIPTEN__ — native inspector fallback */
-
-/* ------------------------------------------------------------------ */
 /* Transform gizmo (#178)                                              */
 /* ------------------------------------------------------------------ */
 
@@ -4915,264 +4553,6 @@ static void pick_update(bool gizmo_active)
 	g_entity_api->set_selected(hit);
 }
 
-#ifndef __EMSCRIPTEN__
-/*
- * Move / Rotate / Scale selector — shared state with the viewport handles.
- * Native fallback only; the live tool chips are drawn from Scheme through
- * krudd-gizmo-mode / krudd-set-gizmo-mode.
- */
-static void draw_gizmo_mode_chips(void)
-{
-	static const char *const NAME[3] = { "Move", "Rotate", "Scale" };
-	int m;
-
-	ImGui::TextUnformatted("Tool");
-	ImGui::SameLine();
-	for (m = 0; m < 3; m++) {
-		bool active = (int)g_gizmo_mode == m;
-
-		if (m > 0)
-			ImGui::SameLine();
-		if (active)
-			ImGui::PushStyleColor(ImGuiCol_Button,
-					      IM_COL32(70, 110, 170, 255));
-		if (ImGui::SmallButton(NAME[m]))
-			g_gizmo_mode = (enum gizmo_mode)m;
-		if (active)
-			ImGui::PopStyleColor();
-	}
-}
-#endif /* !__EMSCRIPTEN__ — native gizmo-chip fallback */
-
-static void draw_tab_world(void)
-{
-#ifdef __EMSCRIPTEN__
-	/* Ported to Scheme (kruddboard.scm). Fall back only if the image can't
-	 * run at all — an empty panel would read as "no world". */
-	if (call_scm_panel("kruddboard-draw-world"))
-		return;
-	ImGui::TextDisabled("(world unavailable)");
-#else
-	const struct world     *w = NULL;
-	const struct transform *t;
-	const char             *ename;
-	uint32_t                i;
-	uint32_t                e;
-	int32_t                 sel;
-	float                   pos[3], rot[4], scl[3];
-	char                    fallback[32];
-	char                    name_buf[256];
-	char                    sel_id[72];
-	char                    del_id[16];
-
-	if (g_entity_api)
-		w = g_entity_api->get_world();
-
-	/* Selection lives in the scene subsystem; fall back if it's absent. */
-	sel = g_entity_api ? g_entity_api->get_selected() : g_entity_sel;
-
-	/* ---- Scene header ---- */
-	ImGui::TextUnformatted("Untitled Scene");
-	ImGui::SameLine();
-	ImGui::SetCursorPosX(ImGui::GetWindowWidth()
-		- ImGui::CalcTextSize("Save As...").x
-		- ImGui::GetStyle().FramePadding.x * 2.0f
-		- ImGui::GetStyle().WindowPadding.x);
-	ImGui::BeginDisabled();
-	ImGui::SmallButton("Save As...");
-	ImGui::EndDisabled();
-
-	ImGui::Separator();
-
-	/* ---- Entity list ---- */
-	if (ImGui::CollapsingHeader("Entities",
-				    ImGuiTreeNodeFlags_DefaultOpen)) {
-		ImGui::BeginDisabled(!g_entity_api);
-		if (ImGui::SmallButton("+ Entity") && g_entity_api) {
-			struct transform seed = {};  /* identity at origin */
-			uint32_t box = asset_id_by_path("builtin://mesh/box");
-			uint32_t material =
-				asset_id_by_path("builtin://material/checker");
-			int32_t          id;
-
-			seed.rotation[3] = 1.0f;
-			seed.scale[0] = seed.scale[1] = seed.scale[2] = 1.0f;
-			id = g_entity_api->create_entity(WORLD_NO_PARENT, &seed,
-							 0u, box);
-			if (id >= 0) {
-				if (material && g_entity_api->set_material_ref)
-					g_entity_api->set_material_ref(id,
-									material);
-				g_entity_api->set_name(id, "Entity");
-				g_entity_api->set_selected(id);
-				sel = id;
-			}
-		}
-		ImGui::EndDisabled();
-
-		if (!w || w->count == 0) {
-			ImGui::TextDisabled("(no entities)");
-		} else if (ImGui::BeginTable("##entlist", 2,
-				ImGuiTableFlags_Borders        |
-				ImGuiTableFlags_RowBg          |
-				ImGuiTableFlags_SizingStretchProp)) {
-			ImGui::TableSetupColumn("Name",
-				ImGuiTableColumnFlags_WidthStretch);
-			ImGui::TableSetupColumn("",
-				ImGuiTableColumnFlags_WidthFixed, 24.0f);
-
-			for (i = 0; i < w->count; i++) {
-				if (!w->alive[i])
-					continue;
-				ename = NULL;
-				if ((w->mask[i] & COMPONENT_NAME) &&
-				    w->name_off[i] != SCENE_NO_NAME)
-					ename = w->names + w->name_off[i];
-				if (!ename) {
-					snprintf(fallback, sizeof(fallback),
-						 "entity %u", i);
-					ename = fallback;
-				}
-				ImGui::TableNextRow();
-				ImGui::TableSetColumnIndex(0);
-				snprintf(sel_id, sizeof(sel_id),
-					 "%s##e%u", ename, i);
-				if (ImGui::Selectable(
-					    sel_id,
-					    (int32_t)i == sel,
-					    ImGuiSelectableFlags_SpanAllColumns)) {
-					if (g_entity_api)
-						g_entity_api->set_selected(
-							(int32_t)i);
-					else
-						g_entity_sel = (int32_t)i;
-					sel = (int32_t)i;
-				}
-				ImGui::TableSetColumnIndex(1);
-				snprintf(del_id, sizeof(del_id), "x##d%u", i);
-				ImGui::BeginDisabled(!g_entity_api);
-				if (ImGui::SmallButton(del_id) && g_entity_api)
-					g_entity_api->destroy_entity((int32_t)i);
-				ImGui::EndDisabled();
-			}
-
-			ImGui::EndTable();
-		}
-	}
-
-	ImGui::Separator();
-
-	draw_gizmo_mode_chips();
-
-	ImGui::Separator();
-
-	/* ---- Inspector ---- */
-	if (ImGui::CollapsingHeader("Inspector",
-				    ImGuiTreeNodeFlags_DefaultOpen)) {
-		if (sel < 0 || !w ||
-		    (uint32_t)sel >= w->count ||
-		    !w->alive[(uint32_t)sel]) {
-			ImGui::TextDisabled("(nothing selected)");
-		} else {
-			e     = (uint32_t)sel;
-			t     = &w->local[e];
-			ename = NULL;
-			if ((w->mask[e] & COMPONENT_NAME) &&
-			    w->name_off[e] != SCENE_NO_NAME)
-				ename = w->names + w->name_off[e];
-			snprintf(name_buf, sizeof(name_buf),
-				 "%s", ename ? ename : "");
-
-			pos[0] = t->position[0];
-			pos[1] = t->position[1];
-			pos[2] = t->position[2];
-			rot[0] = t->rotation[0];
-			rot[1] = t->rotation[1];
-			rot[2] = t->rotation[2];
-			rot[3] = t->rotation[3];
-			scl[0] = t->scale[0];
-			scl[1] = t->scale[1];
-			scl[2] = t->scale[2];
-
-			bool xform_changed = false;
-
-			ImGui::BeginDisabled(!g_entity_api);
-
-			ImGui::SetNextItemWidth(-1.0f);
-			ImGui::InputText("##ename", name_buf,
-					 sizeof(name_buf));
-			/* Commit once, on focus loss — not every keystroke, so
-			 * the append-only name blob doesn't churn. */
-			if (ImGui::IsItemDeactivatedAfterEdit() && g_entity_api)
-				g_entity_api->set_name((int32_t)e, name_buf);
-
-			ImGui::Separator();
-
-			if (ImGui::BeginTable("##xform", 2,
-					ImGuiTableFlags_SizingStretchProp)) {
-				ImGui::TableSetupColumn("",
-					ImGuiTableColumnFlags_WidthFixed,
-					64.0f);
-				ImGui::TableSetupColumn("",
-					ImGuiTableColumnFlags_WidthStretch);
-
-				ImGui::TableNextRow();
-				ImGui::TableSetColumnIndex(0);
-				ImGui::TextUnformatted("Position");
-				ImGui::TableSetColumnIndex(1);
-				ImGui::SetNextItemWidth(-1.0f);
-				xform_changed |=
-					ImGui::InputFloat3("##pos", pos);
-
-				ImGui::TableNextRow();
-				ImGui::TableSetColumnIndex(0);
-				ImGui::TextUnformatted("Rotation");
-				ImGui::TableSetColumnIndex(1);
-				ImGui::SetNextItemWidth(-1.0f);
-				xform_changed |=
-					ImGui::InputFloat4("##rot", rot);
-
-				ImGui::TableNextRow();
-				ImGui::TableSetColumnIndex(0);
-				ImGui::TextUnformatted("Scale");
-				ImGui::TableSetColumnIndex(1);
-				ImGui::SetNextItemWidth(-1.0f);
-				xform_changed |=
-					ImGui::InputFloat3("##scl", scl);
-
-				ImGui::EndTable();
-			}
-
-			ImGui::EndDisabled();
-
-			/* Push edited fields back through the mutable API; the
-			 * next tick's propagate refreshes world_xform. */
-			if (xform_changed && g_entity_api) {
-				struct transform nt;
-
-				nt.position[0] = pos[0];
-				nt.position[1] = pos[1];
-				nt.position[2] = pos[2];
-				nt.rotation[0] = rot[0];
-				nt.rotation[1] = rot[1];
-				nt.rotation[2] = rot[2];
-				nt.rotation[3] = rot[3];
-				nt.scale[0]    = scl[0];
-				nt.scale[1]    = scl[1];
-				nt.scale[2]    = scl[2];
-				g_entity_api->set_transform((int32_t)e, &nt);
-			}
-
-			ImGui::Separator();
-
-			draw_inspector_details(w, e);
-			draw_inspector_mesh(w, e);
-			draw_inspector_material(w, e);
-		}
-	}
-#endif /* __EMSCRIPTEN__ */
-}
-
 /* ------------------------------------------------------------------ */
 /* Main board window                                                   */
 /* ------------------------------------------------------------------ */
@@ -5393,10 +4773,6 @@ static void draw_board(void * /*userdata*/)
 	if (!g_collapsed) {
 		if (ImGui::BeginTabBar("##tabs",
 				       ImGuiTabBarFlags_FittingPolicyScroll)) {
-			if (ImGui::BeginTabItem("Scene")) {
-				draw_tab_world();
-				ImGui::EndTabItem();
-			}
 			if (ImGui::BeginTabItem("Assets")) {
 				draw_tab_assets();
 				ImGui::EndTabItem();

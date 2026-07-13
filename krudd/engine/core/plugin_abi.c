@@ -27,6 +27,32 @@ EM_JS(double, get_device_pixel_ratio, (void), {
 })
 
 /*
+ * kruddgui text-capture handoff.
+ *
+ * The keyboard bridge below (the hidden <input> and its char / key queues) is
+ * one shared resource, drained each frame by whoever owns text input.  ImGui
+ * owns it by default; when a kruddgui field takes focus, kruddgui raises this
+ * flag so imgui_plugin steps aside — skipping its char / key drain and its
+ * desktop WantTextInput auto-focus — and kruddgui drains the bridge into its
+ * own focused field instead.  This is the text-input twin of the pointer-input
+ * inversion (#489): kruddgui owns input, ImGui is downstream.
+ *
+ * Plain C, not EM_JS: both plugins are compiled into this module and reach it
+ * through the global symbol table, the same way they reach the EM_JS bridges.
+ */
+static int g_kgui_text_capture;
+
+void krudd_text_input_set_capture(int on)
+{
+	g_kgui_text_capture = on ? 1 : 0;
+}
+
+int krudd_text_input_capture(void)
+{
+	return g_kgui_text_capture;
+}
+
+/*
  * Web text-input bridge for Dear ImGui — desktop keyboard + mobile soft
  * keyboard support.
  *

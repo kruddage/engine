@@ -2,7 +2,8 @@
 ((wasm-only
 	(library "kruddgui"
 		(wasm-flags "--std=c++17" "-fno-exceptions" "-fno-rtti")
-		(sources "kruddgui.cpp" "kgui_batch.c" "kgui_input.c")
+		(sources "kruddgui.cpp" "kgui_batch.c" "kgui_input.c"
+			"kgui_text_edit.c")
 		(private "." (raw "${generated}") (raw "../third_party")
 			(raw "${imgui}") (raw "${imgui}/backends"))
 		(link "script" "imgui_plugin" "log" "memory" "subsystem"
@@ -23,4 +24,19 @@
 	(executable "kgui_input_test"
 		(sources "kgui_input_test.c")
 		(link "kgui_input"))
-	(test "kgui_input" "kgui_input_test")))
+	(test "kgui_input" "kgui_input_test")
+
+	(library "kgui_text_edit"
+		(sources "kgui_text_edit.c")
+		(public (current)))
+	(executable "kgui_text_edit_test"
+		(sources "kgui_text_edit_test.c")
+		(link "kgui_text_edit"))
+	(test "kgui_text_edit" "kgui_text_edit_test")
+
+	(executable "kgui_scene_test"
+		(sources "kgui_scene_test.c")
+		(private (root "core/include") (raw "${generated}")
+			(raw "../third_party"))
+		(link "script"))
+	(test "kgui_scene" "kgui_scene_test")))

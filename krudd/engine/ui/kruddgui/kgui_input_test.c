@@ -262,6 +262,72 @@ static void test_wheel_routing(void)
 	assert(io->wheel == 3.0f);
 }
 
+/*
+ * A slider (or 2D picker) is a small region declared ON TOP of the scroll body,
+ * after it in draw order. A down inside the slider is captured by the slider —
+ * its press position tracks the pointer so the widget can map it to a value —
+ * while the body stays unpressed, so a drag on the slider never also scrolls.
+ * A down on the body away from the slider still hits the body. This is the whole
+ * per-widget drag-capture mechanism kruddgui-slider / -color-swatch build on, no
+ * kgui_input change needed.
+ */
+static void commit_body_and_slider(struct kgui_input *in)
+{
+	kgui_input_frame_begin(in);
+	kgui_input_region(in, BAR, 0.0f, 0.0f, 300.0f, 300.0f); /* scroll body */
+	kgui_input_region(in, LOG, 50.0f, 100.0f, 200.0f, 40.0f); /* slider ontop */
+	kgui_input_frame_commit(in);
+}
+
+static void test_slider_captures_over_body(void)
+{
+	struct kgui_input *inp;
+	struct kgui_input in;
+	struct kgui_region_io *body, *slider;
+
+	inp = &in;
+	kgui_input_init(inp);
+	commit_body_and_slider(inp);
+
+	/* Down inside the slider rect: the slider (later-declared) captures it. */
+	assert(kgui_input_pointer_down(inp, 1, 120.0f, 120.0f) ==
+	       KGUI_ROUTE_CONSUMED);
+	assert(kgui_input_pointer_move(inp, 1, 180.0f, 121.0f) ==
+	       KGUI_ROUTE_CONSUMED);
+
+	kgui_input_frame_begin(inp);
+	body   = kgui_input_region(inp, BAR, 0.0f, 0.0f, 300.0f, 300.0f);
+	slider = kgui_input_region(inp, LOG, 50.0f, 100.0f, 200.0f, 40.0f);
+
+	assert(slider->pressed);          /* the slider owns the gesture */
+	assert(slider->press_x == 180.0f); /* live x maps to the value */
+	assert(slider->drag_dx == 60.0f);  /* and the accumulated drag */
+	assert(!body->pressed);            /* so the body does NOT scroll */
+	assert(body->drag_dx == 0.0f);
+}
+
+static void test_down_off_slider_hits_body(void)
+{
+	struct kgui_input in;
+	struct kgui_region_io *body, *slider;
+
+	kgui_input_init(&in);
+	commit_body_and_slider(&in);
+
+	/* Down on the body but outside the slider: the body captures it. */
+	assert(kgui_input_pointer_down(&in, 1, 20.0f, 20.0f) ==
+	       KGUI_ROUTE_CONSUMED);
+	kgui_input_pointer_move(&in, 1, 20.0f, 60.0f);
+
+	kgui_input_frame_begin(&in);
+	body   = kgui_input_region(&in, BAR, 0.0f, 0.0f, 300.0f, 300.0f);
+	slider = kgui_input_region(&in, LOG, 50.0f, 100.0f, 200.0f, 40.0f);
+
+	assert(body->pressed);           /* the body owns it — this scrolls */
+	assert(body->drag_dy == 40.0f);
+	assert(!slider->pressed);
+}
+
 static void test_mouse_hover_forwards(void)
 {
 	struct kgui_input in;
@@ -288,6 +354,8 @@ int main(void)
 	RUN(multitouch_independent);
 	RUN(second_unclaimed_pointer_swallowed);
 	RUN(region_press_does_not_block_host_pointer);
+	RUN(slider_captures_over_body);
+	RUN(down_off_slider_hits_body);
 	RUN(wheel_routing);
 	RUN(mouse_hover_forwards);
 

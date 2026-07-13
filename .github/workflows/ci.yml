@@ -14,9 +14,6 @@ jobs:
     # Skip on PR-close events — nothing to lint then.
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
     runs-on: ubuntu-latest
-    # Advisory for now: the .scm comment lint runs and reports, but a failure
-    # must not block merge (see #497). Drop this once the style is re-enforced.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 

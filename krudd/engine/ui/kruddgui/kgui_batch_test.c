@@ -209,6 +209,89 @@ static void test_reset_clears_clip_and_commands(void)
 	assert(b.cmd_count == 1 && !b.cmds[0].clipped);
 }
 
+static void test_image_emits_uv_tint_and_texture(void)
+{
+	struct kgui_batch b;
+
+	kgui_batch_init(&b, verts, STORAGE);
+	kgui_batch_image(&b, 10.0f, 20.0f, 30.0f, 40.0f,
+			 0.25f, 0.5f, 0.75f, 1.0f, 7u,
+			 1.0f, 1.0f, 1.0f, 0.5f);
+
+	assert(b.count == 6);
+	assert(b.cmd_count == 1);
+	assert(b.cmds[0].tex == 7u);   /* the command carries the texture */
+	assert(!b.cmds[0].clipped);
+
+	/* The quad spans the box with the given sub-rect UVs at the corners. */
+	assert(verts[0].x == 10.0f && verts[0].y == 20.0f);
+	assert(verts[0].u == 0.25f && verts[0].v == 0.5f);
+	assert(verts[2].x == 40.0f && verts[2].y == 60.0f);
+	assert(verts[2].u == 0.75f && verts[2].v == 1.0f);
+	/* The tint rides on every vertex (here a half-alpha fade). */
+	assert(verts[0].r == 1.0f && verts[0].a == 0.5f);
+}
+
+static void test_image_splits_from_atlas_commands(void)
+{
+	struct kgui_batch b;
+
+	kgui_batch_init(&b, verts, STORAGE);
+	kgui_batch_quad(&b, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1);  /* atlas   */
+	kgui_batch_image(&b, 0, 0, 1, 1, 0, 0, 1, 1, 9u, 1, 1, 1, 1); /* image */
+	kgui_batch_quad(&b, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1);  /* atlas   */
+
+	/* The texture change opens a command each way: atlas / image / atlas. */
+	assert(b.cmd_count == 3);
+	assert(b.cmds[0].tex == 0u);
+	assert(b.cmds[1].tex == 9u);
+	assert(b.cmds[1].first == 6 && b.cmds[1].count == 6);
+	assert(b.cmds[2].tex == 0u);
+}
+
+static void test_image_same_texture_shares_command(void)
+{
+	struct kgui_batch b;
+
+	kgui_batch_init(&b, verts, STORAGE);
+	kgui_batch_image(&b, 0, 0, 1, 1, 0, 0, 1, 1, 5u, 1, 1, 1, 1);
+	kgui_batch_image(&b, 2, 0, 1, 1, 0, 0, 1, 1, 5u, 1, 1, 1, 1);
+	assert(b.cmd_count == 1);            /* same texture -> one run   */
+	assert(b.cmds[0].count == 12);
+
+	kgui_batch_image(&b, 4, 0, 1, 1, 0, 0, 1, 1, 6u, 1, 1, 1, 1);
+	assert(b.cmd_count == 2);            /* a new texture splits it   */
+	assert(b.cmds[1].tex == 6u);
+}
+
+static void test_image_honours_clip(void)
+{
+	struct kgui_batch b;
+
+	kgui_batch_init(&b, verts, STORAGE);
+	kgui_batch_set_clip(&b, 10, 20, 30, 40);
+	kgui_batch_image(&b, 0, 0, 1, 1, 0, 0, 1, 1, 8u, 1, 1, 1, 1);
+
+	assert(b.cmd_count == 1);
+	assert(b.cmds[0].clipped);
+	assert(b.cmds[0].x == 10 && b.cmds[0].y == 20);
+	assert(b.cmds[0].tex == 8u);
+}
+
+static void test_reset_clears_texture(void)
+{
+	struct kgui_batch b;
+
+	kgui_batch_init(&b, verts, STORAGE);
+	kgui_batch_image(&b, 0, 0, 1, 1, 0, 0, 1, 1, 3u, 1, 1, 1, 1);
+	assert(b.cmds[0].tex == 3u);
+
+	kgui_batch_reset(&b);
+	/* After an image + reset, the next atlas quad is back on texture 0. */
+	kgui_batch_quad(&b, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1);
+	assert(b.cmd_count == 1 && b.cmds[0].tex == 0u);
+}
+
 static void test_utf8_decode(void)
 {
 	/* 'A', 'é' (U+00E9, 2 bytes), '€' (U+20AC, 3 bytes). */
@@ -231,6 +314,11 @@ int main(void)
 	RUN(unclipped_is_one_command);
 	RUN(clip_splits_commands);
 	RUN(reset_clears_clip_and_commands);
+	RUN(image_emits_uv_tint_and_texture);
+	RUN(image_splits_from_atlas_commands);
+	RUN(image_same_texture_shares_command);
+	RUN(image_honours_clip);
+	RUN(reset_clears_texture);
 	RUN(utf8_decode);
 
 	printf("%d/%d tests passed\n", tests_passed, tests_run);

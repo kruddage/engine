@@ -28,17 +28,23 @@ struct kgui_vertex {
 };
 
 /*
- * One draw command: a contiguous run of vertices sharing a clip rectangle. A
- * batch is split into commands only where the clip changes, so a panel with a
- * scroll region flushes as a couple of scissored draws out of the one VBO
- * (`clipped` 0 means "no scissor — the whole viewport"). Coordinates are the
- * same CSS pixels as the vertices.
+ * One draw command: a contiguous run of vertices sharing a clip rectangle and a
+ * sampled texture. A batch is split into a new command only where the clip or the
+ * texture changes, so a panel with a scroll region flushes as a couple of
+ * scissored draws out of the one VBO (`clipped` 0 means "no scissor — the whole
+ * viewport"). Coordinates are the same CSS pixels as the vertices.
+ *
+ * `tex` is 0 for the default draws (filled rects and font-atlas glyphs, which the
+ * renderer samples from the atlas) and the external GL texture handle for an image
+ * quad (kgui_batch_image), which the renderer binds before that command's run. The
+ * batch itself stays GL-free: `tex` is an opaque handle it only stores and matches.
  */
 struct kgui_clip_cmd {
-	int   clipped;
-	float x, y, w, h;
-	int   first; /* first vertex of the run */
-	int   count; /* vertices in the run    */
+	int      clipped;
+	float    x, y, w, h;
+	unsigned tex; /* 0 = atlas; else an external texture handle */
+	int      first; /* first vertex of the run */
+	int      count; /* vertices in the run    */
 };
 
 #define KGUI_BATCH_MAX_CMDS 32
@@ -59,8 +65,9 @@ struct kgui_batch {
 	struct kgui_clip_cmd cmds[KGUI_BATCH_MAX_CMDS];
 	int                  cmd_count;
 
-	int   clip_on;             /* clip currently applied to new quads */
-	float clip_x, clip_y, clip_w, clip_h;
+	int      clip_on;          /* clip currently applied to new quads */
+	float    clip_x, clip_y, clip_w, clip_h;
+	unsigned clip_tex;         /* texture applied to new quads (0 = atlas) */
 };
 
 void kgui_batch_init(struct kgui_batch *b, struct kgui_vertex *storage,
@@ -76,6 +83,20 @@ void kgui_batch_quad(struct kgui_batch *b,
 		     float x, float y, float w, float h,
 		     float u0, float v0, float u1, float v1,
 		     float r, float g, float bl, float a);
+
+/*
+ * Push one image quad sampling the external texture `tex` (a GL handle the batch
+ * only stores) over the UV rectangle (u0,v0)-(u1,v1), modulated by the tint colour
+ * — a plain image passes white. Because the texture differs from the atlas the
+ * rects and glyphs use, the quad opens a fresh draw command carrying `tex`; the
+ * next atlas quad opens another, so images interleave with the rest of the panel
+ * in one VBO. Honours the current clip like any other quad.
+ */
+void kgui_batch_image(struct kgui_batch *b,
+		      float x, float y, float w, float h,
+		      float u0, float v0, float u1, float v1,
+		      unsigned tex,
+		      float r, float g, float bl, float a);
 
 /*
  * Clip subsequent quads to a rectangle (CSS pixels), or clear the clip so they

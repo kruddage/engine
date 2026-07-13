@@ -97,6 +97,7 @@ static void setup(void)
 	s7_eval_c_string(sc, "(set! kruddgui-assets-scroll 0.0)");
 	s7_eval_c_string(sc, "(set! kruddgui-assets-total 0.0)");
 	s7_eval_c_string(sc, "(set! kruddgui-open-picker #f)");
+	s7_eval_c_string(sc, "(set! kruddgui-fold-state '())");
 	s7_eval_c_string(sc, "(set! kruddgui-demo-metallic 0.5)");
 	s7_eval_c_string(sc, "(set! kruddgui-demo-rough 0.3)");
 	s7_eval_c_string(sc, "(set! kruddgui-demo-color (list 0.95 0.55 0.15))");
@@ -258,6 +259,23 @@ static void press_region(const char *id, float fx, float fy)
 	g_region_live = 1;
 }
 
+/* Evaluate a Scheme snippet against the loaded image and return its result. */
+static s7_pointer eval(const char *src)
+{
+	return s7_eval_c_string(script_s7(), src);
+}
+
+static int is_true(s7_pointer p)
+{
+	return p == s7_t(script_s7());
+}
+
+/*
+ * A layout cursor with a wide-open clip band, so a widget called directly is
+ * always visible: origin x 10, width 380, running y 0.
+ */
+#define TEST_LAY "(kruddgui-lay 0.0 -1000.0 2000.0 10.0 380.0)"
+
 /* ------------------------------------------------------------------ */
 /* Tests                                                               */
 /* ------------------------------------------------------------------ */
@@ -266,8 +284,10 @@ static void test_panel_renders(void)
 {
 	draw();
 	assert(rec_has("text ASSETS"));
-	assert(rec_has("text Metallic"));
+	assert(rec_has("text Material"));   /* the fold header  */
+	assert(rec_has("text Metallic"));   /* its body (open)  */
 	assert(rec_has("text Base Color"));
+	assert(rec_has("text Reset"));      /* the button row   */
 	assert(rec_has("region demo-metallic"));
 }
 
@@ -300,15 +320,16 @@ static const char *open_picker(void)
 static void test_swatch_tap_toggles_picker(void)
 {
 	/*
-	 * The swatch row sits below the label, a rule, two sliders and a rule:
-	 * body-y 48 + 26 + 8 + 72 + 72 + 8 + 26 = 260, a 40px row. A tap on it
-	 * opens the picker; nothing is open before, and its regions then draw.
+	 * The swatch row sits below the label, a rule, the (open) Material fold
+	 * header, two sliders and a rule:
+	 * body-y 48 + 26 + 8 + 46 (fold) + 72 + 72 + 8 + 26 = 306, a 40px row. A
+	 * tap on it opens the picker; nothing is open before, its regions draw.
 	 */
 	draw();
 	assert(strcmp(open_picker(), "") == 0);
 	assert(!rec_has("region demo-color-sv"));
 
-	tap(200.0f, 280.0f);
+	tap(200.0f, 326.0f);
 	g_rec_n = 0;
 	draw();
 	assert(strcmp(open_picker(), "demo-color") == 0);
@@ -316,9 +337,66 @@ static void test_swatch_tap_toggles_picker(void)
 	assert(rec_has("region demo-color-hue"));
 
 	/* A second tap on the swatch closes it again (one open at a time). */
-	tap(200.0f, 280.0f);
+	tap(200.0f, 326.0f);
 	draw();
 	assert(strcmp(open_picker(), "") == 0);
+}
+
+static void test_fold_collapses(void)
+{
+	/*
+	 * The Material fold is open by default, so its body draws. Its header is
+	 * the first row after the section label + rule: body-y 48 + 26 + 8 = 82,
+	 * a 40px row. Tapping it collapses the fold — the body no longer draws.
+	 */
+	draw();
+	assert(rec_has("text Material"));
+	assert(rec_has("text Metallic"));
+
+	tap(200.0f, 100.0f);
+	g_rec_n = 0;
+	draw();
+	assert(rec_has("text Material"));       /* header still there */
+	assert(!rec_has("text Metallic"));      /* body gated off     */
+	assert(!rec_has("region demo-metallic"));
+}
+
+static void test_fold_toggle(void)
+{
+	/* A fold called directly: header rect is x10 y0 w380 h40 (see TEST_LAY). */
+	const char *mk =
+		"(kruddgui-fold " TEST_LAY " \"f1\" \"F1\" #f)";
+
+	assert(!is_true(eval(mk)));             /* default closed        */
+	tap(100.0f, 20.0f);
+	assert(is_true(eval(mk)));              /* tap on header opens    */
+	assert(is_true(eval(mk)));              /* stays open, no tap     */
+	tap(100.0f, 20.0f);
+	assert(!is_true(eval(mk)));             /* another tap closes     */
+
+	/* A second fold is independent — still at its own default. */
+	assert(!is_true(eval(
+		"(kruddgui-fold " TEST_LAY " \"f2\" \"F2\" #f)")));
+	assert(is_true(eval(
+		"(kruddgui-fold " TEST_LAY " \"f3\" \"F3\" #t)")));
+}
+
+static void test_button_row_selects(void)
+{
+	/* cw = (380 - 6) / 2 = 187; left cell [10,197], right [203,390]. */
+	const char *mk =
+		"(kruddgui-button-row " TEST_LAY " (list \"Reset\" \"Warm\"))";
+	s7_pointer r;
+
+	assert(eval(mk) == s7_f(script_s7()));  /* no tap -> #f */
+
+	tap(100.0f, 20.0f);
+	r = eval(mk);
+	assert(s7_is_string(r) && strcmp(s7_string(r), "Reset") == 0);
+
+	tap(300.0f, 20.0f);
+	r = eval(mk);
+	assert(s7_is_string(r) && strcmp(s7_string(r), "Warm") == 0);
 }
 
 static void test_picker_hue_changes_colour(void)
@@ -379,6 +457,9 @@ int main(void)
 	RUN(picker_hue_changes_colour);
 	RUN(picker_sv_corner_is_white);
 	RUN(picker_sv_bottom_is_black);
+	RUN(fold_collapses);
+	RUN(fold_toggle);
+	RUN(button_row_selects);
 
 	printf("\n%d/%d kgui widget tests passed\n", tests_passed, tests_run);
 	return tests_passed == tests_run ? 0 : 1;

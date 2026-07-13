@@ -105,10 +105,10 @@
 
 (define ninja-out (getenv "KRUDD_NINJA_OUT"))
 
-; When the harness gives us an s7 interpreter path, wire the generator edge to
-; re-run this very script, so a `.scm` edit under raw `ninja` regenerates the
-; codegen headers before recompiling their consumers. Without it the emitted
-; build.ninja simply has no `regen` edge (fine for the string checks below).
+;;! When the harness gives us an s7 interpreter path, wire the generator edge to
+;;! re-run this very script, so a `.scm` edit under raw `ninja` regenerates the
+;;! codegen headers before recompiling their consumers. Without it the emitted
+;;! build.ninja simply has no `regen` edge (fine for the string checks below).
 (define s7bin (getenv "KRUDD_S7BIN"))
 (define regen-cmd
 	(if (and s7bin (> (string-length s7bin) 0)

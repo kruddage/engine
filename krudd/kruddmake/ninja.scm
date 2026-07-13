@@ -217,11 +217,11 @@
 	  "  command = $empp $mainflags $extraflags $in -o $out"
 	  "  description = LINK(wasm) $out"
 	  ""
-	  ; Re-run the generator so that editing a `.scm`/`.in` input (a build
-	  ; spec, or any Scheme module embedded into a `*_scm.h`) regenerates
-	  ; build.ninja and the codegen outputs before the rest of the build. The
-	  ; regenerated headers then flow to their consumers through the gcc
-	  ; depfiles on the compile rules above.
+	  ;;! Re-run the generator so that editing a `.scm`/`.in` input (a build
+	  ;;! spec, or any Scheme module embedded into a `*_scm.h`) regenerates
+	  ;;! build.ninja and the codegen outputs before the rest of the build. The
+	  ;;! regenerated headers then flow to their consumers through the gcc
+	  ;;! depfiles on the compile rules above.
 	  "rule regen"
 	  "  command = $regen_cmd"
 	  "  generator = 1"
@@ -356,10 +356,10 @@
 		  rendscm
 		  (string-append gen "/renderer.h"))))
 
-; The `.scm`/`.in` inputs that feed code generation. When any of these change
-; the `regen` edge below re-runs the generator, which rewrites build.ninja and
-; the codegen outputs (`generated/*`). Kept a deliberate superset so a stale
-; header can never outlive an edit to its source.
+;;! The `.scm`/`.in` inputs that feed code generation. When any of these change
+;;! the `regen` edge below re-runs the generator, which rewrites build.ninja and
+;;! the codegen outputs (`generated/*`). Kept a deliberate superset so a stale
+;;! header can never outlive an edit to its source.
 (define (ninja-generator-inputs manifest srcroot)
 	(append
 	  (map (lambda (p) (string-append srcroot "/" p))
@@ -384,10 +384,10 @@
 		 (string-append srcroot "/" (car pair) "/build.scm"))
 	       manifest)))
 
-; Emit the generator edge. `regen-cmd` is the exact shell command that
-; regenerates this build.ninja (and, as a side effect, the codegen outputs);
-; each entry point supplies its own, since the build dir and interpreter
-; differ between `krudd build` and the kruddmake test harness.
+;;! Emit the generator edge. `regen-cmd` is the exact shell command that
+;;! regenerates this build.ninja (and, as a side effect, the codegen outputs);
+;;! each entry point supplies its own, since the build dir and interpreter
+;;! differ between `krudd build` and the kruddmake test harness.
 (define (ninja-emit-regen manifest srcroot regen-cmd)
 	(if (and (string? regen-cmd) (> (string-length regen-cmd) 0))
 	    (begin

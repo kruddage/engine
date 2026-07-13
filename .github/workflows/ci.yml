@@ -15,7 +15,7 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Lint .scm comments
         run: python3 .github/scripts/lint-scm-comments.py $(git ls-files '*.scm')
@@ -29,7 +29,7 @@ jobs:
     outputs:
       version: ${{ steps.compute.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Folds every merged PR's release:{breaking,feature,fix,chore} label
       # into an X.Y.Z version — no VERSION file, no git tag. See the script
@@ -51,7 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     container: emscripten/emsdk:6.0.2
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -94,7 +94,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Download staged site
         uses: actions/download-artifact@v8
@@ -141,7 +141,7 @@ jobs:
       group: preview-${{ github.event.pull_request.number }}
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Download staged site
         if: github.event.action != 'closed'

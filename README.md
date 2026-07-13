@@ -15,7 +15,7 @@ fixed-timestep loop; subsystems (logging, memory, rendering) attach as plugins t
 WASM ABI.
 
 Current state: entity/scene runtime, asset pipeline with local IndexedDB persistence,
-WebGL rendering with a frame graph, and an in-browser authoring surface (kruddboard).
+WebGL rendering with a frame graph, and an in-browser authoring surface.
 
 ## Roadmap: Scheme as the build system and the game
 
@@ -25,16 +25,17 @@ stop being two separate disciplines.
 
 **`kruddmake`** is that language — [S7 Scheme](https://ccrma.stanford.edu/software/snd/snd/s7.html)
 embedded as the build driver. Scripts and scene/gameplay data authored in it use the
-`.kscm` extension; the underlying language stays plain S7 Scheme, not a fork, so existing
+`.scm` extension; the underlying language stays plain S7 Scheme, not a fork, so existing
 S7 docs and tooling keep applying.
 
 Planned rollout:
 
-1. **krudd drives CI.** A single Ubuntu + S7 job builds the engine through krudd's own
-   build (Ninja + Emscripten) documented above — no separate lint/sanitizer/coverage
-   jobs yet. Those were deliberately stripped from `ci.yml` (see below) and come back
-   written in Scheme once the tooling exists, rather than as a bolt-on to the old pipeline.
-   This is a temporary trade-off, not a claim that those checks were unnecessary.
+1. **krudd drives the build.** The engine builds through krudd's own build (Ninja +
+   Emscripten) documented above, inside CI. The gates around it (`.scm` comment lint,
+   release-label versioning, per-PR previews) still live as plain YAML jobs in `ci.yml`
+   (see below); sanitizer/coverage gates aren't wired back up yet. The direction is to
+   move that scaffolding into Scheme as the tooling exists, rather than growing it as a
+   bolt-on to the old pipeline.
 2. **krudd eats the build graph, piece by piece.** Asset codecs, plugin registration,
    and scene compilation move from C into Scheme one at a time — the C build tree shrinks
    as the Scheme grows, rather than a rewrite landing in one PR.
@@ -113,14 +114,18 @@ engine loop; the test stamps run the suite, so a green build is a green test run
 
 ## CI
 
-| Workflow | What it checks |
-|---|---|
-| **CI** | WASM build via Emscripten; on push to `main`, also publishes to GitHub Pages |
+A single `ci.yml` workflow runs on every pull request and on push to `main`:
 
-This is intentionally bare-bones: the previous lint/sanitizer/coverage gates, PR previews,
-and changelog/release-label gates were stripped down to this single job to make room for the
-`kruddmake` rewrite (see Roadmap above) — they're expected to return via `kruddmake` rather
-than as separate bolt-on workflows.
+| Job | What it does |
+|---|---|
+| **lint** | Style-checks `.scm` comments (`lint-scm-comments.py`) |
+| **version** | Folds each merged PR's `release:{breaking,feature,fix,chore}` label into an X.Y.Z version |
+| **build** | Builds the WASM module via Emscripten (`emsdk` container) through krudd's own Ninja build |
+| **deploy** | On push to `main`, publishes the staged site to GitHub Pages |
+| **preview** | Deploys each PR's build to a `pr-preview/pr-<N>/` URL and tears it down on close |
+
+Sanitizer and coverage gates aren't wired up yet; the plan is to bring them back through
+`kruddmake` (see Roadmap above) rather than as separate bolt-on workflows.
 
 ## License
 

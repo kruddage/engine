@@ -3,7 +3,7 @@
 	(library "kruddgui"
 		(wasm-flags "--std=c++17" "-fno-exceptions" "-fno-rtti")
 		(sources "kruddgui.cpp" "kgui_batch.c" "kgui_input.c"
-			"kgui_text_edit.c")
+			"kgui_text_edit.c" "kgui_font.c")
 		(private "." (raw "${generated}") (raw "../third_party")
 			(raw "${imgui}") (raw "${imgui}/backends"))
 		(link "script" "imgui_plugin" "log" "memory" "subsystem"
@@ -33,6 +33,14 @@
 		(sources "kgui_text_edit_test.c")
 		(link "kgui_text_edit"))
 	(test "kgui_text_edit" "kgui_text_edit_test")
+
+	(library "kgui_font"
+		(sources "kgui_font.c")
+		(public (current)))
+	(executable "kgui_font_test"
+		(sources "kgui_font_test.c")
+		(link "kgui_font" "kgui_batch"))
+	(test "kgui_font" "kgui_font_test")
 
 	(executable "kgui_scene_test"
 		(sources "kgui_scene_test.c")

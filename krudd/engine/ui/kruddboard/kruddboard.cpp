@@ -202,10 +202,12 @@ static s7_pointer sp_krudd_stats(s7_scheme *sc, s7_pointer args)
 }
 
 /*
- * (krudd-startup) -> (init-ms first-frame-ms (name . ms) ...), or #f when the
- * stats subsystem is absent. init-ms is the whole engine_init wall time,
- * first-frame-ms is boot-start to the first tick, and each trailing pair is one
- * startup phase in boot order. The phases are consed tail-first so they come
+ * (krudd-startup) -> (init-ms first-frame-ms page-first-ms (name . ms) ...), or
+ * #f when the stats subsystem is absent. init-ms is the whole engine_init wall
+ * time, first-frame-ms is boot-start to the first tick, and page-first-ms is
+ * the full page-navigation-to-first-frame wall clock (download and WASM compile
+ * included — the span the boot-relative numbers miss). Each trailing pair is
+ * one startup phase in boot order; the phases are consed tail-first so they come
  * back oldest-first, matching the order they ran.
  */
 static s7_pointer sp_krudd_startup(s7_scheme *sc, s7_pointer args)
@@ -227,7 +229,10 @@ static s7_pointer sp_krudd_startup(s7_scheme *sc, s7_pointer args)
 		s7_make_real(sc, (s7_double)g_stats->init_ms),
 		s7_cons(sc,
 			s7_make_real(sc, (s7_double)g_stats->first_frame_ms),
-			phases));
+			s7_cons(sc,
+				s7_make_real(sc,
+					(s7_double)g_stats->page_to_first_frame_ms),
+				phases)));
 }
 
 /*

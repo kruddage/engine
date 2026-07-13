@@ -201,13 +201,25 @@ void engine_tick(void)
 	frame_count++;
 #ifdef __EMSCRIPTEN__
 	/*
-	 * Time to first frame: init plus the browser's first animation-frame
-	 * round-trip, captured once on the opening tick. Together with init_ms
-	 * this separates "engine boot" from "waiting on the first rAF".
+	 * Time to first frame, captured once on the opening tick, two ways:
+	 *
+	 * first_frame_ms subtracts s_boot_ms, so it's init plus the browser's
+	 * first animation-frame round-trip — "engine boot" measured from
+	 * engine_init entry, separated from "waiting on the first rAF".
+	 *
+	 * page_to_first_frame_ms is the same instant left raw. emscripten_get_now()
+	 * is performance.now() (ms since navigation start), so the unsubtracted
+	 * value is the full page-load-to-first-frame wall clock — it keeps the
+	 * download + WASM compile + runtime bring-up that runs before main(),
+	 * which first_frame_ms throws away. This is what tracks the seconds spent
+	 * on a black screen; the 38 ms figures never saw that span at all.
 	 */
-	if (frame_count == 1)
-		g_stats_api.first_frame_ms = (float)(emscripten_get_now()
-						      - s_boot_ms);
+	if (frame_count == 1) {
+		double now = emscripten_get_now();
+
+		g_stats_api.first_frame_ms         = (float)(now - s_boot_ms);
+		g_stats_api.page_to_first_frame_ms = (float)now;
+	}
 	stats_update();
 	script_tick();
 #endif

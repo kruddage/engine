@@ -32,11 +32,60 @@ static int prev_boundary(const struct kgui_text_edit *e, int i)
 	return i;
 }
 
+/* Start-of-line byte offset for position `pos` (just after the previous '\n'). */
+static int line_start_at(const struct kgui_text_edit *e, int pos)
+{
+	while (pos > 0 && e->buf[pos - 1] != '\n')
+		pos--;
+	return pos;
+}
+
+/* End-of-line byte offset for position `pos` (the next '\n', or the buffer end). */
+static int line_end_at(const struct kgui_text_edit *e, int pos)
+{
+	while (pos < e->len && e->buf[pos] != '\n')
+		pos++;
+	return pos;
+}
+
+/*
+ * Byte offset of the code-point boundary in [start, end] whose pixel x from
+ * `start` is nearest `goal`. Walks the line one code point at a time, measuring
+ * the run start..boundary; the caret snaps to the closest boundary so a
+ * proportional font's columns line up by pixel, not by character.
+ */
+static int nearest_boundary_px(const struct kgui_text_edit *e, int start,
+			       int end, float goal, kgui_text_measure measure,
+			       void *ud)
+{
+	int   best = start;
+	float best_d = goal < 0.0f ? -goal : goal; /* distance at start (x = 0) */
+	int   i = start;
+
+	while (i < end) {
+		float px, d;
+
+		i += lead_len((unsigned char)e->buf[i]);
+		if (i > end)
+			i = end;
+		px = measure(e->buf + start, i - start, ud);
+		d  = px - goal;
+		if (d < 0.0f)
+			d = -d;
+		if (d < best_d) {
+			best_d = d;
+			best   = i;
+		}
+	}
+	return best;
+}
+
 void kgui_text_edit_clear(struct kgui_text_edit *e)
 {
-	e->buf[0] = '\0';
-	e->len    = 0;
-	e->caret  = 0;
+	e->buf[0]  = '\0';
+	e->len     = 0;
+	e->caret   = 0;
+	e->goal_px = -1.0f;
 }
 
 void kgui_text_edit_set(struct kgui_text_edit *e, const char *s)
@@ -83,6 +132,7 @@ int kgui_text_edit_insert(struct kgui_text_edit *e, const char *utf8, int nbytes
 		i        += cl;
 	}
 	e->buf[e->len] = '\0';
+	e->goal_px = -1.0f;
 	return put;
 }
 
@@ -97,6 +147,7 @@ void kgui_text_edit_backspace(struct kgui_text_edit *e)
 	e->len  -= e->caret - p;
 	e->caret = p;
 	e->buf[e->len] = '\0';
+	e->goal_px = -1.0f;
 }
 
 void kgui_text_edit_delete_fwd(struct kgui_text_edit *e)
@@ -112,12 +163,14 @@ void kgui_text_edit_delete_fwd(struct kgui_text_edit *e)
 		(size_t)(e->len - e->caret - cl));
 	e->len -= cl;
 	e->buf[e->len] = '\0';
+	e->goal_px = -1.0f;
 }
 
 void kgui_text_edit_left(struct kgui_text_edit *e)
 {
 	if (e->caret > 0)
 		e->caret = prev_boundary(e, e->caret);
+	e->goal_px = -1.0f;
 }
 
 void kgui_text_edit_right(struct kgui_text_edit *e)
@@ -127,14 +180,97 @@ void kgui_text_edit_right(struct kgui_text_edit *e)
 		if (e->caret > e->len)
 			e->caret = e->len;
 	}
+	e->goal_px = -1.0f;
 }
 
 void kgui_text_edit_home(struct kgui_text_edit *e)
 {
-	e->caret = 0;
+	e->caret   = 0;
+	e->goal_px = -1.0f;
 }
 
 void kgui_text_edit_end(struct kgui_text_edit *e)
 {
-	e->caret = e->len;
+	e->caret   = e->len;
+	e->goal_px = -1.0f;
+}
+
+void kgui_text_edit_line_home(struct kgui_text_edit *e)
+{
+	e->caret   = line_start_at(e, e->caret);
+	e->goal_px = -1.0f;
+}
+
+void kgui_text_edit_line_end(struct kgui_text_edit *e)
+{
+	e->caret   = line_end_at(e, e->caret);
+	e->goal_px = -1.0f;
+}
+
+void kgui_text_edit_up(struct kgui_text_edit *e,
+		       kgui_text_measure measure, void *ud)
+{
+	int cur_start = line_start_at(e, e->caret);
+	int prev_start;
+
+	if (!measure || cur_start == 0)
+		return; /* no font, or already on the first line */
+	if (e->goal_px < 0.0f)
+		e->goal_px = measure(e->buf + cur_start,
+				     e->caret - cur_start, ud);
+	/* cur_start - 1 is the '\n' ending the previous line. */
+	prev_start = line_start_at(e, cur_start - 1);
+	e->caret   = nearest_boundary_px(e, prev_start, cur_start - 1,
+					 e->goal_px, measure, ud);
+}
+
+void kgui_text_edit_down(struct kgui_text_edit *e,
+			 kgui_text_measure measure, void *ud)
+{
+	int cur_start = line_start_at(e, e->caret);
+	int cur_end   = line_end_at(e, e->caret);
+	int next_start, next_end;
+
+	if (!measure || cur_end >= e->len)
+		return; /* no font, or already on the last line */
+	if (e->goal_px < 0.0f)
+		e->goal_px = measure(e->buf + cur_start,
+				     e->caret - cur_start, ud);
+	next_start = cur_end + 1; /* step over the '\n' */
+	next_end   = line_end_at(e, next_start);
+	e->caret   = nearest_boundary_px(e, next_start, next_end,
+					 e->goal_px, measure, ud);
+}
+
+int kgui_text_edit_line_count(const struct kgui_text_edit *e)
+{
+	int i, n = 1;
+
+	for (i = 0; i < e->len; i++)
+		if (e->buf[i] == '\n')
+			n++;
+	return n;
+}
+
+void kgui_text_edit_caret(const struct kgui_text_edit *e,
+			  kgui_text_measure measure, void *ud,
+			  int *line, int *col, float *px)
+{
+	int start = line_start_at(e, e->caret);
+	int i, ln = 0, co = 0;
+
+	if (line) {
+		for (i = 0; i < start; i++)
+			if (e->buf[i] == '\n')
+				ln++;
+		*line = ln;
+	}
+	if (col) {
+		for (i = start; i < e->caret; i += lead_len((unsigned char)e->buf[i]))
+			co++;
+		*col = co;
+	}
+	if (px)
+		*px = measure ? measure(e->buf + start, e->caret - start, ud)
+			      : 0.0f;
 }

@@ -844,6 +844,38 @@ static s7_pointer sp_kgui_region_pressed(s7_scheme *sc, s7_pointer args)
 }
 
 /*
+ * (kgui-region name x y w h) -> (pressed press-x press-y): declare a per-widget
+ * drag-capture region and read its live captured-pointer state. Unlike
+ * kgui-panel-begin this does not change the current panel (s_cur_io) — it just
+ * appends one more region to this frame's z-stack and hands back that region's
+ * own result slot, so a widget (a slider track, a colour-picker square) can sit
+ * ON TOP of the enclosing scroll body: a down inside it is captured here (read
+ * press-x/press-y to map to a value) while a down anywhere else still reaches
+ * the body region underneath and scrolls. Declare it after the body draw so it
+ * wins the overlap, and only for on-screen widgets — regions are a fixed pool
+ * (KGUI_MAX_REGIONS). `press-x`/`press-y` are the live pointer position while
+ * `pressed`, updated on down and every captured move; they hold the down point
+ * until the first move.
+ */
+static s7_pointer sp_kgui_region(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer  p    = args;
+	s7_pointer  nm   = s7_car(p);                        p = s7_cdr(p);
+	double      x    = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double      y    = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double      w    = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double      h    = s7_number_to_real(sc, s7_car(p));
+	const char *name = s7_is_string(nm) ? s7_string(nm) : "";
+	struct kgui_region_io *io =
+		kgui_input_region(&s_input, kgui_name_hash(name),
+				  (float)x, (float)y, (float)w, (float)h);
+
+	return s7_list(sc, 3, s7_make_boolean(sc, io->pressed),
+		       s7_make_real(sc, (s7_double)io->press_x),
+		       s7_make_real(sc, (s7_double)io->press_y));
+}
+
+/*
  * (kgui-clip x y w h) clip subsequent draws to a rect (CSS px);
  * (kgui-clip-none) clears it. Used to scissor a scroll body to its viewport.
  */
@@ -899,6 +931,9 @@ static void register_primitives(s7_scheme *sc)
 			   false, "(kgui-region-wheel) -> wheel delta");
 	s7_define_function(sc, "kgui-region-pressed", sp_kgui_region_pressed, 0,
 			   0, false, "(kgui-region-pressed) -> #t while held");
+	s7_define_function(sc, "kgui-region", sp_kgui_region, 5, 0, false,
+			   "(kgui-region name x y w h) -> "
+			   "(pressed press-x press-y) drag-capture region");
 	s7_define_function(sc, "kgui-clip", sp_kgui_clip, 4, 0, false,
 			   "(kgui-clip x y w h) clip subsequent draws");
 	s7_define_function(sc, "kgui-clip-none", sp_kgui_clip_none, 0, 0, false,

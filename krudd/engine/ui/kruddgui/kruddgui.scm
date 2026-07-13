@@ -1031,10 +1031,310 @@
       (set! kruddgui-scene-open #t))
     (kgui-panel-end)))
 
+;;! ------------------------------------------------------------------
+;;! Widget foundations — the draggable slider and 2D colour picker (#492, PR6a)
+;;! ------------------------------------------------------------------
+
+;;! The Assets tab (the heaviest ImGui consumer left) leans on two widgets the
+;;! read-only consoles never needed: a draggable slider (its material / texture
+;;! params are numeric fields today) and a colour picker (its colour params).
+;;! Both are built here on the per-widget drag-capture seam (kgui-region): each
+;;! declares a small input region at its own rect, on TOP of the enclosing scroll
+;;! body, so a down inside it is captured and mapped to a value while a down
+;;! elsewhere still scrolls the body. They are exercised below by the Assets
+;;! console shell — the tab's kruddgui home, which PR6b/6c fill in with the ported
+;;! browser and editors. Per touch convention a drag that starts on a slider does
+;;! not also start a scroll (the slider's region ate the down); note it.
+
+(define kruddgui-slider-track-h 8)
+(define kruddgui-slider-knob-w 14)
+(define kruddgui-slider-fill     '(0.95 0.55 0.15 0.95))
+(define kruddgui-slider-track-bg '(0.20 0.22 0.26 1.0))
+(define kruddgui-slider-knob     '(0.92 0.94 0.98 1.0))
+
+;;! (kruddgui-slider L id label value lo hi) a labelled draggable track. The label
+;;! and the live value sit on one line; the track fills the next row with a fill
+;;! bar and a knob. Its region spans the track, so a down anywhere on it (tap or
+;;! drag) jumps the value: the captured pointer's x maps across [lo hi]. Returns
+;;! (value . changed?) — changed? #t on any frame the drag moved the value — so
+;;! the caller writes the new value back through its setter, the drag-native twin
+;;! of the numeric field's commit. Culled off-body rows declare no region.
+(define (kruddgui-slider L id label value lo hi)
+  (let* ((x    (kruddgui-lay-x L))
+	 (w    (kruddgui-lay-w L))
+	 (ly   (kruddgui-lay-cy L))
+	 (lh   kruddgui-scene-line)
+	 (th   kruddgui-scene-row-h)
+	 (ty   (+ ly lh))
+	 (span (- hi lo))
+	 (vis  (kruddgui-lay-vis? L (+ lh th)))
+	 (st   (if vis (kgui-region id x ty w th) (list #f 0.0 0.0)))
+	 (nv   (if (and (car st) (> span 0))
+		   (+ lo (* (max 0.0 (min 1.0 (/ (- (cadr st) x) w))) span))
+		   value))
+	 (changed (not (= nv value))))
+    (when vis
+      (kruddgui-board-cell (+ x 2) ly lh label kruddgui-scene-label-fg)
+      (let* ((vstr (format #f "~,3F" nv))
+	     (vw   (car (kgui-text-metrics vstr))))
+	(kruddgui-board-cell (- (+ x w) vw 2) ly lh vstr kruddgui-idle-fg))
+      (let* ((trk-y (+ ty (/ (- th kruddgui-slider-track-h) 2)))
+	     (kw    kruddgui-slider-knob-w)
+	     (t     (if (> span 0) (max 0.0 (min 1.0 (/ (- nv lo) span))) 0.0))
+	     (run   (* t (- w kw))))
+	(kruddgui-rect* (list x trk-y w kruddgui-slider-track-h)
+			kruddgui-slider-track-bg)
+	(kruddgui-rect* (list x trk-y (+ run (/ kw 2)) kruddgui-slider-track-h)
+			kruddgui-slider-fill)
+	(kruddgui-rect* (list (+ x run) ty kw th) kruddgui-slider-knob)))
+    (kruddgui-lay-adv! L (+ lh th kruddgui-scene-gap))
+    (cons nv changed)))
+
+;;! HSV<->RGB, all channels in 0..1, hue wrapped to [0,1). The colour picker works
+;;! in HSV — an SV square at a fixed hue plus a hue strip — and stores RGB, so it
+;;! round-trips through these each frame.
+(define (kruddgui-hsv->rgb h s v)
+  (let* ((h6 (* (- h (floor h)) 6.0))
+	 (i  (modulo (inexact->exact (floor h6)) 6))
+	 (f  (- h6 (floor h6)))
+	 (p  (* v (- 1.0 s)))
+	 (q  (* v (- 1.0 (* s f))))
+	 (u  (* v (- 1.0 (* s (- 1.0 f))))))
+    (cond ((= i 0) (list v u p))
+	  ((= i 1) (list q v p))
+	  ((= i 2) (list p v u))
+	  ((= i 3) (list p q v))
+	  ((= i 4) (list u p v))
+	  (else    (list v p q)))))
+
+(define (kruddgui-rgb->hsv r g b)
+  (let* ((mx (max r g b))
+	 (mn (min r g b))
+	 (d  (- mx mn))
+	 (v  mx)
+	 (s  (if (> mx 0.0) (/ d mx) 0.0))
+	 (h6 (cond ((= d 0.0) 0.0)
+		   ((= mx r) (/ (- g b) d))
+		   ((= mx g) (+ 2.0 (/ (- b r) d)))
+		   (else     (+ 4.0 (/ (- r g) d))))))
+    (list (/ (if (< h6 0.0) (+ h6 6.0) h6) 6.0) s v)))
+
+;;! Picker geometry: the SV square is a fixed side; the hue strip a slim bar to
+;;! its right. Both are drawn as a grid / stack of flat cells since kgui-rect only
+;;! fills — a cheap raster of the gradient, fine at touch scale.
+(define kruddgui-picker-side 132)
+(define kruddgui-picker-hue-w 22)
+(define kruddgui-picker-sv-nx 12)
+(define kruddgui-picker-sv-ny 10)
+(define kruddgui-picker-hue-n 12)
+(define kruddgui-picker-cursor '(0.98 0.99 1.0 1.0))
+
+;;! The id of the one colour picker currently open (or #f), so tapping a second
+;;! swatch closes the first — the same one-open-at-a-time discipline as the combos.
+(define kruddgui-open-picker #f)
+
+;;! (kruddgui-picker-sv L id h s v svx svy side) the saturation/value square at a
+;;! fixed hue: x is saturation, y is value (top = 1). A grid of hsv->rgb cells with
+;;! the current (s v) marked by a cursor box; its region maps a captured pointer to
+;;! (s . v). Returns (s . v), unchanged when not pressed.
+(define (kruddgui-picker-sv id h s v svx svy side)
+  (let* ((nx kruddgui-picker-sv-nx)
+	 (ny kruddgui-picker-sv-ny)
+	 (cw (/ side nx))
+	 (ch (/ side ny)))
+    (let yloop ((j 0))
+      (when (< j ny)
+	(let xloop ((i 0))
+	  (when (< i nx)
+	    (let* ((cs (/ (+ i 0.5) nx))
+		   (cv (- 1.0 (/ (+ j 0.5) ny)))
+		   (c  (kruddgui-hsv->rgb h cs cv)))
+	      (kruddgui-rect* (list (+ svx (* i cw)) (+ svy (* j ch)) cw ch)
+			      (append c (list 1.0))))
+	    (xloop (+ i 1))))
+	(yloop (+ j 1))))
+    (let* ((st  (kgui-region id svx svy side side))
+	   (prs (car st))
+	   (ns  s)
+	   (nv  v))
+      (when prs
+	(set! ns (max 0.0 (min 1.0 (/ (- (cadr st) svx) side))))
+	(set! nv (max 0.0 (min 1.0 (- 1.0 (/ (- (caddr st) svy) side))))))
+      (let ((cx (+ svx (* ns side)))
+	    (cy (+ svy (* (- 1.0 nv) side))))
+	(kruddgui-rect* (list (- cx 4) (- cy 1) 8 2) kruddgui-picker-cursor)
+	(kruddgui-rect* (list (- cx 1) (- cy 4) 2 8) kruddgui-picker-cursor))
+      (cons ns nv))))
+
+;;! (kruddgui-picker-hue id h hx hy side) the hue strip: a vertical stack of full-
+;;! saturation bands with the current hue marked. Its region maps a captured
+;;! pointer's y to a hue in [0,1). Returns the (possibly new) hue.
+(define (kruddgui-picker-hue id h hx hy side)
+  (let* ((n kruddgui-picker-hue-n)
+	 (bh (/ side n)))
+    (let loop ((i 0))
+      (when (< i n)
+	(let ((c (kruddgui-hsv->rgb (/ (+ i 0.5) n) 1.0 1.0)))
+	  (kruddgui-rect* (list hx (+ hy (* i bh)) kruddgui-picker-hue-w bh)
+			  (append c (list 1.0))))
+	(loop (+ i 1))))
+    (let* ((st  (kgui-region id hx hy kruddgui-picker-hue-w side))
+	   (prs (car st))
+	   (nh  h))
+      (when prs
+	(set! nh (max 0.0 (min 0.999 (/ (- (caddr st) hy) side)))))
+      (let ((cy (+ hy (* nh side))))
+	(kruddgui-rect* (list (- hx 2) (- cy 1) (+ kruddgui-picker-hue-w 4) 3)
+			kruddgui-picker-cursor))
+      nh)))
+
+;;! (kruddgui-color-swatch L id label rgb) a labelled colour field: a swatch row
+;;! showing the current colour, which tapping opens into an SV square + hue strip
+;;! (one picker open at a time, keyed by ID). Drag on either recomposes the RGB
+;;! through HSV. Returns (rgb . changed?), the rgb a fresh 3-list; any 4th (alpha)
+;;! component of the input is preserved. Culled rows draw and declare nothing.
+(define (kruddgui-color-swatch L id label rgb)
+  (kruddgui-scene-label L label)
+  (let* ((x     (kruddgui-lay-x L))
+	 (w     (kruddgui-lay-w L))
+	 (y     (kruddgui-lay-cy L))
+	 (h     kruddgui-scene-row-h)
+	 (r     (if (pair? rgb) (car rgb) 0.0))
+	 (g     (if (>= (length rgb) 2) (cadr rgb) 0.0))
+	 (b     (if (>= (length rgb) 3) (caddr rgb) 0.0))
+	 (alpha (if (>= (length rgb) 4) (list (list-ref rgb 3)) '()))
+	 (nrgb  (list r g b))
+	 (changed #f))
+    (when (kruddgui-lay-vis? L h)
+      (kruddgui-rect* (list x y w h) (list r g b 1.0))
+      (kruddgui-rect* (list x y w 2) kruddgui-scene-rule-fg)
+      (when (kgui-button x y w h)
+	(set! kruddgui-open-picker
+	      (if (equal? kruddgui-open-picker id) #f id))))
+    (kruddgui-lay-adv! L (+ h kruddgui-scene-gap))
+    (when (equal? kruddgui-open-picker id)
+      (let* ((side kruddgui-picker-side)
+	     (px   (kruddgui-lay-x L))
+	     (py   (kruddgui-lay-cy L)))
+	(when (kruddgui-lay-vis? L side)
+	  (let* ((hsv (kruddgui-rgb->hsv r g b))
+		 (hx  (+ px side kruddgui-scene-gap))
+		 (sv  (kruddgui-picker-sv (string-append id "-sv")
+					  (car hsv) (cadr hsv) (caddr hsv)
+					  px py side))
+		 (nh  (kruddgui-picker-hue (string-append id "-hue")
+					   (car hsv) hx py side))
+		 (out (kruddgui-hsv->rgb nh (car sv) (cdr sv))))
+	    (set! nrgb out)
+	    (set! changed (not (equal? out (list r g b))))))
+	(kruddgui-lay-adv! L (+ side kruddgui-scene-gap))))
+    (cons (append nrgb alpha) changed)))
+
+;;! ------------------------------------------------------------------
+;;! Assets console shell — the Assets tab's kruddgui home (#492, PR6a)
+;;! ------------------------------------------------------------------
+
+;;! The Assets tab starts its lift out of ImGui with a home of its own: a top-right
+;;! console and a bottom-left handle, matching the Log / board / Scene consoles. In
+;;! PR6a its body is a foundations demo — the slider and colour picker the material
+;;! and texture editors will use — so the new widgets can be eyeballed on the touch
+;;! preview and covered by host tests before the browser grid and the editors land
+;;! in PR6b/6c. State is held across frames like the other consoles.
+(define kruddgui-assets-open #f)
+(define kruddgui-assets-scroll 0.0)
+(define kruddgui-assets-total 0.0)
+(define kruddgui-assets-max-w 400)
+(define kruddgui-assets-header-h 36)
+
+;;! Demo values the foundations panel drives, standing in for the material params
+;;! PR6c will bind these widgets to.
+(define kruddgui-demo-metallic 0.5)
+(define kruddgui-demo-rough 0.3)
+(define kruddgui-demo-color (list 0.95 0.55 0.15))
+
+;;! (kruddgui-assets-body x y w h) the scrolling foundations demo: two sliders and
+;;! a colour swatch drawn through the layout cursor, each writing its value back to
+;;! the demo state. Scroll, clip and culling mirror the Scene body; the widget
+;;! regions declared inside sit on top of this body's region.
+(define (kruddgui-assets-body x y w h)
+  (let* ((min-off (min 0.0 (- h kruddgui-assets-total)))
+	 (off     (max min-off (min 0.0 kruddgui-assets-scroll)))
+	 (ix      (+ x kruddgui-scene-pad))
+	 (iw      (- w (* 2 kruddgui-scene-pad)))
+	 (L       (kruddgui-lay (+ y off) y (+ y h) ix iw)))
+    (set! kruddgui-assets-scroll off)
+    (kruddgui-rect* (list x y w h) kruddgui-scene-body-bg)
+    (kgui-clip x y w h)
+    (kruddgui-scene-label L "Widget foundations (PR6a)")
+    (kruddgui-scene-rule L)
+    (let ((mr (kruddgui-slider L "demo-metallic" "Metallic"
+			       kruddgui-demo-metallic 0.0 1.0)))
+      (when (cdr mr) (set! kruddgui-demo-metallic (car mr))))
+    (let ((rr (kruddgui-slider L "demo-rough" "Roughness"
+			       kruddgui-demo-rough 0.0 1.0)))
+      (when (cdr rr) (set! kruddgui-demo-rough (car rr))))
+    (kruddgui-scene-rule L)
+    (let ((cr (kruddgui-color-swatch L "demo-color" "Base Color"
+				     kruddgui-demo-color)))
+      (when (cdr cr) (set! kruddgui-demo-color (car cr))))
+    (kgui-clip-none)
+    (set! kruddgui-assets-total (- (kruddgui-lay-cy L) (+ y off)))))
+
+;;! (kruddgui-assets-draw-header x y w hdr) the title and the close box; the close
+;;! tap is trapped by the console region so it never reaches ImGui.
+(define (kruddgui-assets-draw-header x y w hdr)
+  (let* ((bs 26)
+	 (bx (- (+ x w) 8 bs))
+	 (by (+ y (/ (- hdr bs) 2))))
+    (kruddgui-label x y 120 hdr "ASSETS" kruddgui-idle-fg)
+    (kruddgui-rect* (list bx by bs bs) kruddgui-idle-bg)
+    (kruddgui-label bx by bs bs "x" kruddgui-idle-fg)
+    (when (kgui-button bx by bs bs)
+      (set! kruddgui-assets-open #f))))
+
+;;! (kruddgui-assets-draw-panel vw vh) the expanded console: a top-left overlay
+;;! stopping short of the mode-bar band, drawn last so it wins any overlap. A
+;;! drag/wheel on the body region scrolls it (then re-clamped in the body).
+(define (kruddgui-assets-draw-panel vw vh)
+  (let* ((m      kruddgui-log-margin)
+	 (avail  (- vh m (kruddgui-modebar-reserve vw vh) kruddgui-gap))
+	 (w      (min kruddgui-assets-max-w (- vw (* 2 m))))
+	 (h      (max 160.0 (min (* vh 0.72) avail)))
+	 (x      m)
+	 (y      m)
+	 (hdr    kruddgui-assets-header-h)
+	 (body-y (+ y hdr))
+	 (body-h (- h hdr)))
+    (kgui-panel-begin "kgui-assets" x y w h)
+    (kruddgui-rect* (list x y w h) kruddgui-scene-panel-bg)
+    (kruddgui-assets-draw-header x y w hdr)
+    (set! kruddgui-assets-scroll
+	  (+ kruddgui-assets-scroll
+	     (cadr (kgui-region-drag))
+	     (kgui-region-wheel)))
+    (kruddgui-assets-body x body-y w body-h)
+    (kgui-panel-end)))
+
+;;! (kruddgui-assets-draw-handle vw vh) the collapsed console: a pill in the bottom-
+;;! left stack, above the SCENE handle. Tap expands the console.
+(define (kruddgui-assets-draw-handle vw vh)
+  (let* ((m  kruddgui-log-margin)
+	 (hw kruddgui-log-handle-w)
+	 (hh kruddgui-log-handle-h)
+	 (x  m)
+	 (y  (- vh m (* 4 hh) (* 3 kruddgui-gap))))
+    (kgui-panel-begin "kgui-assets" x y hw hh)
+    (kruddgui-rect* (list x y hw hh) kruddgui-scene-panel-bg)
+    (kruddgui-label x y hw hh "ASSETS" kruddgui-idle-fg)
+    (when (kgui-button x y hw hh)
+      (set! kruddgui-assets-open #t))
+    (kgui-panel-end)))
+
 ;;! (kruddgui-draw) the whole layer — the host's per-tick entry point. Draw the
 ;;! mode-bar (row or column by orientation), then the Log console, the board
-;;! console and the Scene inspector (each expanded or collapsed). Every panel owns
-;;! its own input region; drawn in order, so a later panel wins any overlap.
+;;! console, the Scene inspector and the Assets console (each expanded or
+;;! collapsed). Every panel owns its own input region; drawn in order, so a later
+;;! panel wins any overlap.
 (define (kruddgui-draw)
   (let* ((vp (kgui-viewport-size))
 	 (vw (car vp))
@@ -1052,4 +1352,7 @@
 	  (kruddgui-board-draw-handle vw vh))
       (if kruddgui-scene-open
 	  (kruddgui-scene-draw-panel vw vh)
-	  (kruddgui-scene-draw-handle vw vh)))))
+	  (kruddgui-scene-draw-handle vw vh))
+      (if kruddgui-assets-open
+	  (kruddgui-assets-draw-panel vw vh)
+	  (kruddgui-assets-draw-handle vw vh)))))

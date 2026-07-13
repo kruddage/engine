@@ -517,10 +517,524 @@
       (set! kruddgui-board-open #t))
     (kgui-panel-end)))
 
+;;! ------------------------------------------------------------------
+;;! Scene inspector — the World tab lifted onto kruddgui's own widgets (#492)
+;;! ------------------------------------------------------------------
+
+;;! The World (Scene) tab — the entity list and the drill-in inspector — was the
+;;! ImGui board's first MUTATING surface. It is re-authored here on kruddgui's
+;;! own interactive widgets: the soft-keyboard text field (kgui-field), numeric
+;;! fields built on it, and tap-driven combos. Every edit still routes through
+;;! the shared undo-recording krudd-entity-* accessors kruddboard registers, so
+;;! rename / transform / rebind record undo steps exactly as the ImGui path did;
+;;! its ImGui draw path (draw_tab_world + kruddboard-draw-world & friends) is
+;;! gone. Like the Log and board consoles this is a dismissable overlay with its
+;;! own input region and a bottom-left handle, stacked above the STATS handle.
+
+(define kruddgui-scene-max-w 400)
+(define kruddgui-scene-header-h 36)
+(define kruddgui-scene-pad 10)
+;;! Interactive row height (>= the 40px minimum finger target); label / read-
+;;! only lines are shorter.
+(define kruddgui-scene-row-h 40)
+(define kruddgui-scene-line 26)
+(define kruddgui-scene-gap 6)
+
+(define kruddgui-scene-panel-bg  '(0.08 0.09 0.11 0.97))
+(define kruddgui-scene-body-bg   '(0.05 0.06 0.08 0.98))
+(define kruddgui-scene-field-bg  '(0.14 0.15 0.18 1.0))
+(define kruddgui-scene-field-act '(0.20 0.25 0.32 1.0))
+(define kruddgui-scene-caret-fg  '(0.95 0.96 0.99 1.0))
+(define kruddgui-scene-label-fg  '(0.62 0.80 0.98 1.0))
+(define kruddgui-scene-head-fg   '(0.62 0.80 0.98 1.0))
+(define kruddgui-scene-rule-fg   '(0.24 0.26 0.30 1.0))
+
+;;! Overlay state, held across frames the way the ImGui statics were: whether the
+;;! console is expanded, which entity's inspector is drilled into (-1 = the entity
+;;! list, matching the engine's "no selection" sentinel since entity id 0 is
+;;! live), the body scroll offset (<= 0), the id of the one open combo (or #f),
+;;! and the content height measured last frame (to clamp the scroll).
+(define kruddgui-scene-open #f)
+(define kruddgui-scene-sel -1)
+(define kruddgui-scene-scroll 0.0)
+(define kruddgui-scene-open-combo #f)
+(define kruddgui-scene-total 0.0)
+
+;;! A layout cursor: a mutable running y plus the body's clip band and the row
+;;! origin/width, so each widget places itself, culls when off the body, and
+;;! advances the cursor. Data, not control flow — the immediate-mode twin of the
+;;! board console's row list, but the rows here are interactive.
+(define (kruddgui-lay cy y0 y1 x w) (vector cy y0 y1 x w))
+(define (kruddgui-lay-cy L) (vector-ref L 0))
+(define (kruddgui-lay-y0 L) (vector-ref L 1))
+(define (kruddgui-lay-y1 L) (vector-ref L 2))
+(define (kruddgui-lay-x  L) (vector-ref L 3))
+(define (kruddgui-lay-w  L) (vector-ref L 4))
+(define (kruddgui-lay-adv! L dh) (vector-set! L 0 (+ (vector-ref L 0) dh)))
+
+;;! A row at the cursor is visible when it overlaps the body's clip band; an
+;;! off-body row is culled (no draw, no input — it cannot be tapped anyway).
+(define (kruddgui-lay-vis? L h)
+  (let ((cy (kruddgui-lay-cy L)))
+    (and (> (+ cy h) (kruddgui-lay-y0 L)) (< cy (kruddgui-lay-y1 L)))))
+
+;;! (kruddgui-scene-field-draw x y w h disp active caret) paints one field cell:
+;;! a filled box (brighter while focused), the text, and — while focused — a caret
+;;! bar at the reported pixel offset. kgui-field owns the editing; this only draws.
+(define (kruddgui-scene-field-draw x y w h disp active caret)
+  (let* ((m  (kgui-text-metrics disp))
+	 (th (cadr m))
+	 (ty (+ y (/ (- h th) 2))))
+    (kruddgui-rect* (list x y w h)
+		    (if active kruddgui-scene-field-act kruddgui-scene-field-bg))
+    (kgui-text (+ x 6) ty disp
+	       (car kruddgui-idle-fg) (cadr kruddgui-idle-fg)
+	       (caddr kruddgui-idle-fg) (cadddr kruddgui-idle-fg))
+    (when active
+      (kruddgui-rect* (list (+ x 6 caret) (+ y 6) 2 (- h 12))
+		      kruddgui-scene-caret-fg))))
+
+;;! (kruddgui-scene-field L id text mode) a full-width field row. Returns the
+;;! kgui-field result (display active? committed? caret-px) so the caller can
+;;! write the value back on commit. Culled rows still return a benign result.
+(define (kruddgui-scene-field L id text mode)
+  (let* ((x  (kruddgui-lay-x L))
+	 (w  (kruddgui-lay-w L))
+	 (y  (kruddgui-lay-cy L))
+	 (h  kruddgui-scene-row-h)
+	 (r  (if (kruddgui-lay-vis? L h)
+		 (let ((res (kgui-field id x y w h text mode)))
+		   (kruddgui-scene-field-draw x y w h (car res) (cadr res)
+					      (cadddr res))
+		   res)
+		 (list text #f #f 0.0))))
+    (kruddgui-lay-adv! L (+ h kruddgui-scene-gap))
+    r))
+
+;;! (kruddgui-scene-label L str) a section label line in accent blue.
+(define (kruddgui-scene-label L str)
+  (let ((x (kruddgui-lay-x L))
+	(y (kruddgui-lay-cy L))
+	(h kruddgui-scene-line))
+    (when (kruddgui-lay-vis? L h)
+      (kruddgui-board-cell (+ x 2) y h str kruddgui-scene-label-fg))
+    (kruddgui-lay-adv! L h)))
+
+;;! (kruddgui-scene-kv L label value) a read-only "label: value" line.
+(define (kruddgui-scene-kv L label value)
+  (let ((x (kruddgui-lay-x L))
+	(w (kruddgui-lay-w L))
+	(y (kruddgui-lay-cy L))
+	(h kruddgui-scene-line))
+    (when (kruddgui-lay-vis? L h)
+      (kruddgui-board-cell (+ x 2) y h label kruddgui-idle-fg)
+      (kruddgui-board-cell (+ x (* w 0.42)) y h value kruddgui-idle-fg))
+    (kruddgui-lay-adv! L h)))
+
+;;! (kruddgui-scene-rule L) a thin divider spanning the row width.
+(define (kruddgui-scene-rule L)
+  (let ((x (kruddgui-lay-x L))
+	(w (kruddgui-lay-w L))
+	(y (kruddgui-lay-cy L)))
+    (when (kruddgui-lay-vis? L 8)
+      (kruddgui-rect* (list x (+ y 3) w 1) kruddgui-scene-rule-fg))
+    (kruddgui-lay-adv! L 8)))
+
+;;! (kruddgui-scene-btn L label enabled?) a full-width tap button row. Returns #t
+;;! on tap (only when enabled and visible).
+(define (kruddgui-scene-btn L label enabled?)
+  (let* ((x (kruddgui-lay-x L))
+	 (w (kruddgui-lay-w L))
+	 (y (kruddgui-lay-cy L))
+	 (h kruddgui-scene-row-h)
+	 (hit #f))
+    (when (kruddgui-lay-vis? L h)
+      (kruddgui-rect* (list x y w h)
+		      (if enabled? kruddgui-idle-bg kruddgui-panel-bg))
+      (kruddgui-label x y w h label kruddgui-idle-fg)
+      (when (and enabled? (kgui-button x y w h))
+	(set! hit #t)))
+    (kruddgui-lay-adv! L (+ h kruddgui-scene-gap))
+    hit))
+
+;;! (kruddgui-scene-numeric x y w id cur) one numeric field cell at an explicit
+;;! rect (used to pack several across a transform row). Returns (value .
+;;! committed?): the parsed value, falling back to CUR while the buffer is empty
+;;! or mid-edit (e.g. "-" or "1."), so an unparseable partial never writes.
+(define (kruddgui-scene-numeric x y w id cur)
+  (let* ((fmt (format #f "~,3F" cur))
+	 (res (kgui-field id x y w kruddgui-scene-row-h fmt 1))
+	 (disp (car res))
+	 (val  (string->number disp)))
+    (kruddgui-scene-field-draw x y w kruddgui-scene-row-h disp (cadr res)
+			       (cadddr res))
+    (cons (if (real? val) val cur) (caddr res))))
+
+;;! (kruddgui-scene-vec-row L label id-base vec) a labelled row of one numeric
+;;! field per component, packed across the row width. Returns (new-vec .
+;;! changed?): the per-component values and whether any component committed.
+(define (kruddgui-scene-vec-row L label id-base vec)
+  (kruddgui-scene-label L label)
+  (let* ((x (kruddgui-lay-x L))
+	 (w (kruddgui-lay-w L))
+	 (y (kruddgui-lay-cy L))
+	 (n (length vec))
+	 (g kruddgui-scene-gap)
+	 (fw (/ (- w (* (- n 1) g)) n)))
+    (let ((res
+	   (if (kruddgui-lay-vis? L kruddgui-scene-row-h)
+	       (let loop ((i 0) (vs vec) (acc '()))
+		 (if (null? vs)
+		     (reverse acc)
+		     (let ((fx (+ x (* i (+ fw g)))))
+		       (loop (+ i 1) (cdr vs)
+			     (cons (kruddgui-scene-numeric
+				    fx y fw (format #f "~A~D" id-base i) (car vs))
+				   acc)))))
+	       (map (lambda (v) (cons v #f)) vec))))
+      (kruddgui-lay-adv! L (+ kruddgui-scene-row-h kruddgui-scene-gap))
+      (cons (map car res)
+	    (let anyc ((r res)) (cond ((null? r) #f)
+				      ((cdr (car r)) #t)
+				      (else (anyc (cdr r)))))))))
+
+;;! (kruddgui-scene-combo L id label preview options ref can-edit setter e) an
+;;! inline combo: a labelled preview button that toggles the option list open (one
+;;! combo open at a time, keyed by ID). While open it lists a "(none)" unbind
+;;! entry then one row per (aid . path) option; a tap selects through SETTER and
+;;! closes. Disabled combos still draw but do not open.
+(define (kruddgui-scene-combo L id label preview options ref can-edit setter e)
+  (kruddgui-scene-label L label)
+  (let ((opened (equal? kruddgui-scene-open-combo id)))
+    (when (kruddgui-scene-btn L preview can-edit)
+      (set! kruddgui-scene-open-combo (if opened #f id)))
+    (when (and can-edit (equal? kruddgui-scene-open-combo id))
+      (when (kruddgui-scene-btn L "  (none)" #t)
+	(setter e 0)
+	(set! kruddgui-scene-open-combo #f))
+      (for-each
+       (lambda (a)
+	 (let ((aid (car a))
+	       (path (cdr a)))
+	   (when (kruddgui-scene-btn L (string-append "  " path) #t)
+	     (setter e aid)
+	     (set! kruddgui-scene-open-combo #f))))
+       options))))
+
+;;! (kruddgui-scene-param-menu L title e params values save-fn) a collapsing-free
+;;! param editor: a label then one numeric field per component of each param, with
+;;! a colour swatch ahead of a 3/4-component colour param. Collects every widget's
+;;! (values . changed?) and, if any committed, packs the new values and hands them
+;;! to SAVE-FN — the entity's undo-recording per-param setter — so the override
+;;! lands immediately, no explicit Save, exactly as the ImGui menu did.
+(define (kruddgui-scene-param-menu L title e id-tag params values save-fn)
+  (unless (null? params)
+    (kruddgui-scene-rule L)
+    (kruddgui-scene-label L title)
+    (let* ((results
+	    (map (lambda (p v pidx)
+		   (kruddgui-scene-param-widget L e
+		       (format #f "~A-~D" id-tag pidx) p v))
+		 params values (kruddgui-scene-iota (length params))))
+	   (new-vals (map car results))
+	   (changed  (let anyc ((r results))
+		       (cond ((null? r) #f)
+			     ((cdr (car r)) #t)
+			     (else (anyc (cdr r)))))))
+      (when changed (save-fn e new-vals)))))
+
+;;! (kruddgui-scene-iota n) -> (0 1 ... n-1), for stable per-param id suffixes.
+(define (kruddgui-scene-iota n)
+  (let loop ((i (- n 1)) (acc '()))
+    (if (< i 0) acc (loop (- i 1) (cons i acc)))))
+
+;;! (kruddgui-scene-param-widget L e id param value) draws one param as component
+;;! numeric fields (a colour param gets a live swatch first) and returns (value .
+;;! changed?), the value staying a list so the save path packs it uniformly.
+(define (kruddgui-scene-param-widget L e id param value)
+  (let ((comps (list-ref param 4))
+	(kind  (list-ref param 5)))
+    (kruddgui-scene-label L (list-ref param 0))
+    (let* ((x (kruddgui-lay-x L))
+	   (w (kruddgui-lay-w L))
+	   (color? (and (string=? kind "color") (>= comps 3)))
+	   (sw (if color? 34 0))
+	   (fx0 (+ x sw))
+	   (fw-tot (- w sw)))
+      (when (and color? (kruddgui-lay-vis? L kruddgui-scene-row-h))
+	(kruddgui-rect* (list x (kruddgui-lay-cy L)
+			      (- sw kruddgui-scene-gap) kruddgui-scene-row-h)
+			(kruddgui-scene-color-of value comps)))
+      (let* ((y (kruddgui-lay-cy L))
+	     (g kruddgui-scene-gap)
+	     (fw (if (> comps 0) (/ (- fw-tot (* (- comps 1) g)) comps) fw-tot))
+	     (res
+	      (if (and (> comps 0) (kruddgui-lay-vis? L kruddgui-scene-row-h))
+		  (let loop ((i 0) (vs value) (acc '()))
+		    (if (or (null? vs) (>= i comps))
+			(reverse acc)
+			(let ((cx (+ fx0 (* i (+ fw g)))))
+			  (loop (+ i 1) (cdr vs)
+				(cons (kruddgui-scene-numeric
+				       cx y fw (format #f "~A~D" id i) (car vs))
+				      acc)))))
+		  (map (lambda (v) (cons v #f)) value))))
+	(kruddgui-lay-adv! L (+ kruddgui-scene-row-h kruddgui-scene-gap))
+	(cons (map car res)
+	      (let anyc ((r res)) (cond ((null? r) #f)
+				       ((cdr (car r)) #t)
+				       (else (anyc (cdr r))))))))))
+
+;;! (kruddgui-scene-color-of value comps) an (r g b a) swatch colour from a param
+;;! value list, opaque when the param carries no alpha component.
+(define (kruddgui-scene-color-of value comps)
+  (let ((r (if (pair? value) (car value) 0.0))
+	(g (if (>= (length value) 2) (cadr value) 0.0))
+	(b (if (>= (length value) 3) (caddr value) 0.0))
+	(a (if (>= comps 4) (list-ref value 3) 1.0)))
+    (list r g b a)))
+
+;;! (kruddgui-scene-bindings L e info can-bind) the Mesh / Material / Script combos
+;;! plus each bound asset's param menu, mirroring kruddboard-draw-inspector-body's
+;;! Bindings section but on kruddgui widgets.
+(define (kruddgui-scene-bindings L e info can-bind)
+  (let ((has-render   (list-ref info 6))
+	(has-material (list-ref info 7))
+	(render-ref   (list-ref info 8))
+	(material-ref (list-ref info 9))
+	(has-script   (list-ref info 10))
+	(script-ref   (list-ref info 11)))
+    (kruddgui-scene-combo L "mesh" "Mesh"
+	(kruddgui-binding-label has-render render-ref) (krudd-mesh-assets)
+	render-ref can-bind krudd-entity-set-render-ref e)
+    (when has-render
+      (kruddgui-scene-param-menu L "Mesh Parameters" e "mshp"
+	  (krudd-mesh-params render-ref)
+	  (krudd-entity-mesh-values e render-ref)
+	  (lambda (e2 nv) (krudd-entity-save-mesh-params e2 render-ref nv))))
+    (kruddgui-scene-combo L "material" "Material"
+	(kruddgui-binding-label has-material material-ref)
+	(krudd-material-assets) material-ref can-bind
+	krudd-entity-set-material-ref e)
+    (when has-material
+      (kruddgui-scene-material-params L e material-ref))
+    (kruddgui-scene-combo L "script" "Script"
+	(kruddgui-binding-label has-script script-ref) (krudd-script-assets)
+	script-ref can-bind krudd-entity-set-script-ref e)
+    (when has-script
+      (kruddgui-scene-param-menu L "Script Parameters" e "sp"
+	  (krudd-script-params script-ref)
+	  (krudd-entity-script-values e script-ref)
+	  (lambda (e2 nv)
+	    (krudd-entity-save-script-params e2 script-ref nv))))))
+
+;;! (kruddgui-binding-label bound? ref) the combo preview: "(none)" when unbound,
+;;! the asset's path when it resolves, else "(missing #ref)" — the World twin of
+;;! kruddboard-binding-label.
+(define (kruddgui-binding-label bound? ref)
+  (if (or (not bound?) (= ref 0))
+      "(none)"
+      (let ((path (krudd-asset-find ref)))
+	(if (string? path) path (format #f "(missing #~D)" ref)))))
+
+;;! (kruddgui-scene-material-params L e material-ref) the bound material's shader
+;;! params and, when its texture slot declares params, that texture's — the
+;;! per-entity override layer, saved immediately through the undo-recording setter.
+(define (kruddgui-scene-material-params L e material-ref)
+  (let ((shader-ref (krudd-asset-shader-ref material-ref)))
+    (unless (= shader-ref 0)
+      (kruddgui-scene-param-menu L "Material Parameters" e "mp"
+	  (krudd-shader-material-params shader-ref)
+	  (krudd-entity-material-values e material-ref shader-ref)
+	  (lambda (e2 nv)
+	    (krudd-entity-save-material-params e2 shader-ref nv))))
+    (let ((slot (krudd-material-texture material-ref)))
+      (when (pair? slot)
+	(kruddgui-scene-param-menu L "Texture Parameters" e "texp"
+	    (krudd-texture-params (car slot))
+	    (krudd-entity-texture-values e (car slot))
+	    (lambda (e2 nv)
+	      (krudd-entity-save-texture-params e2 (car slot) nv)))))))
+
+;;! (kruddgui-scene-inspector L e info can-entity can-asset) the drilled-in
+;;! inspector body: the name field, the Position / Rotation / Scale rows, a read-
+;;! only Info block, and the Bindings section. Each edit writes back through the
+;;! matching krudd-entity-* setter, which records an undo step.
+(define (kruddgui-scene-inspector L e info can-entity can-asset)
+  (let ((name (list-ref info 0))
+	(pos  (list-ref info 1))
+	(rot  (list-ref info 2))
+	(scl  (list-ref info 3)))
+    (kruddgui-scene-label L "Name")
+    (let ((nf (kruddgui-scene-field L "ename" name 0)))
+      (when (and can-entity (caddr nf))
+	(krudd-entity-set-name e (car nf))))
+    (kruddgui-scene-rule L)
+    (let ((pr (kruddgui-scene-vec-row L "Position" "pos" pos))
+	  (rr (kruddgui-scene-vec-row L "Rotation" "rot" rot))
+	  (sr (kruddgui-scene-vec-row L "Scale" "scl" scl)))
+      (when (and can-entity (or (cdr pr) (cdr rr) (cdr sr)))
+	(krudd-entity-set-transform e (car pr) (car rr) (car sr))))
+    (kruddgui-scene-rule L)
+    (kruddgui-scene-label L "Info")
+    (kruddgui-scene-kv L "Entity ID" (format #f "~D" e))
+    (kruddgui-scene-kv L "Parent" (kruddboard-parent-label (list-ref info 4)))
+    (kruddgui-scene-rule L)
+    (kruddgui-scene-label L "Bindings")
+    (kruddgui-scene-bindings L e info (and can-entity can-asset))))
+
+;;! (kruddboard-parent-label parent) formats the Parent line: "(root)", "name
+;;! (#id)", or "entity id" — moved here with the inspector it serves.
+(define (kruddboard-parent-label parent)
+  (if (not parent)
+      "(root)"
+      (let ((pid (car parent))
+	    (pname (cdr parent)))
+	(if (string? pname)
+	    (format #f "~A (#~D)" pname pid)
+	    (format #f "entity ~D" pid)))))
+
+;;! (kruddgui-scene-list L caps) the entity list screen: a "+ Entity" button then
+;;! one row per entity — a tap drills into that entity's inspector (and drives the
+;;! viewport selection so the gizmo tracks it), the right-edge x destroys it. The
+;;! list is materialised so destroying a row mid-frame leaves iteration intact.
+(define (kruddgui-scene-list L caps)
+  (let ((has-api (car caps)))
+    (when (and (kruddgui-scene-btn L "+ Entity" has-api))
+      (kruddgui-scene-create))
+    (let ((ents (krudd-world-entities)))
+      (if (or (not ents) (null? ents))
+	  (kruddgui-scene-label L "(no entities)")
+	  (for-each (lambda (row) (kruddgui-scene-list-row L row has-api))
+		    ents)))))
+
+;;! (kruddgui-scene-create) appends an entity, names it, selects it and drills in
+;;! — the "+ Entity" action, the twin of kruddboard-world-create.
+(define (kruddgui-scene-create)
+  (let ((id (krudd-entity-create)))
+    (when (>= id 0)
+      (krudd-entity-set-name id "Entity")
+      (krudd-entity-select id)
+      (set! kruddgui-scene-sel id))))
+
+;;! (kruddgui-scene-list-row L row has-api) one entity row: the name area drills
+;;! in (checked after the x so a tap on the x deletes without also drilling), the
+;;! right-edge x destroys the entity when the scene api is present.
+(define (kruddgui-scene-list-row L row has-api)
+  (let* ((id   (car row))
+	 (disp (if (string? (cdr row)) (cdr row) (format #f "entity ~D" id)))
+	 (x    (kruddgui-lay-x L))
+	 (w    (kruddgui-lay-w L))
+	 (y    (kruddgui-lay-cy L))
+	 (h    kruddgui-scene-row-h)
+	 (bs   28)
+	 (bx   (- (+ x w) bs 4)))
+    (when (kruddgui-lay-vis? L h)
+      (kruddgui-rect* (list x y w h)
+		      (if (= id (krudd-selected))
+			  kruddgui-active-bg kruddgui-idle-bg))
+      (kruddgui-board-cell (+ x 8) y h disp
+			   (if (= id (krudd-selected))
+			       kruddgui-active-fg kruddgui-idle-fg))
+      (when has-api
+	(kruddgui-rect* (list bx (+ y 6) bs (- h 12)) kruddgui-panel-bg)
+	(kruddgui-label bx (+ y 6) bs (- h 12) "x" kruddgui-idle-fg))
+      (cond
+       ((and has-api (kgui-button bx (+ y 6) bs (- h 12)))
+	(krudd-entity-destroy id))
+       ((kgui-button x y w h)
+	(krudd-entity-select id)
+	(set! kruddgui-scene-sel id))))
+    (kruddgui-lay-adv! L (+ h kruddgui-scene-gap))))
+
+;;! (kruddgui-scene-body x y w h caps) the scrolling inspector/list body. It
+;;! clamps the scroll against last frame's measured content height, draws every
+;;! row through the layout cursor (culling off-body rows), records the height for
+;;! next frame, and — when drilled in but the entity no longer resolves — falls
+;;! back to the list, the stale-guard the ImGui inspector used.
+(define (kruddgui-scene-body x y w h caps)
+  (let* ((min-off (min 0.0 (- h kruddgui-scene-total)))
+	 (off     (max min-off (min 0.0 kruddgui-scene-scroll)))
+	 (ix      (+ x kruddgui-scene-pad))
+	 (iw      (- w (* 2 kruddgui-scene-pad)))
+	 (L       (kruddgui-lay (+ y off) y (+ y h) ix iw)))
+    (set! kruddgui-scene-scroll off)
+    (kruddgui-rect* (list x y w h) kruddgui-scene-body-bg)
+    (kgui-clip x y w h)
+    (if (= kruddgui-scene-sel -1)
+	(kruddgui-scene-list L caps)
+	(let ((info (krudd-entity-inspect kruddgui-scene-sel)))
+	  (if (not info)
+	      (set! kruddgui-scene-sel -1)
+	      (kruddgui-scene-inspector L kruddgui-scene-sel info
+					(car caps) (cadr caps)))))
+    (kgui-clip-none)
+    (set! kruddgui-scene-total
+	  (- (kruddgui-lay-cy L) (+ y off)))))
+
+;;! (kruddgui-scene-draw-header x y w hdr) the title, a "< Back" affordance when
+;;! drilled in, and the close box. Back returns to the list; close collapses the
+;;! console. Both taps are trapped by the console region.
+(define (kruddgui-scene-draw-header x y w hdr)
+  (let* ((bs 26)
+	 (bx (- (+ x w) 8 bs))
+	 (by (+ y (/ (- hdr bs) 2))))
+    (if (= kruddgui-scene-sel -1)
+	(kruddgui-label x y 120 hdr "SCENE" kruddgui-idle-fg)
+	(begin
+	  (kruddgui-rect* (list (+ x 6) by 64 bs) kruddgui-idle-bg)
+	  (kruddgui-label (+ x 6) by 64 bs "< Back" kruddgui-idle-fg)
+	  (when (kgui-button (+ x 6) by 64 bs)
+	    (set! kruddgui-scene-sel -1)
+	    (set! kruddgui-scene-open-combo #f))))
+    (kruddgui-rect* (list bx by bs bs) kruddgui-idle-bg)
+    (kruddgui-label bx by bs bs "x" kruddgui-idle-fg)
+    (when (kgui-button bx by bs bs)
+      (set! kruddgui-scene-open #f))))
+
+;;! (kruddgui-scene-draw-panel vw vh) the expanded console: a top-left overlay
+;;! (drawn last, so it wins any overlap with the Log/board consoles) that stops
+;;! short of the mode-bar's reserved band. Drag/wheel on the region scrolls the
+;;! body before it is redrawn (then re-clamped there).
+(define (kruddgui-scene-draw-panel vw vh)
+  (let* ((m      kruddgui-log-margin)
+	 (avail  (- vh m (kruddgui-modebar-reserve vw vh) kruddgui-gap))
+	 (w      (min kruddgui-scene-max-w (- vw (* 2 m))))
+	 (h      (max 160.0 (min (* vh 0.72) avail)))
+	 (x      m)
+	 (y      m)
+	 (hdr    kruddgui-scene-header-h)
+	 (body-y (+ y hdr))
+	 (body-h (- h hdr)))
+    (kgui-panel-begin "kgui-scene" x y w h)
+    (kruddgui-rect* (list x y w h) kruddgui-scene-panel-bg)
+    (kruddgui-scene-draw-header x y w hdr)
+    (set! kruddgui-scene-scroll
+	  (+ kruddgui-scene-scroll
+	     (cadr (kgui-region-drag))
+	     (kgui-region-wheel)))
+    (kruddgui-scene-body x body-y w body-h (krudd-world-caps))
+    (kgui-panel-end)))
+
+;;! (kruddgui-scene-draw-handle vw vh) the collapsed console: a pill in the bottom-
+;;! left stack, above the STATS handle (STATS above LOG). Tap expands the console.
+(define (kruddgui-scene-draw-handle vw vh)
+  (let* ((m  kruddgui-log-margin)
+	 (hw kruddgui-log-handle-w)
+	 (hh kruddgui-log-handle-h)
+	 (x  m)
+	 (y  (- vh m hh hh hh (* 2 kruddgui-gap))))
+    (kgui-panel-begin "kgui-scene" x y hw hh)
+    (kruddgui-rect* (list x y hw hh) kruddgui-scene-panel-bg)
+    (kruddgui-label x y hw hh "SCENE" kruddgui-idle-fg)
+    (when (kgui-button x y hw hh)
+      (set! kruddgui-scene-open #t))
+    (kgui-panel-end)))
+
 ;;! (kruddgui-draw) the whole layer — the host's per-tick entry point. Draw the
-;;! mode-bar (row or column by orientation), then the Log console and the board
-;;! console (each expanded or collapsed). Four regions in all, each owning its
-;;! own input; drawn in order, so a later panel wins any overlap.
+;;! mode-bar (row or column by orientation), then the Log console, the board
+;;! console and the Scene inspector (each expanded or collapsed). Every panel owns
+;;! its own input region; drawn in order, so a later panel wins any overlap.
 (define (kruddgui-draw)
   (let* ((vp (kgui-viewport-size))
 	 (vw (car vp))
@@ -535,4 +1049,7 @@
 	  (kruddgui-log-draw-handle vw vh))
       (if kruddgui-board-open
 	  (kruddgui-board-draw-panel vw vh)
-	  (kruddgui-board-draw-handle vw vh)))))
+	  (kruddgui-board-draw-handle vw vh))
+      (if kruddgui-scene-open
+	  (kruddgui-scene-draw-panel vw vh)
+	  (kruddgui-scene-draw-handle vw vh)))))

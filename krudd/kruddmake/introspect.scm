@@ -110,19 +110,27 @@
 		(string (string-ref digits (quotient b 16))
 			(string-ref digits (remainder b 16)))))
 
+;;! Emit the byte array as one growing string-output port rather than folding a
+;;! running (string-append acc ...) — the latter is O(n^2) in the file length and,
+;;! for the largest embedded images (kruddgui.scm), churns enough garbage to be
+;;! OOM-killed mid-render. The port appends in amortised O(n); the emitted bytes
+;;! are unchanged.
 (define (krudd-bytes->c-init s)
-	(let* ((n    (string-length s))
-	       (body (let loop ((i 0) (acc ""))
-		       (if (>= i n)
-			   acc
-			   (loop (+ i 1)
-				 (string-append acc
-				   "(char)0x" (krudd-hex-byte
-						(char->integer
-						  (string-ref s i)))
-				   ","
-				   (if (= 0 (modulo (+ i 1) 12)) "\n\t" "")))))))
-		(string-append body "(char)0x00")))
+	(let ((n    (string-length s))
+	      (port (open-output-string)))
+		(let loop ((i 0))
+		  (if (>= i n)
+		      (begin
+			(write-string "(char)0x00" port)
+			(get-output-string port))
+		      (begin
+			(write-string "(char)0x" port)
+			(write-string (krudd-hex-byte
+					(char->integer (string-ref s i)))
+				      port)
+			(write-string "," port)
+			(if (= 0 (modulo (+ i 1) 12)) (write-string "\n\t" port))
+			(loop (+ i 1)))))))
 
 (define (krudd-embed-file in out symbol)
 	(let ((init (krudd-bytes->c-init (krudd-slurp in))))

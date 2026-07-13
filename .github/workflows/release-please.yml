@@ -1,0 +1,37 @@
+name: release-please
+
+# release-please owns versioning and releases. On every push to main it opens
+# (or updates) a single "release PR" that rolls up the Conventional Commits
+# merged since the last release: it bumps version.txt, regenerates CHANGELOG.md,
+# and updates .release-please-manifest.json. Merging that PR tags vX.Y.Z and
+# cuts a GitHub Release. Nothing here builds or deploys the site — ci.yml still
+# does that, reading the version from version.txt.
+on:
+  push:
+    branches: [main]
+
+# Needed to open the release PR and, on merge, push the tag + create the
+# release. GITHUB_TOKEN is sufficient for both.
+permissions:
+  contents: write
+  pull-requests: write
+
+# One release PR at a time; let an in-flight run finish rather than racing.
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      # NOTE: PRs opened by this action are authored by GITHUB_TOKEN, so they do
+      # NOT retrigger ci.yml (Actions does not recurse on GITHUB_TOKEN events).
+      # That is fine here — the release PR only edits version.txt/CHANGELOG.md,
+      # which need no build. If we later want CI to run on the release PR,
+      # swap `token` for a PAT or GitHub App token.
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

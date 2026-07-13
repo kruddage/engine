@@ -1,0 +1,29 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+
+  "//": "release-please derives the version from Conventional Commit messages instead of the old release:* PR-label fold (see .github/workflows/release-please.yml). We squash-merge, so the squashed commit message is the PR title, which .github/workflows/pr-title.yml lints as a Conventional Commit. feat: bumps minor, fix:/perf: bump patch, and a ! or BREAKING CHANGE bumps major; chore:/docs:/ci:/etc. no longer bump the number but are still recorded in the changelog via changelog-sections below.",
+
+  "//bootstrap-sha": "The repo has 270 merged PRs of label-era history but no tags. bootstrap-sha marks the last commit release-please should ignore, so the first release PR only considers commits merged AFTER it — it does not replay the entire label-era history into one giant changelog. This is PR #509, the last commit whose release:* label fold is banked into the seeded 17.11.3 in .release-please-manifest.json (and version.txt), so numbering continues unbroken. (PR #510 merged just after; its squash message is not a Conventional Commit, so release-please ignores it — no bump, no changelog noise.)",
+  "bootstrap-sha": "3c794018c302401b9ac9c93054a43e573ae6585c",
+
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "package-name": "krudd",
+      "include-component-in-tag": false,
+      "changelog-path": "CHANGELOG.md",
+      "//changelog-sections": "Only feat/fix/perf trigger a version bump, but we list every commit type here so the CHANGELOG still records internal-only changes — preserving the old scheme's 'every merge is visible' property even though chore no longer moves the number.",
+      "changelog-sections": [
+        { "type": "feat", "section": "Features" },
+        { "type": "fix", "section": "Bug Fixes" },
+        { "type": "perf", "section": "Performance" },
+        { "type": "refactor", "section": "Refactoring" },
+        { "type": "build", "section": "Build System" },
+        { "type": "ci", "section": "CI" },
+        { "type": "docs", "section": "Documentation" },
+        { "type": "test", "section": "Tests" },
+        { "type": "chore", "section": "Chores" }
+      ]
+    }
+  }
+}

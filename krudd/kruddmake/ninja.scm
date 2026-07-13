@@ -297,6 +297,17 @@
 	      (rendscm  (string-append (krudd-repo-root)
 				      "/krudd/engine/render/renderer.scm")))
 		(system (string-append "mkdir -p \"" gen "\""))
+		;;! Runtime assets served next to index.html — stage-site.sh copies
+		;;! build/assets/ into the deploy. kruddgui fetches its font from
+		;;! assets/ui_font.ttf at startup rather than embedding it in the
+		;;! module, so the font is copied here instead of baked into a header.
+		(let ((assets (string-append builddir "/assets"))
+		      (font   (string-append srcroot
+					     "/ui/kruddgui/assets/ui_font.ttf")))
+			(system (string-append "mkdir -p \"" assets "\""))
+			(if (krudd-path-exists? font)
+			    (system (string-append "cp \"" font "\" \""
+						   assets "/ui_font.ttf\""))))
 		(krudd-configure-file
 		  (string-append srcroot "/core/version.h.in")
 		  (string-append gen "/version.h"))
@@ -324,9 +335,6 @@
 		(krudd-embed-file
 		  (string-append srcroot "/ui/kruddgui/kruddgui.scm")
 		  (string-append gen "/kruddgui_scm.h") "KRUDDGUI_SCM")
-		(krudd-embed-binary-optional
-		  (string-append srcroot "/ui/kruddgui/assets/ui_font.ttf")
-		  (string-append gen "/ui_font_ttf.h") "UI_FONT_TTF")
 		(krudd-embed-scheme-module
 		  mdscm
 		  (string-append gen "/md_parse.h")

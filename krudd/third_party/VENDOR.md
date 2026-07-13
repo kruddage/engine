@@ -3,8 +3,8 @@
 `stb_truetype.h` is third-party, single-header, **public domain** source (its
 upstream carries a public-domain dedication, kept verbatim — it is **not**
 stamped with the project's `GPL-2.0-or-later` line). kruddgui compiles it into
-the WASM module to bake its own glyph atlas from an embedded font, replacing the
-one text coupling it had to Dear ImGui.
+the WASM module to bake its own glyph atlas from the UI font it fetches at
+startup, replacing the one text coupling it had to Dear ImGui.
 
 Exactly one translation unit (`../engine/ui/kruddgui/kgui_font.c`) defines
 `STB_TRUETYPE_IMPLEMENTATION` before the include; every other user gets just the
@@ -13,8 +13,9 @@ code, not held to the engine's `-Werror -Wpedantic`.
 
 > **Trust boundary.** stb_truetype's own header warns it does no bounds checking
 > and must not be run on untrusted font files. kruddgui only ever feeds it the
-> font **baked into the build at compile time** (see `ui_font.ttf`), never a
-> user- or network-supplied file, so that warning does not apply to this use.
+> first-party UI font it ships and fetches from its **own origin** (`ui_font.ttf`,
+> as trusted as the module itself), never a user- or third-party file, so that
+> warning does not apply to this use.
 
 ## Pin (stb_truetype)
 
@@ -40,11 +41,11 @@ project's `GPL-2.0-or-later` line. OFL bundling into a GPL work is the standard
 permissive-inbound case: the font is data, not linked code, so there is nothing
 to reconcile, and OFL poses no obstacle to the commercial build.
 
-It is embedded **unmodified** (rasterised at runtime, never edited or renamed),
-so the OFL's Reserved-Font-Name and Modified-Version clauses do not apply. See
-`../engine/ui/kruddgui/assets/README.md` for the baking notes (kerning is
-GPOS-only in Inter, so inert through stb_truetype; the file is the full
-multi-script face and a Latin subset would shrink the embed).
+It is served **unmodified** (fetched and rasterised at runtime, never edited or
+renamed), so the OFL's Reserved-Font-Name and Modified-Version clauses do not
+apply. See `../engine/ui/kruddgui/assets/README.md` for the baking notes
+(kerning is GPOS-only in Inter, so inert through stb_truetype; the file is the
+full multi-script face and a Latin subset would shrink the download).
 
 ## Pin (Inter)
 

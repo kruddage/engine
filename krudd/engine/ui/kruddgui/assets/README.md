@@ -1,10 +1,14 @@
 <!-- SPDX-License-Identifier: GPL-2.0-or-later -->
 # kruddgui font asset
 
-kruddgui bakes its own glyph atlas at build time from the TrueType font here
-(see `../kgui_font.c`). The build embeds `ui_font.ttf` byte-exact into the WASM
-module as `UI_FONT_TTF` / `UI_FONT_TTF_LEN` (via `krudd-embed-binary-optional`
-in `kruddmake/ninja.scm`), and `kruddgui.cpp` bakes it once at startup.
+kruddgui bakes its own glyph atlas from the TrueType font here (see
+`../kgui_font.c`). The font is **fetched at runtime**, not embedded in the WASM
+module: the build copies `ui_font.ttf` into `build/assets/` (see
+`kruddmake/ninja.scm`), `stage-site.sh` deploys that next to `index.html`, and
+`kruddgui.cpp` fetches it from `assets/ui_font.ttf` at startup (via
+`emscripten_fetch`, the same path `asset_plugin` uses) and bakes it once the
+bytes arrive. This keeps the module lean and lets the font be cached and swapped
+independently of a WASM rebuild.
 
 ## Vendored font: Inter
 
@@ -12,7 +16,7 @@ in `kruddmake/ninja.scm`), and `kruddgui.cpp` bakes it once at startup.
 Project Authors, under the SIL Open Font License 1.1 — see `OFL.txt` and the
 `third_party/VENDOR.md` entry. It came from the author's official site
 (https://rsms.me/inter/) unmodified, so the OFL's Reserved-Font-Name /
-modification clauses do not apply — we embed it as-is and rasterise at runtime.
+modification clauses do not apply — it is served as-is and rasterised at runtime.
 
 Two things worth knowing about baking Inter through stb_truetype:
 
@@ -27,8 +31,9 @@ Two things worth knowing about baking Inter through stb_truetype:
   Regular on the upstream site.
 
 Inter is the full multi-script face (~860 KB), of which only Latin is baked —
-the rest is dead weight in the module. Subsetting it to the baked ranges (e.g.
-`pyftsubset`) would shrink the embed substantially and is a clean follow-up.
+the rest is dead weight fetched over the wire. Subsetting it to the baked ranges
+(e.g. `pyftsubset`) would shrink the download substantially and is a clean
+follow-up.
 
 ## Swapping the font
 
@@ -42,9 +47,9 @@ entry. Requirements:
 - **License:** must be redistributable under a license compatible with the
   repository; record it here and in `third_party/VENDOR.md`.
 
-## Building without a font
+## Building / running without the font
 
-The embed is *optional*: with no `ui_font.ttf` present the build still succeeds,
-emitting a zero-length `UI_FONT_TTF`. `kgui_font_bake` treats that as "no font"
-and kruddgui draws no text (logging once), so panels still lay out and respond —
-only their labels are blank until a font is present.
+The fetch degrades gracefully: until the bytes arrive — or if the request fails,
+or no font is served at all — `kgui_font` stays not-ready and kruddgui draws a
+1×1-white fallback, so panels lay out and respond with blank labels; text
+appears the moment the font is baked in.

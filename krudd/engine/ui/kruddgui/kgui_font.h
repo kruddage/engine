@@ -92,8 +92,9 @@ struct kgui_font {
  * failure `f` is left zeroed and safe to pass to the glyph/kern sources (they
  * report "no glyph" / no kerning). Call kgui_font_free to release it.
  *
- * The blob is trusted, compile-time-embedded engine data, never a user- or
- * network-supplied file — see the trust-boundary note in third_party/VENDOR.md.
+ * The blob is a first-party font shipped with the app and fetched from its own
+ * origin (see kruddgui.cpp), as trusted as the module itself — never a user- or
+ * third-party file. See the trust-boundary note in third_party/VENDOR.md.
  */
 int kgui_font_bake(struct kgui_font *f, const uint8_t *ttf, int ttf_len);
 

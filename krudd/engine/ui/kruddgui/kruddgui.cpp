@@ -15,10 +15,13 @@
  * drawn and kruddgui composites over it.
  *
  * Text now runs through kruddgui's own glyph pipeline (kgui_font): an R8 atlas
- * baked once from an embedded TrueType font, with kerning — no ImGui font
- * dependency. The one remaining ImGui coupling is input: non-bar events are
- * forwarded verbatim to ImGui's io, using the exact translation imgui_plugin
- * used before input ownership moved here.
+ * baked from a TrueType font fetched at startup (emscripten_fetch, the same
+ * mechanism asset_plugin uses), with kerning — no ImGui font dependency. The
+ * font is served alongside the app rather than embedded in the module, so the
+ * WASM stays lean; until it arrives kruddgui draws with a blank fallback and
+ * swaps the real atlas in when the fetch lands. The one remaining ImGui
+ * coupling is input: non-bar events are forwarded verbatim to ImGui's io, using
+ * the exact translation imgui_plugin used before input ownership moved here.
  */
 
 extern "C" {
@@ -35,15 +38,16 @@ extern "C" {
 #include "imgui.h"
 
 #include <emscripten/html5.h>
+#include <emscripten/fetch.h>
 #include <GLES3/gl3.h>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 extern "C" {
 #include "s7.h"			/* self-guards for C++ linkage */
 #include "script.h"
 #include "kruddgui_scm.h"	/* KRUDDGUI_SCM — the panel image */
-#include "ui_font_ttf.h"	/* UI_FONT_TTF / UI_FONT_TTF_LEN — baked font */
 
 double get_device_pixel_ratio(void);	/* plugin_abi.c (main module) */
 int    krudd_is_touch_device(void);
@@ -268,18 +272,28 @@ static void gl_flush(GLuint atlas)
 }
 
 /* ------------------------------------------------------------------ */
-/* Glyph pipeline — bake the embedded font, upload its atlas            */
+/* Glyph pipeline — fetch the font, bake it, upload its atlas           */
 /* ------------------------------------------------------------------ */
 
 /*
- * Upload s_font's baked atlas as the R8 texture every draw samples, and record
- * the solid-white texel used for kgui-rect fills. When no font was embedded
- * (kgui_font_bake left it not-ready — see assets/README.md) a 1×1 white texel
- * stands in so rects and panels still draw; only text is absent.
+ * URL the font is fetched from, relative to the page. stage-site.sh deploys
+ * the build's assets/ dir next to index.html, so this resolves for the local
+ * build, the main deploy, and a PR preview alike.
+ */
+#define KGUI_FONT_URL "assets/ui_font.ttf"
+
+/*
+ * (Re)upload s_font's atlas into the R8 texture every draw samples, and record
+ * the solid-white texel used for kgui-rect fills. The texture is created on the
+ * first call and its contents replaced on later calls, so the fetch callback
+ * can swap the baked atlas in over the startup fallback without reallocating.
+ * Until the font is ready a 1×1 white texel stands in, so rects and panels draw
+ * from the first frame; only text waits for the fetch.
  */
 static void upload_font_atlas(void)
 {
-	glGenTextures(1, &s_font_tex);
+	if (!s_font_tex)
+		glGenTextures(1, &s_font_tex);
 	glBindTexture(GL_TEXTURE_2D, s_font_tex);
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
@@ -306,19 +320,55 @@ static void upload_font_atlas(void)
 }
 
 /*
- * Bake the embedded font once and upload it. The CPU-side atlas bitmap and the
- * font handle are kept for the lifetime of the plugin — the glyph and kern
- * sources read the retained metrics (not the pixels) every frame.
+ * Fetch landed: bake the downloaded font bytes and swap the atlas in. The bake
+ * copies out the metrics it needs, so the fetch buffer is released with the
+ * request. The CPU-side atlas bitmap and font handle then live for the plugin's
+ * lifetime — the glyph and kern sources read the retained metrics every frame.
+ */
+static void on_font_fetched(emscripten_fetch_t *fetch)
+{
+	bool ok = kgui_font_bake(&s_font, (const uint8_t *)fetch->data,
+				 (int)fetch->numBytes) != 0;
+
+	if (ok) {
+		upload_font_atlas();
+		if (g_log)
+			g_log->write(LOG_LEVEL_INFO,
+				     "kruddgui: baked UI font (%llu bytes)",
+				     (unsigned long long)fetch->numBytes);
+	} else if (g_log) {
+		g_log->write(LOG_LEVEL_WARN,
+			     "kruddgui: UI font failed to bake; text disabled");
+	}
+	emscripten_fetch_close(fetch);
+}
+
+static void on_font_fetch_error(emscripten_fetch_t *fetch)
+{
+	if (g_log)
+		g_log->write(LOG_LEVEL_WARN,
+			     "kruddgui: UI font fetch failed (HTTP %d, %s); "
+			     "text disabled", fetch->status, KGUI_FONT_URL);
+	emscripten_fetch_close(fetch);
+}
+
+/*
+ * Show the blank fallback immediately, then fetch the font. Baking + the atlas
+ * swap happen in on_font_fetched when the bytes arrive; the callbacks run on the
+ * main thread between ticks, so touching GL there is safe.
  */
 static void init_font(void)
 {
-	bool ok = kgui_font_bake(&s_font, UI_FONT_TTF, (int)UI_FONT_TTF_LEN) != 0;
+	emscripten_fetch_attr_t attr;
 
-	if (!ok && g_log)
-		g_log->write(LOG_LEVEL_WARN,
-			     "kruddgui: no UI font baked (embed one at "
-			     "ui/kruddgui/assets/ui_font.ttf); text disabled");
-	upload_font_atlas();
+	upload_font_atlas(); /* s_font not ready yet → 1×1 white fallback */
+
+	emscripten_fetch_attr_init(&attr);
+	strncpy(attr.requestMethod, "GET", sizeof(attr.requestMethod) - 1);
+	attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY;
+	attr.onsuccess  = on_font_fetched;
+	attr.onerror    = on_font_fetch_error;
+	emscripten_fetch(&attr, KGUI_FONT_URL);
 }
 
 /* ------------------------------------------------------------------ */

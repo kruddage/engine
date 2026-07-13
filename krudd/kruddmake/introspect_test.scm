@@ -75,27 +75,6 @@
 	(check "embed body is a NUL-terminated byte array"
 	       (and (has? h "(char)0x") (has? h "(char)0x00"))))
 
-;;! krudd-embed-binary — byte-exact embedding for binary assets (fonts, etc.).
-;;! Write a fixture with bytes UTF-8 slurping would corrupt (a NUL, a lone 0x80
-;;! continuation byte, 0xFF) and confirm they survive verbatim with a length.
-(call-with-output-file (string-append tmp "/blob.bin")
-  (lambda (p)
-    (for-each (lambda (b) (write-byte b p))
-	      (list #x00 #x7f #x80 #xff #x42))))
-(krudd-embed-binary
-  (string-append tmp "/blob.bin")
-  (string-append tmp "/blob.h") "TEST_BLOB")
-(let ((h (slurp (string-append tmp "/blob.h"))))
-	(check "binary embed declares an unsigned char array"
-	       (has? h "static const unsigned char TEST_BLOB[] ="))
-	(check "binary embed carries the exact byte count"
-	       (has? h "TEST_BLOB_LEN = 5UL"))
-	(check "binary embed preserves a high byte (0xff)" (has? h "0xff,"))
-	(check "binary embed preserves a lone continuation byte (0x80)"
-	       (has? h "0x80,"))
-	(check "binary embed preserves an interior NUL (0x00)"
-	       (has? h "0x00,")))
-
 (display "introspect: binding generator\n")
 (krudd-embed-scheme-module
   (string-append krudd-root "/krudd/engine/ui/kruddboard/md_parse.scm")

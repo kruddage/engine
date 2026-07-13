@@ -110,6 +110,230 @@ static void test_builtin_grid(void)
 }
 
 /*
+ * Every swept or parametric built-in shares one contract: a non-NULL blob of
+ * the expected vertex/index counts, an index count that is a whole number of
+ * triangles, every index in range, and every normal unit length. gen_checked
+ * verifies that and hands the blob back so a per-shape test can add its own
+ * bounds checks. The counts are the geometry's fingerprint — they change only
+ * when the profile/resolution in builtin_mesh_scripts.h does.
+ */
+static struct mesh_blob *gen_checked(const char *src, uint32_t exp_v,
+				     uint32_t exp_i)
+{
+	struct mesh_blob         *b;
+	const struct mesh_vertex *v;
+	const uint16_t           *idx;
+	uint32_t                   size = 0;
+	uint32_t                   i;
+
+	b = mesh_script_generate(src, NULL, 0, g_mem, &size);
+	assert(b != NULL);
+	assert(size == mesh_blob_size(exp_v, exp_i));
+	assert(b->vertex_count == exp_v);
+	assert(b->index_count  == exp_i);
+	assert(b->index_count % 3 == 0);
+
+	v   = mesh_blob_vertices(b);
+	idx = mesh_blob_indices(b);
+	for (i = 0; i < exp_i; i++)
+		assert(idx[i] < exp_v);
+	for (i = 0; i < exp_v; i++)
+		assert(fabsf(vlen(v[i].normal) - 1.0f) <= EPS);
+	return b;
+}
+
+/* Radius of a vertex from the Y axis — the swept prims' natural extent. */
+static float radius_xz(const struct mesh_vertex *v)
+{
+	return sqrtf(v->position[0] * v->position[0]
+		     + v->position[2] * v->position[2]);
+}
+
+/*
+ * cylinder — the six-point lathe: radius 0.5, height 1. Every vertex sits
+ * within the 0.5 radius and the ±0.5 height, and the two zero-height crease
+ * rings drop out so the index count is exactly the three real segments.
+ */
+static void test_builtin_cylinder(void)
+{
+	struct mesh_blob         *b = gen_checked(CYLINDER_MESH_SCRIPT_SRC, 150, 432);
+	const struct mesh_vertex *v = mesh_blob_vertices(b);
+	uint32_t                   i;
+
+	for (i = 0; i < 150; i++) {
+		assert(radius_xz(&v[i]) <= 0.5f + EPS);
+		assert(fabsf(v[i].position[1]) <= 0.5f + EPS);
+	}
+	g_mem->free(b);
+}
+
+/* cone — base radius 0.5 tapering to an apex at r=0, height 1. */
+static void test_builtin_cone(void)
+{
+	struct mesh_blob         *b = gen_checked(CONE_MESH_SCRIPT_SRC, 100, 288);
+	const struct mesh_vertex *v = mesh_blob_vertices(b);
+	uint32_t                   i;
+
+	for (i = 0; i < 100; i++) {
+		assert(radius_xz(&v[i]) <= 0.5f + EPS);
+		assert(fabsf(v[i].position[1]) <= 0.5f + EPS);
+	}
+	g_mem->free(b);
+}
+
+/*
+ * disc — a flat circle of radius 0.5 on the XZ plane: zero height, every vertex
+ * within the radius, and every normal pointing straight up.
+ */
+static void test_builtin_disc(void)
+{
+	struct mesh_blob         *b = gen_checked(DISC_MESH_SCRIPT_SRC, 50, 144);
+	const struct mesh_vertex *v = mesh_blob_vertices(b);
+	uint32_t                   i;
+
+	for (i = 0; i < 50; i++) {
+		assert(radius_xz(&v[i]) <= 0.5f + EPS);
+		assert(fabsf(v[i].position[1]) <= EPS);
+		assert(fabsf(v[i].normal[1] - 1.0f) <= EPS);
+	}
+	g_mem->free(b);
+}
+
+/*
+ * torus — a tube of minor radius 0.15 orbiting at major radius 0.35, so every
+ * vertex lies in the annulus [0.20, 0.50] and within ±0.15 of the XZ plane. No
+ * vertex ever reaches the axis (the one prim with no pole).
+ */
+static void test_builtin_torus(void)
+{
+	struct mesh_blob         *b = gen_checked(TORUS_MESH_SCRIPT_SRC, 425, 2304);
+	const struct mesh_vertex *v = mesh_blob_vertices(b);
+	uint32_t                   i;
+
+	for (i = 0; i < 425; i++) {
+		float r = radius_xz(&v[i]);
+
+		assert(r >= 0.2f - EPS && r <= 0.5f + EPS);
+		assert(fabsf(v[i].position[1]) <= 0.15f + EPS);
+	}
+	g_mem->free(b);
+}
+
+/*
+ * capsule — radius 0.5, a unit cylindrical middle capped by two hemispheres, so
+ * it spans the full ±1 in height while never exceeding the 0.5 radius. The caps
+ * really do reach y = ±1.
+ */
+static void test_builtin_capsule(void)
+{
+	struct mesh_blob         *b = gen_checked(CAPSULE_MESH_SCRIPT_SRC, 450, 2448);
+	const struct mesh_vertex *v = mesh_blob_vertices(b);
+	uint32_t                   i;
+	float                      maxy = 0.0f;
+
+	for (i = 0; i < 450; i++) {
+		float ay = fabsf(v[i].position[1]);
+
+		assert(radius_xz(&v[i]) <= 0.5f + EPS);
+		assert(ay <= 1.0f + EPS);
+		if (ay > maxy)
+			maxy = ay;
+	}
+	assert(fabsf(maxy - 1.0f) <= EPS);
+	g_mem->free(b);
+}
+
+/*
+ * superquadric — with the default exponents (e1=e2=1) a superellipsoid IS an
+ * ellipsoid, and ours is the unit sphere scaled to radius 0.5: every vertex is
+ * distance 0.5 from the origin. The finite-difference normals are unit too
+ * (checked in gen_checked), including the pole fallback.
+ */
+static void test_builtin_superquadric_default_is_ellipsoid(void)
+{
+	struct mesh_blob         *b = gen_checked(SUPERQUADRIC_MESH_SCRIPT_SRC, 825, 4608);
+	const struct mesh_vertex *v = mesh_blob_vertices(b);
+	uint32_t                   i;
+
+	for (i = 0; i < 825; i++)
+		assert(fabsf(vlen(v[i].position) - 0.5f) <= 1.0e-3f);
+	g_mem->free(b);
+}
+
+/*
+ * The exponents reshape the surface: e1=e2=0.3 pinches the ellipsoid toward a
+ * box, whose corners sit farther from the centre than the 0.5-radius sphere —
+ * proof the (params ...) override drives mesh-param-surface, the geometry twin
+ * of test_box_params_reshape.
+ */
+static void test_superquadric_params_reshape(void)
+{
+	const float               boxish[2] = { 0.3f, 0.3f }; /* e1 e2 */
+	struct mesh_blob         *b;
+	const struct mesh_vertex *v;
+	uint32_t                   i;
+	float                      maxr = 0.0f;
+
+	b = mesh_script_generate(SUPERQUADRIC_MESH_SCRIPT_SRC,
+				 (const uint8_t *)boxish, sizeof(boxish), g_mem, NULL);
+	assert(b != NULL);
+	assert(b->vertex_count == 825);
+	v = mesh_blob_vertices(b);
+	for (i = 0; i < 825; i++) {
+		float r = vlen(v[i].position);
+
+		if (r > maxr)
+			maxr = r;
+	}
+	assert(maxr > 0.55f); /* corners push past the ellipsoid's 0.5 */
+	g_mem->free(b);
+}
+
+/*
+ * heightfield — a unit XZ patch displaced in Y. Default relief is non-flat but
+ * bounded by the amplitude (0.15), and x/z stay within the ±0.5 footprint.
+ */
+static void test_builtin_heightfield(void)
+{
+	struct mesh_blob         *b = gen_checked(HEIGHTFIELD_MESH_SCRIPT_SRC, 625, 3456);
+	const struct mesh_vertex *v = mesh_blob_vertices(b);
+	uint32_t                   i;
+	float                      maxy = 0.0f;
+
+	for (i = 0; i < 625; i++) {
+		float ay = fabsf(v[i].position[1]);
+
+		assert(v[i].position[0] >= -0.5f - EPS && v[i].position[0] <= 0.5f + EPS);
+		assert(v[i].position[2] >= -0.5f - EPS && v[i].position[2] <= 0.5f + EPS);
+		if (ay > maxy)
+			maxy = ay;
+	}
+	assert(maxy > 0.01f);        /* the default terrain has relief   */
+	assert(maxy <= 0.15f + EPS); /* bounded by the amp-0.15 envelope */
+	g_mem->free(b);
+}
+
+/*
+ * Amplitude 0 collapses the heightfield to a perfectly flat plane — the param
+ * genuinely scales the displacement, not just decorates the asset.
+ */
+static void test_heightfield_amp_flattens(void)
+{
+	const float               flat[1] = { 0.0f }; /* amp = 0 */
+	struct mesh_blob         *b;
+	const struct mesh_vertex *v;
+	uint32_t                   i;
+
+	b = mesh_script_generate(HEIGHTFIELD_MESH_SCRIPT_SRC,
+				 (const uint8_t *)flat, sizeof(flat), g_mem, NULL);
+	assert(b != NULL);
+	v = mesh_blob_vertices(b);
+	for (i = 0; i < 625; i++)
+		assert(fabsf(v[i].position[1]) <= EPS);
+	g_mem->free(b);
+}
+
+/*
  * Calling generate a second time for the exact same source must produce an
  * equivalent mesh (the *mesh-scripts* cache in mesh_script.scm returns the
  * same result object rather than faulting or drifting on re-evaluation).
@@ -240,6 +464,15 @@ int main(void)
 
 	test_hand_authored_quad();
 	test_builtin_grid();
+	test_builtin_cylinder();
+	test_builtin_cone();
+	test_builtin_disc();
+	test_builtin_torus();
+	test_builtin_capsule();
+	test_builtin_superquadric_default_is_ellipsoid();
+	test_superquadric_params_reshape();
+	test_builtin_heightfield();
+	test_heightfield_amp_flattens();
 	test_repeat_call_is_stable();
 	test_malformed_source_yields_no_mesh();
 	test_box_params_declared();

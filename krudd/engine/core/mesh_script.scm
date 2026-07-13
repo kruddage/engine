@@ -2,8 +2,10 @@
 
 ;;! mesh-script — the (mesh NAME (generate () ...)) form, its geometry helper
 ;;! vocabulary, and the mesh generator. Every mesh in the engine — including
-;;! the built-in box/sphere/plane/pyramid/grid (see builtin_mesh_scripts.h)
-;;! — is one of these forms; there is no hardcoded C mesh generator anymore.
+;;! the built-in box/sphere/plane/pyramid/grid, the revolved
+;;! cylinder/cone/capsule/disc/torus, and the parametric superquadric/heightfield
+;;! (see builtin_mesh_scripts.h) — is one of these forms; there is no hardcoded
+;;! C mesh generator anymore.
 ;;! Mirrors entity_script.scm's (script NAME ...) dispatcher.
 ;;!
 ;;! A mesh script is one (mesh NAME [(params ...)] (generate () EXPR ...))
@@ -115,6 +117,148 @@
                                       (cons (+ k2 1) (cons k2 (cons (+ k1 1) a1)))
                                       a1)))
                          (sloop (+ s 1) a2))))))))
+
+;;! --- surfaces of revolution & parametric grids ----------------------
+;;!
+;;! Two shape "engines" that turn a compact description into (VERTS . INDICES),
+;;! the way mesh-quad-verts turns a face into four vertices — the reusable core
+;;! the swept and parametric built-ins are each one line over. mesh-revolve
+;;! sweeps a meridian PROFILE around the Y axis (cylinder, cone, capsule, disc,
+;;! and torus are each just a profile); mesh-param-surface samples a position
+;;! function over a (u,v) grid, taking normals from the surface tangents
+;;! (superquadric and heightfield are each just a function).
+
+;;! A meridian profile point is (r y nr ny v): radius from the Y axis, height,
+;;! the 2-D outward normal (nr ny) in the (radius,height) plane, and the V
+;;! texcoord. Sweeping rotates (r,nr) into the XZ plane; a hard crease is two
+;;! points at one (r,y) carrying different (nr,ny). mesh-arc-profile builds the
+;;! common case — points along a circular arc — so a capsule cap or a torus tube
+;;! stays a single call.
+
+;;! (mesh-arc-profile cr cy rad a0 a1 n v0 v1) -> a list of (n+1) profile points
+;;! along a circular arc of radius RAD centred at (CR,CY) in the meridian plane,
+;;! sweeping angle A0..A1, with outward normals radial from that centre and V
+;;! interpolating V0..V1. A hemisphere cap is a quarter turn; a torus tube a full
+;;! one.
+(define (mesh-arc-profile cr cy rad a0 a1 n v0 v1)
+  (let loop ((i 0) (acc '()))
+    (if (> i n)
+        (reverse acc)
+        (let* ((t (/ (exact->inexact i) n))
+               (a (+ a0 (* (- a1 a0) t)))
+               (ca (cos a)) (sa (sin a)))
+          (loop (+ i 1)
+                (cons (list (+ cr (* rad ca)) (+ cy (* rad sa)) ca sa
+                            (+ v0 (* (- v1 v0) t)))
+                      acc))))))
+
+;;! (mesh-revolve-verts profile sectors) -> the swept vertex list: each of the
+;;! (length profile) rings is SECTORS+1 vertices (the seam vertex is doubled so
+;;! U runs a clean 0..1), row-major with profile order outermost.
+(define (mesh-revolve-verts profile sectors)
+  (let ploop ((rows profile) (acc '()))
+    (if (null? rows)
+        (reverse acc)
+        (let* ((p (car rows))
+               (r (car p)) (y (cadr p))
+               (nr (caddr p)) (ny (list-ref p 3)) (vv (list-ref p 4)))
+          (ploop (cdr rows)
+                 (let sloop ((s 0) (a acc))
+                   (if (> s sectors)
+                       a
+                       (let* ((phi (/ (* 2.0 pi s) sectors))
+                              (cs (cos phi)) (sn (sin phi)))
+                         (sloop (+ s 1)
+                                (cons (list (* r cs) y (* r sn)
+                                            (* nr cs) ny (* nr sn)
+                                            (exact->inexact (/ s sectors)) vv)
+                                      a))))))))))
+
+;;! (mesh-revolve-indices profile sectors) -> the triangles matching
+;;! mesh-revolve-verts. A profile segment whose two points share one (r,y) is a
+;;! crease (a zero-area ring) and emits nothing, so a cylinder's or cone's cap
+;;! rim costs no wasted triangles; every other segment is a quad strip. The row
+;;! counter advances across creases too, since a crease still occupies a vertex
+;;! row that later segments index against.
+(define (mesh-revolve-indices profile sectors)
+  (let rloop ((rows profile) (r 0) (acc '()))
+    (if (null? (cdr rows))
+        (reverse acc)
+        (let* ((p0 (car rows)) (p1 (cadr rows))
+               (crease (and (= (car p0) (car p1)) (= (cadr p0) (cadr p1)))))
+          (rloop (cdr rows) (+ r 1)
+                 (if crease
+                     acc
+                     (let sloop ((s 0) (a acc))
+                       (if (= s sectors)
+                           a
+                           (let* ((k1 (+ (* r (+ sectors 1)) s))
+                                  (k2 (+ k1 sectors 1)))
+                             (sloop (+ s 1)
+                                    (cons k2 (cons (+ k2 1) (cons k1
+                                      (cons (+ k2 1)
+                                        (cons (+ k1 1) (cons k1 a))))))))))))))))
+
+;;! (mesh-revolve profile sectors) -> (VERTS . INDICES) for the surface swept by
+;;! rotating PROFILE around the Y axis in SECTORS steps.
+(define (mesh-revolve profile sectors)
+  (cons (mesh-revolve-verts profile sectors)
+        (mesh-revolve-indices profile sectors)))
+
+;;! (mesh-grid-indices nu nv) -> triangles for an (nv+1)x(nu+1) vertex grid,
+;;! row-major with columns fastest — the winding the built-in grid emits, shared
+;;! by every parametric surface.
+(define (mesh-grid-indices nu nv)
+  (let rloop ((r 0) (acc '()))
+    (if (= r nv)
+        (reverse acc)
+        (rloop (+ r 1)
+               (let cloop ((c 0) (a acc))
+                 (if (= c nu)
+                     a
+                     (let* ((k1 (+ (* r (+ nu 1)) c))
+                            (k2 (+ k1 nu 1)))
+                       (cloop (+ c 1)
+                              (cons k2 (cons (+ k2 1) (cons k1
+                                (cons (+ k2 1)
+                                  (cons (+ k1 1) (cons k1 a))))))))))))))
+
+;;! (mesh-param-surface f nu nv) -> (VERTS . INDICES) sampling F, a
+;;! (u v)->(list x y z) position function with u,v in [0,1], over an
+;;! (nu+1)x(nv+1) grid. Each normal is the cross product of the two surface
+;;! tangents estimated by a one-sided finite difference (kept inside [0,1] near
+;;! the edges), so an author supplies positions only; U,V ride along as uv0. A
+;;! degenerate tangent (a pole, where a tangent collapses) falls back to the
+;;! outward position ray so the normal stays unit length.
+(define (mesh-param-surface f nu nv)
+  (cons
+    (let rloop ((r 0) (acc '()))
+      (if (> r nv)
+          (reverse acc)
+          (rloop (+ r 1)
+                 (let cloop ((c 0) (a acc))
+                   (if (> c nu)
+                       a
+                       (let* ((u (/ (exact->inexact c) nu))
+                              (v (/ (exact->inexact r) nv))
+                              (h 1.0e-3)
+                              (ub (if (> u 0.5) (- u h) u))
+                              (uf (if (> u 0.5) u (+ u h)))
+                              (vb (if (> v 0.5) (- v h) v))
+                              (vf (if (> v 0.5) v (+ v h)))
+                              (p  (f u v))
+                              (pu (mesh-sub (f uf v) (f ub v)))
+                              (pv (mesh-sub (f u vf) (f u vb)))
+                              (cn (mesh-cross pv pu))
+                              (cl (+ (* (car cn) (car cn))
+                                     (* (cadr cn) (cadr cn))
+                                     (* (caddr cn) (caddr cn))))
+                              (n  (mesh-normalize (if (> cl 1.0e-12) cn p))))
+                         (cloop (+ c 1)
+                                (cons (list (car p) (cadr p) (caddr p)
+                                            (car n) (cadr n) (caddr n) u v)
+                                      a))))))))
+    (mesh-grid-indices nu nv)))
 
 ;;! --- the (mesh ...) form and driver ------------------------------------
 

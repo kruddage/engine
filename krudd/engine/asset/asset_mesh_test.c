@@ -67,6 +67,13 @@ int main(void)
 	check_mesh("builtin://mesh/plane");
 	check_mesh("builtin://mesh/pyramid");
 	check_mesh("builtin://mesh/grid");
+	check_mesh("builtin://mesh/cylinder");
+	check_mesh("builtin://mesh/cone");
+	check_mesh("builtin://mesh/disc");
+	check_mesh("builtin://mesh/capsule");
+	check_mesh("builtin://mesh/torus");
+	check_mesh("builtin://mesh/superquadric");
+	check_mesh("builtin://mesh/heightfield");
 
 	log_shutdown();
 	mem_shutdown();

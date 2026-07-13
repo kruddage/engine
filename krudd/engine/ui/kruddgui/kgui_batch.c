@@ -24,6 +24,7 @@ void kgui_batch_reset(struct kgui_batch *b)
 	b->overflow  = 0;
 	b->cmd_count = 0;
 	b->clip_on   = 0;
+	b->clip_tex  = 0;
 }
 
 void kgui_batch_set_clip(struct kgui_batch *b,
@@ -42,11 +43,11 @@ void kgui_batch_clear_clip(struct kgui_batch *b)
 }
 
 /*
- * The draw command that the next quad belongs to: the last one when its clip
- * matches the current clip, otherwise a fresh command starting at the current
- * vertex. When the command list is full the last command is reused so vertices
- * are never dropped for want of a command (its clip may then be stale, a
- * bounded and unlikely overflow the renderer tolerates).
+ * The draw command that the next quad belongs to: the last one when its clip and
+ * texture match the current ones, otherwise a fresh command starting at the
+ * current vertex. When the command list is full the last command is reused so
+ * vertices are never dropped for want of a command (its clip/texture may then be
+ * stale, a bounded and unlikely overflow the renderer tolerates).
  */
 static struct kgui_clip_cmd *cur_cmd(struct kgui_batch *b)
 {
@@ -54,7 +55,7 @@ static struct kgui_clip_cmd *cur_cmd(struct kgui_batch *b)
 
 	if (b->cmd_count > 0) {
 		c = &b->cmds[b->cmd_count - 1];
-		if (c->clipped == b->clip_on &&
+		if (c->tex == b->clip_tex && c->clipped == b->clip_on &&
 		    (!b->clip_on ||
 		     (c->x == b->clip_x && c->y == b->clip_y &&
 		      c->w == b->clip_w && c->h == b->clip_h)))
@@ -70,6 +71,7 @@ static struct kgui_clip_cmd *cur_cmd(struct kgui_batch *b)
 	c->y       = b->clip_y;
 	c->w       = b->clip_w;
 	c->h       = b->clip_h;
+	c->tex     = b->clip_tex;
 	c->first   = b->count;
 	c->count   = 0;
 	return c;
@@ -95,14 +97,23 @@ static void push_vertex(struct kgui_batch *b, float x, float y,
 	out->a = a;
 }
 
-void kgui_batch_quad(struct kgui_batch *b,
-		     float x, float y, float w, float h,
-		     float u0, float v0, float u1, float v1,
-		     float r, float g, float bl, float a)
+/*
+ * Push one quad (two triangles) sampling texture `tex` — 0 for the atlas path
+ * (rects and glyphs), an external handle for an image. The texture is staged on
+ * the batch so cur_cmd opens or extends the matching command before the vertices
+ * land.
+ */
+static void emit_quad(struct kgui_batch *b,
+		      float x, float y, float w, float h,
+		      float u0, float v0, float u1, float v1,
+		      unsigned tex, float r, float g, float bl, float a)
 {
 	float                 x1  = x + w;
 	float                 y1  = y + h;
-	struct kgui_clip_cmd *cmd = cur_cmd(b);
+	struct kgui_clip_cmd *cmd;
+
+	b->clip_tex = tex;
+	cmd         = cur_cmd(b);
 
 	/*
 	 * Two triangles, counter-clockwise, sharing the tl->br diagonal.
@@ -118,6 +129,23 @@ void kgui_batch_quad(struct kgui_batch *b,
 
 	/* Extend the run to whatever actually landed (short on overflow). */
 	cmd->count = b->count - cmd->first;
+}
+
+void kgui_batch_quad(struct kgui_batch *b,
+		     float x, float y, float w, float h,
+		     float u0, float v0, float u1, float v1,
+		     float r, float g, float bl, float a)
+{
+	emit_quad(b, x, y, w, h, u0, v0, u1, v1, 0u, r, g, bl, a);
+}
+
+void kgui_batch_image(struct kgui_batch *b,
+		      float x, float y, float w, float h,
+		      float u0, float v0, float u1, float v1,
+		      unsigned tex,
+		      float r, float g, float bl, float a)
+{
+	emit_quad(b, x, y, w, h, u0, v0, u1, v1, tex, r, g, bl, a);
 }
 
 uint32_t kgui_utf8_next(const char **s)

@@ -250,6 +250,8 @@ static void gl_flush(GLuint atlas)
 	glBlendEquation(GL_FUNC_ADD);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
+	GLuint bound = atlas;
+
 	glUseProgram(s_prog);
 	glUniform2f(s_u_viewport, s_css_w, s_css_h);
 	glUniform1i(s_u_tex, 0);
@@ -264,9 +266,20 @@ static void gl_flush(GLuint atlas)
 
 	for (i = 0; i < s_batch.cmd_count; i++) {
 		const struct kgui_clip_cmd *c = &s_batch.cmds[i];
+		GLuint                      want;
 
 		if (c->count <= 0)
 			continue;
+		/*
+		 * An image command samples its own texture; every other command
+		 * samples the glyph atlas. Bind only on a change so a run of rects
+		 * and glyphs still issues its draws without redundant binds.
+		 */
+		want = c->tex ? (GLuint)c->tex : atlas;
+		if (want != bound) {
+			glBindTexture(GL_TEXTURE_2D, want);
+			bound = want;
+		}
 		if (c->clipped) {
 			int sx = (int)(c->x * scale_x + 0.5f);
 			int sw = (int)(c->w * scale_x + 0.5f);
@@ -661,6 +674,45 @@ static s7_pointer sp_kgui_rect(s7_scheme *sc, s7_pointer args)
 	return s7_unspecified(sc);
 }
 
+/*
+ * (kgui-image x y w h tex [u0 v0 u1 v1] [r g b a]) -> unspecified. Draws the GL
+ * texture handle `tex` into the (x y w h) box. Omit the UVs to map the whole
+ * texture to the box; omit the tint to draw it unmodulated. The tint multiplies
+ * the sampled texel — an alpha below 1 fades the image, a colour shades it — so a
+ * baked texture / mesh preview blits straight in, and the whole thing honours the
+ * panel's current clip. The batch draws it after ImGui, so it composites over the
+ * editor like every other kruddgui quad.
+ */
+static s7_pointer sp_kgui_image(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer p = args;
+	double x = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double y = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double w = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double h = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	s7_int tex = s7_integer(s7_car(p)); p = s7_cdr(p);
+	double u0 = 0.0, v0 = 0.0, u1 = 1.0, v1 = 1.0;
+	double r = 1.0, g = 1.0, b = 1.0, a = 1.0;
+
+	if (s7_is_pair(p)) {
+		u0 = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+		v0 = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+		u1 = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+		v1 = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	}
+	if (s7_is_pair(p)) {
+		r = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+		g = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+		b = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+		a = s7_number_to_real(sc, s7_car(p));
+	}
+
+	kgui_batch_image(&s_batch, (float)x, (float)y, (float)w, (float)h,
+			 (float)u0, (float)v0, (float)u1, (float)v1,
+			 (unsigned)tex, (float)r, (float)g, (float)b, (float)a);
+	return s7_unspecified(sc);
+}
+
 /* (kgui-text x y str r g b a) -> unspecified. (x, y) is the text's top-left. */
 static s7_pointer sp_kgui_text(s7_scheme *sc, s7_pointer args)
 {
@@ -910,6 +962,8 @@ static s7_pointer sp_kgui_viewport_size(s7_scheme *sc, s7_pointer args)
 
 static void register_primitives(s7_scheme *sc)
 {
+	s7_define_function(sc, "kgui-image", sp_kgui_image, 5, 8, false,
+			   "(kgui-image x y w h tex [u0 v0 u1 v1] [r g b a])");
 	s7_define_function(sc, "kgui-rect", sp_kgui_rect, 8, 0, false,
 			   "(kgui-rect x y w h r g b a) filled rectangle");
 	s7_define_function(sc, "kgui-text", sp_kgui_text, 7, 0, false,

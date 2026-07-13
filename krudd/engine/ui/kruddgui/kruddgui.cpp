@@ -14,11 +14,11 @@
  * tick runs after imgui's, so ImGui_ImplOpenGL3_RenderDrawData has already
  * drawn and kruddgui composites over it.
  *
- * Two deliberate, isolated ImGui couplings for v0, both confined to this file:
- *   - text reuses ImGui's baked font atlas (glyph_source below) rather than
- *     standing up a new glyph pipeline;
- *   - non-bar input is forwarded verbatim to ImGui's io, using the exact
- *     translation imgui_plugin used before input ownership moved here.
+ * Text now runs through kruddgui's own glyph pipeline (kgui_font): an R8 atlas
+ * baked once from an embedded TrueType font, with kerning — no ImGui font
+ * dependency. The one remaining ImGui coupling is input: non-bar events are
+ * forwarded verbatim to ImGui's io, using the exact translation imgui_plugin
+ * used before input ownership moved here.
  */
 
 extern "C" {
@@ -28,6 +28,7 @@ extern "C" {
 #include "log_level.h"
 #include "kgui_batch.h"
 #include "kgui_input.h"
+#include "kgui_font.h"
 }
 
 #ifdef __EMSCRIPTEN__
@@ -42,6 +43,7 @@ extern "C" {
 #include "s7.h"			/* self-guards for C++ linkage */
 #include "script.h"
 #include "kruddgui_scm.h"	/* KRUDDGUI_SCM — the panel image */
+#include "ui_font_ttf.h"	/* UI_FONT_TTF / UI_FONT_TTF_LEN — baked font */
 
 double get_device_pixel_ratio(void);	/* plugin_abi.c (main module) */
 int    krudd_is_touch_device(void);
@@ -84,16 +86,25 @@ static struct kgui_batch  s_batch;
 static float s_css_w, s_css_h;
 static int   s_phys_w, s_phys_h;
 
-/* Font atlas coupling, refreshed each tick from ImGui's io. */
-static float  s_white_u, s_white_v;
-static float  s_text_size;
+/*
+ * Our own glyph pipeline: a font baked once at init (kgui_font) and its atlas
+ * uploaded as the single R8 texture every draw samples. s_white_u/v is the
+ * reserved solid texel that kgui-rect fills point at; both are set once from
+ * the baked font (or a 1×1 white fallback when no font is embedded).
+ */
+static struct kgui_font s_font;
+static GLuint           s_font_tex;
+static float            s_white_u, s_white_v;
 
 /*
- * Glyph text scale over the atlas's baked size. The atlas is baked once at a
- * desktop-ish size; a modest upscale keeps mode-bar labels legible at arm's
- * distance without a second glyph pipeline (that is #488's follow-on, not v0).
+ * On-screen text size, in CSS pixels. Matches the size the mode-bar and panels
+ * were laid out against (ImGui's 13px face upscaled 1.5×), so switching to the
+ * baked font does not reflow existing panels. The font is baked far larger
+ * (KGUI_FONT_BAKE_PX) and always minified to this, which is what keeps it crisp
+ * at any device-pixel-ratio.
  */
-#define KGUI_TEXT_SCALE 1.5f
+#define KGUI_TEXT_PX 19.5f
+static float s_text_size = KGUI_TEXT_PX;
 
 static const char *k_vert_src =
 	"#version 300 es\n"
@@ -111,6 +122,12 @@ static const char *k_vert_src =
 	"    v_col = a_col;\n"
 	"}\n";
 
+/*
+ * The atlas is single-channel (R8) coverage: text glyphs and the reserved
+ * white texel both live in the red channel. Sample it as alpha and keep the
+ * vertex colour's RGB, so a glyph paints its colour at its coverage and a rect
+ * (pointed at the solid-white texel) paints its colour at full opacity.
+ */
 static const char *k_frag_src =
 	"#version 300 es\n"
 	"precision mediump float;\n"
@@ -119,7 +136,7 @@ static const char *k_frag_src =
 	"uniform sampler2D u_tex;\n"
 	"out vec4 frag;\n"
 	"void main() {\n"
-	"    frag = v_col * texture(u_tex, v_uv);\n"
+	"    frag = vec4(v_col.rgb, v_col.a * texture(u_tex, v_uv).r);\n"
 	"}\n";
 
 static GLuint compile_shader(GLenum type, const char *src)
@@ -251,66 +268,57 @@ static void gl_flush(GLuint atlas)
 }
 
 /* ------------------------------------------------------------------ */
-/* ImGui font atlas — the one intentional, isolated text coupling      */
+/* Glyph pipeline — bake the embedded font, upload its atlas            */
 /* ------------------------------------------------------------------ */
 
-static ImFont *atlas_font(void)
+/*
+ * Upload s_font's baked atlas as the R8 texture every draw samples, and record
+ * the solid-white texel used for kgui-rect fills. When no font was embedded
+ * (kgui_font_bake left it not-ready — see assets/README.md) a 1×1 white texel
+ * stands in so rects and panels still draw; only text is absent.
+ */
+static void upload_font_atlas(void)
 {
-	ImGuiIO &io = ImGui::GetIO();
+	glGenTextures(1, &s_font_tex);
+	glBindTexture(GL_TEXTURE_2D, s_font_tex);
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
-	if (!io.Fonts || io.Fonts->Fonts.Size == 0)
-		return nullptr;
-	return io.Fonts->Fonts[0];
-}
+	if (s_font.ready) {
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_R8,
+			     s_font.atlas_w, s_font.atlas_h, 0,
+			     GL_RED, GL_UNSIGNED_BYTE, s_font.pixels);
+		s_white_u = s_font.white_u;
+		s_white_v = s_font.white_v;
+	} else {
+		static const unsigned char white = 0xFF;
 
-static GLuint atlas_texture(void)
-{
-	return (GLuint)(intptr_t)ImGui::GetIO().Fonts->TexID;
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, 1, 1, 0,
+			     GL_RED, GL_UNSIGNED_BYTE, &white);
+		s_white_u = 0.5f;
+		s_white_v = 0.5f;
+	}
+
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 /*
- * kgui_glyph_fn over an ImFont: map a code point to its baked atlas quad,
- * scaled to the requested pixel size. This function — plus atlas_texture and
- * the TexUvWhitePixel read in refresh_atlas — is the whole of kruddgui's ImGui
- * text dependency; everything else draws through kgui_batch.
+ * Bake the embedded font once and upload it. The CPU-side atlas bitmap and the
+ * font handle are kept for the lifetime of the plugin — the glyph and kern
+ * sources read the retained metrics (not the pixels) every frame.
  */
-static int glyph_source(void *ud, uint32_t cp, float size,
-			struct kgui_glyph *out)
+static void init_font(void)
 {
-	ImFont *f = (ImFont *)ud;
-	const ImFontGlyph *g;
-	float   s;
+	bool ok = kgui_font_bake(&s_font, UI_FONT_TTF, (int)UI_FONT_TTF_LEN) != 0;
 
-	if (!f)
-		return 0;
-	g = f->FindGlyph((ImWchar)cp);
-	if (!g)
-		return 0;
-
-	s = (f->FontSize > 0.0f) ? size / f->FontSize : 1.0f;
-	out->x0      = g->X0 * s;
-	out->y0      = g->Y0 * s;
-	out->x1      = g->X1 * s;
-	out->y1      = g->Y1 * s;
-	out->u0      = g->U0;
-	out->v0      = g->V0;
-	out->u1      = g->U1;
-	out->v1      = g->V1;
-	out->advance = g->AdvanceX * s;
-	out->visible = (g->X1 > g->X0 && g->Y1 > g->Y0);
-	return 1;
-}
-
-static void refresh_atlas(void)
-{
-	ImGuiIO &io = ImGui::GetIO();
-	ImFont  *f  = atlas_font();
-
-	if (io.Fonts) {
-		s_white_u = io.Fonts->TexUvWhitePixel.x;
-		s_white_v = io.Fonts->TexUvWhitePixel.y;
-	}
-	s_text_size = (f ? f->FontSize : 13.0f) * KGUI_TEXT_SCALE;
+	if (!ok && g_log)
+		g_log->write(LOG_LEVEL_WARN,
+			     "kruddgui: no UI font baked (embed one at "
+			     "ui/kruddgui/assets/ui_font.ttf); text disabled");
+	upload_font_atlas();
 }
 
 /* ------------------------------------------------------------------ */
@@ -493,7 +501,8 @@ static s7_pointer sp_kgui_text(s7_scheme *sc, s7_pointer args)
 	if (s7_is_string(str))
 		kgui_batch_text(&s_batch, (float)x, (float)y, s7_string(str),
 				s_text_size, (float)r, (float)g, (float)b,
-				(float)a, glyph_source, atlas_font());
+				(float)a, kgui_font_glyph, kgui_font_kern,
+				&s_font);
 	return s7_unspecified(sc);
 }
 
@@ -505,7 +514,7 @@ static s7_pointer sp_kgui_text_metrics(s7_scheme *sc, s7_pointer args)
 
 	if (s7_is_string(str))
 		w = kgui_text_width(s7_string(str), s_text_size,
-				    glyph_source, atlas_font());
+				    kgui_font_glyph, kgui_font_kern, &s_font);
 	return s7_list(sc, 2, s7_make_real(sc, (s7_double)w),
 		       s7_make_real(sc, (s7_double)s_text_size));
 }
@@ -698,6 +707,7 @@ static void kruddgui_init(void)
 	kgui_batch_init(&s_batch, s_verts, KGUI_MAX_VERTS);
 	kgui_input_init(&s_input);
 	gl_init();
+	init_font();
 
 	/* Take over the pointer callbacks from imgui_plugin. */
 	emscripten_set_mousemove_callback("#canvas", nullptr, 0, on_mouse_move);
@@ -727,8 +737,6 @@ static void kruddgui_tick(void)
 	s_phys_w = (int)(css_w * dpr + 0.5);
 	s_phys_h = (int)(css_h * dpr + 0.5);
 
-	refresh_atlas();
-
 	kgui_batch_reset(&s_batch);
 	kgui_input_frame_begin(&s_input);
 	s_cur_io = NULL;
@@ -744,12 +752,17 @@ static void kruddgui_tick(void)
 	s_cur_io = NULL;
 	kgui_input_frame_commit(&s_input);
 
-	gl_flush(atlas_texture());
+	gl_flush(s_font_tex);
 #endif
 }
 
 static void kruddgui_shutdown(void)
 {
+#ifdef __EMSCRIPTEN__
+	if (s_font_tex)
+		glDeleteTextures(1, &s_font_tex);
+	kgui_font_free(&s_font);
+#endif
 	if (g_log)
 		g_log->write(LOG_LEVEL_INFO, "kruddgui: shutdown");
 }

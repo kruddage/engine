@@ -159,10 +159,11 @@ uint32_t kgui_utf8_next(const char **s)
 float kgui_batch_text(struct kgui_batch *b, float x, float y,
 		      const char *str, float size,
 		      float r, float g, float bl, float a,
-		      kgui_glyph_fn glyphs, void *ud)
+		      kgui_glyph_fn glyphs, kgui_kern_fn kern, void *ud)
 {
-	const char *p   = str;
-	float       pen = x;
+	const char *p    = str;
+	float       pen  = x;
+	uint32_t    prev = 0; /* last code point with a glyph, 0 = none yet */
 
 	if (!str)
 		return 0.0f;
@@ -173,19 +174,23 @@ float kgui_batch_text(struct kgui_batch *b, float x, float y,
 
 		if (!glyphs(ud, cp, size, &gl))
 			continue;
+		/* Kern against the previous drawn glyph before placing this one. */
+		if (kern && prev)
+			pen += kern(ud, prev, cp, size);
 		if (b && gl.visible)
 			kgui_batch_quad(b, pen + gl.x0, y + gl.y0,
 					gl.x1 - gl.x0, gl.y1 - gl.y0,
 					gl.u0, gl.v0, gl.u1, gl.v1,
 					r, g, bl, a);
 		pen += gl.advance;
+		prev = cp;
 	}
 	return pen - x;
 }
 
 float kgui_text_width(const char *str, float size,
-		      kgui_glyph_fn glyphs, void *ud)
+		      kgui_glyph_fn glyphs, kgui_kern_fn kern, void *ud)
 {
 	return kgui_batch_text(NULL, 0.0f, 0.0f, str, size,
-			       0.0f, 0.0f, 0.0f, 0.0f, glyphs, ud);
+			       0.0f, 0.0f, 0.0f, 0.0f, glyphs, kern, ud);
 }

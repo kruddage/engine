@@ -324,6 +324,9 @@
 		(krudd-embed-file
 		  (string-append srcroot "/ui/kruddgui/kruddgui.scm")
 		  (string-append gen "/kruddgui_scm.h") "KRUDDGUI_SCM")
+		(krudd-embed-binary-optional
+		  (string-append srcroot "/ui/kruddgui/assets/ui_font.ttf")
+		  (string-append gen "/ui_font_ttf.h") "UI_FONT_TTF")
 		(krudd-embed-scheme-module
 		  mdscm
 		  (string-append gen "/md_parse.h")

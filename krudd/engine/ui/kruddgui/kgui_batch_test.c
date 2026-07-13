@@ -48,6 +48,20 @@ static int fake_glyph(void *ud, uint32_t cp, float size, struct kgui_glyph *out)
 	return 1;
 }
 
+/*
+ * Fake kern: a flat -2px between any pair. Enough to prove the pen adjustment
+ * lands between glyphs (never before the first) and that measured width tracks
+ * it. The real source (kgui_font) returns per-pair values from the font.
+ */
+static float fake_kern(void *ud, uint32_t prev, uint32_t cur, float size)
+{
+	(void)ud;
+	(void)prev;
+	(void)cur;
+	(void)size;
+	return -2.0f;
+}
+
 #define STORAGE 256
 static struct kgui_vertex verts[STORAGE];
 
@@ -83,7 +97,7 @@ static void test_text_run_vertices_and_width(void)
 	kgui_batch_init(&b, verts, STORAGE);
 	/* "AB": two visible glyphs -> two quads -> 12 vertices. */
 	w = kgui_batch_text(&b, 100.0f, 200.0f, "AB", 8.0f,
-			    1.0f, 1.0f, 1.0f, 1.0f, fake_glyph, NULL);
+			    1.0f, 1.0f, 1.0f, 1.0f, fake_glyph, NULL, NULL);
 
 	assert(b.count == 12);
 	assert(w == 16.0f); /* two glyphs advancing 8px each */
@@ -102,7 +116,7 @@ static void test_whitespace_advances_without_quad(void)
 	kgui_batch_init(&b, verts, STORAGE);
 	/* "A B": space is invisible -> only two quads, but full advance. */
 	w = kgui_batch_text(&b, 0.0f, 0.0f, "A B", 10.0f,
-			    1.0f, 1.0f, 1.0f, 1.0f, fake_glyph, NULL);
+			    1.0f, 1.0f, 1.0f, 1.0f, fake_glyph, NULL, NULL);
 
 	assert(b.count == 12); /* 'A' and 'B' only */
 	assert(w == 30.0f);    /* three advances of 10px */
@@ -118,7 +132,7 @@ static void test_missing_glyph_skipped(void)
 	kgui_batch_init(&b, verts, STORAGE);
 	/* '\t' has no glyph: it neither draws nor advances. */
 	w = kgui_batch_text(&b, 0.0f, 0.0f, "A\tB", 8.0f,
-			    1.0f, 1.0f, 1.0f, 1.0f, fake_glyph, NULL);
+			    1.0f, 1.0f, 1.0f, 1.0f, fake_glyph, NULL, NULL);
 
 	assert(b.count == 12);
 	assert(w == 16.0f);
@@ -131,11 +145,51 @@ static void test_width_matches_no_geometry(void)
 
 	kgui_batch_init(&b, verts, STORAGE);
 	drawn    = kgui_batch_text(&b, 5.0f, 5.0f, "Hello", 12.0f,
-				   1.0f, 1.0f, 1.0f, 1.0f, fake_glyph, NULL);
-	measured = kgui_text_width("Hello", 12.0f, fake_glyph, NULL);
+				   1.0f, 1.0f, 1.0f, 1.0f, fake_glyph, NULL, NULL);
+	measured = kgui_text_width("Hello", 12.0f, fake_glyph, NULL, NULL);
 
 	assert(drawn == measured);
 	assert(measured == 60.0f); /* 5 glyphs * 12px */
+}
+
+/*
+ * Kerning: a -2px pair delta lands between adjacent glyphs but never before the
+ * first, so "AB" is one delta narrower and 'B' shifts left by it.
+ */
+static void test_kern_applied_between_glyphs(void)
+{
+	struct kgui_batch b;
+	float             w;
+
+	kgui_batch_init(&b, verts, STORAGE);
+	w = kgui_batch_text(&b, 100.0f, 200.0f, "AB", 8.0f,
+			    1.0f, 1.0f, 1.0f, 1.0f, fake_glyph, fake_kern, NULL);
+
+	/* Two advances of 8 plus one -2 kern between them. */
+	assert(w == 14.0f);
+	/* First glyph is not kerned (nothing precedes it). */
+	assert(verts[0].x == 100.0f);
+	/* Second glyph: 100 + advance(8) + kern(-2). */
+	assert(verts[6].x == 106.0f);
+}
+
+/*
+ * A missing glyph does not reset the kern anchor: in "A\tB" the tab has no
+ * glyph, so the pair kerned is (A, B) — the delta still applies once.
+ */
+static void test_kern_skips_missing_glyph(void)
+{
+	float w = kgui_text_width("A\tB", 8.0f, fake_glyph, fake_kern, NULL);
+
+	assert(w == 14.0f); /* two 8px advances, one -2 kern across the tab */
+}
+
+/* A NULL kern source is exactly the advance-only layout (no adjustment). */
+static void test_null_kern_is_advance_only(void)
+{
+	float kerned = kgui_text_width("AB", 8.0f, fake_glyph, NULL, NULL);
+
+	assert(kerned == 16.0f);
 }
 
 static void test_overflow_latches_and_bounds(void)
@@ -227,6 +281,9 @@ int main(void)
 	RUN(whitespace_advances_without_quad);
 	RUN(missing_glyph_skipped);
 	RUN(width_matches_no_geometry);
+	RUN(kern_applied_between_glyphs);
+	RUN(kern_skips_missing_glyph);
+	RUN(null_kern_is_advance_only);
 	RUN(overflow_latches_and_bounds);
 	RUN(unclipped_is_one_command);
 	RUN(clip_splits_commands);

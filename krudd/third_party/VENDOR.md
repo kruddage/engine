@@ -1,3 +1,35 @@
+# stb_truetype (kruddgui's glyph baker) — vendored
+
+`stb_truetype.h` is third-party, single-header, **public domain** source (its
+upstream carries a public-domain dedication, kept verbatim — it is **not**
+stamped with the project's `GPL-2.0-or-later` line). kruddgui compiles it into
+the WASM module to bake its own glyph atlas from an embedded font, replacing the
+one text coupling it had to Dear ImGui.
+
+Exactly one translation unit (`../engine/ui/kruddgui/kgui_font.c`) defines
+`STB_TRUETYPE_IMPLEMENTATION` before the include; every other user gets just the
+declarations. Like s7, it is compiled with relaxed warnings — it is upstream
+code, not held to the engine's `-Werror -Wpedantic`.
+
+> **Trust boundary.** stb_truetype's own header warns it does no bounds checking
+> and must not be run on untrusted font files. kruddgui only ever feeds it the
+> font **baked into the build at compile time** (see `ui_font.ttf`), never a
+> user- or network-supplied file, so that warning does not apply to this use.
+
+## Pin (stb_truetype)
+
+| Field    | Value |
+|----------|-------|
+| Version  | stb_truetype **v1.26** |
+| License  | Public domain (Unlicense alternative in-header) |
+| Upstream | https://github.com/nothings/stb |
+| Mirror   | pinned to commit `f0569113c93ad095470c54bf34a17b36646bbbb5` |
+
+Re-vendoring means re-fetching `stb_truetype.h` at a new pinned commit and
+updating the version/commit above.
+
+---
+
 # s7 Scheme (krudd's build interpreter) — vendored
 
 `s7.c` / `s7.h` are third-party source, **not** engine-authored code, and are

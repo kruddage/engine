@@ -102,23 +102,43 @@ struct kgui_glyph {
 /*
  * Resolve one Unicode code point at a pixel size into a glyph. Returns 0 when
  * the font has no glyph for it (the caller skips it). The void* is opaque
- * userdata — in kruddgui it is the ImGui font; the test passes a fake.
+ * userdata — in kruddgui it is the baked font (kgui_font); the test passes a
+ * fake.
  */
 typedef int (*kgui_glyph_fn)(void *ud, uint32_t cp, float size,
 			     struct kgui_glyph *out);
 
 /*
+ * Optional kerning source: the pen adjustment to insert between a `prev` and a
+ * `cur` code point at `size`, in pixels (typically negative — "AV" tucks
+ * closer). Kerning is a pair relationship, so it can't live in kgui_glyph
+ * (which is per-glyph); the layout loop remembers the previous code point and
+ * asks for the pair delta. `ud` is the same userdata passed for glyphs. A NULL
+ * kern source, or one that returns 0, means no kerning — the advance-only
+ * layout that predates this hook. Pairs where either side has no glyph are not
+ * queried.
+ */
+typedef float (*kgui_kern_fn)(void *ud, uint32_t prev, uint32_t cur,
+			      float size);
+
+/*
  * Emit quads for a UTF-8 string with its top-left at (x, y), at pixel size
- * `size`, in one colour. Returns the total advance width in pixels.
+ * `size`, in one colour. Returns the total advance width in pixels. `kern` is
+ * an optional pair-kerning source (NULL for none) applied between adjacent
+ * drawn glyphs.
  */
 float kgui_batch_text(struct kgui_batch *b, float x, float y,
 		      const char *str, float size,
 		      float r, float g, float bl, float a,
-		      kgui_glyph_fn glyphs, void *ud);
+		      kgui_glyph_fn glyphs, kgui_kern_fn kern, void *ud);
 
-/* Advance width of a UTF-8 string at `size`, without emitting geometry. */
+/*
+ * Advance width of a UTF-8 string at `size`, without emitting geometry. Takes
+ * the same kern source as kgui_batch_text so measured width matches drawn
+ * width — centring stays correct once kerning is on.
+ */
 float kgui_text_width(const char *str, float size,
-		      kgui_glyph_fn glyphs, void *ud);
+		      kgui_glyph_fn glyphs, kgui_kern_fn kern, void *ud);
 
 /*
  * Decode one UTF-8 code point from `s`, advancing *`s` past it. Malformed bytes

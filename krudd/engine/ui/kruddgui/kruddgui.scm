@@ -389,19 +389,24 @@
 	      (list 'kv "Frame ms"  (format #f "~,2F" (cadr s)))
 	      (list 'kv "Frame"     (format #f "~D"   (caddr s)))))))
 
-;;! (kruddgui-board-startup-rows) the one-time boot profile: init total, time to
-;;! first frame, then a per-phase breakdown. (krudd-startup) -> (init-ms
-;;! first-frame-ms (name . ms) ...) or #f when stats are absent.
+;;! (kruddgui-board-startup-rows) the one-time boot profile: the page-load wall
+;;! clock, init total, time to first frame, then a per-phase breakdown.
+;;! (krudd-startup) -> (init-ms first-frame-ms page-first-ms (name . ms) ...) or
+;;! #f when stats are absent. "Page->1st frame" is the honest black-screen time
+;;! (download + WASM compile included); "Init total" and "1st frame" are measured
+;;! from engine_init entry and so miss everything before main().
 (define (kruddgui-board-startup-rows)
   (let ((s (krudd-startup)))
     (if (not s)
 	(list (list 'dim "(startup timings unavailable)"))
-	(let ((init  (car s))
-	      (first (cadr s))
-	      (phases (cddr s)))
+	(let ((init   (car s))
+	      (first  (cadr s))
+	      (page   (caddr s))
+	      (phases (cdddr s)))
 	  (append
-	   (list (list 'kv "Init total" (format #f "~,1F ms" init))
-		 (list 'kv "1st frame"  (format #f "~,1F ms" first)))
+	   (list (list 'kv "Page->1st frame" (format #f "~,1F ms" page))
+		 (list 'kv "Init total"      (format #f "~,1F ms" init))
+		 (list 'kv "1st frame"       (format #f "~,1F ms" first)))
 	   (map (lambda (p)
 		  (list 'kv (car p) (format #f "~,2F ms" (cdr p))))
 		phases))))))

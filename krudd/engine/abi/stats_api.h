@@ -25,11 +25,22 @@ struct stats_api {
 	 * and never mutated after, so a reader always sees a settled boot
 	 * picture. init_ms is the whole engine_init wall time; first_frame_ms
 	 * is boot-start to the first engine_tick (init plus the browser's first
-	 * animation-frame round-trip). phases[0..phase_count) breaks init_ms
-	 * down by the slice that produced each cost.
+	 * animation-frame round-trip). Both are measured from engine_init entry,
+	 * so neither counts the download + WASM compile + Emscripten runtime
+	 * bring-up that runs before main() — the bulk of the black screen.
+	 *
+	 * page_to_first_frame_ms is the honest wall clock: emscripten_get_now()
+	 * is performance.now(), milliseconds since the page's time origin
+	 * (navigation start), so its raw value at the first tick is the whole
+	 * span from page load to first frame — download and compile included.
+	 * This is the number that matches the seconds a user watches tick by.
+	 *
+	 * phases[0..phase_count) breaks init_ms down by the slice that produced
+	 * each cost.
 	 */
 	float              init_ms;
 	float              first_frame_ms;
+	float              page_to_first_frame_ms;
 	uint32_t           phase_count;
 	struct stats_phase phases[STATS_MAX_PHASES];
 };

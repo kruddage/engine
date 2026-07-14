@@ -471,6 +471,7 @@ static EM_BOOL on_wheel(int /*type*/, const EmscriptenWheelEvent *e,
 static struct kgui_text_edit s_field_edit;
 static uint32_t s_field_id;           /* focused field's name hash, 0 = none */
 static int      s_field_numeric;      /* focused field filters to numeric input */
+static int      s_field_multi;        /* focused field is multiline (Enter = \n) */
 static int      s_field_dirty;        /* buffer edited since focus */
 static int      s_field_committed;    /* latched commit awaiting a Scheme read */
 static uint32_t s_field_committed_id; /* which field the latch is for */
@@ -546,7 +547,28 @@ static void field_commit(void)
 {
 	if (s_field_dirty)
 		field_latch_commit();
-	s_field_id = 0;
+	s_field_id    = 0;
+	s_field_multi = 0;
+}
+
+/*
+ * Measure the pixel width of a byte run in the panel font — the GL-free caret
+ * math (kgui_text_edit_up/down and the caret report) takes this as its
+ * kgui_text_measure callback. kgui_text_width wants a NUL-terminated string, so
+ * copy the run out first (the same trick as the caret-bar placement).
+ */
+static float host_measure(const char *s, int nbytes, void *ud)
+{
+	char tmp[KGUI_TEXT_EDIT_CAP];
+
+	(void)ud;
+	if (nbytes < 0)
+		nbytes = 0;
+	if (nbytes > (int)sizeof(tmp) - 1)
+		nbytes = (int)sizeof(tmp) - 1;
+	memcpy(tmp, s, (size_t)nbytes);
+	tmp[nbytes] = '\0';
+	return kgui_text_width(tmp, s_text_size, kgui_font_glyph, &s_font);
 }
 
 /* Keep only the bytes a numeric field admits (digits, sign, dot, exponent). */
@@ -601,20 +623,45 @@ static void field_pump(void)
 		case 6: /* RightArrow */
 			kgui_text_edit_right(&s_field_edit);
 			break;
-		case 9: /* Home */
-			kgui_text_edit_home(&s_field_edit);
+		case 7: /* Up: only a multiline field has a line above */
+			if (s_field_multi)
+				kgui_text_edit_up(&s_field_edit,
+						  host_measure, NULL);
 			break;
-		case 10: /* End */
-			kgui_text_edit_end(&s_field_edit);
+		case 8: /* Down: only a multiline field has a line below */
+			if (s_field_multi)
+				kgui_text_edit_down(&s_field_edit,
+						    host_measure, NULL);
 			break;
-		case 2: /* Enter */
-		case 3: /* Tab */
+		case 9: /* Home: line start (multiline) or buffer start */
+			if (s_field_multi)
+				kgui_text_edit_line_home(&s_field_edit);
+			else
+				kgui_text_edit_home(&s_field_edit);
+			break;
+		case 10: /* End: line end (multiline) or buffer end */
+			if (s_field_multi)
+				kgui_text_edit_line_end(&s_field_edit);
+			else
+				kgui_text_edit_end(&s_field_edit);
+			break;
+		case 2: /* Enter: newline in a multiline field, else commit */
+			if (s_field_multi) {
+				if (kgui_text_edit_insert(&s_field_edit,
+							  "\n", 1) > 0)
+					s_field_dirty = 1;
+				break;
+			}
+			field_commit();
+			return;
+		case 3: /* Tab: commit + drop focus */
 			field_commit();
 			return;
 		case 11: /* Escape: abandon the edit */
-			s_field_id = 0;
+			s_field_id    = 0;
+			s_field_multi = 0;
 			return;
-		default: /* Up / Down: no caret model on a single line */
+		default:
 			break;
 		}
 	}
@@ -635,18 +682,63 @@ static void field_sync(void)
 	}
 }
 
-/* Pixel width of the first `caret` bytes of `s`, for placing the caret bar. */
-static float field_caret_px(const char *s, int caret)
-{
-	char tmp[KGUI_TEXT_EDIT_CAP];
+/*
+ * The shared body of (kgui-field) and (kgui-field-multi): declare the rect,
+ * resolve focus/commit against the one global focus (s_field_id), and report
+ * what the caller draws. `multi` marks the field multiline when this tap
+ * focuses it, so the key drain (field_pump) knows Enter means newline. Both
+ * primitives format their own return list from this.
+ */
+struct field_read {
+	const char *disp;       /* text to draw (live edit buffer or the value) */
+	int         active;     /* this field owns focus */
+	int         committed;  /* a commit is latched for this read */
+	float       caret_px;   /* caret x within its line (0 when inactive) */
+	int         caret_line; /* caret's line index (0 when inactive) */
+	int         nlines;     /* line count of `disp` (>= 1) */
+};
 
-	if (caret <= 0)
-		return 0.0f;
-	if (caret > (int)sizeof(tmp) - 1)
-		caret = (int)sizeof(tmp) - 1;
-	memcpy(tmp, s, (size_t)caret);
-	tmp[caret] = '\0';
-	return kgui_text_width(tmp, s_text_size, kgui_font_glyph, &s_font);
+static struct field_read field_focus(const char *id, double x, double y,
+				     double w, double h, const char *cur,
+				     double mode, int multi)
+{
+	uint32_t          hash = kgui_name_hash(id);
+	struct field_read r    = { cur, 0, 0, 0.0f, 0, 1 };
+	const char       *p;
+
+	field_rect_add((float)x, (float)y, (float)w, (float)h);
+
+	if (hash == s_field_id) {
+		r.active = 1;
+		r.disp   = s_field_edit.buf;
+	} else if (hash == s_field_committed_id) {
+		r.committed          = s_field_committed;
+		r.disp               = s_field_commit_buf;
+		s_field_committed    = 0;
+		s_field_committed_id = 0;
+	} else if (s_cur_io && s_cur_io->tapped &&
+		   s_cur_io->tap_x >= x && s_cur_io->tap_x <= x + w &&
+		   s_cur_io->tap_y >= y && s_cur_io->tap_y <= y + h) {
+		s_cur_io->tapped = 0; /* consume: the tap focuses this field */
+		/* Moving focus off an edited field commits it (read next frame). */
+		if (s_field_id && s_field_dirty)
+			field_latch_commit();
+		kgui_text_edit_set(&s_field_edit, cur);
+		s_field_id      = hash;
+		s_field_dirty   = 0;
+		s_field_numeric = (mode != 0.0);
+		s_field_multi   = multi;
+		r.active        = 1;
+		r.disp          = s_field_edit.buf;
+	}
+
+	if (r.active)
+		kgui_text_edit_caret(&s_field_edit, host_measure, NULL,
+				     &r.caret_line, NULL, &r.caret_px);
+	for (p = r.disp; *p; p++)
+		if (*p == '\n')
+			r.nlines++;
+	return r;
 }
 
 /* ------------------------------------------------------------------ */
@@ -824,44 +916,61 @@ static s7_pointer sp_kgui_field(s7_scheme *sc, s7_pointer args)
 	double      mode = s7_number_to_real(sc, s7_car(p));
 	const char *id   = s7_is_string(nm) ? s7_string(nm) : "";
 	const char *cur  = s7_is_string(txt) ? s7_string(txt) : "";
-	uint32_t    hash = kgui_name_hash(id);
-	int         active = 0;
-	int         committed = 0;
-	const char *disp = cur;
-	float       caret_px = 0.0f;
+	struct field_read r = field_focus(id, x, y, w, h, cur, mode, 0);
 
-	field_rect_add((float)x, (float)y, (float)w, (float)h);
+	return s7_list(sc, 4, s7_make_string(sc, r.disp),
+		       s7_make_boolean(sc, r.active),
+		       s7_make_boolean(sc, r.committed),
+		       s7_make_real(sc, (s7_double)r.caret_px));
+}
 
-	if (hash == s_field_id) {
-		active = 1;
-		disp   = s_field_edit.buf;
-	} else if (hash == s_field_committed_id) {
-		committed            = s_field_committed;
-		disp                 = s_field_commit_buf;
-		s_field_committed    = 0;
-		s_field_committed_id = 0;
-	} else if (s_cur_io && s_cur_io->tapped &&
-		   s_cur_io->tap_x >= x && s_cur_io->tap_x <= x + w &&
-		   s_cur_io->tap_y >= y && s_cur_io->tap_y <= y + h) {
-		s_cur_io->tapped = 0; /* consume: the tap focuses this field */
-		/* Moving focus off an edited field commits it (read next frame). */
-		if (s_field_id && s_field_dirty)
-			field_latch_commit();
-		kgui_text_edit_set(&s_field_edit, cur);
-		s_field_id      = hash;
-		s_field_dirty   = 0;
-		s_field_numeric = (mode != 0.0);
-		active          = 1;
-		disp            = s_field_edit.buf;
-	}
+/*
+ * (kgui-field-multi id x y w h text) ->
+ *     (display active? committed? caret-px caret-line nlines).
+ *
+ * The multiline cousin of (kgui-field): the same single global focus and the
+ * same commit-on-blur, but Enter inserts a newline instead of committing, and
+ * Up/Down walk the caret between lines (preserving its pixel-x). The extra
+ * `caret-line` and `nlines` let the Scheme seam place the caret bar on the
+ * right visual line and size its scroll body. There is no `mode` — a multiline
+ * field is always free text. Commit happens on blur: tapping another field, or
+ * the seam's Done button calling (kgui-field-blur). The field draws nothing
+ * itself; the seam draws the clipped, scrolled lines and the caret.
+ */
+static s7_pointer sp_kgui_field_multi(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer  p   = args;
+	s7_pointer  nm  = s7_car(p);                        p = s7_cdr(p);
+	double      x   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double      y   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double      w   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double      h   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	s7_pointer  txt = s7_car(p);
+	const char *id  = s7_is_string(nm) ? s7_string(nm) : "";
+	const char *cur = s7_is_string(txt) ? s7_string(txt) : "";
+	struct field_read r = field_focus(id, x, y, w, h, cur, 0.0, 1);
 
-	if (active)
-		caret_px = field_caret_px(disp, s_field_edit.caret);
+	return s7_list(sc, 6, s7_make_string(sc, r.disp),
+		       s7_make_boolean(sc, r.active),
+		       s7_make_boolean(sc, r.committed),
+		       s7_make_real(sc, (s7_double)r.caret_px),
+		       s7_make_integer(sc, r.caret_line),
+		       s7_make_integer(sc, r.nlines));
+}
 
-	return s7_list(sc, 4, s7_make_string(sc, disp),
-		       s7_make_boolean(sc, active),
-		       s7_make_boolean(sc, committed),
-		       s7_make_real(sc, (s7_double)caret_px));
+/*
+ * (kgui-field-blur) -> #t if a field was focused. Commits the focused field
+ * (latching an edit for the next read) and drops focus — the Done-button path
+ * for a multiline field, whose Enter makes newlines and so cannot commit.
+ */
+static s7_pointer sp_kgui_field_blur(s7_scheme *sc, s7_pointer args)
+{
+	int was = (s_field_id != 0);
+
+	(void)args;
+	if (was)
+		field_commit();
+	return s7_make_boolean(sc, was);
 }
 
 /*
@@ -975,6 +1084,12 @@ static void register_primitives(s7_scheme *sc)
 	s7_define_function(sc, "kgui-field", sp_kgui_field, 7, 0, false,
 			   "(kgui-field id x y w h text mode) -> "
 			   "(display active? committed? caret-px)");
+	s7_define_function(sc, "kgui-field-multi", sp_kgui_field_multi, 6, 0,
+			   false, "(kgui-field-multi id x y w h text) -> "
+			   "(display active? committed? caret-px caret-line "
+			   "nlines)");
+	s7_define_function(sc, "kgui-field-blur", sp_kgui_field_blur, 0, 0,
+			   false, "(kgui-field-blur) -> #t if a field committed");
 	s7_define_function(sc, "kgui-panel-begin", sp_kgui_panel_begin, 5, 0,
 			   false, "(kgui-panel-begin name x y w h) input region");
 	s7_define_function(sc, "kgui-panel-end", sp_kgui_panel_end, 0, 0, false,

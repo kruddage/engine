@@ -616,6 +616,77 @@
     (kruddgui-lay-adv! L (+ h kruddgui-scene-gap))
     r))
 
+;;! The multiline field is a fixed-height, several-row body: it shows this many
+;;! text rows and scrolls the rest under the caret. The box height leaves a small
+;;! top/bottom margin around the rows.
+(define kruddgui-scene-multi-rows 6)
+(define kruddgui-scene-multi-h
+  (+ 12 (* kruddgui-scene-multi-rows kruddgui-scene-line)))
+
+;;! (kruddgui-scene-nth-line s idx) the IDX-th (0-based) newline-delimited line
+;;! of S, without its newline; "" past the end. Splits the flat edit buffer into
+;;! the lines the multiline field paints.
+(define (kruddgui-scene-nth-line s idx)
+  (let ((n (string-length s)))
+    (let loop ((i 0) (line 0) (start 0))
+      (cond ((= i n) (if (= line idx) (substring s start i) ""))
+	    ((char=? (string-ref s i) #\newline)
+	     (if (= line idx)
+		 (substring s start i)
+		 (loop (+ i 1) (+ line 1) (+ i 1))))
+	    (else (loop (+ i 1) line start))))))
+
+;;! (kruddgui-scene-multi-top cline rows nlines active) the index of the first
+;;! visible line: keep the caret line in view, scrolling it onto the last row
+;;! once it passes the bottom. An unfocused field shows the top. Pure math so the
+;;! scroll-to-caret is host-testable without a browser.
+(define (kruddgui-scene-multi-top cline rows nlines active)
+  (cond ((not active) 0)
+	((< cline rows) 0)
+	(else (+ 1 (- cline rows)))))
+
+;;! (kruddgui-scene-field-multi L id text) the multiline cousin of
+;;! kruddgui-scene-field: a fixed-height body that reuses kruddgui-scene-field-draw
+;;! per visible line (the caret's line drawn active — brighter, with the caret
+;;! bar). kgui-field-multi owns the editing (Enter inserts a newline; Up/Down walk
+;;! the caret; commit is on blur). The body is scissored to its box intersected
+;;! with the layout clip band, then the band clip is restored for the rows below.
+;;! Returns the kgui-field-multi result (display active? committed? caret-px
+;;! caret-line nlines); culled rows return a benign result.
+(define (kruddgui-scene-field-multi L id text)
+  (let* ((x (kruddgui-lay-x L))
+	 (w (kruddgui-lay-w L))
+	 (y (kruddgui-lay-cy L))
+	 (h kruddgui-scene-multi-h)
+	 (r (if (kruddgui-lay-vis? L h)
+		(let* ((res    (kgui-field-multi id x y w h text))
+		       (disp   (car res))
+		       (active (cadr res))
+		       (cpx    (cadddr res))
+		       (cline  (list-ref res 4))
+		       (nlines (list-ref res 5))
+		       (lh     kruddgui-scene-line)
+		       (rows   (max 1 (quotient (- h 12) lh)))
+		       (top    (kruddgui-scene-multi-top cline rows nlines active))
+		       (cy0    (max y (kruddgui-lay-y0 L)))
+		       (cy1    (min (+ y h) (kruddgui-lay-y1 L))))
+		  (kruddgui-rect* (list x y w h) kruddgui-scene-field-bg)
+		  (kgui-clip x cy0 w (- cy1 cy0))
+		  (let loop ((li top) (row 0))
+		    (when (and (< li nlines) (< row rows))
+		      (kruddgui-scene-field-draw
+		       x (+ y 6 (* row lh)) w lh
+		       (kruddgui-scene-nth-line disp li)
+		       (and active (= li cline)) cpx)
+		      (loop (+ li 1) (+ row 1))))
+		  (kgui-clip (kruddgui-lay-x L) (kruddgui-lay-y0 L)
+			     (kruddgui-lay-w L)
+			     (- (kruddgui-lay-y1 L) (kruddgui-lay-y0 L)))
+		  res)
+		(list text #f #f 0.0 0 1))))
+    (kruddgui-lay-adv! L (+ h kruddgui-scene-gap))
+    r))
+
 ;;! (kruddgui-scene-label L str) a section label line in accent blue.
 (define (kruddgui-scene-label L str)
   (let ((x (kruddgui-lay-x L))

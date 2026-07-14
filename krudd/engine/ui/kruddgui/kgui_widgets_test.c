@@ -86,6 +86,14 @@ static char  g_region_id[64];
 static int   g_region_live;
 static float g_region_fx, g_region_fy;
 
+/*
+ * A steerable kgui-field-multi: it echoes the field's text as the display and
+ * reports the focus state / caret line / line count a test dials in, so the
+ * multiline seam can be driven without the WASM edit buffer behind it.
+ */
+static int   g_fm_active, g_fm_committed, g_fm_cline, g_fm_nlines;
+static float g_fm_caret_px;
+
 static void setup(void)
 {
 	s7_scheme *sc = script_s7();
@@ -96,6 +104,9 @@ static void setup(void)
 	g_region_id[0] = '\0';
 	g_region_live  = 0;
 	g_region_fx    = g_region_fy = 0.0f;
+	g_fm_active    = g_fm_committed = 0;
+	g_fm_cline     = g_fm_nlines = 0;
+	g_fm_caret_px  = 0.0f;
 
 	/* Reset the one-open-at-a-time picker and the fold set a prior test set. */
 	s7_eval_c_string(sc, "(set! kruddgui-open-picker #f)");
@@ -176,6 +187,21 @@ static s7_pointer st_region(s7_scheme *sc, s7_pointer a)
 		       s7_make_real(sc, 0.0));
 }
 
+/* (kgui-field-multi id x y w h text) -> the 6-tuple, echoing text as display. */
+static s7_pointer st_field_multi(s7_scheme *sc, s7_pointer a)
+{
+	s7_pointer  t   = s7_list_ref(sc, a, 5);
+	const char *txt = s7_is_string(t) ? s7_string(t) : "";
+
+	rec("field-multi %s", g_fm_active ? "active" : "idle");
+	return s7_list(sc, 6, s7_make_string(sc, txt),
+		       s7_make_boolean(sc, g_fm_active),
+		       s7_make_boolean(sc, g_fm_committed),
+		       s7_make_real(sc, (double)g_fm_caret_px),
+		       s7_make_integer(sc, g_fm_cline),
+		       s7_make_integer(sc, g_fm_nlines));
+}
+
 static void def(s7_scheme *sc, const char *name, s7_function fn, int req)
 {
 	s7_define_function(sc, name, fn, req, 0, false, "stub");
@@ -195,6 +221,7 @@ static s7_scheme *setup_interp(void)
 	def(sc, "kgui-clip", st_nullary, 4);
 	def(sc, "kgui-clip-none", st_nullary, 0);
 	def(sc, "kgui-region", st_region, 5);
+	def(sc, "kgui-field-multi", st_field_multi, 6);
 
 	assert(script_eval(KRUDDGUI_SCM) == 0);
 	return sc;
@@ -235,6 +262,12 @@ static int is_true(s7_pointer p)
 static double nth_real(s7_pointer lst, int n)
 {
 	return s7_real(s7_list_ref(script_s7(), lst, n));
+}
+
+/* nth (0-based) integer of a scheme list. */
+static long nth_int(s7_pointer lst, int n)
+{
+	return (long)s7_integer(s7_list_ref(script_s7(), lst, n));
 }
 
 /*
@@ -409,6 +442,82 @@ static void test_button_row_selects(void)
 	assert(s7_is_string(r) && strcmp(s7_string(r), "Warm") == 0);
 }
 
+/* The line splitter behind the multiline field's per-line paint. */
+static void test_multi_nth_line(void)
+{
+	assert(strcmp(s7_string(eval(
+		"(kruddgui-scene-nth-line \"ab\\ncd\\nef\" 0)")), "ab") == 0);
+	assert(strcmp(s7_string(eval(
+		"(kruddgui-scene-nth-line \"ab\\ncd\\nef\" 1)")), "cd") == 0);
+	assert(strcmp(s7_string(eval(
+		"(kruddgui-scene-nth-line \"ab\\ncd\\nef\" 2)")), "ef") == 0);
+	/* Past the last line is empty, and a trailing newline yields a blank line. */
+	assert(strcmp(s7_string(eval(
+		"(kruddgui-scene-nth-line \"ab\\ncd\" 9)")), "") == 0);
+	assert(strcmp(s7_string(eval(
+		"(kruddgui-scene-nth-line \"ab\\n\" 1)")), "") == 0);
+}
+
+/* Scroll-to-caret: the first visible line index keeps the caret in view. */
+static void test_multi_top_math(void)
+{
+	/* Unfocused always shows the top. */
+	assert(s7_integer(eval("(kruddgui-scene-multi-top 7 6 10 #f)")) == 0);
+	/* Caret within the first page stays at top 0. */
+	assert(s7_integer(eval("(kruddgui-scene-multi-top 3 6 10 #t)")) == 0);
+	/* Caret past the bottom scrolls onto the last visible row. */
+	assert(s7_integer(eval("(kruddgui-scene-multi-top 7 6 10 #t)")) == 2);
+	assert(s7_integer(eval("(kruddgui-scene-multi-top 9 6 10 #t)")) == 4);
+}
+
+/* A 10-line focused field with the caret low: only the lines around it draw. */
+static void test_multi_field_culls_to_caret(void)
+{
+	const char *ten =
+		"\"L0\\nL1\\nL2\\nL3\\nL4\\nL5\\nL6\\nL7\\nL8\\nL9\"";
+	char        src[256];
+	s7_pointer  r;
+
+	g_fm_active = 1;
+	g_fm_cline  = 7;
+	g_fm_nlines = 10;
+	snprintf(src, sizeof(src),
+		 "(kruddgui-scene-field-multi %s \"src\" %s)", TEST_LAY, ten);
+	r = eval(src);
+
+	/* rows = 6, caret line 7 -> top 2 -> visible lines 2..7 only. */
+	assert(rec_has("text L2"));
+	assert(rec_has("text L7"));
+	assert(!rec_has("text L0"));
+	assert(!rec_has("text L1"));
+	assert(!rec_has("text L8"));
+	assert(!rec_has("text L9"));
+
+	/* The 6-tuple passes straight back to the caller. */
+	assert(is_true(s7_list_ref(script_s7(), r, 1)));  /* active   */
+	assert(nth_int(r, 4) == 7);                        /* caret-line */
+	assert(nth_int(r, 5) == 10);                       /* nlines   */
+}
+
+/* An unfocused field shows its top page. */
+static void test_multi_field_unfocused_shows_top(void)
+{
+	const char *ten =
+		"\"L0\\nL1\\nL2\\nL3\\nL4\\nL5\\nL6\\nL7\\nL8\\nL9\"";
+	char        src[256];
+
+	g_fm_active = 0;
+	g_fm_cline  = 0;
+	g_fm_nlines = 10;
+	snprintf(src, sizeof(src),
+		 "(kruddgui-scene-field-multi %s \"src\" %s)", TEST_LAY, ten);
+	eval(src);
+
+	assert(rec_has("text L0"));
+	assert(rec_has("text L5"));
+	assert(!rec_has("text L6"));
+}
+
 int main(void)
 {
 	setup_interp();
@@ -423,6 +532,10 @@ int main(void)
 	RUN(swatch_preserves_alpha);
 	RUN(fold_toggle);
 	RUN(button_row_selects);
+	RUN(multi_nth_line);
+	RUN(multi_top_math);
+	RUN(multi_field_culls_to_caret);
+	RUN(multi_field_unfocused_shows_top);
 
 	printf("\n%d/%d kgui widget tests passed\n", tests_passed, tests_run);
 	return tests_passed == tests_run ? 0 : 1;

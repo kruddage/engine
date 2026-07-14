@@ -548,6 +548,8 @@
 (define kruddgui-scene-label-fg  '(0.62 0.80 0.98 1.0))
 (define kruddgui-scene-head-fg   '(0.62 0.80 0.98 1.0))
 (define kruddgui-scene-rule-fg   '(0.24 0.26 0.30 1.0))
+(define kruddgui-scene-ok-fg     '(0.30 0.90 0.30 1.0))
+(define kruddgui-scene-err-fg    '(1.00 0.30 0.30 1.0))
 
 ;;! Overlay state, held across frames the way the ImGui statics were: whether the
 ;;! console is expanded, which entity's inspector is drilled into (-1 = the entity
@@ -687,14 +689,20 @@
     (kruddgui-lay-adv! L (+ h kruddgui-scene-gap))
     r))
 
-;;! (kruddgui-scene-label L str) a section label line in accent blue.
-(define (kruddgui-scene-label L str)
+;;! (kruddgui-scene-label-c L str c) a one-line label in colour C, advanced through
+;;! the layout cursor like the other rows. The colour-carrying core of
+;;! kruddgui-scene-label, reused by the Save-result line for its green / red states.
+(define (kruddgui-scene-label-c L str c)
   (let ((x (kruddgui-lay-x L))
 	(y (kruddgui-lay-cy L))
 	(h kruddgui-scene-line))
     (when (kruddgui-lay-vis? L h)
-      (kruddgui-board-cell (+ x 2) y h str kruddgui-scene-label-fg))
+      (kruddgui-board-cell (+ x 2) y h str c))
     (kruddgui-lay-adv! L h)))
+
+;;! (kruddgui-scene-label L str) a section label line in accent blue.
+(define (kruddgui-scene-label L str)
+  (kruddgui-scene-label-c L str kruddgui-scene-label-fg))
 
 ;;! (kruddgui-scene-kv L label value) a read-only "label: value" line.
 (define (kruddgui-scene-kv L label value)
@@ -1740,6 +1748,36 @@
 (define kruddgui-assets-clone-name "")
 (define kruddgui-assets-clone-conflict #f)
 
+;;! Source-editor edit buffer and the id whose bytes it holds (0 = none), reloaded
+;;! only when the selection changes — the twin of Assets.scm's kruddboard-assets-
+;;! edit-id / edit-text. The shader / script / mesh / text source editors all share
+;;! this one buffer (only one asset inspector is open at a time). Each frame the
+;;! multiline field returns its live display, which is written straight back here, so
+;;! an in-progress edit persists between frames; Save reads it back to persist.
+(define kruddgui-assets-edit-id 0)
+(define kruddgui-assets-edit-text "")
+
+;;! Last Save result per source-editor type: 'untried before any Save, then #t (the
+;;! save took) or #f (rejected — a shader that failed to compile, a script / mesh
+;;! that was not a well-formed form). Mirrors Assets.scm's shader-ok / script-ok /
+;;! mesh-ok tri-states; reset to 'untried on selection change so a freshly opened
+;;! asset never shows a stale "Compiled OK".
+(define kruddgui-assets-shader-ok 'untried)
+(define kruddgui-assets-script-ok 'untried)
+(define kruddgui-assets-mesh-ok 'untried)
+
+;;! (kruddgui-assets-maybe-reload-edit id) (re)seeds the edit buffer from the asset
+;;! catalog when the selection changes and clears the per-type Save results. Keyed by
+;;! id so an in-progress edit is never clobbered mid-frame — the twin of Assets.scm's
+;;! kruddboard-assets-maybe-reload-edit.
+(define (kruddgui-assets-maybe-reload-edit id)
+  (unless (= kruddgui-assets-edit-id id)
+    (set! kruddgui-assets-edit-id id)
+    (set! kruddgui-assets-edit-text (krudd-asset-data id))
+    (set! kruddgui-assets-shader-ok 'untried)
+    (set! kruddgui-assets-script-ok 'untried)
+    (set! kruddgui-assets-mesh-ok 'untried)))
+
 ;;! (kruddgui-assets-refresh-material) re-derives the parameter descriptors and
 ;;! current values for the loaded material against its selected shader — run on
 ;;! load and whenever the shader changes (krudd-material-values returns the shader's
@@ -1775,6 +1813,8 @@
   (krudd-asset-delete id)
   (set! kruddgui-assets-mat-id 0)
   (set! kruddgui-assets-tex-id 0)
+  (set! kruddgui-assets-edit-id 0)
+  (set! kruddgui-assets-edit-text "")
   (set! kruddgui-assets-sel 0))
 
 ;;! (kruddgui-assets-numeric-row L id label comps value) a labelled row of COMPS
@@ -2074,22 +2114,181 @@
     (kruddgui-scene-label L
 	(format #f "(\"~A\" already exists)" kruddgui-assets-clone-name))))
 
+;;! (kruddgui-asset-src-field L field-id) draws the shared source buffer through the
+;;! multiline field and writes its live display straight back into the buffer, so an
+;;! in-progress edit persists frame to frame — the kruddgui answer to Assets.scm's
+;;! (set! kruddboard-assets-edit-text (car r)) off imgui-input-text-multiline. field-
+;;! id is a stable per-editor string ("asset-shader-src" etc.) so the one global focus
+;;! survives the body scrolling the field off screen.
+(define (kruddgui-asset-src-field L field-id)
+  (let ((r (kruddgui-scene-field-multi L field-id kruddgui-assets-edit-text)))
+    (set! kruddgui-assets-edit-text (car r))))
+
+;;! (kruddgui-asset-src-save id save) commits the live edit and routes it through the
+;;! save primitive. Commit is on blur and the field's own Enter now inserts a newline,
+;;! so a Save tap must (kgui-field-blur) first to drop focus and flush the field's
+;;! internal state; the display was already written back into the edit buffer this
+;;! frame, so the flushed text is exactly what SAVE persists. Returns the save's
+;;! tri-state (#t / #f, or unspecified for the resultless text save). save is a one-
+;;! argument thunk over the buffer text so each editor names its own krudd-asset-save-*.
+(define (kruddgui-asset-src-save id save)
+  (kgui-field-blur)
+  (save kruddgui-assets-edit-text))
+
+;;! (kruddgui-scene-result L ok ok-msg err-msg) the tri-state Save-result line: green
+;;! ok-msg after a save took, red err-msg after one was rejected, nothing while
+;;! 'untried — the kruddgui form of the imgui-text-colored feedback beside the ImGui
+;;! Save buttons (on its own row, since kruddgui buttons span the width).
+(define (kruddgui-scene-result L ok ok-msg err-msg)
+  (cond ((eq? ok #t) (kruddgui-scene-label-c L ok-msg kruddgui-scene-ok-fg))
+	((eq? ok #f) (kruddgui-scene-label-c L err-msg kruddgui-scene-err-fg))))
+
+;;! (kruddgui-asset-clone-row L id path name-id clone) the built-in's Clone row: a
+;;! name field seeded "<path>_copy" on first view and a Clone button that runs the
+;;! clone thunk on the entered name, drilling into the new id or flagging a name
+;;! clash. The generalised twin of the mesh / material clone rows — clone is a one-
+;;! argument thunk over the name so a source editor passes (krudd-asset-clone-shader
+;;! name (krudd-asset-data id)) and the like. Shares the one clone-src/name/conflict
+;;! state, since only one inspector is open at a time.
+(define (kruddgui-asset-clone-row L id path name-id clone)
+  (unless (= kruddgui-assets-clone-src id)
+    (set! kruddgui-assets-clone-src id)
+    (set! kruddgui-assets-clone-name
+	  (string-append (kruddgui-strip-builtin-prefix path) "_copy"))
+    (set! kruddgui-assets-clone-conflict #f))
+  (kruddgui-scene-label L "Clone as")
+  (let ((nf (kruddgui-scene-field L name-id kruddgui-assets-clone-name 0)))
+    (set! kruddgui-assets-clone-name (car nf)))
+  (when (and (kruddgui-scene-btn L "Clone" #t)
+	     (not (string=? kruddgui-assets-clone-name "")))
+    (let ((nid (clone kruddgui-assets-clone-name)))
+      (if (= nid 0)
+	  (set! kruddgui-assets-clone-conflict #t)
+	  (begin
+	    (set! kruddgui-assets-clone-conflict #f)
+	    (set! kruddgui-assets-sel nid)))))
+  (when kruddgui-assets-clone-conflict
+    (kruddgui-scene-label L
+	(format #f "(\"~A\" already exists)" kruddgui-assets-clone-name))))
+
 ;;! (kruddgui-asset-mesh-editor L id path editable?) the mesh inspector: the derived
-;;! Declaration and the live shaded Preview, then Delete when the mesh is mutable, or
-;;! the Clone row for a read-only built-in. Ported (in part) from Assets.scm's
-;;! kruddboard-draw-asset-mesh-editor: the read-only Source view and the Save that
-;;! persists edited source stay on the ImGui tab until a multiline field lands, so a
-;;! mutable mesh here is preview + Delete (there is no editable surface to Save yet).
+;;! Declaration, the live shaded Preview, and — now a multiline field has landed — the
+;;! editable Source with a Save that persists through krudd-asset-save-mesh (its Saved
+;;! / Not a valid mesh tri-state below), then Save/Delete, or the Clone row for a read-
+;;! only built-in. Ported from Assets.scm's kruddboard-draw-asset-mesh-editor; the read-
+;;! only Source view stays on the ImGui tab (kruddgui has no read-only multiline field —
+;;! a built-in shows Clone, not a field).
 (define (kruddgui-asset-mesh-editor L id path editable?)
+  (kruddgui-assets-maybe-reload-edit id)
   (when (kruddgui-fold L "mesh-decl-fold" "Declaration" #f)
     (kruddgui-scene-kv L "Format" "krudd-mesh"))
   (when (kruddgui-fold L "mesh-preview-fold" "Preview" #t)
     (kruddgui-assets-mesh-preview L id))
-  (kruddgui-scene-rule L)
   (if editable?
-      (when (kruddgui-scene-btn L "Delete" #t)
-	(kruddgui-assets-do-delete id))
-      (kruddgui-asset-mesh-clone L id path)))
+      (begin
+	(when (kruddgui-fold L "mesh-src-fold" "Source" #f)
+	  (kruddgui-asset-src-field L "asset-mesh-src"))
+	(kruddgui-scene-rule L)
+	(let ((act (kruddgui-button-row L (list "Save" "Delete"))))
+	  (cond
+	   ((equal? act "Save")
+	    (set! kruddgui-assets-mesh-ok
+		  (kruddgui-asset-src-save id
+		      (lambda (t) (krudd-asset-save-mesh id t)))))
+	   ((equal? act "Delete")
+	    (kruddgui-assets-do-delete id))))
+	(kruddgui-scene-result L kruddgui-assets-mesh-ok
+			       "Saved" "Not a valid mesh"))
+      (begin
+	(kruddgui-scene-rule L)
+	(kruddgui-asset-mesh-clone L id path))))
+
+;;! (kruddgui-asset-shader-editor L id path editable?) the shader inspector: the
+;;! derived Declaration (format + live stage list from krudd-shader-stages), the
+;;! editable Source, and a Save that compiles + persists through krudd-asset-save-
+;;! shader (its Compiled OK / Compile failed tri-state below — a failed compile
+;;! commits nothing), then Save/Delete, or the built-in's Clone row (which clones the
+;;! catalog source verbatim). Ported from Assets.scm's kruddboard-draw-asset-shader-
+;;! editor.
+(define (kruddgui-asset-shader-editor L id path editable?)
+  (kruddgui-assets-maybe-reload-edit id)
+  (when (kruddgui-fold L "shader-decl-fold" "Declaration" #f)
+    (kruddgui-scene-kv L "Format" "krudd-shader")
+    (kruddgui-scene-kv L "Stages"
+		       (let ((s (krudd-shader-stages kruddgui-assets-edit-text)))
+			 (if (string=? s "") "(none)" s))))
+  (if editable?
+      (begin
+	(when (kruddgui-fold L "shader-src-fold" "Source" #t)
+	  (kruddgui-asset-src-field L "asset-shader-src"))
+	(kruddgui-scene-rule L)
+	(let ((act (kruddgui-button-row L (list "Save" "Delete"))))
+	  (cond
+	   ((equal? act "Save")
+	    (set! kruddgui-assets-shader-ok
+		  (kruddgui-asset-src-save id
+		      (lambda (t) (krudd-asset-save-shader id t)))))
+	   ((equal? act "Delete")
+	    (kruddgui-assets-do-delete id))))
+	(kruddgui-scene-result L kruddgui-assets-shader-ok
+			       "Compiled OK" "Compile failed"))
+      (begin
+	(kruddgui-scene-rule L)
+	(kruddgui-asset-clone-row L id path "shader-clone-name"
+	    (lambda (nm) (krudd-asset-clone-shader nm (krudd-asset-data id)))))))
+
+;;! (kruddgui-asset-script-editor L id path editable?) the script inspector: the
+;;! derived Declaration (format + live hook list from krudd-script-hooks), the editable
+;;! Source, and a Save that persists through krudd-asset-save-script (its Saved / Not a
+;;! valid script tri-state below — a rejected save leaves the last-committed source
+;;! live), then Save/Delete, or the built-in's Clone row. The (script ...) counterpart
+;;! of kruddgui-asset-shader-editor, ported from Assets.scm.
+(define (kruddgui-asset-script-editor L id path editable?)
+  (kruddgui-assets-maybe-reload-edit id)
+  (when (kruddgui-fold L "script-decl-fold" "Declaration" #f)
+    (kruddgui-scene-kv L "Format" "krudd-script")
+    (kruddgui-scene-kv L "Hooks"
+		       (let ((s (krudd-script-hooks kruddgui-assets-edit-text)))
+			 (if (string=? s "") "(none)" s))))
+  (if editable?
+      (begin
+	(when (kruddgui-fold L "script-src-fold" "Source" #t)
+	  (kruddgui-asset-src-field L "asset-script-src"))
+	(kruddgui-scene-rule L)
+	(let ((act (kruddgui-button-row L (list "Save" "Delete"))))
+	  (cond
+	   ((equal? act "Save")
+	    (set! kruddgui-assets-script-ok
+		  (kruddgui-asset-src-save id
+		      (lambda (t) (krudd-asset-save-script id t)))))
+	   ((equal? act "Delete")
+	    (kruddgui-assets-do-delete id))))
+	(kruddgui-scene-result L kruddgui-assets-script-ok
+			       "Saved" "Not a valid script"))
+      (begin
+	(kruddgui-scene-rule L)
+	(kruddgui-asset-clone-row L id path "script-clone-name"
+	    (lambda (nm) (krudd-asset-clone-script nm (krudd-asset-data id)))))))
+
+;;! (kruddgui-asset-text-editor L id) the authored-text inspector: the editable Source
+;;! and a Save that persists through krudd-asset-save-text (which has no compile gate,
+;;! so no tri-state result), then Save/Delete. Ported from Assets.scm's kruddboard-
+;;! draw-asset-text-editor minus the rendered markdown Preview — that is md_draw's
+;;! kgui_batch port, a later PR, so this ports only the SOURCE box + Save. Only reached
+;;! for a mutable (authored) text; a read-only text has no clone primitive and falls to
+;;! the catalog view, as it did under ImGui.
+(define (kruddgui-asset-text-editor L id)
+  (kruddgui-assets-maybe-reload-edit id)
+  (when (kruddgui-fold L "text-src-fold" "Source" #t)
+    (kruddgui-asset-src-field L "asset-text-src"))
+  (kruddgui-scene-rule L)
+  (let ((act (kruddgui-button-row L (list "Save" "Delete"))))
+    (cond
+     ((equal? act "Save")
+      (kruddgui-asset-src-save id
+	  (lambda (t) (krudd-asset-save-text id t))))
+     ((equal? act "Delete")
+      (kruddgui-assets-do-delete id)))))
 
 ;;! (kruddgui-asset-generic L info) the read-only catalog view — the browser's
 ;;! landing screen for any asset without a dedicated editor yet, and the tail of the
@@ -2111,11 +2310,12 @@
 
 ;;! (kruddgui-asset-body L id info) dispatches to the per-type editor by asset type
 ;;! ahead of the generic catalog view — the twin of Assets.scm's
-;;! kruddboard-draw-asset-body. ASSET_TYPE_MESH = 1, TEXTURE = 2, MATERIAL = 3
-;;! (mirroring asset_api.h); the mesh, texture and material editors are filled in,
-;;! the remaining per-type editors slot in here as they land. read-only? (info field
-;;! 6) drives the material's Save-vs-Clone and the mesh's Delete-vs-Clone rows and
-;;! gates the texture Delete.
+;;! kruddboard-draw-asset-body. ASSET_TYPE_MESH = 1, TEXTURE = 2, MATERIAL = 3,
+;;! SHADER = 4, TEXT = 7, SCRIPT = 8 (mirroring asset_api.h). read-only? (info field
+;;! 6) drives the Save-vs-Clone / Delete-vs-Clone rows and gates the texture Delete;
+;;! a read-only source asset shows the Clone row, not an editable field. TEXT has no
+;;! clone primitive, so a read-only text falls through to the catalog view (as it did
+;;! under ImGui, which only gave the editor to authored text).
 (define (kruddgui-asset-body L id info)
   (let ((type      (list-ref info 1))
 	(read-only (list-ref info 6)))
@@ -2126,6 +2326,14 @@
       (kruddgui-asset-texture-editor L id (not read-only)))
      ((= type 3)
       (kruddgui-asset-material-editor L id (list-ref info 0) (not read-only)))
+     ((= type 4)
+      (kruddgui-asset-shader-editor L id (list-ref info 0) (not read-only)))
+     ((= type 7)
+      (if read-only
+	  (kruddgui-asset-generic L info)
+	  (kruddgui-asset-text-editor L id)))
+     ((= type 8)
+      (kruddgui-asset-script-editor L id (list-ref info 0) (not read-only)))
      (else (kruddgui-asset-generic L info)))))
 
 ;;! (kruddgui-asset-inspector L id) the drilled-in inspector: a "< Back" row, the

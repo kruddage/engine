@@ -94,6 +94,14 @@ static int g_mat_texture;  /* krudd-material-texture binds a texture when set */
 static int g_tex_bake_ok;  /* krudd-texture-bake returns 0 when clear */
 static int g_mesh_bake_ok; /* krudd-mesh-bake returns 0 when clear */
 
+/* Source-editor steering: the save primitives return this tri-state, the multiline
+ * field echoes g_fm_display (an edited buffer) when set, and blur bumps a counter. */
+static int  g_save_shader_ok = 1; /* krudd-asset-save-shader -> #t/#f  */
+static int  g_save_script_ok = 1; /* krudd-asset-save-script -> #t/#f  */
+static int  g_save_mesh_ok   = 1; /* krudd-asset-save-mesh   -> #t/#f  */
+static char g_fm_display[128];    /* when set, kgui-field-multi's display */
+static int  g_blur_called;        /* kgui-field-blur invocations         */
+
 static void setup(void)
 {
 	s7_scheme *sc = script_s7();
@@ -111,6 +119,11 @@ static void setup(void)
 	g_mat_texture  = 0;
 	g_tex_bake_ok  = 1;
 	g_mesh_bake_ok = 1;
+	g_save_shader_ok = 1;
+	g_save_script_ok = 1;
+	g_save_mesh_ok   = 1;
+	g_fm_display[0]  = '\0';
+	g_blur_called    = 0;
 
 	/* Reset the overlay + browser state a prior test may have left set. */
 	s7_eval_c_string(sc, "(set! kruddgui-assets-open #t)");
@@ -129,6 +142,13 @@ static void setup(void)
 	s7_eval_c_string(sc, "(set! kruddgui-assets-clone-conflict #f)");
 	s7_eval_c_string(sc, "(set! kruddgui-scene-open-combo #f)");
 	s7_eval_c_string(sc, "(set! kruddgui-open-picker #f)");
+
+	/* Reset the source-editor edit buffer + tri-state Save results. */
+	s7_eval_c_string(sc, "(set! kruddgui-assets-edit-id 0)");
+	s7_eval_c_string(sc, "(set! kruddgui-assets-edit-text \"\")");
+	s7_eval_c_string(sc, "(set! kruddgui-assets-shader-ok 'untried)");
+	s7_eval_c_string(sc, "(set! kruddgui-assets-script-ok 'untried)");
+	s7_eval_c_string(sc, "(set! kruddgui-assets-mesh-ok 'untried)");
 }
 
 /* ------------------------------------------------------------------ */
@@ -304,6 +324,20 @@ static s7_pointer st_asset_info(s7_scheme *sc, s7_pointer a)
 	/* A read-only built-in mesh, for the Clone row. */
 	if (id == 28)
 		return ainfo(sc, "builtin://mesh/cube", 1, 1, 1, 0, 0, 1, 0);
+	/* An authored (mutable) shader and its read-only built-in cousin. */
+	if (id == 22)
+		return ainfo(sc, "shader/custom", 4, 0, 1, 0, 0, 0, 1);
+	/* (a read-only built-in shader is id 1 above) */
+	/* An authored (mutable) script and a read-only built-in one. */
+	if (id == 23)
+		return ainfo(sc, "script/spin", 8, 0, 1, 0, 0, 0, 1);
+	if (id == 24)
+		return ainfo(sc, "builtin://script/idle", 8, 1, 1, 0, 0, 1, 0);
+	/* An authored (mutable) text and a read-only built-in text. */
+	if (id == 27)
+		return ainfo(sc, "notes/readme", 7, 0, 1, 0, 0, 0, 1);
+	if (id == 29)
+		return ainfo(sc, "builtin://text/license", 7, 1, 1, 0, 0, 1, 0);
 	return s7_f(sc);
 }
 
@@ -499,6 +533,91 @@ static s7_pointer st_clone_mesh(s7_scheme *sc, s7_pointer a)
 	return s7_make_integer(sc, 88);
 }
 
+/* ---- source editor accessor stubs (#492, PR6h) ---- */
+
+/*
+ * (kgui-field-multi id x y w h text) -> the 6-tuple. It echoes g_fm_display as the
+ * live display when a test has dialled one in (simulating a keyboard-edited buffer),
+ * otherwise the seed text passed in — the same steerable seam kgui_widgets_test uses.
+ */
+static s7_pointer st_field_multi(s7_scheme *sc, s7_pointer a)
+{
+	s7_pointer  t    = s7_list_ref(sc, a, 5);
+	const char *txt  = s7_is_string(t) ? s7_string(t) : "";
+	const char *disp = g_fm_display[0] ? g_fm_display : txt;
+
+	rec("field-multi %s", disp);
+	return s7_list(sc, 6, s7_make_string(sc, disp), s7_f(sc), s7_f(sc),
+		       s7_make_real(sc, 0.0), s7_make_integer(sc, 0),
+		       s7_make_integer(sc, 1));
+}
+
+/* (kgui-field-blur) -> #t, and records that the Save path flushed the field. */
+static s7_pointer st_field_blur(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	g_blur_called++;
+	rec("field-blur");
+	return s7_t(sc);
+}
+
+/* (krudd-shader-stages src) / (krudd-script-hooks src) -> a derived list string. */
+static s7_pointer st_shader_stages(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	return s7_make_string(sc, "vertex fragment");
+}
+
+static s7_pointer st_script_hooks(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	return s7_make_string(sc, "update");
+}
+
+/* The Save primitives record the text they were handed and return the tri-state. */
+static const char *arg2_str(s7_scheme *sc, s7_pointer a)
+{
+	s7_pointer s = s7_cadr(a);
+
+	return s7_is_string(s) ? s7_string(s) : "?";
+}
+
+static s7_pointer st_save_shader(s7_scheme *sc, s7_pointer a)
+{
+	rec("save-shader %s", arg2_str(sc, a));
+	return s7_make_boolean(sc, g_save_shader_ok);
+}
+
+static s7_pointer st_save_script(s7_scheme *sc, s7_pointer a)
+{
+	rec("save-script %s", arg2_str(sc, a));
+	return s7_make_boolean(sc, g_save_script_ok);
+}
+
+static s7_pointer st_save_mesh(s7_scheme *sc, s7_pointer a)
+{
+	rec("save-mesh %s", arg2_str(sc, a));
+	return s7_make_boolean(sc, g_save_mesh_ok);
+}
+
+static s7_pointer st_save_text(s7_scheme *sc, s7_pointer a)
+{
+	rec("save-text %s", arg2_str(sc, a));
+	return s7_unspecified(sc);
+}
+
+static s7_pointer st_clone_shader(s7_scheme *sc, s7_pointer a)
+{
+	rec("clone-shader %s", arg1_str(sc, a));
+	return s7_make_integer(sc, 91);
+}
+
+static s7_pointer st_clone_script(s7_scheme *sc, s7_pointer a)
+{
+	rec("clone-script %s", arg1_str(sc, a));
+	return s7_make_integer(sc, 92);
+}
+
 static void def(s7_scheme *sc, const char *name, s7_function fn, int req)
 {
 	s7_define_function(sc, name, fn, req, 0, false, "stub");
@@ -558,6 +677,18 @@ static s7_scheme *setup_interp(void)
 	def(sc, "krudd-mesh-bake", st_mesh_bake, 3);
 	def(sc, "krudd-asset-data", st_asset_data, 1);
 	def(sc, "krudd-asset-clone-mesh", st_clone_mesh, 2);
+
+	/* The multiline field seam + the source-editor save / clone accessors. */
+	def(sc, "kgui-field-multi", st_field_multi, 6);
+	def(sc, "kgui-field-blur", st_field_blur, 0);
+	def(sc, "krudd-shader-stages", st_shader_stages, 1);
+	def(sc, "krudd-script-hooks", st_script_hooks, 1);
+	def(sc, "krudd-asset-save-shader", st_save_shader, 2);
+	def(sc, "krudd-asset-save-script", st_save_script, 2);
+	def(sc, "krudd-asset-save-mesh", st_save_mesh, 2);
+	def(sc, "krudd-asset-save-text", st_save_text, 2);
+	def(sc, "krudd-asset-clone-shader", st_clone_shader, 2);
+	def(sc, "krudd-asset-clone-script", st_clone_script, 2);
 
 	assert(script_eval(KRUDDGUI_SCM) == 0);
 	return sc;
@@ -945,7 +1076,9 @@ static void test_mesh_editor_renders(void)
 	assert(rec_has("< Back"));
 	assert(rec_has("text Declaration"));
 	assert(rec_has("text Preview"));
-	assert(rec_has("image tex=66")); /* the shaded render blits */
+	assert(rec_has("image tex=66")); /* the shaded render blits      */
+	assert(rec_has("text Source"));  /* now an editable source fold  */
+	assert(rec_has("text Save"));    /* Save/Delete replaces Delete  */
 }
 
 static void test_mesh_preview_unavailable(void)
@@ -958,23 +1091,24 @@ static void test_mesh_preview_unavailable(void)
 	assert(!rec_has("image tex="));
 }
 
-/* Close the mesh editor's two folds so the action row sits at a known y. */
+/* Close the mesh editor's three folds so the action row sits at a known y. */
 static void close_mesh_folds(void)
 {
 	eval("(set! kruddgui-fold-state "
 	     "(list (cons \"mesh-decl-fold\" #f) "
-	     "(cons \"mesh-preview-fold\" #f)))");
+	     "(cons \"mesh-preview-fold\" #f) (cons \"mesh-src-fold\" #f)))");
 }
 
 static void test_mesh_delete(void)
 {
 	/*
-	 * Folds closed: Back (->94), path (->120), rule (->128), decl / preview
-	 * folds (46 each: ->174 ->220), rule (->228), Delete at y 228..268.
+	 * Folds closed: Back (->94), path (->120), rule (->128), decl / preview /
+	 * source folds (46 each: ->174 ->220 ->266), rule (->274), then the
+	 * Save/Delete row at y 274..314. Delete is the right half.
 	 */
 	set_sel(10);
 	close_mesh_folds();
-	tap(100.0f, 245.0f);
+	tap(250.0f, 288.0f);
 	draw();
 	assert(rec_has("asset-delete 10"));
 	assert(get_sel() == 0);
@@ -993,6 +1127,185 @@ static void test_mesh_clone(void)
 	draw();
 	assert(rec_has("clone-mesh"));
 	assert(get_sel() == 88);
+}
+
+/* ------------------------------------------------------------------ */
+/* Source editors (#492, PR6h)                                         */
+/* ------------------------------------------------------------------ */
+
+/* Close a shader/script editor's Declaration + Source folds so the Save/Delete
+ * row sits at a known y: Back (->94), path (->120), rule (->128), decl + source
+ * folds (46 each: ->174 ->220), rule (->228), the row at y 228..268. */
+static void close_src_folds(const char *decl, const char *src)
+{
+	char buf[128];
+
+	snprintf(buf, sizeof(buf),
+		 "(set! kruddgui-fold-state (list (cons \"%s\" #f) "
+		 "(cons \"%s\" #f)))", decl, src);
+	eval(buf);
+}
+
+static void test_shader_editor_renders(void)
+{
+	/* Drilling into a mutable shader (type 4) draws the source editor. */
+	set_sel(22);
+	draw();
+	assert(rec_has("< Back"));
+	assert(rec_has("text Source"));   /* the editable Source fold (open) */
+	assert(rec_has("field-multi"));   /* the multiline field draws       */
+	assert(rec_has("text Save"));
+	assert(rec_has("text Delete"));
+}
+
+static void test_shader_save_ok(void)
+{
+	/* Save routes the buffer to krudd-asset-save-shader; a compile-ok flips the
+	 * tri-state to #t. Folds closed -> Save is the left half at y 228..268. */
+	set_sel(22);
+	close_src_folds("shader-decl-fold", "shader-src-fold");
+	tap(100.0f, 245.0f);
+	draw();
+	assert(rec_has("save-shader"));
+	assert(is_true(eval("(eq? kruddgui-assets-shader-ok #t)")));
+}
+
+static void test_shader_save_failed(void)
+{
+	/* A failed compile flips the tri-state to #f (nothing committed). */
+	g_save_shader_ok = 0;
+	set_sel(22);
+	close_src_folds("shader-decl-fold", "shader-src-fold");
+	tap(100.0f, 245.0f);
+	draw();
+	assert(rec_has("save-shader"));
+	assert(is_true(eval("(eq? kruddgui-assets-shader-ok #f)")));
+}
+
+static void test_shader_blur_flushes(void)
+{
+	/*
+	 * With the Source fold open the field draws and its live display is written
+	 * back into the edit buffer; a Save tap (kgui-field-blur) first, then persists
+	 * the flushed text. Source open (#t default), decl closed: field (168 tall)
+	 * pushes the Save/Delete row to y 402..442, Save the left half.
+	 */
+	strcpy(g_fm_display, "edited-shader-src");
+	set_sel(22);
+	eval("(set! kruddgui-fold-state (list (cons \"shader-decl-fold\" #f)))");
+	tap(100.0f, 420.0f);
+	draw();
+	assert(g_blur_called >= 1);                     /* Save flushed the field  */
+	assert(rec_has("save-shader edited-shader-src")); /* the live edit persisted */
+}
+
+static void test_shader_result_resets_on_reselect(void)
+{
+	/* A save leaves shader-ok #t; switching assets and back reseeds to 'untried,
+	 * so a freshly opened asset never shows a stale "Compiled OK". */
+	set_sel(22);
+	close_src_folds("shader-decl-fold", "shader-src-fold");
+	tap(100.0f, 245.0f);
+	draw();
+	assert(is_true(eval("(eq? kruddgui-assets-shader-ok #t)")));
+	set_sel(23);            /* a different asset -> maybe-reload-edit fires */
+	draw();
+	set_sel(22);
+	draw();
+	assert(is_true(eval("(eq? kruddgui-assets-shader-ok 'untried)")));
+}
+
+static void test_shader_clone(void)
+{
+	/*
+	 * A read-only shader (id 1) shows Clone, not an editable field: decl fold
+	 * closed (->174), rule (->182), "Clone as" (->208), name field (46 ->254),
+	 * Clone at y 254..294. Clone copies the catalog source verbatim.
+	 */
+	set_sel(1);
+	eval("(set! kruddgui-fold-state (list (cons \"shader-decl-fold\" #f)))");
+	assert(!rec_has("field-multi"));    /* no editable field for a built-in */
+	tap(100.0f, 270.0f);
+	draw();
+	assert(rec_has("clone-shader"));
+	assert(get_sel() == 91);
+}
+
+static void test_read_only_shows_clone_not_field(void)
+{
+	/* A read-only source asset draws the Clone row and never the source field. */
+	set_sel(1);
+	draw();
+	assert(rec_has("text Clone as"));
+	assert(rec_has("text Clone"));
+	assert(!rec_has("field-multi"));
+}
+
+static void test_script_editor_and_save(void)
+{
+	/* A mutable script (type 8) saves through krudd-asset-save-script; a well-
+	 * formed save flips the tri-state to #t. */
+	set_sel(23);
+	draw();
+	assert(rec_has("text Source"));
+	assert(rec_has("field-multi"));
+	close_src_folds("script-decl-fold", "script-src-fold");
+	tap(100.0f, 245.0f);
+	draw();
+	assert(rec_has("save-script"));
+	assert(is_true(eval("(eq? kruddgui-assets-script-ok #t)")));
+}
+
+static void test_script_clone(void)
+{
+	/* A read-only script (id 24) shows the Clone row, same layout as the shader. */
+	set_sel(24);
+	eval("(set! kruddgui-fold-state (list (cons \"script-decl-fold\" #f)))");
+	tap(100.0f, 270.0f);
+	draw();
+	assert(rec_has("clone-script"));
+	assert(get_sel() == 92);
+}
+
+static void test_mesh_source_save(void)
+{
+	/* The mesh editor now carries an editable Source + Save through krudd-asset-
+	 * save-mesh; with the three folds closed Save is the left half at y 274..314. */
+	set_sel(10);
+	close_mesh_folds();
+	tap(100.0f, 288.0f);
+	draw();
+	assert(rec_has("save-mesh"));
+	assert(is_true(eval("(eq? kruddgui-assets-mesh-ok #t)")));
+}
+
+static void test_text_editor_and_save(void)
+{
+	/*
+	 * A mutable text (type 7) shows the Source box + Save (no compile gate, no
+	 * tri-state). Source fold closed: Back (->94), path (->120), rule (->128),
+	 * source fold (->174), rule (->182), Save/Delete row at y 182..222.
+	 */
+	set_sel(27);
+	draw();
+	assert(rec_has("text Source"));
+	assert(rec_has("field-multi"));
+	eval("(set! kruddgui-fold-state (list (cons \"text-src-fold\" #f)))");
+	tap(100.0f, 200.0f);
+	draw();
+	assert(rec_has("save-text"));
+	assert(g_blur_called >= 1);
+}
+
+static void test_read_only_text_is_catalog(void)
+{
+	/* A read-only text has no clone primitive, so it falls to the catalog view
+	 * (as it did under ImGui), not the editable Source box. */
+	set_sel(29);
+	draw();
+	assert(rec_has("text Type"));      /* a catalog field label */
+	assert(rec_has("text Text"));      /* its value (type 7)    */
+	assert(!rec_has("field-multi"));
 }
 
 int main(void)
@@ -1025,6 +1338,18 @@ int main(void)
 	RUN(mesh_preview_unavailable);
 	RUN(mesh_delete);
 	RUN(mesh_clone);
+	RUN(shader_editor_renders);
+	RUN(shader_save_ok);
+	RUN(shader_save_failed);
+	RUN(shader_blur_flushes);
+	RUN(shader_result_resets_on_reselect);
+	RUN(shader_clone);
+	RUN(read_only_shows_clone_not_field);
+	RUN(script_editor_and_save);
+	RUN(script_clone);
+	RUN(mesh_source_save);
+	RUN(text_editor_and_save);
+	RUN(read_only_text_is_catalog);
 
 	printf("\n%d/%d kgui assets tests passed\n", tests_passed, tests_run);
 	return tests_passed == tests_run ? 0 : 1;

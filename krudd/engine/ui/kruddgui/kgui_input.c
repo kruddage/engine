@@ -111,6 +111,11 @@ static uint32_t region_at(const struct kgui_input *in, float x, float y)
 	return 0;
 }
 
+uint32_t kgui_input_hit_region(const struct kgui_input *in, float x, float y)
+{
+	return region_at(in, x, y);
+}
+
 static const struct kgui_region *region_by_name(const struct kgui_input *in,
 						uint32_t name)
 {

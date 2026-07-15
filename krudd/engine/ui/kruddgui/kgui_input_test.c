@@ -341,6 +341,38 @@ static void test_mouse_hover_forwards(void)
 	       KGUI_ROUTE_FORWARD);
 }
 
+/*
+ * The point-over-panel query the viewport overlay (gizmo) uses to stand down:
+ * a point inside a committed region reports it, a gap reports 0.
+ */
+static void test_hit_region_reports_panel(void)
+{
+	struct kgui_input in;
+
+	kgui_input_init(&in);
+	commit_two(&in);
+
+	assert(kgui_input_hit_region(&in, 50.0f, 25.0f) == BAR);
+	assert(kgui_input_hit_region(&in, 250.0f, 25.0f) == LOG);
+	assert(kgui_input_hit_region(&in, 150.0f, 25.0f) == 0); /* gap between */
+	assert(kgui_input_hit_region(&in, 50.0f, 100.0f) == 0); /* below both  */
+}
+
+/* In an overlap the later-declared (top) region wins, matching routing z-order. */
+static void test_hit_region_topmost_on_overlap(void)
+{
+	struct kgui_input in;
+
+	kgui_input_init(&in);
+	kgui_input_frame_begin(&in);
+	kgui_input_region(&in, BAR, 0.0f, 0.0f, 100.0f, 100.0f);
+	kgui_input_region(&in, LOG, 50.0f, 50.0f, 100.0f, 100.0f);
+	kgui_input_frame_commit(&in);
+
+	assert(kgui_input_hit_region(&in, 75.0f, 75.0f) == LOG); /* overlap -> top */
+	assert(kgui_input_hit_region(&in, 25.0f, 25.0f) == BAR);
+}
+
 int main(void)
 {
 	RUN(name_hash_nonzero);
@@ -358,6 +390,8 @@ int main(void)
 	RUN(down_off_slider_hits_body);
 	RUN(wheel_routing);
 	RUN(mouse_hover_forwards);
+	RUN(hit_region_reports_panel);
+	RUN(hit_region_topmost_on_overlap);
 
 	printf("%d/%d tests passed\n", tests_passed, tests_run);
 	return tests_passed == tests_run ? 0 : 1;

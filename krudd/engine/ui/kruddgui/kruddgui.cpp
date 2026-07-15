@@ -32,6 +32,7 @@ extern "C" {
 #include "kgui_input.h"
 #include "kgui_text_edit.h"
 #include "kgui_font.h"
+#include "kruddgui_api.h"
 }
 
 #ifdef __EMSCRIPTEN__
@@ -323,6 +324,27 @@ static struct kgui_region_io *s_cur_io;
 
 static bool s_touch_device;
 
+/*
+ * The unclaimed (non-panel) pointer, tracked for the viewport overlay seam
+ * (kruddgui_api) — the gizmo's replacement for ImGuiIO. The forward path
+ * (forward_button / the forwarded move branch) updates it alongside the ImGui io
+ * it still feeds; `clicked` / `released` are one-frame edges cleared after the
+ * overlays run each tick, mirroring IsMouseClicked / IsMouseReleased.
+ */
+static struct {
+	float x, y;
+	int   down;
+	int   clicked;
+	int   released;
+} s_vp_ptr;
+
+/* Registered viewport overlays, run each tick before the Scheme panels draw. */
+static struct {
+	void (*fn)(void *ud);
+	void *ud;
+} s_overlays[KRUDDGUI_MAX_OVERLAYS];
+static int s_overlay_count;
+
 /* A touch consumed by a field raises the keyboard from the gesture (below). */
 static int point_in_field(float x, float y);
 
@@ -343,6 +365,17 @@ static void forward_button(float x, float y, bool down)
 
 	io.AddMousePosEvent(x, y);
 	io.AddMouseButtonEvent(0, down);
+
+	/* Track the unclaimed pointer for the overlay seam (kruddgui_api). */
+	s_vp_ptr.x = x;
+	s_vp_ptr.y = y;
+	if (down) {
+		s_vp_ptr.down    = 1;
+		s_vp_ptr.clicked = 1;
+	} else {
+		s_vp_ptr.down     = 0;
+		s_vp_ptr.released = 1;
+	}
 }
 
 static void pointer_down(int32_t id, float x, float y)
@@ -353,8 +386,11 @@ static void pointer_down(int32_t id, float x, float y)
 
 static void pointer_move(int32_t id, float x, float y)
 {
-	if (kgui_input_pointer_move(&s_input, id, x, y) == KGUI_ROUTE_FORWARD)
+	if (kgui_input_pointer_move(&s_input, id, x, y) == KGUI_ROUTE_FORWARD) {
 		ImGui::GetIO().AddMousePosEvent(x, y);
+		s_vp_ptr.x = x;
+		s_vp_ptr.y = y;
+	}
 }
 
 static void pointer_up(int32_t id, float x, float y, bool is_touch)
@@ -1228,6 +1264,76 @@ static void call_scm_panel(const char *proc)
 		s7_call(sc, fn, s7_nil(sc));
 }
 
+/* ------------------------------------------------------------------ */
+/* Viewport overlay seam (kruddgui_api) — a C subsystem's gizmo draw   */
+/* ------------------------------------------------------------------ */
+
+static void kga_register_overlay(void (*fn)(void *ud), void *ud)
+{
+	if (s_overlay_count < KRUDDGUI_MAX_OVERLAYS) {
+		s_overlays[s_overlay_count].fn = fn;
+		s_overlays[s_overlay_count].ud = ud;
+		s_overlay_count++;
+	}
+}
+
+static void kga_line(float x0, float y0, float x1, float y1, float width,
+		     float r, float g, float b, float a)
+{
+	kgui_batch_line(&s_batch, x0, y0, x1, y1, width, s_white_u, s_white_v,
+			r, g, b, a);
+}
+
+static void kga_rect(float x, float y, float w, float h,
+		     float r, float g, float b, float a)
+{
+	kgui_batch_quad(&s_batch, x, y, w, h, s_white_u, s_white_v,
+			s_white_u, s_white_v, r, g, b, a);
+}
+
+static void kga_circle(float cx, float cy, float rad,
+		       float r, float g, float b, float a)
+{
+	kgui_batch_circle(&s_batch, cx, cy, rad, kgui_circle_segs(rad),
+			  s_white_u, s_white_v, r, g, b, a);
+}
+
+static void kga_ring(float cx, float cy, float rad, float width,
+		     float r, float g, float b, float a)
+{
+	kgui_batch_ring(&s_batch, cx, cy, rad, width, kgui_circle_segs(rad),
+			s_white_u, s_white_v, r, g, b, a);
+}
+
+static void kga_viewport(float *w, float *h)
+{
+	if (w) *w = s_css_w;
+	if (h) *h = s_css_h;
+}
+
+static void kga_pointer(float *x, float *y)
+{
+	if (x) *x = s_vp_ptr.x;
+	if (y) *y = s_vp_ptr.y;
+}
+
+static int kga_pointer_down(void)     { return s_vp_ptr.down; }
+static int kga_pointer_clicked(void)  { return s_vp_ptr.clicked; }
+static int kga_pointer_released(void) { return s_vp_ptr.released; }
+
+static int kga_over_ui(float x, float y)
+{
+	return kgui_input_hit_region(&s_input, x, y) != 0;
+}
+
+static const struct kruddgui_api g_kruddgui_api = {
+	kga_register_overlay,
+	kga_line, kga_rect, kga_circle, kga_ring,
+	kga_viewport,
+	kga_pointer, kga_pointer_down, kga_pointer_clicked, kga_pointer_released,
+	kga_over_ui,
+};
+
 #endif /* __EMSCRIPTEN__ */
 
 /* ------------------------------------------------------------------ */
@@ -1287,6 +1393,21 @@ static void kruddgui_tick(void)
 	s_cur_io     = NULL;
 	s_fr_build_n = 0;
 
+	/*
+	 * Viewport overlays (the transform gizmo) draw first, so the Scheme
+	 * panels compose over them, and read the unclaimed pointer accumulated
+	 * since the last tick. Their one-frame click/release edges are cleared
+	 * once consumed here, before the panels draw.
+	 */
+	{
+		int i;
+
+		for (i = 0; i < s_overlay_count; i++)
+			s_overlays[i].fn(s_overlays[i].ud);
+		s_vp_ptr.clicked  = 0;
+		s_vp_ptr.released = 0;
+	}
+
 	call_scm_panel("kruddgui-draw");
 
 	/*
@@ -1314,7 +1435,7 @@ static void kruddgui_shutdown(void)
 
 static const struct subsystem desc = {
 	"kruddgui",
-	nullptr,
+	&g_kruddgui_api,
 	kruddgui_init,
 	kruddgui_tick,
 	kruddgui_shutdown,

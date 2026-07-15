@@ -120,6 +120,16 @@ struct kgui_region_io *kgui_input_region(struct kgui_input *in, uint32_t name,
  */
 void kgui_input_frame_commit(struct kgui_input *in);
 
+/*
+ * The name of the topmost committed region under (x, y), or 0 if the point is
+ * on no panel — the "is the pointer over UI" test a viewport overlay (the
+ * transform gizmo) uses to stand down when the pointer is on a panel, the
+ * kruddgui equivalent of ImGui's WantCaptureMouse. Reads the committed set, so
+ * it reflects the panels declared on the previous tick (a one-frame lag, as
+ * WantCaptureMouse had).
+ */
+uint32_t kgui_input_hit_region(const struct kgui_input *in, float x, float y);
+
 /* Pointer events — driven from the Emscripten callbacks (or a test). */
 enum kgui_route kgui_input_pointer_down(struct kgui_input *in, int32_t id,
 					float x, float y);

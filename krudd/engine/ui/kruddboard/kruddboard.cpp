@@ -12,10 +12,10 @@
  *
  * What remains in C here: the shared krudd-* accessors the kruddgui panels read
  * (registered against the s7 interpreter), and the viewport-space editor tools —
- * the transform gizmo, click-to-pick and drag-to-spawn — which still render
- * through ImGui's draw list and pointer io (draw_viewport_tools). Those are the
- * last ImGui consumers here, ported onto kruddgui primitives in a follow-up
- * (#492, feeding #487). Toggle the viewport tools with backtick (`).
+ * the transform gizmo and click-to-pick (draw_viewport_tools) — which now draw on
+ * kruddgui's own batch and read its pointer through the overlay seam (kruddgui_api,
+ * #492, feeding #487). No ImGui remains in kruddboard; drag-to-spawn, which rode
+ * ImGui's drag/drop, is retired. Toggle the viewport tools with backtick (`).
  */
 
 extern "C" {
@@ -24,7 +24,7 @@ extern "C" {
 #include "log_api.h"
 #include "log_level.h"
 #include "stats_api.h"
-#include "imgui_api.h"
+#include "kruddgui_api.h"
 #include "asset_api.h"
 #include "entity_api.h"
 #include "edit_api.h"
@@ -40,15 +40,21 @@ extern "C" {
 #endif
 }
 
-#include "imgui.h"
-
 #ifdef __EMSCRIPTEN__
+#include <emscripten.h>
 #include <emscripten/html5.h>
 #include <GLES3/gl3.h>
 #include <string.h>
 #include <math.h>
 #include "md_parse.h"
 #include "s7.h"			/* self-guards for C++ linkage */
+
+/*
+ * Soft-keyboard capture flag (plugin_abi.c): true while a kruddgui field owns
+ * text input. on_keydown checks it to leave a focused field's own edit-undo
+ * alone, the kruddgui replacement for ImGui's WantTextInput.
+ */
+extern "C" int krudd_text_input_capture(void);
 #endif
 
 #include <cstdio>
@@ -67,6 +73,7 @@ static int32_t                         g_entity_sel = -1; /* -1 = none */
 static const struct edit_api          *g_edit_api;  /* NULL = no history */
 static const struct camera_api        *g_camera_api; /* NULL = no viewport gizmo */
 static const struct preview_api       *g_preview_api; /* NULL = no mesh preview */
+static const struct kruddgui_api      *g_kgui; /* the overlay seam; NULL until up */
 
 /* Transform gizmo mode, shared between the viewport handles and the World tab. */
 enum gizmo_mode {
@@ -98,12 +105,12 @@ static EM_BOOL on_keydown(int /*type*/, const EmscriptenKeyboardEvent *e,
 
 	/*
 	 * Global undo/redo: Ctrl+Z undoes, Ctrl+Y / Ctrl+Shift+Z redo (Cmd on
-	 * mac). Skip entirely when a text widget is capturing keys so a focused
-	 * markdown/shader field keeps its own stb_textedit undo — the shortcut
-	 * must never both edit text and pop the global stack in one press. No
-	 * "edit" service (older engine build) means these are safe no-ops.
+	 * mac). Skip entirely when a kruddgui field owns text input so a focused
+	 * markdown/shader field keeps its own edit undo — the shortcut must never
+	 * both edit text and pop the global stack in one press. No "edit" service
+	 * (older engine build) means these are safe no-ops.
 	 */
-	if (!g_edit_api || ImGui::GetIO().WantTextInput)
+	if (!g_edit_api || krudd_text_input_capture())
 		return EM_FALSE;
 
 	ctrl = e->ctrlKey || e->metaKey;
@@ -1888,10 +1895,7 @@ static uint32_t tex_prev_hash(const uint8_t *b, uint32_t n)
  * write) and fed to texture_script_generate, so a slider drag re-bakes. res is
  * clamped to a preview-sized edge. The one cached GL texture is re-uploaded only
  * when (ref, res, packed-params) changes, so a still frame costs nothing.
- *
- * Shared by the ImGui inline preview (sp_krudd_texture_preview) and the kruddgui
- * image-primitive path (sp_krudd_texture_bake): both want the same pixels, they
- * only differ in how they present the resulting handle.
+ * sp_krudd_texture_bake hands the resulting handle to kruddgui's kgui-image.
  */
 static GLuint bake_texture_preview(s7_scheme *sc, uint32_t tex_ref,
 				   s7_pointer values, uint32_t res)
@@ -1970,30 +1974,9 @@ static GLuint bake_texture_preview(s7_scheme *sc, uint32_t tex_ref,
 }
 
 /*
- * (krudd-texture-preview texture-ref field-values res) draws the live bake as an
- * inline ImGui image (the Assets tab's texture inspector), or a disabled note when
- * it can't be baked.
- */
-static s7_pointer sp_krudd_texture_preview(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer a       = args;
-	uint32_t   tex_ref = (uint32_t)s7_integer(s7_car(a)); a = s7_cdr(a);
-	s7_pointer values  = s7_car(a);                      a = s7_cdr(a);
-	uint32_t   res     = (uint32_t)s7_integer(s7_car(a));
-	GLuint     tex     = bake_texture_preview(sc, tex_ref, values, res);
-
-	if (tex)
-		ImGui::Image((ImTextureID)(intptr_t)tex, ImVec2(128.0f, 128.0f));
-	else
-		ImGui::TextDisabled("(no preview)");
-	return s7_unspecified(sc);
-}
-
-/*
  * (krudd-texture-bake texture-ref field-values res) -> the GL texture id of the
- * live bake, or 0 when it can't be baked. The kruddgui twin of the ImGui inline
- * preview: kruddgui draws the returned handle itself with kgui-image, so the same
- * baked pixels present through its own quad batch instead of ImGui::Image.
+ * live bake, or 0 when it can't be baked. kruddgui draws the returned handle
+ * itself with kgui-image, so the baked pixels present through its own quad batch.
  */
 static s7_pointer sp_krudd_texture_bake(s7_scheme *sc, s7_pointer args)
 {
@@ -2008,43 +1991,11 @@ static s7_pointer sp_krudd_texture_bake(s7_scheme *sc, s7_pointer args)
 }
 
 /*
- * (krudd-mesh-preview mesh-ref material-ref res) renders mesh-ref shaded — the
- * real scene pipeline into an offscreen target, via scene_renderer's preview
- * service (preview_api.h) — and draws the result inline as a slowly rotating
- * thumbnail. material-ref 0 uses the built-in default material, so the mesh
- * inspector shows pure lit geometry regardless of any authored material. Draws a
- * disabled note when the preview service is absent (no renderer) or the render
- * fails. Unlike the texture preview's CPU bake, the pixels come from a GPU render
- * pass into a render-target texture — the first consumer of the FBO path.
- */
-static s7_pointer sp_krudd_mesh_preview(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer a        = args;
-	uint32_t   mesh_ref = (uint32_t)s7_integer(s7_car(a)); a = s7_cdr(a);
-	uint32_t   mat_ref  = (uint32_t)s7_integer(s7_car(a)); a = s7_cdr(a);
-	uint32_t   res      = (uint32_t)s7_integer(s7_car(a));
-	float      yaw      = (float)ImGui::GetTime() * 0.5f;
-	uint32_t   tex;
-
-	if (!g_preview_api || !g_preview_api->render_mesh || res == 0) {
-		ImGui::TextDisabled("(no preview)");
-		return s7_unspecified(sc);
-	}
-	tex = g_preview_api->render_mesh(mesh_ref, mat_ref, res, yaw);
-	if (tex)
-		ImGui::Image((ImTextureID)(intptr_t)tex, ImVec2(192.0f, 192.0f));
-	else
-		ImGui::TextDisabled("(preview unavailable)");
-	return s7_unspecified(sc);
-}
-
-/*
  * (krudd-mesh-bake mesh-ref material-ref res) -> the GL texture id of a shaded
  * offscreen render of the mesh, or 0 when the preview service is absent or the
- * render fails. The kruddgui twin of the ImGui inline mesh preview: it runs the
- * same scene_renderer preview pass (spinning by the same GetTime-derived yaw) but
- * returns the render-target handle for kruddgui to blit with kgui-image instead of
- * drawing it through ImGui::Image. material-ref 0 uses the built-in default
+ * render fails. Runs scene_renderer's preview pass (preview_api.h) into a render-
+ * target texture, spinning by a wall-clock-derived yaw, and returns the handle
+ * for kruddgui to blit with kgui-image. material-ref 0 uses the built-in default
  * material, so the mesh inspector shows pure lit geometry.
  */
 static s7_pointer sp_krudd_mesh_bake(s7_scheme *sc, s7_pointer args)
@@ -2053,7 +2004,7 @@ static s7_pointer sp_krudd_mesh_bake(s7_scheme *sc, s7_pointer args)
 	uint32_t   mesh_ref = (uint32_t)s7_integer(s7_car(a)); a = s7_cdr(a);
 	uint32_t   mat_ref  = (uint32_t)s7_integer(s7_car(a)); a = s7_cdr(a);
 	uint32_t   res      = (uint32_t)s7_integer(s7_car(a));
-	float      yaw      = (float)ImGui::GetTime() * 0.5f;
+	float      yaw      = (float)(emscripten_get_now() * 0.0005);
 
 	if (!g_preview_api || !g_preview_api->render_mesh || res == 0)
 		return s7_make_integer(sc, 0);
@@ -2855,18 +2806,10 @@ static s7_scheme *ensure_panel_scm(void)
 			   1, 0, false,
 			   "(krudd-texture-values texture-ref) -> "
 			   "(component-list ...) of declared defaults");
-	s7_define_function(sc, "krudd-texture-preview", sp_krudd_texture_preview,
-			   3, 0, false,
-			   "(krudd-texture-preview texture-ref values res) draw a "
-			   "live bake as an inline image");
 	s7_define_function(sc, "krudd-texture-bake", sp_krudd_texture_bake,
 			   3, 0, false,
 			   "(krudd-texture-bake texture-ref values res) -> "
 			   "GL texture id of the live bake, or 0");
-	s7_define_function(sc, "krudd-mesh-preview", sp_krudd_mesh_preview,
-			   3, 0, false,
-			   "(krudd-mesh-preview mesh-ref material-ref res) draw a "
-			   "shaded offscreen render as an inline image");
 	s7_define_function(sc, "krudd-mesh-bake", sp_krudd_mesh_bake,
 			   3, 0, false,
 			   "(krudd-mesh-bake mesh-ref material-ref res) -> "
@@ -2956,35 +2899,37 @@ static s7_scheme *ensure_panel_scm(void)
 /*
  * Hand-rolled against our own camera matrices rather than pulling in ImGuizmo:
  * the engine already exposes view·projection (#171) and a mutable transform API
- * (#173), and driving handles off the ImGui draw list is a precedent already
- * set elsewhere in this file.  A dependency would only wrap the same three
- * primitives (project, hit-test, write-back) we already have the pieces for.
- *
- * Handles are drawn on the background draw list so they sit over the rendered
- * 3D scene but under the editor overlay.  All geometry works in world space and
- * projects through the live camera, so the axes track it for free.
+ * (#173).  The handles draw on kruddgui's own batch through the viewport overlay
+ * seam (kruddgui_api, #492) — flat lines, dots and rings under the editor panels
+ * — and read the unclaimed pointer from it, where they drove ImGui's background
+ * draw list and io before.  All geometry works in world space and projects
+ * through the live camera, so the axes track it for free.
  */
 
 #define GIZMO_AXIS_NONE (-1)
 
+/* A 2D point in CSS pixels — the space the overlay seam draws and points in. */
+struct gv2 { float x, y; };
+
 static int32_t          g_gizmo_axis = GIZMO_AXIS_NONE; /* dragging axis, or -1 */
 static struct transform g_gizmo_start;                  /* local xform at grab */
-static ImVec2           g_gizmo_grab;                   /* mouse pos at grab */
+static struct gv2       g_gizmo_grab;                   /* pointer pos at grab */
 static bool             g_gizmo_gesture;                /* edit begin/commit open */
 
-static const ImU32 GIZMO_AXIS_COL[3] = {
-	IM_COL32(230,  70,  70, 255),  /* X — red   */
-	IM_COL32( 90, 210,  90, 255),  /* Y — green */
-	IM_COL32( 90, 140, 240, 255),  /* Z — blue  */
+/* Axis colours, RGBA 0..1: X red, Y green, Z blue. */
+static const float GIZMO_AXIS_COL[3][4] = {
+	{ 0.90f, 0.27f, 0.27f, 1.0f },
+	{ 0.35f, 0.82f, 0.35f, 1.0f },
+	{ 0.35f, 0.55f, 0.94f, 1.0f },
 };
 
 /*
- * Project a world point through view_proj into ImGui display-space pixels.
- * view_proj is column-major (m[col*4+row]); disp is io.DisplaySize.  Returns
- * false when the point is at or behind the camera plane (w <= 0).
+ * Project a world point through view_proj into overlay pixels. view_proj is
+ * column-major (m[col*4+row]); disp is the viewport size.  Returns false when
+ * the point is at or behind the camera plane (w <= 0).
  */
 static bool gizmo_project(const float vp[16], const float p[3],
-			  ImVec2 disp, ImVec2 *out)
+			  struct gv2 disp, struct gv2 *out)
 {
 	float cx = vp[0]*p[0] + vp[4]*p[1] + vp[8]*p[2]  + vp[12];
 	float cy = vp[1]*p[0] + vp[5]*p[1] + vp[9]*p[2]  + vp[13];
@@ -2998,7 +2943,7 @@ static bool gizmo_project(const float vp[16], const float p[3],
 }
 
 /* Shortest distance from point p to segment ab, in pixels. */
-static float gizmo_seg_dist(ImVec2 p, ImVec2 a, ImVec2 b)
+static float gizmo_seg_dist(struct gv2 p, struct gv2 a, struct gv2 b)
 {
 	float vx = b.x - a.x, vy = b.y - a.y;
 	float wx = p.x - a.x, wy = p.y - a.y;
@@ -3060,19 +3005,19 @@ static float gizmo_handle_len(const float eye[3], const float origin[3])
 static bool gizmo_update_and_draw(void)
 {
 	const struct world *w;
-	ImGuiIO            &io = ImGui::GetIO();
-	ImDrawList         *dl;
 	struct mat4         vp;
 	float               eye[3];
 	float               origin[3];
 	float               len;
+	float               dw, dh, px, py;
+	struct gv2          disp, ptr;
 	int32_t             sel;
 	uint32_t            e;
-	ImVec2              o2d;
-	ImVec2              tip2d[3];
+	struct gv2          o2d;
+	struct gv2          tip2d[3];
 	int32_t             hot = GIZMO_AXIS_NONE;
 
-	if (!g_camera_api || !g_entity_api)
+	if (!g_camera_api || !g_entity_api || !g_kgui)
 		return false;
 
 	sel = g_entity_api->get_selected();
@@ -3090,7 +3035,12 @@ static bool gizmo_update_and_draw(void)
 	g_camera_api->get_eye(eye);
 	len = gizmo_handle_len(eye, origin);
 
-	if (!gizmo_project(vp.m, origin, io.DisplaySize, &o2d))
+	g_kgui->viewport(&dw, &dh);
+	disp.x = dw; disp.y = dh;
+	g_kgui->pointer(&px, &py);
+	ptr.x = px; ptr.y = py;
+
+	if (!gizmo_project(vp.m, origin, disp, &o2d))
 		return false; /* entity behind the camera */
 
 	/* Project each axis tip; bail an axis that clips behind the camera. */
@@ -3099,21 +3049,21 @@ static bool gizmo_update_and_draw(void)
 		float tip[3] = { origin[0], origin[1], origin[2] };
 
 		tip[a] += len;
-		tip_ok[a] = gizmo_project(vp.m, tip, io.DisplaySize, &tip2d[a]);
+		tip_ok[a] = gizmo_project(vp.m, tip, disp, &tip2d[a]);
 	}
 
 	/*
 	 * Hit-test against the nearest axis line — but only when the pointer is
-	 * unobstructed, i.e. not over an ImGui window, or a drag is already in
-	 * flight, so clicking the editor panel never grabs a handle.
+	 * unobstructed, i.e. not over a kruddgui panel (over_ui), or a drag is
+	 * already in flight, so tapping the editor never grabs a handle.
 	 */
-	if ((!io.WantCaptureMouse || g_gizmo_axis != GIZMO_AXIS_NONE)) {
+	if (!g_kgui->over_ui(ptr.x, ptr.y) || g_gizmo_axis != GIZMO_AXIS_NONE) {
 		float best = 10.0f; /* px pick radius */
 
 		for (int a = 0; a < 3; a++) {
 			if (!tip_ok[a])
 				continue;
-			float d = gizmo_seg_dist(io.MousePos, o2d, tip2d[a]);
+			float d = gizmo_seg_dist(ptr, o2d, tip2d[a]);
 			if (d < best) {
 				best = d;
 				hot  = a;
@@ -3123,14 +3073,14 @@ static bool gizmo_update_and_draw(void)
 
 	/* Grab: begin a single-entry undo gesture and snapshot the start xform. */
 	if (g_gizmo_axis == GIZMO_AXIS_NONE && hot != GIZMO_AXIS_NONE &&
-	    ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+	    g_kgui->pointer_clicked()) {
 		static const char *const LABEL[3] = {
 			"Move Entity", "Rotate Entity", "Scale Entity"
 		};
 
 		g_gizmo_axis   = hot;
 		g_gizmo_start  = w->local[e];
-		g_gizmo_grab   = io.MousePos;
+		g_gizmo_grab   = ptr;
 		if (g_edit_api && g_edit_api->begin) {
 			g_edit_api->begin(LABEL[g_gizmo_mode]);
 			g_gizmo_gesture = true;
@@ -3138,18 +3088,17 @@ static bool gizmo_update_and_draw(void)
 	}
 
 	/* Drag: map the pointer motion onto the grabbed axis and write it back. */
-	if (g_gizmo_axis != GIZMO_AXIS_NONE &&
-	    ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+	if (g_gizmo_axis != GIZMO_AXIS_NONE && g_kgui->pointer_down()) {
 		int             a  = g_gizmo_axis;
 		struct transform t = g_gizmo_start;
 		float           ax = tip2d[a].x - o2d.x;
 		float           ay = tip2d[a].y - o2d.y;
 		float           axis_px = sqrtf(ax*ax + ay*ay);
 		/* Signed pointer travel along the axis's screen direction. */
-		float           mx = io.MousePos.x - g_gizmo_grab.x;
-		float           my = io.MousePos.y - g_gizmo_grab.y;
+		float           mvx = ptr.x - g_gizmo_grab.x;
+		float           mvy = ptr.y - g_gizmo_grab.y;
 		float           along = axis_px > 1e-3f
-					? (mx*ax + my*ay) / axis_px : 0.0f;
+					? (mvx*ax + mvy*ay) / axis_px : 0.0f;
 
 		if (g_gizmo_mode == GIZMO_MOVE) {
 			/* along px * (world units per px along this axis). */
@@ -3178,38 +3127,39 @@ static bool gizmo_update_and_draw(void)
 	}
 
 	/* Release: close the undo gesture so the whole drag is one entry. */
-	if (g_gizmo_axis != GIZMO_AXIS_NONE &&
-	    ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+	if (g_gizmo_axis != GIZMO_AXIS_NONE && g_kgui->pointer_released()) {
 		if (g_gizmo_gesture && g_edit_api && g_edit_api->commit)
 			g_edit_api->commit();
 		g_gizmo_gesture = false;
 		g_gizmo_axis    = GIZMO_AXIS_NONE;
 	}
 
-	/* ---- Render the handles ---- */
-	dl = ImGui::GetBackgroundDrawList();
-	dl->AddCircleFilled(o2d, 4.0f, IM_COL32(230, 230, 235, 255));
+	/* ---- Render the handles on the overlay batch ---- */
+	g_kgui->circle(o2d.x, o2d.y, 4.0f, 0.90f, 0.90f, 0.92f, 1.0f);
 
 	for (int a = 0; a < 3; a++) {
-		ImU32 col = GIZMO_AXIS_COL[a];
-		float th  = (a == hot) ? 4.0f : 2.5f;
+		const float *c  = GIZMO_AXIS_COL[a];
+		float        th = (a == hot) ? 4.0f : 2.5f;
 
 		if (!tip_ok[a])
 			continue;
-		dl->AddLine(o2d, tip2d[a], col, th);
+		g_kgui->line(o2d.x, o2d.y, tip2d[a].x, tip2d[a].y, th,
+			     c[0], c[1], c[2], c[3]);
 
 		if (g_gizmo_mode == GIZMO_MOVE) {
-			dl->AddCircleFilled(tip2d[a], (a == hot) ? 7.0f : 5.0f,
-					    col);
+			g_kgui->circle(tip2d[a].x, tip2d[a].y,
+				       (a == hot) ? 7.0f : 5.0f,
+				       c[0], c[1], c[2], c[3]);
 		} else if (g_gizmo_mode == GIZMO_SCALE) {
 			float r = (a == hot) ? 6.0f : 4.5f;
 
-			dl->AddRectFilled(ImVec2(tip2d[a].x - r, tip2d[a].y - r),
-					  ImVec2(tip2d[a].x + r, tip2d[a].y + r),
-					  col);
+			g_kgui->rect(tip2d[a].x - r, tip2d[a].y - r, 2.0f * r,
+				     2.0f * r, c[0], c[1], c[2], c[3]);
 		} else { /* rotate: a ring at the tip */
-			dl->AddCircle(tip2d[a], (a == hot) ? 8.0f : 6.0f, col,
-				      0, (a == hot) ? 3.0f : 2.0f);
+			g_kgui->ring(tip2d[a].x, tip2d[a].y,
+				     (a == hot) ? 8.0f : 6.0f,
+				     (a == hot) ? 3.0f : 2.0f,
+				     c[0], c[1], c[2], c[3]);
 		}
 	}
 
@@ -3239,23 +3189,23 @@ static bool gizmo_update_and_draw(void)
 static int32_t pick_entity_at(float sx, float sy)
 {
 	const struct world *w;
-	ImGuiIO            &io = ImGui::GetIO();
 	struct mat4         vp;
 	float               origin[3];
 	float               dir[3];
+	float               dw, dh;
 	int32_t             best = -1;
 	float               best_t = FLT_MAX;
 	uint32_t            e;
 
-	if (!g_camera_api || !g_entity_api || !g_asset_api || !g_mem)
+	if (!g_camera_api || !g_entity_api || !g_asset_api || !g_mem || !g_kgui)
 		return -1;
 	w = g_entity_api->get_world();
 	if (!w)
 		return -1;
 
 	g_camera_api->get_view_proj(&vp);
-	if (ray_from_screen(&vp, sx, sy, io.DisplaySize.x, io.DisplaySize.y,
-			    origin, dir) != 0)
+	g_kgui->viewport(&dw, &dh);
+	if (ray_from_screen(&vp, sx, sy, dw, dh, origin, dir) != 0)
 		return -1;
 
 	for (e = 0; e < w->count; e++) {
@@ -3313,17 +3263,18 @@ static int32_t pick_entity_at(float sx, float sy)
  */
 static void pick_update(bool gizmo_active)
 {
-	ImGuiIO &io = ImGui::GetIO();
-	int32_t  hit;
+	float   px, py;
+	int32_t hit;
 
-	if (!g_entity_api)
+	if (!g_entity_api || !g_kgui)
 		return;
-	if (gizmo_active || io.WantCaptureMouse)
+	if (gizmo_active || !g_kgui->pointer_clicked())
 		return;
-	if (!ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+	g_kgui->pointer(&px, &py);
+	if (g_kgui->over_ui(px, py))
 		return;
 
-	hit = pick_entity_at(io.MousePos.x, io.MousePos.y);
+	hit = pick_entity_at(px, py);
 	if (hit != -1 && hit == g_entity_api->get_selected()) {
 		g_gizmo_mode = (enum gizmo_mode)((g_gizmo_mode + 1) % 3);
 		return;
@@ -3332,7 +3283,7 @@ static void pick_update(bool gizmo_active)
 }
 
 /* ------------------------------------------------------------------ */
-/* Main board window                                                   */
+/* Viewport tools overlay                                              */
 /* ------------------------------------------------------------------ */
 
 /*
@@ -3344,94 +3295,29 @@ static void pick_update(bool gizmo_active)
  */
 
 /*
- * Spawn a dragged mesh asset as a live entity: identity transform at the
- * origin, render_ref = the asset id (which sets COMPONENT_RENDER), then select
- * it. Placement is fixed for v1; cursor-raycast placement needs camera unproject
- * (#171) and is a noted follow-up. No-op if the scene api or asset is missing.
- */
-static void spawn_asset_entity(uint32_t asset_id)
-{
-	struct transform t;
-	int32_t          id;
-
-	if (!g_entity_api || !g_entity_api->create_entity || asset_id == 0)
-		return;
-
-	memset(&t, 0, sizeof(t));
-	t.rotation[3] = 1.0f;
-	t.scale[0] = t.scale[1] = t.scale[2] = 1.0f;
-	id = g_entity_api->create_entity(WORLD_NO_PARENT, &t, 0u, asset_id);
-	if (id >= 0 && g_entity_api->set_selected)
-		g_entity_api->set_selected(id);
-}
-
-/*
- * A viewport-sized invisible drop target for drag-to-spawn (#176). The 3D
- * viewport is not an ImGui window, so there is no natural drop target there;
- * this fullscreen window supplies one. It is submitted only while an ASSET_ID
- * drag is in flight (so it never captures the mouse otherwise) and before the
- * kruddboard overlay, so the overlay stays interactable on top.
- */
-static void draw_spawn_drop_target(void)
-{
-	const ImGuiPayload *active = ImGui::GetDragDropPayload();
-	ImGuiViewport      *vp;
-	ImGuiWindowFlags    flags;
-
-	if (!active || !active->IsDataType("ASSET_ID"))
-		return;
-
-	vp    = ImGui::GetMainViewport();
-	flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize
-	      | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar
-	      | ImGuiWindowFlags_NoBackground
-	      | ImGuiWindowFlags_NoBringToFrontOnFocus
-	      | ImGuiWindowFlags_NoFocusOnAppearing
-	      | ImGuiWindowFlags_NoNavFocus;
-
-	ImGui::SetNextWindowPos(vp->Pos);
-	ImGui::SetNextWindowSize(vp->Size);
-	if (ImGui::Begin("##viewport_drop", nullptr, flags)) {
-		ImGui::InvisibleButton("##viewport_drop_area", vp->Size);
-		if (ImGui::BeginDragDropTarget()) {
-			const ImGuiPayload *pl =
-				ImGui::AcceptDragDropPayload("ASSET_ID");
-
-			if (pl && pl->DataSize == (int)sizeof(uint32_t))
-				spawn_asset_entity(
-					*(const uint32_t *)pl->Data);
-			ImGui::EndDragDropTarget();
-		}
-	}
-	ImGui::End();
-}
-
-/*
- * The editor's viewport-space overlay: keep the camera aspect matched to the
- * live canvas, then draw and drive the selection's transform gizmo plus the
- * click-to-pick and drag-to-spawn interactions over the 3D scene. Still
- * registered as an ImGui panel because the gizmo renders through ImGui's draw
- * list and reads its pointer io — that is the remaining ImGui consumer here,
- * ported onto kruddgui primitives in a follow-up (#492, feeding #487).
+ * The editor's viewport-space overlay, registered with kruddgui as an overlay
+ * callback (kruddgui_api) and run each kruddgui tick under the panels: keep the
+ * camera aspect matched to the live canvas, then draw and drive the selection's
+ * transform gizmo and the click-to-pick over the 3D scene, all on kruddgui's own
+ * batch and pointer (#492). This is the last ImGui consumer gone from kruddboard;
+ * drag-to-spawn (#176), which rode ImGui's drag/drop payloads, is retired with it
+ * and will return on a kruddgui drag model if wanted.
  *
- * The board's window chrome is gone (#492): every tab is now a standalone
- * kruddgui console (kruddgui.scm), and the header's live controls — undo/redo
- * and play/pause — moved onto kruddgui's own top toolbar (the "Show KB" toggle
- * retired with them, since kruddgui fields raise the soft keyboard on focus).
- * Backtick still toggles g_visible, which now gates just this overlay.
+ * The board's window chrome is gone (#492): every tab is a standalone kruddgui
+ * console (kruddgui.scm), and the header's undo/redo + play/pause moved onto
+ * kruddgui's top toolbar. Backtick still toggles g_visible, gating this overlay.
  */
 static void draw_viewport_tools(void * /*userdata*/)
 {
-	if (!g_visible)
+	float dw, dh;
+
+	if (!g_visible || !g_kgui)
 		return;
 
+	g_kgui->viewport(&dw, &dh);
 	if (g_camera_api && g_camera_api->set_viewport)
-		g_camera_api->set_viewport(ImGui::GetIO().DisplaySize.x,
-					   ImGui::GetIO().DisplaySize.y);
+		g_camera_api->set_viewport(dw, dh);
 	pick_update(gizmo_update_and_draw());
-
-	/* Catches asset drops onto the viewport (the ImGui drag/drop path). */
-	draw_spawn_drop_target();
 }
 
 /* ------------------------------------------------------------------ */
@@ -3460,18 +3346,16 @@ static void kruddboard_init(void)
 static void kruddboard_tick(void)
 {
 #ifdef __EMSCRIPTEN__
-	const struct imgui_api *imgui;
-
 	if (g_panels_registered)
 		return;
 
-	imgui = (const struct imgui_api *)
-		subsystem_manager_get_api(g_mgr, "imgui");
+	g_kgui = (const struct kruddgui_api *)
+		subsystem_manager_get_api(g_mgr, "kruddgui");
 
-	if (!imgui)
-		return;
+	if (!g_kgui)
+		return; /* kruddgui not up yet — retry next tick */
 
-	imgui->register_panel("##viewport_tools", draw_viewport_tools, nullptr);
+	g_kgui->register_overlay(draw_viewport_tools, nullptr);
 	g_panels_registered = 1;
 
 	if (g_log)

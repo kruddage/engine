@@ -30,9 +30,7 @@
 			     dirs)))
 
 (define (ninja-resolve-var p)
-	(krudd-replace
-	  (krudd-replace p "${imgui}" "$imgui")
-	  "${generated}" "generated"))
+	(krudd-replace p "${generated}" "generated"))
 
 (define (ninja-wasm-ref path)
 	(if (ninja-has-dollar? path)
@@ -60,8 +58,7 @@
 (define (ninja-wasm! out) (set! ninja-wasm (cons out ninja-wasm)))
 
 (define (ninja-obj-clean p)
-	(krudd-replace (krudd-replace p "${imgui}" "imgui")
-		       "${generated}" "generated"))
+	(krudd-replace p "${generated}" "generated"))
 
 (define (ninja-emit-compile name dir includes-flags src-spec)
 	(let* ((treepath (rz-path dir src-spec))
@@ -159,7 +156,6 @@
 	  "emcflags = -std=gnu11 -Wall -Werror -Wpedantic"
 	  "s7dir = $srcroot/../third_party"
 	  "s7flags = -O2 -w -DWITH_C_LOADER=0 -DWITH_MAIN=0 -I$s7dir"
-	  (string-append "imgui = " (krudd-fetch-dir "imgui"))
 	  (string-append "mainflags = -sENVIRONMENT=web -sALLOW_MEMORY_GROWTH=1 "
 			 "-sGROWABLE_ARRAYBUFFERS=0 -sMALLOC=mimalloc "
 			 "-sFETCH=1 -sMAX_WEBGL_VERSION=2 "

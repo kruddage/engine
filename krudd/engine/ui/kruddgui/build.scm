@@ -4,9 +4,8 @@
 		(wasm-flags "--std=c++17" "-fno-exceptions" "-fno-rtti")
 		(sources "kruddgui.cpp" "kgui_batch.c" "kgui_input.c"
 			"kgui_text_edit.c" "kgui_font.c")
-		(private "." (raw "${generated}") (raw "../third_party")
-			(raw "${imgui}") (raw "${imgui}/backends"))
-		(link "script" "imgui_plugin" "log" "memory" "subsystem"
+		(private "." (raw "${generated}") (raw "../third_party"))
+		(link "script" "log" "memory" "subsystem"
 			"subsystem_manager")))
 
  (native-only

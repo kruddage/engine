@@ -1,26 +1,21 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /*
- * kruddgui — a touch-first UI layer drawn OVER Dear ImGui.
+ * kruddgui — krudd's touch-first UI layer, now the whole of it.
  *
- * krudd is a mobile-first editor, but its debug UI (kruddboard) is Dear ImGui,
- * which is mouse-first. kruddgui is the seam through which we grow our own UI:
- * it draws with its own batched 2D quad primitives straight to WebGL, layered
- * on top of ImGui, and its panels are authored in Scheme (kruddgui.scm) against
- * a handful of C primitives registered here. This is #490's proof of life — a
- * finger-sized MOVE / ROTATE / SCALE mode-bar wired to the shared gizmo tool.
+ * krudd is a mobile-first editor. Its debug UI began as Dear ImGui and was
+ * strangled onto kruddgui one panel at a time (#490–#492); with the last panel
+ * and the viewport gizmo moved over, ImGui is gone. kruddgui draws every panel
+ * with its own batched 2D quad primitives straight to WebGL, and the panels are
+ * authored in Scheme (kruddgui.scm) against the C primitives registered here.
  *
- * Loaded after renderer_webgl (the GL 2 context) and after imgui_plugin: its
- * tick runs after imgui's, so ImGui_ImplOpenGL3_RenderDrawData has already
- * drawn and kruddgui composites over it.
+ * Loaded after renderer_webgl (the GL 2 context), it owns what imgui_plugin used
+ * to: it sizes the canvas each tick, holds the pointer / touch / wheel callbacks
+ * (routing gestures to panels, the rest to the viewport overlay seam), drives the
+ * hidden-<input> text bridge for its own fields, and composites over the 3D scene.
  *
- * Text now stands on kruddgui's own baked glyph atlas (kgui_font): the font is
- * rasterised to a GL texture here and every glyph query goes through kgui_font,
- * so ImGui's font atlas is no longer sampled and a non-ASCII code point is
- * skipped rather than drawn as ImGui's '?'. That leaves one ImGui coupling in
- * this file, which falls with the last panel:
- *   - non-bar input is forwarded verbatim to ImGui's io, using the exact
- *     translation imgui_plugin used before input ownership moved here.
+ * Text stands on kruddgui's own baked glyph atlas (kgui_font): a code point
+ * outside it has no glyph and is skipped. No ImGui remains.
  */
 
 extern "C" {
@@ -36,8 +31,6 @@ extern "C" {
 }
 
 #ifdef __EMSCRIPTEN__
-#include "imgui.h"
-
 #include <emscripten/html5.h>
 #include <GLES3/gl3.h>
 #include <cstddef>
@@ -53,18 +46,13 @@ double get_device_pixel_ratio(void);	/* plugin_abi.c (main module) */
 int    krudd_is_touch_device(void);
 
 /*
- * The soft-keyboard speculative raise on a forwarded touch-end still lives in
- * imgui_plugin (which owns the grace countdown and the WantTextInput reconcile
- * in its tick); kruddgui pokes it when it forwards a touch to ImGui.
+ * The web text-input bridge (plugin_abi.c, main module) — the hidden <input>
+ * and its char/key queues. kruddgui owns it now that ImGui is gone: it creates
+ * it at init (krudd_text_input_init) and drives show/hide/drain for its own
+ * focused field. krudd_text_input_set_capture marks the frames a kruddgui field
+ * holds focus, which kruddboard's key handler reads to leave its edit-undo alone.
  */
-void imgui_soft_keyboard_touch_hint(void);
-
-/*
- * The web text-input bridge (plugin_abi.c, main module). kruddgui drives it
- * directly for its own focused field — the text-input twin of owning the
- * pointer callbacks. krudd_text_input_set_capture tells imgui_plugin to leave
- * the bridge alone while a kruddgui field holds focus (see imgui_tick).
- */
+void krudd_text_input_init(void);
 void krudd_text_input_show(void);
 void krudd_text_input_hide(void);
 int  krudd_text_input_drain_chars(char *buf, int cap);
@@ -307,10 +295,9 @@ static void gl_flush(GLuint atlas)
 /*
  * kruddgui owns the Emscripten pointer callbacks and routes every event
  * through kgui_input: a down that lands on a declared panel region is captured
- * by that region for its whole gesture, and everything else is forwarded to
- * ImGui with the exact translation imgui_plugin used before input moved here.
- * The router is GL- and ImGui-free (host-tested in kgui_input_test.c); this
- * file is only the thin Emscripten/ImGui adapter over it.
+ * by that region for its whole gesture, and everything else is the viewport's —
+ * fed to the overlay seam's pointer for the gizmo. The router is GL-free (host-
+ * tested in kgui_input_test.c); this file is the thin Emscripten adapter over it.
  *
  * s_input's region set is (re)declared by the Scheme image each tick
  * (kgui-panel-begin) and committed at the end of the tick; the async callbacks
@@ -326,10 +313,10 @@ static bool s_touch_device;
 
 /*
  * The unclaimed (non-panel) pointer, tracked for the viewport overlay seam
- * (kruddgui_api) — the gizmo's replacement for ImGuiIO. The forward path
- * (forward_button / the forwarded move branch) updates it alongside the ImGui io
- * it still feeds; `clicked` / `released` are one-frame edges cleared after the
- * overlays run each tick, mirroring IsMouseClicked / IsMouseReleased.
+ * (kruddgui_api) — the gizmo's replacement for ImGuiIO. The unclaimed-pointer
+ * path (vp_pointer_button / the forwarded move branch) updates it; `clicked` /
+ * `released` are one-frame edges cleared after the overlays run each tick,
+ * mirroring IsMouseClicked / IsMouseReleased.
  */
 static struct {
 	float x, y;
@@ -353,20 +340,15 @@ static int point_in_field(float x, float y);
 /* ------------------------------------------------------------------ */
 
 /*
- * The forward path — the exact io translation imgui_plugin did before input
- * ownership moved here. Positions come from targetX/targetY (element-relative
- * CSS pixels), not the deprecated canvasX/canvasY (which read 0 on current
- * Emscripten), so the router's hit-test and ImGui's io share one CSS-pixel
- * space with imgui_tick's DisplaySize.
+ * The unclaimed-pointer path. A pointer whose down misses every panel region is
+ * the viewport's: its position (from targetX/targetY, element-relative CSS
+ * pixels — the deprecated canvasX/canvasY read 0 on current Emscripten) and its
+ * button edges feed the overlay seam's pointer (s_vp_ptr), which the transform
+ * gizmo reads. Nothing is forwarded to a host any more: ImGui is gone and the
+ * camera auto-orbits, so the viewport pointer's one consumer is the overlay.
  */
-static void forward_button(float x, float y, bool down)
+static void vp_pointer_button(float x, float y, bool down)
 {
-	ImGuiIO &io = ImGui::GetIO();
-
-	io.AddMousePosEvent(x, y);
-	io.AddMouseButtonEvent(0, down);
-
-	/* Track the unclaimed pointer for the overlay seam (kruddgui_api). */
 	s_vp_ptr.x = x;
 	s_vp_ptr.y = y;
 	if (down) {
@@ -381,13 +363,12 @@ static void forward_button(float x, float y, bool down)
 static void pointer_down(int32_t id, float x, float y)
 {
 	if (kgui_input_pointer_down(&s_input, id, x, y) == KGUI_ROUTE_FORWARD)
-		forward_button(x, y, true);
+		vp_pointer_button(x, y, true);
 }
 
 static void pointer_move(int32_t id, float x, float y)
 {
 	if (kgui_input_pointer_move(&s_input, id, x, y) == KGUI_ROUTE_FORWARD) {
-		ImGui::GetIO().AddMousePosEvent(x, y);
 		s_vp_ptr.x = x;
 		s_vp_ptr.y = y;
 	}
@@ -396,9 +377,7 @@ static void pointer_move(int32_t id, float x, float y)
 static void pointer_up(int32_t id, float x, float y, bool is_touch)
 {
 	if (kgui_input_pointer_up(&s_input, id, x, y) == KGUI_ROUTE_FORWARD) {
-		forward_button(x, y, false);
-		if (is_touch)
-			imgui_soft_keyboard_touch_hint();
+		vp_pointer_button(x, y, false);
 	} else if (is_touch && point_in_field(x, y)) {
 		/*
 		 * A touch consumed by a kruddgui field: raise the soft keyboard
@@ -424,17 +403,12 @@ static EM_BOOL on_mouse_button(int type, const EmscriptenMouseEvent *e,
 	float x       = (float)e->targetX;
 	float y       = (float)e->targetY;
 
-	/* Only the left button routes to panels; forward the rest verbatim. */
+	/* Only the left button drives panels and the viewport; ignore the rest. */
 	if ((int)e->button == 0) {
 		if (pressed)
 			pointer_down(KGUI_MOUSE_ID, x, y);
 		else
 			pointer_up(KGUI_MOUSE_ID, x, y, false);
-	} else if ((int)e->button < 5) {
-		ImGuiIO &io = ImGui::GetIO();
-
-		io.AddMousePosEvent(x, y);
-		io.AddMouseButtonEvent((int)e->button, pressed);
 	}
 	return EM_FALSE;
 }
@@ -468,21 +442,15 @@ static EM_BOOL on_touch(int type, const EmscriptenTouchEvent *e, void * /*ud*/)
 }
 
 /*
- * Wheel routes to a region under the pointer as a scroll delta (a scrollable
- * panel reads it via kgui-region-wheel); otherwise it becomes ImGui's wheel.
- * DOM deltaY is positive-down and roughly one notch per 100 px; ImGui's wheel
- * is positive-up, so the forwarded value is negated and scaled to notches.
+ * Wheel routes to a panel region under the pointer as a scroll delta (a
+ * scrollable panel reads it via kgui-region-wheel). A wheel off every panel has
+ * no consumer now — ImGui is gone and the camera auto-orbits — so it is dropped.
  */
 static EM_BOOL on_wheel(int /*type*/, const EmscriptenWheelEvent *e,
 			void * /*ud*/)
 {
-	float x = (float)e->mouse.targetX;
-	float y = (float)e->mouse.targetY;
-
-	if (kgui_input_wheel(&s_input, x, y, (float)e->deltaY) ==
-	    KGUI_ROUTE_FORWARD)
-		ImGui::GetIO().AddMouseWheelEvent(0.0f,
-						  -(float)e->deltaY / 100.0f);
+	kgui_input_wheel(&s_input, (float)e->mouse.targetX,
+			 (float)e->mouse.targetY, (float)e->deltaY);
 	return EM_TRUE;
 }
 
@@ -627,7 +595,7 @@ static int numeric_filter(char *buf, int n)
  * Drain the keyboard bridge into the focused field. Runs at the top of the tick
  * (before the image reads the field) so a typed character shows the same frame.
  * Only runs while a field is focused, which is exactly when kruddgui holds the
- * capture flag and imgui_plugin has stepped aside.
+ * text-input capture flag.
  */
 static void field_pump(void)
 {
@@ -879,8 +847,8 @@ static s7_pointer sp_kgui_ring(s7_scheme *sc, s7_pointer args)
  * texture to the box; omit the tint to draw it unmodulated. The tint multiplies
  * the sampled texel — an alpha below 1 fades the image, a colour shades it — so a
  * baked texture / mesh preview blits straight in, and the whole thing honours the
- * panel's current clip. The batch draws it after ImGui, so it composites over the
- * editor like every other kruddgui quad.
+ * panel's current clip. The batch draws after the 3D scene, so it composites over
+ * the editor like every other kruddgui quad.
  */
 static s7_pointer sp_kgui_image(s7_scheme *sc, s7_pointer args)
 {
@@ -1353,7 +1321,14 @@ static void kruddgui_init(void)
 	s_text_size = s_font.size;
 	gl_init();
 
-	/* Take over the pointer callbacks from imgui_plugin. */
+	/*
+	 * Create the hidden <input> and its listeners for the text-input bridge,
+	 * which imgui_plugin set up before it was removed (#492). kruddgui's fields
+	 * are its only consumer now — show/hide/drain all route through it.
+	 */
+	krudd_text_input_init();
+
+	/* Own the pointer callbacks (imgui_plugin owned them before #489). */
 	emscripten_set_mousemove_callback("#canvas", nullptr, 0, on_mouse_move);
 	emscripten_set_mousedown_callback("#canvas", nullptr, 0, on_mouse_button);
 	emscripten_set_mouseup_callback("#canvas",   nullptr, 0, on_mouse_button);
@@ -1380,6 +1355,13 @@ static void kruddgui_tick(void)
 	s_css_h  = (float)css_h;
 	s_phys_w = (int)(css_w * dpr + 0.5);
 	s_phys_h = (int)(css_h * dpr + 0.5);
+
+	/*
+	 * Own the canvas's device-pixel size, which imgui_plugin sized before it
+	 * was removed (#492): the renderer and gl_flush draw into a framebuffer at
+	 * this resolution while the panels lay out in the CSS pixels above.
+	 */
+	emscripten_set_canvas_element_size("#canvas", s_phys_w, s_phys_h);
 
 	/*
 	 * Apply this tick's typed input to the focused field before the image

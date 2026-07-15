@@ -12,6 +12,5 @@
  "render/frame_graph"
  "render/scene_renderer"
  "asset"
- "ui/imgui"
  "ui/kruddboard"
  "ui/kruddgui")

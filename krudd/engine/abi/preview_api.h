@@ -11,9 +11,9 @@
  * path), so a preview goes through the exact same shader/material pipeline a live
  * entity draws with rather than a separate approximation.
  *
- * The mesh inspector (kruddboard's Assets tab) is the first consumer: it calls
+ * The mesh inspector (kruddgui's Assets console) is the first consumer: it calls
  * render_mesh each frame the Preview fold is open and draws the result with
- * ImGui::Image, giving a lit, spinnable thumbnail of the authored geometry.
+ * kgui-image, giving a lit, spinnable thumbnail of the authored geometry.
  */
 struct preview_api {
 	/*

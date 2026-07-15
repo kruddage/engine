@@ -141,20 +141,40 @@ static s7_pointer st_rect(s7_scheme *sc, s7_pointer a)
 	return s7_unspecified(sc);
 }
 
+/* Records "text <str>"; when a size arg (8th) is present, appends "@<size>". */
 static s7_pointer st_text(s7_scheme *sc, s7_pointer a)
 {
 	s7_pointer s = s7_list_ref(sc, a, 2);
 
-	if (s7_is_string(s))
-		rec("text %s", s7_string(s));
+	if (s7_is_string(s)) {
+		int size = (s7_list_length(sc, a) > 7)
+			 ? (int)num(sc, s7_list_ref(sc, a, 7)) : 0;
+
+		if (size > 0)
+			rec("text %s @%d", s7_string(s), size);
+		else
+			rec("text %s", s7_string(s));
+	}
 	return s7_unspecified(sc);
 }
 
+/*
+ * 8px per character at the default (1-arg) size, keeping the existing widget
+ * tests exact; with an explicit size the width scales as n*size*0.5 and the
+ * reported height is that size, so the markdown wrap can be driven at any size.
+ */
 static s7_pointer st_metrics(s7_scheme *sc, s7_pointer a)
 {
-	s7_pointer s = s7_car(a);
-	int        n = s7_is_string(s) ? (int)strlen(s7_string(s)) : 0;
+	s7_pointer s    = s7_car(a);
+	s7_pointer rest = s7_cdr(a);
+	int        n    = s7_is_string(s) ? (int)strlen(s7_string(s)) : 0;
 
+	if (s7_is_pair(rest)) {
+		double size = num(sc, s7_car(rest));
+
+		return s7_list(sc, 2, s7_make_real(sc, n * size * 0.5),
+			       s7_make_real(sc, size));
+	}
 	return s7_list(sc, 2, s7_make_real(sc, 8.0 * n), s7_make_real(sc, 12.0));
 }
 
@@ -263,14 +283,21 @@ static void def(s7_scheme *sc, const char *name, s7_function fn, int req)
 	s7_define_function(sc, name, fn, req, 0, false, "stub");
 }
 
+/* Like def, but with opt optional args (for the size-taking text primitives). */
+static void defo(s7_scheme *sc, const char *name, s7_function fn, int req,
+		 int opt)
+{
+	s7_define_function(sc, name, fn, req, opt, false, "stub");
+}
+
 static s7_scheme *setup_interp(void)
 {
 	s7_scheme *sc = script_s7();
 
 	assert(sc);
 	def(sc, "kgui-rect", st_rect, 8);
-	def(sc, "kgui-text", st_text, 7);
-	def(sc, "kgui-text-metrics", st_metrics, 1);
+	defo(sc, "kgui-text", st_text, 7, 1);
+	defo(sc, "kgui-text-metrics", st_metrics, 1, 1);
 	def(sc, "kgui-panel-begin", st_nullary, 5);
 	def(sc, "kgui-panel-end", st_nullary, 0);
 	def(sc, "kgui-button", st_button, 4);
@@ -676,6 +703,80 @@ static void test_toolbar_enabled_redo_fires(void)
 	assert(g_redo_calls == 1);
 }
 
+/* ------------------------------------------------------------------ */
+/* Markdown preview (md_draw's kgui port)                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Greedy word wrap. At size 16 the stub metrics give 8px/char and an 8px space,
+ * so "aaaa bbbb cccc" packs "aaaa bbbb" (72px) onto line 1 and breaks "cccc"
+ * (would be 112px) onto line 2. Ranges are (start . end) over the source.
+ */
+static void test_md_wrap_breaks_lines(void)
+{
+	s7_pointer r, l0, l1;
+
+	r = eval("(kruddgui-md-wrap \"aaaa bbbb cccc\" 80.0 16.0)");
+	assert(s7_list_length(script_s7(), r) == 2);
+	l0 = s7_car(r);
+	l1 = s7_cadr(r);
+	assert(s7_integer(s7_car(l0)) == 0 && s7_integer(s7_cdr(l0)) == 9);
+	assert(s7_integer(s7_car(l1)) == 10 && s7_integer(s7_cdr(l1)) == 14);
+}
+
+/* A word wider than the whole width takes its own (overflowing) line. */
+static void test_md_wrap_long_word_own_line(void)
+{
+	s7_pointer r;
+
+	r = eval("(kruddgui-md-wrap \"tiny enormouswordhere\" 60.0 16.0)");
+	assert(s7_list_length(script_s7(), r) == 2);
+}
+
+/* Runs flatten to one string plus (end . style) boundaries for colour lookup. */
+static void test_md_runs_concat_and_style(void)
+{
+	eval("(define _tb (kruddgui-md-runs->text+bounds "
+	     "(list (cons \"ab\" 0) (cons \"cd\" 2))))");
+	assert(strcmp(s7_string(eval("(car _tb)")), "abcd") == 0);
+	assert(s7_integer(eval("(kruddgui-md-style-at (cdr _tb) 0)")) == 0);
+	assert(s7_integer(eval("(kruddgui-md-style-at (cdr _tb) 2)")) == 2);
+	assert(s7_integer(eval("(kruddgui-md-seg-end (cdr _tb) 0)")) == 2);
+}
+
+/* A heading draws at its scaled size: h1 -> 32, h2 -> 24, h3 -> body 16. */
+static void test_md_heading_scaled(void)
+{
+	eval("(kruddgui-md-block " TEST_LAY " (list 1 1 (list (cons \"Title\" 0))))");
+	assert(rec_has("text Title @32"));
+	g_rec_n = 0;
+	eval("(kruddgui-md-block " TEST_LAY " (list 1 2 (list (cons \"Sub\" 0))))");
+	assert(rec_has("text Sub @24"));
+	g_rec_n = 0;
+	eval("(kruddgui-md-block " TEST_LAY " (list 1 3 (list (cons \"Wee\" 0))))");
+	assert(rec_has("text Wee @16"));
+}
+
+/* A code block lays a slab rect under its unwrapped, base-size line. */
+static void test_md_code_has_slab(void)
+{
+	eval("(kruddgui-md-block " TEST_LAY " (list 3 0 (list (cons \"x=1\" 0))))");
+	assert(rec_has("rect"));
+	assert(rec_has("text x=1 @16"));
+}
+
+/*
+ * A paragraph with a bold run draws the line as two colour segments — the plain
+ * prefix and the styled word — split at the run boundary, not as one string.
+ */
+static void test_md_paragraph_styled_segments(void)
+{
+	eval("(kruddgui-md-block " TEST_LAY
+	     " (list 0 0 (list (cons \"hi \" 0) (cons \"bold\" 1))))");
+	assert(rec_has("text hi "));
+	assert(rec_has("text bold"));
+}
+
 int main(void)
 {
 	setup_interp();
@@ -700,6 +801,12 @@ int main(void)
 	RUN(toolbar_tap_toggles_sim);
 	RUN(toolbar_disabled_undo_is_inert);
 	RUN(toolbar_enabled_redo_fires);
+	RUN(md_wrap_breaks_lines);
+	RUN(md_wrap_long_word_own_line);
+	RUN(md_runs_concat_and_style);
+	RUN(md_heading_scaled);
+	RUN(md_code_has_slab);
+	RUN(md_paragraph_styled_segments);
 
 	printf("\n%d/%d kgui widget tests passed\n", tests_passed, tests_run);
 	return tests_passed == tests_run ? 0 : 1;

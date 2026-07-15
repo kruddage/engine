@@ -48,7 +48,6 @@ extern "C" {
 #include <string.h>
 #include <math.h>
 #include "md_parse.h"
-#include "md_draw.h"
 #include "s7.h"			/* self-guards for C++ linkage */
 #endif
 
@@ -2625,26 +2624,78 @@ static s7_pointer sp_krudd_asset_clone_mesh(s7_scheme *sc, s7_pointer args)
 }
 
 /*
- * (krudd-md-preview text h) -> unspecified. Parses text fresh every call
- * (cheap relative to a 16ms frame budget) and draws it in a bordered,
- * horizontally-scrolling child of height h — folding md_parse.h's block
- * array entirely behind this primitive rather than marshalling md_block/
- * md_span structs into Scheme data no caller needs to see.
+ * A styled run of a block's text — a NUL-terminated slice plus its md style
+ * (0 normal, 1 bold, 2 code). md_parse hands back byte-offset spans over the
+ * block text; splitting them into ready-to-draw runs here (the byte-accurate
+ * memcpy the old md_draw shim did) keeps the Scheme markdown renderer to plain
+ * layout, never touching offsets. A block with no spans is one normal run.
  */
-static s7_pointer sp_krudd_md_preview(s7_scheme *sc, s7_pointer args)
+static s7_pointer md_block_runs(s7_scheme *sc, const struct md_block *b)
+{
+	s7_pointer runs = s7_nil(sc);
+	uint32_t   len  = (uint32_t)strlen(b->text);
+	uint32_t   pos  = 0;
+	char       buf[MD_TEXT_MAX];
+	int32_t    i;
+
+	/* Append (text . style) for b->text[a, e); clamps to the buffer. */
+	#define MD_PUSH_RUN(a, e, style) do {                             \
+		uint32_t n_ = (e) - (a);                                  \
+		if (n_ >= MD_TEXT_MAX) n_ = MD_TEXT_MAX - 1;              \
+		memcpy(buf, b->text + (a), n_); buf[n_] = '\0';          \
+		runs = s7_cons(sc, s7_cons(sc, s7_make_string(sc, buf),   \
+					   s7_make_integer(sc, (style))), \
+			       runs);                                     \
+	} while (0)
+
+	if (b->span_count == 0) {
+		if (len > 0)
+			MD_PUSH_RUN(0u, len, 0);
+	} else {
+		for (i = 0; i < (int32_t)b->span_count; i++) {
+			const struct md_span *sp = &b->spans[i];
+
+			if (sp->start > pos)
+				MD_PUSH_RUN(pos, sp->start, 0); /* plain gap */
+			MD_PUSH_RUN(sp->start, sp->end,
+				    (s7_int)(sp->style & MD_SPAN_CODE ? 2
+					     : sp->style & MD_SPAN_BOLD ? 1 : 0));
+			pos = sp->end;
+		}
+		if (pos < len)
+			MD_PUSH_RUN(pos, len, 0); /* trailing plain */
+	}
+	#undef MD_PUSH_RUN
+	return s7_reverse(sc, runs);
+}
+
+/*
+ * (krudd-md-parse text) -> a list of parsed markdown blocks for the kruddgui
+ * preview to lay out: each block is (type level (run ...)), type 0 paragraph /
+ * 1 heading / 2 list-item / 3 code, run = (text . style). Replaces the old
+ * ImGui md-preview: the parse (md_parse) and span splitting stay in C; the
+ * layout and drawing move to kruddgui.scm (#492 item 3). Parsed fresh each call,
+ * cheap against a frame budget; a non-string argument yields no blocks.
+ */
+static s7_pointer sp_krudd_md_parse(s7_scheme *sc, s7_pointer args)
 {
 	static struct md_block blocks[MD_BLOCKS_MAX];
 	s7_pointer              text = s7_car(args);
-	float                   h    = (float)s7_number_to_real(sc, s7_cadr(args));
 	const char             *src  = s7_is_string(text) ? s7_string(text) : "";
-	int32_t                 n;
+	s7_pointer              out  = s7_nil(sc);
+	int32_t                 n    = md_parse(src, blocks, MD_BLOCKS_MAX);
+	int32_t                 i;
 
-	n = md_parse(src, blocks, MD_BLOCKS_MAX);
-	ImGui::BeginChild("##mdpreview", ImVec2(0.0f, h), true,
-			  ImGuiWindowFlags_HorizontalScrollbar);
-	md_draw_blocks(blocks, n);
-	ImGui::EndChild();
-	return s7_unspecified(sc);
+	for (i = n - 1; i >= 0; i--) {
+		const struct md_block *b = &blocks[i];
+
+		out = s7_cons(sc, s7_list(sc, 3,
+					  s7_make_integer(sc, b->type),
+					  s7_make_integer(sc, b->level),
+					  md_block_runs(sc, b)),
+			      out);
+	}
+	return out;
 }
 
 } /* extern "C" — s7 callbacks */
@@ -2881,8 +2932,8 @@ static s7_scheme *ensure_panel_scm(void)
 			   sp_krudd_asset_clone_material, 3, 3, false,
 			   "(krudd-asset-clone-material name shader-ref values "
 			   "[tex-ref w h]) -> new id or 0");
-	s7_define_function(sc, "krudd-md-preview", sp_krudd_md_preview, 2, 0,
-			   false, "(krudd-md-preview text h) scrolling preview child");
+	s7_define_function(sc, "krudd-md-parse", sp_krudd_md_parse, 1, 0,
+			   false, "(krudd-md-parse text) -> (block ...) for preview");
 	ready = true;
 	return sc;
 }

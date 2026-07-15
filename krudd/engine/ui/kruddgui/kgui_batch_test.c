@@ -10,6 +10,7 @@
 #include "kgui_batch.h"
 
 #include <assert.h>
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -303,6 +304,86 @@ static void test_utf8_decode(void)
 	assert(*s == '\0');
 }
 
+/* A thick horizontal segment is a rotated quad: two triangles, six vertices,
+ * offset perpendicular by half the width, on the atlas (untextured) path. */
+static void test_line_emits_rotated_quad(void)
+{
+	struct kgui_batch b;
+
+	kgui_batch_init(&b, verts, STORAGE);
+	kgui_batch_line(&b, 0.0f, 0.0f, 10.0f, 0.0f, 4.0f, 0.5f, 0.5f,
+			1.0f, 0.2f, 0.3f, 1.0f);
+
+	assert(b.count == 6 && !b.overflow);
+	/* Horizontal line, width 4 -> corners offset +/-2 in y. */
+	assert(verts[0].x == 0.0f && verts[0].y == 2.0f);
+	assert(verts[1].x == 10.0f && verts[1].y == 2.0f);
+	assert(verts[2].x == 10.0f && verts[2].y == -2.0f);
+	/* The white texel UV and colour ride on every vertex. */
+	assert(verts[0].u == 0.5f && verts[0].v == 0.5f);
+	assert(verts[0].r == 1.0f && verts[0].a == 1.0f);
+	/* Untextured: shares the atlas command with rects and glyphs. */
+	assert(b.cmd_count == 1 && b.cmds[0].tex == 0u);
+}
+
+/* A zero-length segment has no direction and draws nothing. */
+static void test_line_degenerate_noop(void)
+{
+	struct kgui_batch b;
+
+	kgui_batch_init(&b, verts, STORAGE);
+	kgui_batch_line(&b, 5.0f, 5.0f, 5.0f, 5.0f, 3.0f, 0.0f, 0.0f,
+			1.0f, 1.0f, 1.0f, 1.0f);
+	assert(b.count == 0);
+}
+
+/* A filled circle is a centre-fan: segs triangles, each rim point on radius. */
+static void test_circle_fan_count_and_radius(void)
+{
+	struct kgui_batch b;
+	int               i;
+
+	kgui_batch_init(&b, verts, STORAGE);
+	kgui_batch_circle(&b, 100.0f, 100.0f, 10.0f, 12, 0.5f, 0.5f,
+			  1.0f, 1.0f, 1.0f, 1.0f);
+	assert(b.count == 36); /* 12 triangles */
+	for (i = 0; i < 12; i++) {
+		float rx = verts[i * 3 + 1].x - 100.0f;
+		float ry = verts[i * 3 + 1].y - 100.0f;
+
+		assert(verts[i * 3].x == 100.0f && verts[i * 3].y == 100.0f);
+		assert(fabsf(sqrtf(rx * rx + ry * ry) - 10.0f) < 1e-3f);
+	}
+}
+
+/* Fewer than three segments is clamped up to a triangle. */
+static void test_circle_clamps_min_segments(void)
+{
+	struct kgui_batch b;
+
+	kgui_batch_init(&b, verts, STORAGE);
+	kgui_batch_circle(&b, 0.0f, 0.0f, 5.0f, 1, 0.0f, 0.0f,
+			  1.0f, 1.0f, 1.0f, 1.0f);
+	assert(b.count == 9); /* clamped to 3 triangles */
+}
+
+/* A ring is a strip of quads between the inner and outer radii. */
+static void test_ring_quad_count_and_radii(void)
+{
+	struct kgui_batch b;
+	float             d;
+
+	kgui_batch_init(&b, verts, STORAGE);
+	kgui_batch_ring(&b, 0.0f, 0.0f, 10.0f, 2.0f, 8, 0.5f, 0.5f,
+			1.0f, 1.0f, 1.0f, 1.0f);
+	assert(b.count == 48); /* 8 quads * 6 vertices */
+	/* First vertex on the outer radius (10 + 1), third on the inner (10 - 1). */
+	d = sqrtf(verts[0].x * verts[0].x + verts[0].y * verts[0].y);
+	assert(fabsf(d - 11.0f) < 1e-3f);
+	d = sqrtf(verts[2].x * verts[2].x + verts[2].y * verts[2].y);
+	assert(fabsf(d - 9.0f) < 1e-3f);
+}
+
 int main(void)
 {
 	RUN(rect_emits_six_vertices);
@@ -320,6 +401,11 @@ int main(void)
 	RUN(image_honours_clip);
 	RUN(reset_clears_texture);
 	RUN(utf8_decode);
+	RUN(line_emits_rotated_quad);
+	RUN(line_degenerate_noop);
+	RUN(circle_fan_count_and_radius);
+	RUN(circle_clamps_min_segments);
+	RUN(ring_quad_count_and_radii);
 
 	printf("%d/%d tests passed\n", tests_passed, tests_run);
 	return tests_passed == tests_run ? 0 : 1;

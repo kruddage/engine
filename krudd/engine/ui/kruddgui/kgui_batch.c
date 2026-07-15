@@ -7,6 +7,7 @@
 
 #include "kgui_batch.h"
 
+#include <math.h>
 #include <stddef.h>
 
 void kgui_batch_init(struct kgui_batch *b, struct kgui_vertex *storage, int cap)
@@ -146,6 +147,95 @@ void kgui_batch_image(struct kgui_batch *b,
 		      float r, float g, float bl, float a)
 {
 	emit_quad(b, x, y, w, h, u0, v0, u1, v1, tex, r, g, bl, a);
+}
+
+/* One solid triangle on the atlas path, all three corners at the white texel. */
+static void emit_solid_tri(struct kgui_batch *b,
+			   float ax, float ay, float bx, float by,
+			   float cx, float cy, float u, float v,
+			   float r, float g, float bl, float a)
+{
+	struct kgui_clip_cmd *cmd;
+
+	b->clip_tex = 0u; /* atlas — a flat white texel modulated by colour */
+	cmd         = cur_cmd(b);
+	push_vertex(b, ax, ay, u, v, r, g, bl, a);
+	push_vertex(b, bx, by, u, v, r, g, bl, a);
+	push_vertex(b, cx, cy, u, v, r, g, bl, a);
+	cmd->count = b->count - cmd->first;
+}
+
+void kgui_batch_line(struct kgui_batch *b, float x0, float y0, float x1, float y1,
+		     float width, float u, float v,
+		     float r, float g, float bl, float a)
+{
+	float dx  = x1 - x0;
+	float dy  = y1 - y0;
+	float len = sqrtf(dx * dx + dy * dy);
+	float nx, ny;
+
+	if (len < 1e-6f)
+		return; /* degenerate segment: nothing to draw */
+
+	/* Half-width perpendicular to the segment direction. */
+	nx = -dy / len * width * 0.5f;
+	ny =  dx / len * width * 0.5f;
+
+	emit_solid_tri(b, x0 + nx, y0 + ny, x1 + nx, y1 + ny,
+		       x1 - nx, y1 - ny, u, v, r, g, bl, a);
+	emit_solid_tri(b, x0 + nx, y0 + ny, x1 - nx, y1 - ny,
+		       x0 - nx, y0 - ny, u, v, r, g, bl, a);
+}
+
+void kgui_batch_circle(struct kgui_batch *b, float cx, float cy, float rad,
+		       int segs, float u, float v,
+		       float r, float g, float bl, float a)
+{
+	float step;
+	int   i;
+
+	if (segs < 3)
+		segs = 3;
+	step = 6.28318530717958648f / (float)segs;
+	for (i = 0; i < segs; i++) {
+		float a0 = step * (float)i;
+		float a1 = step * (float)(i + 1);
+
+		emit_solid_tri(b, cx, cy,
+			       cx + cosf(a0) * rad, cy + sinf(a0) * rad,
+			       cx + cosf(a1) * rad, cy + sinf(a1) * rad,
+			       u, v, r, g, bl, a);
+	}
+}
+
+void kgui_batch_ring(struct kgui_batch *b, float cx, float cy, float rad,
+		     float width, int segs, float u, float v,
+		     float r, float g, float bl, float a)
+{
+	float ri = rad - width * 0.5f;
+	float ro = rad + width * 0.5f;
+	float step;
+	int   i;
+
+	if (segs < 3)
+		segs = 3;
+	if (ri < 0.0f)
+		ri = 0.0f;
+	step = 6.28318530717958648f / (float)segs;
+	for (i = 0; i < segs; i++) {
+		float a0 = step * (float)i;
+		float a1 = step * (float)(i + 1);
+		float c0 = cosf(a0), s0 = sinf(a0);
+		float c1 = cosf(a1), s1 = sinf(a1);
+
+		/* The segment's outer/inner arc, as two triangles of a quad. */
+		emit_solid_tri(b, cx + c0 * ro, cy + s0 * ro,
+			       cx + c1 * ro, cy + s1 * ro,
+			       cx + c1 * ri, cy + s1 * ri, u, v, r, g, bl, a);
+		emit_solid_tri(b, cx + c0 * ro, cy + s0 * ro,
+			       cx + c1 * ri, cy + s1 * ri,
+			       cx + c0 * ri, cy + s0 * ri, u, v, r, g, bl, a);
+	}
 }
 
 uint32_t kgui_utf8_next(const char **s)

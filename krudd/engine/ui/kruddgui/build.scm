@@ -10,9 +10,11 @@
 			"subsystem_manager")))
 
  (native-only
+	;;! kgui_batch links libm for the vector primitives' sinf/cosf/sqrtf.
 	(library "kgui_batch"
 		(sources "kgui_batch.c")
-		(public (current)))
+		(public (current))
+		(link "m"))
 	(executable "kgui_batch_test"
 		(sources "kgui_batch_test.c")
 		(link "kgui_batch"))

@@ -109,6 +109,29 @@ void kgui_batch_set_clip(struct kgui_batch *b,
 void kgui_batch_clear_clip(struct kgui_batch *b);
 
 /*
+ * Vector primitives built from solid triangles that sample the atlas white texel
+ * (u, v) — the same texel filled rects use, so they carry a flat colour with no
+ * new texture. They open no new draw command of their own (tex stays the atlas)
+ * and honour the current clip. Added for the viewport transform gizmo, which
+ * drew its axes and handles on ImGui's draw list before the migration (#492).
+ *
+ * kgui_batch_line   — a thick segment (x0,y0)->(x1,y1) of the given width, as a
+ *                     rotated quad (two triangles); zero-length segments no-op.
+ * kgui_batch_circle — a filled disc of `segs` triangles fanned from the centre.
+ * kgui_batch_ring   — a circle outline of stroke `width`, `segs` quads around the
+ *                     perimeter. `segs` is clamped up to 3.
+ */
+void kgui_batch_line(struct kgui_batch *b, float x0, float y0, float x1, float y1,
+		     float width, float u, float v,
+		     float r, float g, float bl, float a);
+void kgui_batch_circle(struct kgui_batch *b, float cx, float cy, float rad,
+		       int segs, float u, float v,
+		       float r, float g, float bl, float a);
+void kgui_batch_ring(struct kgui_batch *b, float cx, float cy, float rad,
+		     float width, int segs, float u, float v,
+		     float r, float g, float bl, float a);
+
+/*
  * One glyph as reported by a font source: a pen-relative box and its atlas UVs.
  * `visible` is 0 for a glyph with no drawable area (e.g. space), which emits no
  * quad but still advances the pen.

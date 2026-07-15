@@ -3,20 +3,19 @@
 /*
  * kruddboard — engine debug overlay plugin.
  *
- * Single full-width ImGui window anchored to the top of the viewport.
- * Height auto-sizes to the active tab's content; the Log section caps at
- * ~88 % of the viewport height and scrolls internally.  The tab bar
- * uses FittingPolicyScroll to handle overflow on narrow / phone screens.
- * Toggle visibility with backtick (`).
+ * Every panel that was once an ImGui tab of this overlay — the Log console, the
+ * KRUDD tab (frame stats, startup profile, subsystems), the World/Scene
+ * inspector and the Assets browser — is now a standalone kruddgui console drawn
+ * in kruddgui.scm (#491/#492). The board's own ImGui window, header and tab bar
+ * are gone with them, and the header's live controls (undo/redo, play/pause)
+ * moved onto kruddgui's top toolbar off the accessors registered here.
  *
- * Tabs:
- *   Scene      — entity list, create/delete, inspector
- *   Assets     — asset browser and markdown editor
- *
- * The KRUDD tab (frame stats, subsystems) and its Log section moved out of
- * ImGui into the kruddgui console panels (kruddgui.scm, #491/#492); the shared
- * krudd-stats / krudd-startup / krudd-subsystems / krudd-log-history accessors
- * they read are still registered here.
+ * What remains in C here: the shared krudd-* accessors the kruddgui panels read
+ * (registered against the s7 interpreter), and the viewport-space editor tools —
+ * the transform gizmo, click-to-pick and drag-to-spawn — which still render
+ * through ImGui's draw list and pointer io (draw_viewport_tools). Those are the
+ * last ImGui consumers here, ported onto kruddgui primitives in a follow-up
+ * (#492, feeding #487). Toggle the viewport tools with backtick (`).
  */
 
 extern "C" {
@@ -51,19 +50,6 @@ extern "C" {
 #include "md_parse.h"
 #include "md_draw.h"
 #include "s7.h"			/* self-guards for C++ linkage */
-#include "kruddboard_scm.h"	/* KRUDDBOARD_SCM — the panel image */
-#include "assets_scm.h"		/* ASSETS_SCM — the Assets-tab panel image */
-
-/*
- * Soft-keyboard toggle (plugin_abi.c, main module — see imgui_plugin.cpp
- * for the fuller comment on the bridge).  On a touch device kruddboard owns
- * krudd_text_input_show/hide directly via the top-right button below;
- * imgui_plugin's own WantTextInput-driven auto-focus is disabled for touch
- * devices precisely so the two don't fight over who's driving the keyboard.
- */
-extern "C" void krudd_text_input_show(void);
-extern "C" void krudd_text_input_hide(void);
-extern "C" int  krudd_is_touch_device(void);
 #endif
 
 #include <cstdio>
@@ -75,11 +61,6 @@ static const struct asset_api         *g_asset_api;
 static const struct memory_api        *g_mem; /* for click-to-pick mesh gen */
 static const struct subsystem_manager *g_mgr;
 static int                             g_visible = 1;
-static int                             g_collapsed = 1;
-#ifdef __EMSCRIPTEN__
-static bool                            g_touch_device;
-static bool                            g_kbd_shown;
-#endif
 static int                             g_panels_registered;
 static uint32_t                        asset_id_by_path(const char *path);
 static const struct entity_api        *g_entity_api;
@@ -146,48 +127,27 @@ static EM_BOOL on_keydown(int /*type*/, const EmscriptenKeyboardEvent *e,
 #endif
 
 /* ------------------------------------------------------------------ */
-/* Scheme panel host                                                   */
+/* Scheme accessor host                                                */
 /* ------------------------------------------------------------------ */
 
 #ifdef __EMSCRIPTEN__
 /*
- * The seam that lets a kruddboard panel be authored in Scheme instead of C++.
- * The image (kruddboard.scm, embedded as KRUDDBOARD_SCM) draws through the
- * primitives registered here against the shared s7 interpreter — the same one
- * the shader DSL and the runtime tick already run in. A primitive only issues
- * an ImGui call, so a panel procedure must be invoked while a frame is open;
- * call_scm_panel() does exactly that at draw time. Nothing here touches the
- * engine ABI — only kruddboard's own tabs cross this seam, one at a time.
+ * The seam between the engine ABIs and the kruddgui panels authored in Scheme.
+ * The krudd-* accessors below are registered against the shared s7 interpreter —
+ * the same one the shader DSL and the runtime tick run in — and read at draw
+ * time by the kruddgui consoles (kruddgui.scm): the frame stats and subsystem
+ * table, the entity list and its undo-recording inspector, the asset browser and
+ * editors, and the top toolbar's undo/redo + play/pause. Every panel's pixels
+ * are now kruddgui's; C keeps only these data/command bindings over the engine.
  */
 
 /*
- * The three primitives below are s7 callbacks, so they carry C language
- * linkage to match the s7_function pointer type they are registered as.
- *
- * (imgui-text str) -> unspecified. Draw one line. A non-string argument is
- * ignored rather than trapped, so a malformed call in the image cannot take
- * the frame down.
+ * The s7 callbacks below carry C language linkage to match the s7_function
+ * pointer type they are registered as. They are the krudd-* accessors the
+ * kruddgui panels read — data and command bindings over the engine ABIs, each
+ * cheap enough to call once per drawn frame.
  */
 extern "C" {
-
-static s7_pointer sp_imgui_text(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer str = s7_car(args);
-
-	if (s7_is_string(str))
-		ImGui::TextUnformatted(s7_string(str));
-	return s7_unspecified(sc);
-}
-
-/* (imgui-text-disabled str) -> unspecified. As imgui-text, dimmed. */
-static s7_pointer sp_imgui_text_disabled(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer str = s7_car(args);
-
-	if (s7_is_string(str))
-		ImGui::TextDisabled("%s", s7_string(str));
-	return s7_unspecified(sc);
-}
 
 /* (krudd-stats) -> (fps frame-ms frame-count), or #f when stats are absent. */
 static s7_pointer sp_krudd_stats(s7_scheme *sc, s7_pointer args)
@@ -233,138 +193,6 @@ static s7_pointer sp_krudd_startup(s7_scheme *sc, s7_pointer args)
 				s7_make_real(sc,
 					(s7_double)g_stats->page_to_first_frame_ms),
 				phases)));
-}
-
-/*
- * (imgui-text-colored r g b a str) -> unspecified. Draw one line in an RGBA
- * colour (each channel 0..1). A non-string str is ignored, like imgui-text.
- */
-static s7_pointer sp_imgui_text_colored(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer p   = args;
-	double     r   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
-	double     g   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
-	double     b   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
-	double     a   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
-	s7_pointer str = s7_car(p);
-
-	if (s7_is_string(str))
-		ImGui::TextColored(ImVec4((float)r, (float)g, (float)b,
-					  (float)a), "%s", s7_string(str));
-	return s7_unspecified(sc);
-}
-
-/* (imgui-small-button label) -> #t when clicked this frame, else #f. */
-static s7_pointer sp_imgui_small_button(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer label = s7_car(args);
-	bool       hit   = false;
-
-	if (s7_is_string(label))
-		hit = ImGui::SmallButton(s7_string(label));
-	return s7_make_boolean(sc, hit);
-}
-
-/* (imgui-same-line) -> unspecified. Keep the next widget on this line. */
-static s7_pointer sp_imgui_same_line(s7_scheme *sc, s7_pointer args)
-{
-	(void)args;
-	ImGui::SameLine();
-	return s7_unspecified(sc);
-}
-
-/* (imgui-separator) -> unspecified. */
-static s7_pointer sp_imgui_separator(s7_scheme *sc, s7_pointer args)
-{
-	(void)args;
-	ImGui::Separator();
-	return s7_unspecified(sc);
-}
-
-/*
- * (imgui-collapsing-header label [default-open]) -> #t when the section is
- * open. default-open is optional and defaults to #t, matching the C headers
- * that passed ImGuiTreeNodeFlags_DefaultOpen; pass #f to start the section
- * collapsed instead (used by the Subsystems section, which starts rolled up).
- */
-static s7_pointer sp_imgui_collapsing_header(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer label        = s7_car(args);
-	s7_pointer rest         = s7_cdr(args);
-	bool       default_open = s7_is_pair(rest) ?
-				   s7_boolean(sc, s7_car(rest)) : true;
-	bool       open         = false;
-
-	if (s7_is_string(label)) {
-		open = ImGui::CollapsingHeader(s7_string(label),
-					      default_open ?
-					      ImGuiTreeNodeFlags_DefaultOpen : 0);
-	}
-	return s7_make_boolean(sc, open);
-}
-
-/*
- * (imgui-begin-table id ncols) -> #t when the table opened. Bordered, row-
- * striped, proportional-stretch — the flag set every kruddboard table used. A
- * #t result must be paired with imgui-end-table.
- */
-static s7_pointer sp_imgui_begin_table(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer id     = s7_car(args);
-	s7_pointer ncols  = s7_cadr(args);
-	bool       opened = false;
-
-	if (s7_is_string(id) && s7_is_integer(ncols) && s7_integer(ncols) > 0)
-		opened = ImGui::BeginTable(s7_string(id),
-					   (int)s7_integer(ncols),
-					   ImGuiTableFlags_Borders |
-					   ImGuiTableFlags_RowBg   |
-					   ImGuiTableFlags_SizingStretchProp);
-	return s7_make_boolean(sc, opened);
-}
-
-/* (imgui-table-setup-column label) -> unspecified. */
-static s7_pointer sp_imgui_table_setup_column(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer label = s7_car(args);
-
-	if (s7_is_string(label))
-		ImGui::TableSetupColumn(s7_string(label));
-	return s7_unspecified(sc);
-}
-
-/* (imgui-table-headers-row) -> unspecified. */
-static s7_pointer sp_imgui_table_headers_row(s7_scheme *sc, s7_pointer args)
-{
-	(void)args;
-	ImGui::TableHeadersRow();
-	return s7_unspecified(sc);
-}
-
-/* (imgui-table-next-row) -> unspecified. */
-static s7_pointer sp_imgui_table_next_row(s7_scheme *sc, s7_pointer args)
-{
-	(void)args;
-	ImGui::TableNextRow();
-	return s7_unspecified(sc);
-}
-
-/*
- * (imgui-table-next-column) -> #t if the new cell is visible. Advances to the
- * next column (ImGui::TableNextColumn), which after a row lands on column 0.
- */
-static s7_pointer sp_imgui_table_next_column(s7_scheme *sc, s7_pointer args)
-{
-	(void)args;
-	return s7_make_boolean(sc, ImGui::TableNextColumn());
-}
-
-/* (imgui-end-table) -> unspecified. */
-static s7_pointer sp_imgui_end_table(s7_scheme *sc, s7_pointer args)
-{
-	(void)args;
-	ImGui::EndTable();
-	return s7_unspecified(sc);
 }
 
 /*
@@ -463,165 +291,12 @@ static s7_pointer real_list(s7_scheme *sc, const float *v, int n)
 }
 
 /*
- * (imgui-begin-disabled flag) -> unspecified. Grey out and swallow input for
- * every widget until imgui-end-disabled — the BeginDisabled/EndDisabled pairs
- * the World tab wrapped its create/edit widgets in when the scene api is absent.
- */
-static s7_pointer sp_imgui_begin_disabled(s7_scheme *sc, s7_pointer args)
-{
-	ImGui::BeginDisabled(s7_boolean(sc, s7_car(args)));
-	return s7_unspecified(sc);
-}
-
-/* (imgui-end-disabled) -> unspecified. */
-static s7_pointer sp_imgui_end_disabled(s7_scheme *sc, s7_pointer args)
-{
-	(void)args;
-	ImGui::EndDisabled();
-	return s7_unspecified(sc);
-}
-
-/* (imgui-set-next-item-width w) -> unspecified. A negative w fills to the right. */
-static s7_pointer sp_imgui_set_next_item_width(s7_scheme *sc, s7_pointer args)
-{
-	ImGui::SetNextItemWidth((float)s7_number_to_real(sc, s7_car(args)));
-	return s7_unspecified(sc);
-}
-
-/* (imgui-input-float3 id (x y z)) -> ((x y z) . changed?). */
-static s7_pointer sp_imgui_input_float3(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer id      = s7_car(args);
-	float      v[3];
-	bool       changed = false;
-
-	read_reals(sc, s7_cadr(args), v, 3);
-	if (s7_is_string(id))
-		changed = ImGui::InputFloat3(s7_string(id), v);
-	return s7_cons(sc, real_list(sc, v, 3), s7_make_boolean(sc, changed));
-}
-
-/* (imgui-input-float4 id (x y z w)) -> ((x y z w) . changed?). */
-static s7_pointer sp_imgui_input_float4(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer id      = s7_car(args);
-	float      v[4];
-	bool       changed = false;
-
-	read_reals(sc, s7_cadr(args), v, 4);
-	if (s7_is_string(id))
-		changed = ImGui::InputFloat4(s7_string(id), v);
-	return s7_cons(sc, real_list(sc, v, 4), s7_make_boolean(sc, changed));
-}
-
-/*
- * (imgui-begin-combo id preview) -> #t when the dropdown is open. A #t result
- * must be paired with imgui-end-combo and holds the selectable rows.
- */
-static s7_pointer sp_imgui_begin_combo(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer id      = s7_car(args);
-	s7_pointer preview = s7_cadr(args);
-	bool       open    = false;
-
-	if (s7_is_string(id) && s7_is_string(preview))
-		open = ImGui::BeginCombo(s7_string(id), s7_string(preview));
-	return s7_make_boolean(sc, open);
-}
-
-/* (imgui-end-combo) -> unspecified. */
-static s7_pointer sp_imgui_end_combo(s7_scheme *sc, s7_pointer args)
-{
-	(void)args;
-	ImGui::EndCombo();
-	return s7_unspecified(sc);
-}
-
-/*
- * (imgui-selectable label selected? span-all?) -> #t when clicked this frame.
- * span-all? spans every table column, as the entity-list rows did; the combo
- * rows pass #f.
- */
-static s7_pointer sp_imgui_selectable(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer           label = s7_car(args);
-	bool                 sel   = s7_boolean(sc, s7_cadr(args));
-	bool                 span  = s7_boolean(sc, s7_caddr(args));
-	ImGuiSelectableFlags flags = span ? ImGuiSelectableFlags_SpanAllColumns
-					  : 0;
-	bool                 hit   = false;
-
-	if (s7_is_string(label))
-		hit = ImGui::Selectable(s7_string(label), sel, flags);
-	return s7_make_boolean(sc, hit);
-}
-
-/*
- * (imgui-tree-node id label leaf? selected?) -> (open? . clicked?). Draws a
- * tree node in the table's current cell. id is the ImGui identifier and must
- * be unique across the whole tree (an asset's own path, or an accumulated
- * folder prefix, both satisfy this); label is the text actually shown. A
- * non-leaf node only toggles open on its arrow or a double-click, so a plain
- * click on the label is unambiguously a select, mirroring imgui-selectable's
- * contract; a leaf node draws a bullet instead of an arrow, never carries
- * children, and always reports open? as #f. When open? is #t for a non-leaf
- * node the caller must draw its children and then call imgui-tree-pop.
- */
-static s7_pointer sp_imgui_tree_node(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer id       = s7_car(args);
-	s7_pointer label    = s7_cadr(args);
-	bool       leaf     = s7_boolean(sc, s7_caddr(args));
-	bool       selected = s7_boolean(sc, s7_cadddr(args));
-	bool       open     = false;
-	bool       clicked  = false;
-
-	if (s7_is_string(id) && s7_is_string(label)) {
-		ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_SpanAvailWidth;
-
-		if (selected)
-			flags |= ImGuiTreeNodeFlags_Selected;
-		if (leaf)
-			flags |= ImGuiTreeNodeFlags_Leaf |
-				 ImGuiTreeNodeFlags_Bullet |
-				 ImGuiTreeNodeFlags_NoTreePushOnOpen;
-		else
-			flags |= ImGuiTreeNodeFlags_OpenOnArrow |
-				 ImGuiTreeNodeFlags_OpenOnDoubleClick;
-		open    = ImGui::TreeNodeEx(s7_string(id), flags, "%s",
-					    s7_string(label));
-		clicked = ImGui::IsItemClicked();
-	}
-	return s7_cons(sc, s7_make_boolean(sc, open),
-		       s7_make_boolean(sc, clicked));
-}
-
-/*
- * (imgui-tree-pop) -> unspecified. Pairs with a non-leaf imgui-tree-node
- * call whose open? came back #t.
- */
-static s7_pointer sp_imgui_tree_pop(s7_scheme *sc, s7_pointer args)
-{
-	(void)args;
-	ImGui::TreePop();
-	return s7_unspecified(sc);
-}
-
-/* (imgui-set-item-default-focus) -> unspecified. Focus the last item on open. */
-static s7_pointer sp_imgui_set_item_default_focus(s7_scheme *sc, s7_pointer args)
-{
-	(void)args;
-	ImGui::SetItemDefaultFocus();
-	return s7_unspecified(sc);
-}
-
-/*
- * The World tab's ImGui-only helper bindings — imgui-calc-text-width,
- * imgui-same-line-right, imgui-push-style-color-button / -pop-style-color,
- * imgui-dot, imgui-begin-table-plain, imgui-table-setup-column-fixed and the
- * plain imgui-input-text — were pruned here when the World tab was lifted onto
- * kruddgui's own widgets (#492); the Assets tab, the last ImGui consumer, uses
- * none of them.
+ * The imgui-* Scheme drawing primitives that once backed the World and Assets
+ * tabs — text, tables, combos, the collapsing headers, the input/colour widgets,
+ * the mesh drag source — were pruned here when the last of those tabs moved onto
+ * kruddgui's own widgets (#492). What survives are pure data helpers (read_reals
+ * / real_list) and the krudd-* accessors below, which the kruddgui Scene console
+ * reads; none of them touch ImGui.
  */
 
 /* Selection id honouring the api / g_entity_sel fallback the World tab uses. */
@@ -941,6 +616,71 @@ static s7_pointer sp_krudd_set_gizmo_mode(s7_scheme *sc, s7_pointer args)
 	return s7_unspecified(sc);
 }
 
+/*
+ * Editor-toolbar accessors (#492) — the undo/redo history and the play/pause
+ * simulation toggle that were the ImGui board header's buttons, now driven by
+ * kruddgui's own top toolbar (kruddgui.scm). Each mirrors the null-guard the
+ * ImGui draw_undo_redo / draw_sim_mode did: with no edit history service the
+ * undo/redo controls report empty and no-op, and with no pausing support the
+ * sim control reports #f so the toolbar hides it.
+ */
+
+/* (krudd-can-undo) -> #t when there is an edit to undo, else #f. */
+static s7_pointer sp_krudd_can_undo(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	return s7_make_boolean(sc, g_edit_api && g_edit_api->can_undo());
+}
+
+/* (krudd-can-redo) -> #t when there is an undone edit to redo, else #f. */
+static s7_pointer sp_krudd_can_redo(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	return s7_make_boolean(sc, g_edit_api && g_edit_api->can_redo());
+}
+
+/* (krudd-undo) undo the last edit; a no-op with no history service. */
+static s7_pointer sp_krudd_undo(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	if (g_edit_api)
+		g_edit_api->undo();
+	return s7_unspecified(sc);
+}
+
+/* (krudd-redo) redo the last undone edit; a no-op with no history service. */
+static s7_pointer sp_krudd_redo(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	if (g_edit_api)
+		g_edit_api->redo();
+	return s7_unspecified(sc);
+}
+
+/*
+ * (krudd-sim-mode) -> 'playing or 'paused, or #f when the scene api does not
+ * support pausing (the toolbar then omits the play/pause control, exactly as
+ * draw_sim_mode drew nothing).
+ */
+static s7_pointer sp_krudd_sim_mode(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	if (!g_entity_api || !g_entity_api->get_paused ||
+	    !g_entity_api->set_paused)
+		return s7_make_boolean(sc, false);
+	return s7_make_symbol(sc,
+			      g_entity_api->get_paused() ? "paused" : "playing");
+}
+
+/* (krudd-toggle-sim) flip play/pause; a no-op when pausing is unsupported. */
+static s7_pointer sp_krudd_toggle_sim(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	if (g_entity_api && g_entity_api->get_paused && g_entity_api->set_paused)
+		g_entity_api->set_paused(!g_entity_api->get_paused());
+	return s7_unspecified(sc);
+}
+
 /* ------------------------------------------------------------------ */
 /* Assets-tab primitives (#402)                                        */
 /* ------------------------------------------------------------------ */
@@ -1171,177 +911,6 @@ static void maybe_persist_asset(uint32_t id, int32_t type, const void *bytes,
 	if (!g_asset_api || g_asset_api->find(id, &info) != 0)
 		return;
 	g_backend->persist_asset(id, info.path, type, bytes, size);
-}
-
-/* (imgui-button label) -> #t when clicked this frame, else #f. */
-static s7_pointer sp_imgui_button(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer label = s7_car(args);
-	bool       hit   = false;
-
-	if (s7_is_string(label))
-		hit = ImGui::Button(s7_string(label));
-	return s7_make_boolean(sc, hit);
-}
-
-/*
- * (imgui-input-text-enter id text) -> (text . entered?). Like imgui-input-
- * text, but entered? is #t the instant Enter is pressed inside the field
- * (ImGuiInputTextFlags_EnterReturnsTrue) rather than on focus loss — the New
- * Asset name field and the shader clone-name field both confirm on Enter.
- */
-static s7_pointer sp_imgui_input_text_enter(s7_scheme *sc, s7_pointer args)
-{
-	static char buf[256];
-	s7_pointer  id      = s7_car(args);
-	s7_pointer  text    = s7_cadr(args);
-	bool        entered = false;
-
-	buf[0] = '\0';
-	if (s7_is_string(text)) {
-		strncpy(buf, s7_string(text), sizeof(buf) - 1);
-		buf[sizeof(buf) - 1] = '\0';
-	}
-	if (s7_is_string(id))
-		entered = ImGui::InputText(s7_string(id), buf, sizeof(buf),
-					   ImGuiInputTextFlags_EnterReturnsTrue);
-	return s7_cons(sc, s7_make_string(sc, buf), s7_make_boolean(sc, entered));
-}
-
-/*
- * (imgui-input-text-multiline id text h readonly?) -> (text . changed?).
- * changed? is #t on any edit this frame (InputTextMultiline's own return),
- * not just on commit — the markdown/shader source boxes reparse or redraw
- * live as the source changes, unlike the single-line name field.
- */
-static s7_pointer sp_imgui_input_text_multiline(s7_scheme *sc, s7_pointer args)
-{
-	static char buf[ASSETS_EDIT_MAX];
-	s7_pointer  p        = args;
-	s7_pointer  id       = s7_car(p); p = s7_cdr(p);
-	s7_pointer  text     = s7_car(p); p = s7_cdr(p);
-	float       h        = (float)s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
-	bool        readonly = s7_boolean(sc, s7_car(p));
-	bool        changed  = false;
-
-	buf[0] = '\0';
-	if (s7_is_string(text)) {
-		strncpy(buf, s7_string(text), sizeof(buf) - 1);
-		buf[sizeof(buf) - 1] = '\0';
-	}
-	if (s7_is_string(id))
-		changed = ImGui::InputTextMultiline(
-			s7_string(id), buf, sizeof(buf), ImVec2(-1.0f, h),
-			readonly ? ImGuiInputTextFlags_ReadOnly
-				 : ImGuiInputTextFlags_None);
-	return s7_cons(sc, s7_make_string(sc, buf), s7_make_boolean(sc, changed));
-}
-
-/*
- * (imgui-combo id items current) -> the (possibly new) selected index. items
- * is a list of label strings; the New Asset type picker is the only caller,
- * capped at 8 entries (it uses 3).
- */
-static s7_pointer sp_imgui_combo(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer  id    = s7_car(args);
-	s7_pointer  items = s7_cadr(args);
-	int         cur   = (int)s7_integer(s7_caddr(args));
-	const char *labels[8];
-	int         n     = 0;
-	s7_pointer  p;
-
-	for (p = items; s7_is_pair(p) && n < 8; p = s7_cdr(p))
-		labels[n++] = s7_string(s7_car(p));
-	if (s7_is_string(id))
-		ImGui::Combo(s7_string(id), &cur, labels, n);
-	return s7_make_integer(sc, cur);
-}
-
-/* (imgui-color-edit4 id rgba) -> (rgba . changed?). */
-static s7_pointer sp_imgui_color_edit4(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer id      = s7_car(args);
-	float      v[4];
-	bool       changed = false;
-
-	read_reals(sc, s7_cadr(args), v, 4);
-	if (s7_is_string(id))
-		changed = ImGui::ColorEdit4(s7_string(id), v);
-	return s7_cons(sc, real_list(sc, v, 4), s7_make_boolean(sc, changed));
-}
-
-/* (imgui-color-edit3 id (r g b)) -> ((r g b) . changed?). */
-static s7_pointer sp_imgui_color_edit3(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer id      = s7_car(args);
-	float      v[3];
-	bool       changed = false;
-
-	read_reals(sc, s7_cadr(args), v, 3);
-	if (s7_is_string(id))
-		changed = ImGui::ColorEdit3(s7_string(id), v);
-	return s7_cons(sc, real_list(sc, v, 3), s7_make_boolean(sc, changed));
-}
-
-/* (imgui-input-float id x) -> (x . changed?). */
-static s7_pointer sp_imgui_input_float(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer id      = s7_car(args);
-	float      v       = (float)s7_number_to_real(sc, s7_cadr(args));
-	bool       changed = false;
-
-	if (s7_is_string(id))
-		changed = ImGui::InputFloat(s7_string(id), &v);
-	return s7_cons(sc, s7_make_real(sc, v), s7_make_boolean(sc, changed));
-}
-
-/* (imgui-input-float2 id (x y)) -> ((x y) . changed?). */
-static s7_pointer sp_imgui_input_float2(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer id      = s7_car(args);
-	float      v[2];
-	bool       changed = false;
-
-	read_reals(sc, s7_cadr(args), v, 2);
-	if (s7_is_string(id))
-		changed = ImGui::InputFloat2(s7_string(id), v);
-	return s7_cons(sc, real_list(sc, v, 2), s7_make_boolean(sc, changed));
-}
-
-/* (imgui-slider-float id x lo hi) -> (x . changed?). */
-static s7_pointer sp_imgui_slider_float(s7_scheme *sc, s7_pointer args)
-{
-	s7_pointer p       = args;
-	s7_pointer id      = s7_car(p); p = s7_cdr(p);
-	float      v       = (float)s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
-	float      lo      = (float)s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
-	float      hi      = (float)s7_number_to_real(sc, s7_car(p));
-	bool       changed = false;
-
-	if (s7_is_string(id))
-		changed = ImGui::SliderFloat(s7_string(id), &v, lo, hi);
-	return s7_cons(sc, s7_make_real(sc, v), s7_make_boolean(sc, changed));
-}
-
-/*
- * (imgui-mesh-drag-source id label) -> unspecified. A mesh asset row is a
- * drag source the whole frame it's drawn; the payload is the raw asset id,
- * which draw_spawn_drop_target's viewport-wide target reads back to spawn
- * an entity bound to that mesh (#176). id must fit a uint32_t.
- */
-static s7_pointer sp_imgui_mesh_drag_source(s7_scheme *sc, s7_pointer args)
-{
-	uint32_t   id    = (uint32_t)s7_integer(s7_car(args));
-	s7_pointer label = s7_cadr(args);
-
-	if (s7_is_string(label) &&
-	    ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
-		ImGui::SetDragDropPayload("ASSET_ID", &id, sizeof(id));
-		ImGui::Text("Spawn %s", s7_string(label));
-		ImGui::EndDragDropSource();
-	}
-	return s7_unspecified(sc);
 }
 
 /* One (id path type kind state size refs) row for the asset browser. */
@@ -3093,89 +2662,16 @@ static s7_scheme *ensure_panel_scm(void)
 
 	if (ready || !sc)
 		return sc;
-	s7_define_function(sc, "imgui-text", sp_imgui_text, 1, 0, false,
-			   "(imgui-text str) draw a line of text");
-	s7_define_function(sc, "imgui-text-disabled", sp_imgui_text_disabled,
-			   1, 0, false,
-			   "(imgui-text-disabled str) draw a dimmed line of text");
 	s7_define_function(sc, "krudd-stats", sp_krudd_stats, 0, 0, false,
 			   "(krudd-stats) -> (fps frame-ms frame-count) or #f");
 	s7_define_function(sc, "krudd-startup", sp_krudd_startup, 0, 0, false,
 			   "(krudd-startup) -> (init-ms first-frame-ms (name . ms) ...) or #f");
-	s7_define_function(sc, "imgui-text-colored", sp_imgui_text_colored,
-			   5, 0, false,
-			   "(imgui-text-colored r g b a str) coloured line");
-	s7_define_function(sc, "imgui-small-button", sp_imgui_small_button,
-			   1, 0, false,
-			   "(imgui-small-button label) -> #t when clicked");
-	s7_define_function(sc, "imgui-same-line", sp_imgui_same_line, 0, 0,
-			   false, "(imgui-same-line) stay on this line");
-	s7_define_function(sc, "imgui-separator", sp_imgui_separator, 0, 0,
-			   false, "(imgui-separator) horizontal rule");
-	s7_define_function(sc, "imgui-collapsing-header",
-			   sp_imgui_collapsing_header, 1, 1, false,
-			   "(imgui-collapsing-header label [default-open]) -> #t when open");
-	s7_define_function(sc, "imgui-begin-table", sp_imgui_begin_table, 2, 0,
-			   false, "(imgui-begin-table id ncols) -> #t if opened");
-	s7_define_function(sc, "imgui-table-setup-column",
-			   sp_imgui_table_setup_column, 1, 0, false,
-			   "(imgui-table-setup-column label) declare a column");
-	s7_define_function(sc, "imgui-table-headers-row",
-			   sp_imgui_table_headers_row, 0, 0, false,
-			   "(imgui-table-headers-row) draw the header row");
-	s7_define_function(sc, "imgui-table-next-row", sp_imgui_table_next_row,
-			   0, 0, false, "(imgui-table-next-row) start a row");
-	s7_define_function(sc, "imgui-table-next-column",
-			   sp_imgui_table_next_column, 0, 0, false,
-			   "(imgui-table-next-column) advance to the next cell");
-	s7_define_function(sc, "imgui-end-table", sp_imgui_end_table, 0, 0,
-			   false, "(imgui-end-table) close the table");
 	s7_define_function(sc, "krudd-subsystems", sp_krudd_subsystems, 0, 0,
 			   false,
 			   "(krudd-subsystems) -> rows of (name api? tick? size)");
 	s7_define_function(sc, "krudd-log-history", sp_krudd_log_history, 0, 0,
 			   false,
 			   "(krudd-log-history) -> ((level . text) ...) or #f");
-	s7_define_function(sc, "imgui-begin-disabled", sp_imgui_begin_disabled,
-			   1, 0, false,
-			   "(imgui-begin-disabled flag) grey out widgets");
-	s7_define_function(sc, "imgui-end-disabled", sp_imgui_end_disabled, 0, 0,
-			   false, "(imgui-end-disabled) end a disabled block");
-	s7_define_function(sc, "imgui-set-next-item-width",
-			   sp_imgui_set_next_item_width, 1, 0, false,
-			   "(imgui-set-next-item-width w) width the next widget");
-	s7_define_function(sc, "imgui-input-float3", sp_imgui_input_float3, 2, 0,
-			   false,
-			   "(imgui-input-float3 id vec) -> (vec . changed?)");
-	s7_define_function(sc, "imgui-input-float4", sp_imgui_input_float4, 2, 0,
-			   false,
-			   "(imgui-input-float4 id vec) -> (vec . changed?)");
-	s7_define_function(sc, "imgui-input-float", sp_imgui_input_float, 2, 0,
-			   false, "(imgui-input-float id x) -> (x . changed?)");
-	s7_define_function(sc, "imgui-input-float2", sp_imgui_input_float2, 2, 0,
-			   false,
-			   "(imgui-input-float2 id vec) -> (vec . changed?)");
-	s7_define_function(sc, "imgui-color-edit3", sp_imgui_color_edit3, 2, 0,
-			   false,
-			   "(imgui-color-edit3 id rgb) -> (rgb . changed?)");
-	s7_define_function(sc, "imgui-slider-float", sp_imgui_slider_float, 4, 0,
-			   false,
-			   "(imgui-slider-float id x lo hi) -> (x . changed?)");
-	s7_define_function(sc, "imgui-begin-combo", sp_imgui_begin_combo, 2, 0,
-			   false, "(imgui-begin-combo id preview) -> #t if open");
-	s7_define_function(sc, "imgui-end-combo", sp_imgui_end_combo, 0, 0,
-			   false, "(imgui-end-combo) close the dropdown");
-	s7_define_function(sc, "imgui-selectable", sp_imgui_selectable, 3, 0,
-			   false,
-			   "(imgui-selectable label sel? span?) -> #t if clicked");
-	s7_define_function(sc, "imgui-tree-node", sp_imgui_tree_node, 4, 0,
-			   false,
-			   "(imgui-tree-node id label leaf? sel?) -> (open? . clicked?)");
-	s7_define_function(sc, "imgui-tree-pop", sp_imgui_tree_pop, 0, 0, false,
-			   "(imgui-tree-pop) close a tree-node opened as non-leaf");
-	s7_define_function(sc, "imgui-set-item-default-focus",
-			   sp_imgui_set_item_default_focus, 0, 0, false,
-			   "(imgui-set-item-default-focus) focus the last item");
 	s7_define_function(sc, "krudd-world-caps", sp_krudd_world_caps, 0, 0,
 			   false,
 			   "(krudd-world-caps) -> (entity-api? asset-api?)");
@@ -3231,21 +2727,18 @@ static s7_scheme *ensure_panel_scm(void)
 			   false, "(krudd-gizmo-mode) -> 0 move 1 rotate 2 scale");
 	s7_define_function(sc, "krudd-set-gizmo-mode", sp_krudd_set_gizmo_mode,
 			   1, 0, false, "(krudd-set-gizmo-mode m) set the tool");
-	s7_define_function(sc, "imgui-button", sp_imgui_button, 1, 0, false,
-			   "(imgui-button label) -> #t when clicked");
-	s7_define_function(sc, "imgui-input-text-enter",
-			   sp_imgui_input_text_enter, 2, 0, false,
-			   "(imgui-input-text-enter id text) -> (text . entered?)");
-	s7_define_function(sc, "imgui-input-text-multiline",
-			   sp_imgui_input_text_multiline, 4, 0, false,
-			   "(imgui-input-text-multiline id text h ro?) -> (text . changed?)");
-	s7_define_function(sc, "imgui-combo", sp_imgui_combo, 3, 0, false,
-			   "(imgui-combo id items current) -> new index");
-	s7_define_function(sc, "imgui-color-edit4", sp_imgui_color_edit4, 2, 0,
-			   false, "(imgui-color-edit4 id rgba) -> (rgba . changed?)");
-	s7_define_function(sc, "imgui-mesh-drag-source",
-			   sp_imgui_mesh_drag_source, 2, 0, false,
-			   "(imgui-mesh-drag-source id label) drag-to-spawn source");
+	s7_define_function(sc, "krudd-can-undo", sp_krudd_can_undo, 0, 0, false,
+			   "(krudd-can-undo) -> #t when an edit can be undone");
+	s7_define_function(sc, "krudd-can-redo", sp_krudd_can_redo, 0, 0, false,
+			   "(krudd-can-redo) -> #t when an edit can be redone");
+	s7_define_function(sc, "krudd-undo", sp_krudd_undo, 0, 0, false,
+			   "(krudd-undo) undo the last edit");
+	s7_define_function(sc, "krudd-redo", sp_krudd_redo, 0, 0, false,
+			   "(krudd-redo) redo the last undone edit");
+	s7_define_function(sc, "krudd-sim-mode", sp_krudd_sim_mode, 0, 0, false,
+			   "(krudd-sim-mode) -> 'playing / 'paused, or #f");
+	s7_define_function(sc, "krudd-toggle-sim", sp_krudd_toggle_sim, 0, 0,
+			   false, "(krudd-toggle-sim) flip play/pause");
 	s7_define_function(sc, "krudd-assets", sp_krudd_assets, 0, 0, false,
 			   "(krudd-assets) -> (builtin-rows project-rows) or #f");
 	s7_define_function(sc, "krudd-asset-mut?", sp_krudd_asset_mut, 0, 0,
@@ -3390,851 +2883,20 @@ static s7_scheme *ensure_panel_scm(void)
 			   "[tex-ref w h]) -> new id or 0");
 	s7_define_function(sc, "krudd-md-preview", sp_krudd_md_preview, 2, 0,
 			   false, "(krudd-md-preview text h) scrolling preview child");
-	script_eval(KRUDDBOARD_SCM);
-	script_eval(ASSETS_SCM);
 	ready = true;
 	return sc;
 }
-
-/*
- * Call a nullary panel procedure the image defines (e.g. kruddboard-draw-assets)
- * inside the current frame. Returns true if it ran, false if the interpreter
- * is down or the image never defined it, so the caller can fall back.
- */
-static bool call_scm_panel(const char *proc)
-{
-	s7_scheme *sc = ensure_panel_scm();
-	s7_pointer fn;
-
-	if (!sc)
-		return false;
-	fn = s7_name_to_value(sc, proc);
-	if (!s7_is_procedure(fn))
-		return false;
-	s7_call(sc, fn, s7_nil(sc));
-	return true;
-}
 #endif /* __EMSCRIPTEN__ */
 
 /*
- * The KRUDD tab — Frame Stats, the startup profile, and the Subsystems table —
- * was lifted out of ImGui into the kruddgui board console (kruddgui.scm, #492),
- * which draws all three sections over the editor with kruddgui's own quads off
- * the same krudd-stats / krudd-startup / krudd-subsystems accessors (still
- * registered below). draw_tab_stats / draw_tab_subsystems / draw_tab_krudd and
- * the KRUDD tab item are gone with it, as is the Scene tab's Perf roll-up, which
- * drew the same frame stats and startup profile. (The Log tab moved the same way
- * in #491.) g_stats / g_mgr / g_startup live on: the accessors read them.
+ * All of this board's panels now draw as kruddgui consoles off the accessors
+ * above (kruddgui.scm, #491/#492): the KRUDD tab's frame stats / startup profile
+ * / subsystem table, the Log console, the World/Scene inspector and the Assets
+ * browser and editors. Their ImGui draw paths — draw_tab_krudd / -stats /
+ * -subsystems / -world / -assets, the ImGui `imgui-*` Scheme primitives that
+ * backed them, and the Assets/kruddboard Scheme images — are gone; g_stats and
+ * g_mgr live on because the accessors read them.
  */
-
-/* ------------------------------------------------------------------ */
-/* Tab: Assets                                                         */
-/* ------------------------------------------------------------------ */
-
-/*
- * Pre-port native fallback for the whole Assets tab (#402).  This library
- * only ever builds wasm-only (see build.scm), so __EMSCRIPTEN__ is always
- * defined in the one configuration that actually compiles; everything in
- * this #ifndef block is dead code kept as the established native-fallback
- * convention (#401) — a hypothetical native ImGui build would fall through to
- * this instead of the Scheme-driven browser path below.
- */
-#ifndef __EMSCRIPTEN__
-static uint32_t g_asset_sel; /* 0 = none */
-
-static const char *asset_state_str(int32_t s)
-{
-	switch (s) {
-	case 0:  return "Pending";
-	case 1:  return "Loaded";
-	default: return "Error";
-	}
-}
-
-static const char *asset_kind_str(int32_t k)
-{
-	if (k == ASSET_KIND_PRIMITIVE)
-		return "Primitive";
-	return "Normal";
-}
-
-static const char *asset_type_str(int32_t t)
-{
-	switch (t) {
-	case ASSET_TYPE_MESH:     return "Mesh";
-	case ASSET_TYPE_TEXTURE:  return "Texture";
-	case ASSET_TYPE_MATERIAL: return "Material";
-	case ASSET_TYPE_SHADER:   return "Shader";
-	case ASSET_TYPE_FONT:     return "Font";
-	case ASSET_TYPE_SCENE:    return "Scene";
-	case ASSET_TYPE_TEXT:     return "Text";
-	default:                  return "Unknown";
-	}
-}
-
-/*
- * Markdown editor state.  Tracks which asset is loaded into the edit
- * buffer so we only reload on selection change, not every frame.
- */
-#define EDIT_BUF_MAX (64 * 1024)
-static char     g_edit[EDIT_BUF_MAX];
-static uint32_t g_edit_id; /* id whose bytes are in g_edit; 0 = none */
-static int      g_shader_compile_ok = -1; /* -1 = untried, 0 = fail, 1 = ok */
-
-static struct md_block g_blocks[MD_BLOCKS_MAX];
-static int32_t         g_nblocks;
-
-/* Material color editor state — the RGBA base_color the fragment shader
- * multiplies in (see the Material uniform block in SCENE_SHADER_SRC). */
-static float    g_material_color[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-static uint32_t g_material_color_id; /* id whose bytes are in g_material_color */
-
-/*
- * (Re)load the color editor from the asset catalog when the selection
- * changes. A missing or short (pre-Save) asset falls back to white, same as
- * the renderer's resolve_material_color default.
- */
-static void maybe_reload_material_color(uint32_t id)
-{
-	const void *src;
-	uint32_t    sz = 0;
-
-	if (g_material_color_id == id)
-		return;
-	g_material_color_id = id;
-	g_material_color[0] = g_material_color[1] =
-		g_material_color[2] = g_material_color[3] = 1.0f;
-	if (!g_asset_api || !g_asset_api->get_data)
-		return;
-	src = g_asset_api->get_data(id, &sz);
-	if (src && sz >= sizeof(g_material_color))
-		memcpy(g_material_color, src, sizeof(g_material_color));
-}
-
-/*
- * (Re)load the edit buffer from the asset catalog when the selection
- * changes.  Clamps to EDIT_BUF_MAX - 1 bytes and NUL-terminates.
- */
-static void maybe_reload_edit(uint32_t id)
-{
-	const void *src;
-	uint32_t    sz;
-
-	if (g_edit_id == id)
-		return;
-	g_edit_id  = id;
-	g_edit[0]  = '\0';
-	g_nblocks  = 0;
-	g_shader_compile_ok = -1;
-	if (!g_asset_api || !g_asset_api->get_data)
-		return;
-	src = g_asset_api->get_data(id, &sz);
-	if (!src)
-		return;
-	if (sz >= (uint32_t)EDIT_BUF_MAX)
-		sz = (uint32_t)EDIT_BUF_MAX - 1;
-	memcpy(g_edit, src, (size_t)sz);
-	g_edit[sz] = '\0';
-	g_nblocks  = md_parse(g_edit, g_blocks, MD_BLOCKS_MAX);
-}
-
-static void draw_asset_inspector(uint32_t id)
-{
-	struct asset_info       info;
-	struct asset_decl_field fields[16];
-	uint32_t                nf;
-	uint32_t                i;
-	uint32_t                idx;
-	uint32_t                n;
-	struct asset_info       tmp;
-	char                    buf[32];
-
-	if (g_asset_api->find(id, &info) != 0) {
-		g_asset_sel = 0;
-		return;
-	}
-
-	if (ImGui::SmallButton("<- Back"))
-		g_asset_sel = 0;
-	ImGui::SameLine();
-	ImGui::TextUnformatted(info.path);
-	ImGui::SameLine();
-	ImGui::TextDisabled("[%s | %s | %s]",
-		asset_type_str(info.type),
-		asset_state_str(info.state),
-		info.read_only ? "read-only" : "mutable");
-
-#ifdef __EMSCRIPTEN__
-	/*
-	 * Authored text assets get the markdown editor/viewer.
-	 * All other assets fall through to the read-only inspector tables.
-	 */
-	if (info.origin == ASSET_ORIGIN_AUTHORED &&
-	    info.type   == ASSET_TYPE_TEXT) {
-		int    can_persist;
-		size_t edit_len;
-
-		can_persist = g_backend &&
-			(g_backend->get_caps() &
-			 BACKEND_CAP_PROJECT_PERSIST);
-
-		maybe_reload_edit(id);
-
-		ImGui::Separator();
-
-		/* -- Source editor -- */
-		if (ImGui::CollapsingHeader("Source",
-					    ImGuiTreeNodeFlags_DefaultOpen)) {
-			if (ImGui::InputTextMultiline(
-				    "##md", g_edit, (size_t)EDIT_BUF_MAX,
-				    ImVec2(-1.0f, 200.0f))) {
-				/* Reparse on every edit keystroke. */
-				g_nblocks = md_parse(g_edit, g_blocks,
-						     MD_BLOCKS_MAX);
-			}
-		}
-
-		ImGui::Separator();
-
-		/* -- Rendered preview -- */
-		if (ImGui::CollapsingHeader("Preview",
-					    ImGuiTreeNodeFlags_DefaultOpen)) {
-			ImGui::BeginChild(
-				"##mdpreview", ImVec2(0.0f, 200.0f),
-				true, ImGuiWindowFlags_HorizontalScrollbar);
-			md_draw_blocks(g_blocks, g_nblocks);
-			ImGui::EndChild();
-		}
-
-		ImGui::Separator();
-
-		/* -- Action buttons -- */
-		edit_len = strlen(g_edit);
-		/*
-		 * Save always writes the in-memory asset, so this session sees
-		 * the change even with no backend to persist it to (mirrors
-		 * the shader Save fix in #390).
-		 */
-		if (ImGui::Button("Save")) {
-			if (g_asset_mut)
-				g_asset_mut->set_data(
-					id, g_edit,
-					(uint32_t)edit_len);
-			if (can_persist)
-				g_backend->persist_asset(
-					id, info.path,
-					ASSET_TYPE_TEXT, g_edit,
-					(uint32_t)edit_len);
-		}
-
-		ImGui::SameLine();
-
-		if (ImGui::Button("Delete")) {
-			if (g_asset_mut)
-				g_asset_mut->destroy(id);
-			if (g_backend && can_persist)
-				g_backend->delete_asset(id);
-			g_edit_id   = 0;
-			g_edit[0]   = '\0';
-			g_nblocks   = 0;
-			g_asset_sel = 0;
-		}
-
-		return;
-	}
-
-	/*
-	 * Shader assets — read-only built-ins and authored/project shaders
-	 * alike — get the same screen: a source editor plus its declaration.
-	 * A krudd shader source embeds every stage it defines, so there is no
-	 * per-asset stage/dialect to pick; "Declaration" is a derived, read-
-	 * only summary of what the source contains. The only difference
-	 * between a built-in and an authored shader is whether the source box
-	 * accepts edits and the Save button is live.
-	 */
-	if (info.type == ASSET_TYPE_SHADER) {
-		bool   editable = !info.read_only;
-		int    can_persist;
-		size_t edit_len;
-
-		can_persist = editable && g_backend &&
-			(g_backend->get_caps() &
-			 BACKEND_CAP_PROJECT_PERSIST);
-
-		maybe_reload_edit(id);
-
-		ImGui::Separator();
-
-		/* -- Declaration (derived from the source; read-only) -- */
-		if (ImGui::CollapsingHeader("Declaration",
-					    ImGuiTreeNodeFlags_DefaultOpen)) {
-			const char *stages = shader_stages_from_source(g_edit);
-
-			ImGui::Text("format: %s", SHADER_FORMAT);
-			ImGui::Text("stages: %s", stages[0] ? stages : "(none)");
-		}
-
-		ImGui::Separator();
-
-		/* -- Source editor (plain; no markdown preview) -- */
-		if (ImGui::CollapsingHeader("Source",
-					    ImGuiTreeNodeFlags_DefaultOpen)) {
-			ImGui::InputTextMultiline(
-				"##shader", g_edit, (size_t)EDIT_BUF_MAX,
-				ImVec2(-1.0f, 260.0f),
-				editable ? ImGuiInputTextFlags_None
-					 : ImGuiInputTextFlags_ReadOnly);
-		}
-
-		ImGui::Separator();
-
-		/* -- Action buttons -- */
-		edit_len = strlen(g_edit);
-		if (!editable) {
-			/*
-			 * Built-ins can't be saved in place, but they make a good
-			 * starting point: name a project shader and clone this
-			 * source into it, then land straight in its (editable)
-			 * inspector.
-			 */
-			static uint32_t clone_src_id;
-			static char     clone_name[256];
-			static int      clone_conflict;
-			bool            confirm;
-
-			if (clone_src_id != id) {
-				clone_src_id = id;
-				snprintf(clone_name, sizeof(clone_name),
-					 "%s_copy", info.path);
-				clone_conflict = 0;
-			}
-
-			ImGui::SetNextItemWidth(240.0f);
-			confirm = ImGui::InputText(
-				"##clonename", clone_name, sizeof(clone_name),
-				ImGuiInputTextFlags_EnterReturnsTrue);
-			ImGui::SameLine();
-			confirm |= ImGui::Button("Clone");
-
-			if (confirm && clone_name[0] != '\0') {
-				uint32_t nid = g_asset_mut ?
-					g_asset_mut->create(
-						clone_name, ASSET_TYPE_SHADER,
-						g_edit, (uint32_t)edit_len) : 0;
-
-				if (nid == 0) {
-					clone_conflict = 1;
-				} else {
-					struct asset_decl_field decl[2];
-
-					decl[0].key   = "format";
-					decl[0].value = SHADER_FORMAT;
-					decl[1].key   = "stages";
-					decl[1].value =
-						shader_stages_from_source(g_edit);
-					if (g_asset_mut->set_decl)
-						g_asset_mut->set_decl(
-							nid, decl, 2);
-
-					if (g_backend &&
-					    (g_backend->get_caps() &
-					     BACKEND_CAP_PROJECT_PERSIST))
-						g_backend->persist_asset(
-							nid, clone_name,
-							ASSET_TYPE_SHADER,
-							g_edit,
-							(uint32_t)edit_len);
-
-					clone_conflict = 0;
-					g_asset_sel    = nid;
-				}
-			}
-			if (clone_conflict) {
-				ImGui::SameLine();
-				ImGui::TextColored(
-					ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
-					"\"%s\" already exists", clone_name);
-			}
-		} else {
-			/*
-			 * Save always writes the in-memory asset, so this
-			 * session sees the change even with no backend to
-			 * persist it to. A failed compile keeps whatever was
-			 * last committed (the seeded default, for a brand new
-			 * shader) instead of pushing broken source live.
-			 */
-			if (ImGui::Button("Save")) {
-				if (shader_compiles(g_edit)) {
-					struct asset_decl_field decl[2];
-
-					decl[0].key   = "format";
-					decl[0].value = SHADER_FORMAT;
-					decl[1].key   = "stages";
-					decl[1].value =
-						shader_stages_from_source(g_edit);
-
-					if (g_asset_mut) {
-						g_asset_mut->set_data(
-							id, g_edit,
-							(uint32_t)edit_len);
-						if (g_asset_mut->set_decl)
-							g_asset_mut->set_decl(
-								id, decl, 2);
-					}
-					if (can_persist)
-						g_backend->persist_asset(
-							id, info.path,
-							ASSET_TYPE_SHADER, g_edit,
-							(uint32_t)edit_len);
-					g_shader_compile_ok = 1;
-				} else {
-					g_shader_compile_ok = 0;
-				}
-			}
-			ImGui::SameLine();
-			if (g_shader_compile_ok == 1)
-				ImGui::TextColored(
-					ImVec4(0.3f, 0.9f, 0.3f, 1.0f),
-					"Compiled OK");
-			else if (g_shader_compile_ok == 0)
-				ImGui::TextColored(
-					ImVec4(1.0f, 0.3f, 0.3f, 1.0f),
-					"Compile failed");
-		}
-
-		if (editable) {
-			ImGui::SameLine();
-			if (ImGui::Button("Delete")) {
-				if (g_asset_mut)
-					g_asset_mut->destroy(id);
-				if (g_backend && can_persist)
-					g_backend->delete_asset(id);
-				g_edit_id   = 0;
-				g_edit[0]   = '\0';
-				g_nblocks   = 0;
-				g_asset_sel = 0;
-			}
-		}
-
-		return;
-	}
-
-	/*
-	 * Material assets — a single authored RGBA base_color, edited with a
-	 * color picker rather than a text box. #materials v0: no fixed-
-	 * function state, no textures, one parameter (see scene_renderer.c).
-	 */
-	if (info.type == ASSET_TYPE_MATERIAL) {
-		bool editable    = !info.read_only;
-		int  can_persist = editable && g_backend &&
-			(g_backend->get_caps() & BACKEND_CAP_PROJECT_PERSIST);
-
-		maybe_reload_material_color(id);
-
-		ImGui::Separator();
-
-		if (ImGui::CollapsingHeader("Color",
-					    ImGuiTreeNodeFlags_DefaultOpen)) {
-			ImGui::BeginDisabled(!editable);
-			ImGui::ColorEdit4("##basecolor", g_material_color);
-			ImGui::EndDisabled();
-		}
-
-		ImGui::Separator();
-
-		if (!editable) {
-			ImGui::BeginDisabled();
-			ImGui::Button("Save");
-			ImGui::EndDisabled();
-			ImGui::SameLine();
-			ImGui::TextDisabled("read-only");
-		} else {
-			/*
-			 * Save always writes the in-memory asset — the entity
-			 * inspector's material combo and the renderer both read
-			 * live catalog bytes — so the edit is visible this
-			 * session even with no backend to persist it to (mirrors
-			 * the shader Save fix in #390).
-			 */
-			if (ImGui::Button("Save")) {
-				if (g_asset_mut)
-					g_asset_mut->set_data(
-						id, g_material_color,
-						(uint32_t)sizeof(g_material_color));
-				if (can_persist)
-					g_backend->persist_asset(
-						id, info.path, ASSET_TYPE_MATERIAL,
-						g_material_color,
-						(uint32_t)sizeof(g_material_color));
-			}
-		}
-
-		if (editable) {
-			ImGui::SameLine();
-			if (ImGui::Button("Delete")) {
-				if (g_asset_mut)
-					g_asset_mut->destroy(id);
-				if (g_backend && can_persist)
-					g_backend->delete_asset(id);
-				g_material_color_id = 0;
-				g_asset_sel          = 0;
-			}
-		}
-
-		return;
-	}
-#endif /* __EMSCRIPTEN__ */
-
-	ImGui::Separator();
-	ImGui::TextUnformatted("Declaration");
-
-	/* Locate the index for describe(), which is index-addressed. */
-	n   = g_asset_api->count();
-	idx = n; /* sentinel: not found */
-	for (i = 0; i < n; i++) {
-		if (g_asset_api->info(i, &tmp) == 0 && tmp.id == id) {
-			idx = i;
-			break;
-		}
-	}
-	nf = (idx < n) ? g_asset_api->describe(idx, fields, 16) : 0;
-	if (nf == 0) {
-		ImGui::TextDisabled("(no declaration)");
-	} else if (ImGui::BeginTable("##decl", 2,
-				     ImGuiTableFlags_Borders |
-				     ImGuiTableFlags_RowBg   |
-				     ImGuiTableFlags_SizingStretchProp)) {
-		ImGui::TableSetupColumn("Property");
-		ImGui::TableSetupColumn("Value");
-		ImGui::TableHeadersRow();
-		for (i = 0; i < nf; i++) {
-			ImGui::TableNextRow();
-			ImGui::TableSetColumnIndex(0);
-			ImGui::TextUnformatted(fields[i].key);
-			ImGui::TableSetColumnIndex(1);
-			ImGui::TextUnformatted(fields[i].value);
-		}
-		ImGui::EndTable();
-	}
-
-	ImGui::Separator();
-	ImGui::TextUnformatted("Catalog");
-
-	if (!ImGui::BeginTable("##catalog", 2,
-			       ImGuiTableFlags_Borders |
-			       ImGuiTableFlags_RowBg   |
-			       ImGuiTableFlags_SizingStretchProp))
-		return;
-
-	ImGui::TableSetupColumn("Field");
-	ImGui::TableSetupColumn("Value");
-	ImGui::TableHeadersRow();
-
-	ImGui::TableNextRow();
-	ImGui::TableSetColumnIndex(0);
-	ImGui::TextUnformatted("path");
-	ImGui::TableSetColumnIndex(1);
-	ImGui::TextUnformatted(info.path);
-
-	ImGui::TableNextRow();
-	ImGui::TableSetColumnIndex(0);
-	ImGui::TextUnformatted("kind");
-	ImGui::TableSetColumnIndex(1);
-	ImGui::TextUnformatted(asset_kind_str(info.kind));
-
-	ImGui::TableNextRow();
-	ImGui::TableSetColumnIndex(0);
-	ImGui::TextUnformatted("type");
-	ImGui::TableSetColumnIndex(1);
-	ImGui::TextUnformatted(asset_type_str(info.type));
-
-	ImGui::TableNextRow();
-	ImGui::TableSetColumnIndex(0);
-	ImGui::TextUnformatted("state");
-	ImGui::TableSetColumnIndex(1);
-	ImGui::TextUnformatted(asset_state_str(info.state));
-
-	ImGui::TableNextRow();
-	ImGui::TableSetColumnIndex(0);
-	ImGui::TextUnformatted("size");
-	ImGui::TableSetColumnIndex(1);
-	if (info.size) {
-		snprintf(buf, sizeof(buf), "%u", info.size);
-		ImGui::TextUnformatted(buf);
-	} else {
-		ImGui::TextDisabled("-");
-	}
-
-	ImGui::TableNextRow();
-	ImGui::TableSetColumnIndex(0);
-	ImGui::TextUnformatted("refs");
-	ImGui::TableSetColumnIndex(1);
-	snprintf(buf, sizeof(buf), "%d", info.refs);
-	ImGui::TextUnformatted(buf);
-
-	ImGui::TableNextRow();
-	ImGui::TableSetColumnIndex(0);
-	ImGui::TextUnformatted("read_only");
-	ImGui::TableSetColumnIndex(1);
-	ImGui::TextUnformatted(info.read_only ? "yes" : "no");
-
-	ImGui::EndTable();
-}
-
-static void draw_tab_assets_native(void)
-{
-	uint32_t          n;
-	uint32_t          i;
-	struct asset_info info;
-	char              size_buf[32];
-	int               has_builtin = 0;
-	int               has_project = 0;
-
-	if (!g_asset_api) {
-		ImGui::TextDisabled("(assets unavailable)");
-		return;
-	}
-
-#ifdef __EMSCRIPTEN__
-	/*
-	 * New Asset button — only shown in the list view, not the inspector.
-	 * A small form collects just the name and the asset type (Text /
-	 * Shader); a krudd shader's stages live inside its DSL source, not in
-	 * a per-asset field, so there is nothing else to ask for here — the
-	 * new asset opens straight into the same editor screen used to view
-	 * one, ready for source to be typed in and saved.
-	 */
-	if (g_asset_sel == 0 && g_asset_mut) {
-		static char new_name[256];
-		static int  naming;   /* 1 while the form is visible */
-		static int  new_type; /* 0 = Text, 1 = Shader, 2 = Material */
-
-		static const char *const NEW_TYPES[] =
-			{ "Text", "Shader", "Material" };
-
-		if (!naming) {
-			if (ImGui::Button("New Asset")) {
-				naming      = 1;
-				new_name[0] = '\0';
-				new_type    = 0;
-			}
-		} else {
-			ImGui::SetNextItemWidth(240.0f);
-			bool confirm = ImGui::InputText(
-				"name", new_name, sizeof(new_name),
-				ImGuiInputTextFlags_EnterReturnsTrue);
-
-			ImGui::SetNextItemWidth(160.0f);
-			ImGui::Combo("type", &new_type, NEW_TYPES, 3);
-
-			confirm |= ImGui::Button("Create");
-			ImGui::SameLine();
-			if (ImGui::Button("Cancel"))
-				naming = 0;
-
-			if (confirm && new_name[0] != '\0') {
-				static const float DEFAULT_COLOR[4] =
-					{ 1.0f, 1.0f, 1.0f, 1.0f };
-				char        path[256];
-				int32_t     atype;
-				uint32_t    nid;
-				int         can_persist;
-				const void *bytes;
-				uint32_t    size;
-
-				atype = (new_type == 2) ? ASSET_TYPE_MATERIAL
-					: (new_type == 1) ? ASSET_TYPE_SHADER
-							  : ASSET_TYPE_TEXT;
-
-				/*
-				 * A material's bytes are its base_color vec4;
-				 * a new shader seeds from the built-in scene
-				 * shader so it starts from working source;
-				 * text still authors as empty.
-				 */
-				if (atype == ASSET_TYPE_MATERIAL) {
-					bytes = DEFAULT_COLOR;
-					size  = (uint32_t)sizeof(DEFAULT_COLOR);
-				} else if (atype == ASSET_TYPE_SHADER) {
-					const char *seed = default_shader_src();
-
-					bytes = seed;
-					size  = (uint32_t)strlen(seed);
-				} else {
-					bytes = "";
-					size  = 0;
-				}
-
-				snprintf(path, sizeof(path), "%s", new_name);
-
-				nid = g_asset_mut->create(path, atype, bytes, size);
-				if (nid != 0) {
-					can_persist =
-						g_backend &&
-						(g_backend->get_caps() &
-						 BACKEND_CAP_PROJECT_PERSIST);
-					if (can_persist)
-						g_backend->persist_asset(
-							nid, path, atype,
-							bytes, size);
-					g_asset_sel = nid;
-				}
-				naming = 0;
-			}
-		}
-
-		ImGui::Separator();
-	}
-#endif /* __EMSCRIPTEN__ */
-
-	n = g_asset_api->count();
-	if (n == 0) {
-		ImGui::TextDisabled("(no assets)");
-		return;
-	}
-
-	if (g_asset_sel != 0) {
-		draw_asset_inspector(g_asset_sel);
-		return;
-	}
-
-	/* Pre-scan to know which groups are present. */
-	for (i = 0; i < n; i++) {
-		if (g_asset_api->info(i, &info) != 0)
-			continue;
-		if (info.read_only)
-			has_builtin = 1;
-		else
-			has_project = 1;
-	}
-
-	if (!ImGui::BeginTable("##assets", 6,
-			       ImGuiTableFlags_Borders        |
-			       ImGuiTableFlags_RowBg          |
-			       ImGuiTableFlags_SizingStretchProp))
-		return;
-
-	ImGui::TableSetupColumn("Path");
-	ImGui::TableSetupColumn("Type");
-	ImGui::TableSetupColumn("Kind");
-	ImGui::TableSetupColumn("State");
-	ImGui::TableSetupColumn("Size");
-	ImGui::TableSetupColumn("Flags");
-	ImGui::TableHeadersRow();
-
-	/* Group 1: built-in (read-only) primitives */
-	if (has_builtin) {
-		ImGui::TableNextRow();
-		ImGui::TableSetColumnIndex(0);
-		ImGui::TextDisabled("-- BUILT-IN (read-only) --");
-
-		for (i = 0; i < n; i++) {
-			if (g_asset_api->info(i, &info) != 0 ||
-			    !info.read_only)
-				continue;
-			ImGui::TableNextRow();
-			ImGui::TableSetColumnIndex(0);
-			if (ImGui::Selectable(
-				    info.path, false,
-				    ImGuiSelectableFlags_SpanAllColumns))
-				g_asset_sel = info.id;
-			/*
-			 * Mesh rows are drag sources: the payload is the asset
-			 * id, which becomes the spawned entity's render_ref
-			 * (drag-to-spawn, #176).
-			 */
-			if (info.type == ASSET_TYPE_MESH &&
-			    ImGui::BeginDragDropSource(
-				    ImGuiDragDropFlags_None)) {
-				ImGui::SetDragDropPayload("ASSET_ID", &info.id,
-							  sizeof(info.id));
-				ImGui::Text("Spawn %s", info.path);
-				ImGui::EndDragDropSource();
-			}
-			ImGui::TableSetColumnIndex(1);
-			ImGui::TextUnformatted(asset_type_str(info.type));
-			ImGui::TableSetColumnIndex(2);
-			ImGui::TextUnformatted(asset_kind_str(info.kind));
-			ImGui::TableSetColumnIndex(3);
-			ImGui::TextUnformatted(asset_state_str(info.state));
-			ImGui::TableSetColumnIndex(4);
-			if (info.size) {
-				snprintf(size_buf, sizeof(size_buf),
-					 "%u", info.size);
-				ImGui::TextUnformatted(size_buf);
-			} else {
-				ImGui::TextDisabled("-");
-			}
-			ImGui::TableSetColumnIndex(5);
-			ImGui::TextColored(
-				ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "RO");
-		}
-	}
-
-	/* Group 2: project assets */
-	if (has_project) {
-		ImGui::TableNextRow();
-		ImGui::TableSetColumnIndex(0);
-		ImGui::TextDisabled("-- PROJECT --");
-
-		for (i = 0; i < n; i++) {
-			if (g_asset_api->info(i, &info) != 0 ||
-			    info.read_only)
-				continue;
-			ImGui::TableNextRow();
-			ImGui::TableSetColumnIndex(0);
-			if (ImGui::Selectable(
-				    info.path, false,
-				    ImGuiSelectableFlags_SpanAllColumns))
-				g_asset_sel = info.id;
-			/*
-			 * Mesh rows are drag sources: the payload is the asset
-			 * id, which becomes the spawned entity's render_ref
-			 * (drag-to-spawn, #176).
-			 */
-			if (info.type == ASSET_TYPE_MESH &&
-			    ImGui::BeginDragDropSource(
-				    ImGuiDragDropFlags_None)) {
-				ImGui::SetDragDropPayload("ASSET_ID", &info.id,
-							  sizeof(info.id));
-				ImGui::Text("Spawn %s", info.path);
-				ImGui::EndDragDropSource();
-			}
-			ImGui::TableSetColumnIndex(1);
-			ImGui::TextUnformatted(asset_type_str(info.type));
-			ImGui::TableSetColumnIndex(2);
-			ImGui::TextUnformatted(asset_kind_str(info.kind));
-			ImGui::TableSetColumnIndex(3);
-			ImGui::TextUnformatted(asset_state_str(info.state));
-			ImGui::TableSetColumnIndex(4);
-			if (info.size) {
-				snprintf(size_buf, sizeof(size_buf),
-					 "%u", info.size);
-				ImGui::TextUnformatted(size_buf);
-			} else {
-				ImGui::TextDisabled("-");
-			}
-			ImGui::TableSetColumnIndex(5);
-			ImGui::TextDisabled("-");
-		}
-	}
-
-	ImGui::EndTable();
-}
-#endif /* !__EMSCRIPTEN__ — native Assets-tab fallback (#402) */
-
-static void draw_tab_assets(void)
-{
-#ifdef __EMSCRIPTEN__
-	/* Ported to Scheme (tabs/Assets.scm). Fall back only if the image
-	 * can't run at all — an empty panel would read as "no assets". */
-	if (call_scm_panel("kruddboard-draw-assets"))
-		return;
-	ImGui::TextDisabled("(assets unavailable)");
-#else
-	draw_tab_assets_native();
-#endif
-}
 
 /* ------------------------------------------------------------------ */
 /* Transform gizmo (#178)                                              */
@@ -4623,71 +3285,12 @@ static void pick_update(bool gizmo_active)
 /* ------------------------------------------------------------------ */
 
 /*
- * Editor-global Undo / Redo buttons for the board header. Greyed via
- * can_undo / can_redo and tooltipped with the next action's label
- * ("Undo Move Entity"). Nothing is drawn when the "edit" service is absent.
+ * The board header's Undo / Redo buttons and the Play / Pause toggle were lifted
+ * onto kruddgui's top toolbar (#492); they draw there now off the krudd-can-undo
+ * / krudd-undo / krudd-sim-mode / krudd-toggle-sim accessors above, so their
+ * ImGui draw functions (draw_undo_redo / draw_sim_mode) are gone with the board
+ * window that hosted them.
  */
-static void draw_undo_redo(void)
-{
-	bool can_undo;
-	bool can_redo;
-
-	if (!g_edit_api)
-		return;
-
-	can_undo = g_edit_api->can_undo();
-	can_redo = g_edit_api->can_redo();
-
-	ImGui::SameLine();
-	ImGui::BeginDisabled(!can_undo);
-	if (ImGui::SmallButton("Undo"))
-		g_edit_api->undo();
-	ImGui::EndDisabled();
-	if (can_undo && ImGui::IsItemHovered()) {
-		const char *label = g_edit_api->undo_label();
-
-		ImGui::SetTooltip("Undo %s", label ? label : "");
-	}
-
-	ImGui::SameLine();
-	ImGui::BeginDisabled(!can_redo);
-	if (ImGui::SmallButton("Redo"))
-		g_edit_api->redo();
-	ImGui::EndDisabled();
-	if (can_redo && ImGui::IsItemHovered()) {
-		const char *label = g_edit_api->redo_label();
-
-		ImGui::SetTooltip("Redo %s", label ? label : "");
-	}
-}
-
-/*
- * Simulation mode toggle for the board header: Playing (default) runs
- * world_tick + entity scripts every frame; Paused freezes the scene while
- * everything else (rendering, gizmo, undo/redo) keeps running. Color-tinted
- * (green while playing, amber while paused) so the state reads at a glance;
- * the label names the action a click takes, not the current state. Nothing
- * is drawn when the "scene" service doesn't support pausing.
- */
-static void draw_sim_mode(void)
-{
-	bool paused;
-
-	if (!g_entity_api || !g_entity_api->get_paused || !g_entity_api->set_paused)
-		return;
-
-	paused = g_entity_api->get_paused();
-
-	ImGui::SameLine();
-	ImGui::PushStyleColor(ImGuiCol_Button,
-			      paused ? IM_COL32(170, 120, 40, 255)
-				     : IM_COL32(60, 150, 60, 255));
-	if (ImGui::SmallButton(paused ? "> Play" : "|| Pause"))
-		g_entity_api->set_paused(!paused);
-	ImGui::PopStyleColor();
-	if (ImGui::IsItemHovered())
-		ImGui::SetTooltip(paused ? "Resume simulation" : "Pause simulation");
-}
 
 /*
  * Spawn a dragged mesh asset as a live entity: identity transform at the
@@ -4752,101 +3355,32 @@ static void draw_spawn_drop_target(void)
 	ImGui::End();
 }
 
-static void draw_board(void * /*userdata*/)
+/*
+ * The editor's viewport-space overlay: keep the camera aspect matched to the
+ * live canvas, then draw and drive the selection's transform gizmo plus the
+ * click-to-pick and drag-to-spawn interactions over the 3D scene. Still
+ * registered as an ImGui panel because the gizmo renders through ImGui's draw
+ * list and reads its pointer io — that is the remaining ImGui consumer here,
+ * ported onto kruddgui primitives in a follow-up (#492, feeding #487).
+ *
+ * The board's window chrome is gone (#492): every tab is now a standalone
+ * kruddgui console (kruddgui.scm), and the header's live controls — undo/redo
+ * and play/pause — moved onto kruddgui's own top toolbar (the "Show KB" toggle
+ * retired with them, since kruddgui fields raise the soft keyboard on focus).
+ * Backtick still toggles g_visible, which now gates just this overlay.
+ */
+static void draw_viewport_tools(void * /*userdata*/)
 {
-	float            vp_w;
-	float            vp_h;
-	float            win_w;
-	float            hint_x;
-	ImGuiWindowFlags flags;
-
 	if (!g_visible)
 		return;
 
-	/*
-	 * Keep the camera's projection aspect matched to the live canvas, then
-	 * draw the selection's transform handles over the viewport.  Both run
-	 * before the overlay so the gizmo sits under the editor window.
-	 */
 	if (g_camera_api && g_camera_api->set_viewport)
 		g_camera_api->set_viewport(ImGui::GetIO().DisplaySize.x,
 					   ImGui::GetIO().DisplaySize.y);
 	pick_update(gizmo_update_and_draw());
 
-	/* Behind the overlay: catches asset drops onto the viewport. */
+	/* Catches asset drops onto the viewport (the ImGui drag/drop path). */
 	draw_spawn_drop_target();
-
-	vp_w  = ImGui::GetMainViewport()->WorkSize.x;
-	vp_h  = ImGui::GetMainViewport()->WorkSize.y;
-	win_w = vp_w - 16.0f; /* 8 px margin each side */
-
-	ImGui::SetNextWindowSizeConstraints(
-		ImVec2(win_w, 0.0f), ImVec2(win_w, vp_h * 0.9f));
-	ImGui::SetNextWindowPos(ImVec2(8.0f, 8.0f), ImGuiCond_Always);
-	ImGui::SetNextWindowBgAlpha(0.86f);
-
-	flags = ImGuiWindowFlags_NoTitleBar
-	      | ImGuiWindowFlags_NoMove
-	      | ImGuiWindowFlags_NoScrollbar
-	      | ImGuiWindowFlags_NoScrollWithMouse
-	      | ImGuiWindowFlags_AlwaysAutoResize
-	      | ImGuiWindowFlags_NoBringToFrontOnFocus;
-
-	if (!ImGui::Begin("##kruddboard", nullptr, flags)) {
-		ImGui::End();
-		return;
-	}
-
-	if (ImGui::SmallButton(g_collapsed ? "[+]" : "[-]"))
-		g_collapsed = !g_collapsed;
-	ImGui::SameLine();
-	ImGui::TextDisabled("KRUDD EDITOR");
-	draw_undo_redo();
-	draw_sim_mode();
-#ifdef __EMSCRIPTEN__
-	if (g_touch_device) {
-		/*
-		 * No physical backtick on a touch device, and no reason to
-		 * pop the native keyboard on every tap (see imgui_plugin.cpp)
-		 * — so replace the hint with a button that shows/hides it.
-		 */
-		const char *label = g_kbd_shown ? "Hide KB" : "Show KB";
-
-		hint_x = ImGui::GetWindowWidth()
-			- ImGui::CalcTextSize(label).x
-			- 2.0f * ImGui::GetStyle().FramePadding.x
-			- ImGui::GetStyle().WindowPadding.x;
-		ImGui::SameLine(hint_x);
-		if (ImGui::SmallButton(label)) {
-			g_kbd_shown = !g_kbd_shown;
-			if (g_kbd_shown)
-				krudd_text_input_show();
-			else
-				krudd_text_input_hide();
-		}
-	} else
-#endif
-	{
-		hint_x = ImGui::GetWindowWidth()
-			- ImGui::CalcTextSize("` to hide").x
-			- ImGui::GetStyle().WindowPadding.x;
-		ImGui::SameLine(hint_x);
-		ImGui::TextDisabled("` to hide");
-	}
-	ImGui::Separator();
-
-	if (!g_collapsed) {
-		if (ImGui::BeginTabBar("##tabs",
-				       ImGuiTabBarFlags_FittingPolicyScroll)) {
-			if (ImGui::BeginTabItem("Assets")) {
-				draw_tab_assets();
-				ImGui::EndTabItem();
-			}
-			ImGui::EndTabBar();
-		}
-	}
-
-	ImGui::End();
 }
 
 /* ------------------------------------------------------------------ */
@@ -4858,15 +3392,13 @@ static void kruddboard_init(void)
 #ifdef __EMSCRIPTEN__
 	emscripten_set_keydown_callback(EMSCRIPTEN_EVENT_TARGET_DOCUMENT,
 					nullptr, 0, on_keydown);
-	g_touch_device = krudd_is_touch_device() != 0;
 
 	/*
 	 * Register the Scheme primitives eagerly, not on first panel draw. The
-	 * gizmo-mode getter/setter (krudd-gizmo-mode / krudd-set-gizmo-mode)
-	 * lives here but is now also read by kruddgui's mode-bar, whose tick can
-	 * run before any kruddboard tab has drawn (the board may be collapsed).
-	 * Populating the shared s7 environment at init makes the binding exist
-	 * regardless of board visibility; the draw-time calls then no-op.
+	 * accessors the kruddgui panels read (krudd-gizmo-mode, the toolbar's
+	 * krudd-can-undo / krudd-sim-mode, …) live here but drive kruddgui's own
+	 * tick, which can run before any kruddboard C panel has drawn. Populating
+	 * the shared s7 environment at init makes the bindings exist regardless.
 	 */
 	ensure_panel_scm();
 #endif
@@ -4888,11 +3420,12 @@ static void kruddboard_tick(void)
 	if (!imgui)
 		return;
 
-	imgui->register_panel("##kruddboard", draw_board, nullptr);
+	imgui->register_panel("##viewport_tools", draw_viewport_tools, nullptr);
 	g_panels_registered = 1;
 
 	if (g_log)
-		g_log->write(LOG_LEVEL_INFO, "kruddboard: board registered");
+		g_log->write(LOG_LEVEL_INFO,
+			     "kruddboard: viewport tools registered");
 #endif
 }
 

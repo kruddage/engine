@@ -179,7 +179,7 @@
 	     (and (contains? ninja-text "build build.ninja: regen ")
 		  (contains? ninja-text "generator = 1")))
       (check "regen edge lists an embedded .scm source as an input"
-	     (contains? ninja-text "ui/kruddboard/tabs/Assets.scm"))))
+	     (contains? ninja-text "ui/kruddgui/kruddgui.scm"))))
 
 (if (and ninja-out (> (string-length ninja-out) 0))
     (begin

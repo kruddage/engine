@@ -123,6 +123,8 @@ static void setup(void)
 	/* Reset the one-open-at-a-time picker and the fold set a prior test set. */
 	s7_eval_c_string(sc, "(set! kruddgui-open-picker #f)");
 	s7_eval_c_string(sc, "(set! kruddgui-fold-state '())");
+	/* Reset the console arbiter so a tray test starts from a clean slate. */
+	s7_eval_c_string(sc, "(set! kruddgui-active-console #f)");
 }
 
 /* ------------------------------------------------------------------ */
@@ -704,6 +706,94 @@ static void test_toolbar_enabled_redo_fires(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* Dock layout — safe frame, band reservation, the console arbiter     */
+/* ------------------------------------------------------------------ */
+
+/* The width breakpoints map to the three layout modes. */
+static void test_layout_mode_breakpoints(void)
+{
+	assert(is_true(eval(
+		"(eq? (kruddgui-layout-mode 500 900) 'phone-portrait)")));
+	assert(is_true(eval(
+		"(eq? (kruddgui-layout-mode 700 500) 'phone-landscape)")));
+	assert(is_true(eval(
+		"(eq? (kruddgui-layout-mode 1000 800) 'desktop)")));
+}
+
+/*
+ * Reserving a bottom band shrinks the free rect by extent+gap and returns the
+ * band flush with the old bottom edge; the free top (y) does not move. gap is
+ * kruddgui-gap (10), so a 56px band leaves free h = 800-66 = 734.
+ */
+static void test_dock_reserve_bottom(void)
+{
+	s7_pointer r = eval(
+		"(let* ((D (kruddgui-dock 0 0 'desktop 0 0 400 800))"
+		"       (b (kruddgui-dock-reserve! D 'bottom 56)))"
+		"  (list (cadr b) (caddr b) (cadddr b)"
+		"        (kruddgui-dock-y D) (kruddgui-dock-h D)))");
+	assert(close_to(nth_real(r, 0), 744.0));  /* band y = 800-56 */
+	assert(close_to(nth_real(r, 1), 400.0));  /* band w spans free */
+	assert(close_to(nth_real(r, 2), 56.0));   /* band h = extent */
+	assert(close_to(nth_real(r, 3), 0.0));    /* free top unmoved */
+	assert(close_to(nth_real(r, 4), 734.0));  /* free h -= extent+gap */
+}
+
+/* Reserving a top band pushes the free rect's origin down past band+gap. */
+static void test_dock_reserve_top(void)
+{
+	s7_pointer r = eval(
+		"(let* ((D (kruddgui-dock 0 0 'desktop 0 0 400 800))"
+		"       (b (kruddgui-dock-reserve! D 'top 40)))"
+		"  (list (cadr b) (kruddgui-dock-y D) (kruddgui-dock-h D)))");
+	assert(close_to(nth_real(r, 0), 0.0));    /* band at old top */
+	assert(close_to(nth_real(r, 1), 50.0));   /* free y = 40+gap */
+	assert(close_to(nth_real(r, 2), 750.0));  /* free h = 800-50 */
+}
+
+/* A zero-extent reserve (a hidden bar, e.g. the mode-bar with no selection)
+ * costs no space and returns a degenerate band. */
+static void test_dock_reserve_zero(void)
+{
+	s7_pointer r = eval(
+		"(let* ((D (kruddgui-dock 0 0 'desktop 0 0 400 800))"
+		"       (b (kruddgui-dock-reserve! D 'bottom 0)))"
+		"  (list (kruddgui-dock-h D) (cadddr b)))");
+	assert(close_to(nth_real(r, 0), 800.0));  /* free h unchanged */
+	assert(close_to(nth_real(r, 1), 0.0));    /* band h = 0 */
+}
+
+/*
+ * The arbiter holds at most one console: opening a second closes the first,
+ * and re-tapping the active one parks it (#f). This is the occlusion fix — two
+ * near-full-width consoles can never be live at once.
+ */
+static void test_arbiter_single_active(void)
+{
+	assert(is_true(eval(
+		"(begin (set! kruddgui-active-console #f)"
+		"  (kruddgui-console-toggle! 'log)"
+		"  (and (eq? kruddgui-active-console 'log)"
+		"       (begin (kruddgui-console-toggle! 'board)"
+		"              (eq? kruddgui-active-console 'board))"
+		"       (begin (kruddgui-console-toggle! 'board)"
+		"              (eq? kruddgui-active-console #f))))")));
+}
+
+/*
+ * A tap on a tray pill activates that console through the arbiter. The tray
+ * reserves a 40px row off a 400-wide dock: 4 pills of width 92.5 at stride
+ * 102.5, so the SCENE pill (index 2) spans x 205..297.5 — centre (251, 20).
+ */
+static void test_tray_tap_activates(void)
+{
+	tap(251.0f, 20.0f);
+	eval("(kruddgui-tray-draw "
+	     "(kruddgui-dock 400 800 'phone-portrait 0 0 400 800))");
+	assert(is_true(eval("(eq? kruddgui-active-console 'scene)")));
+}
+
+/* ------------------------------------------------------------------ */
 /* Markdown preview (md_draw's kgui port)                              */
 /* ------------------------------------------------------------------ */
 
@@ -801,6 +891,12 @@ int main(void)
 	RUN(toolbar_tap_toggles_sim);
 	RUN(toolbar_disabled_undo_is_inert);
 	RUN(toolbar_enabled_redo_fires);
+	RUN(layout_mode_breakpoints);
+	RUN(dock_reserve_bottom);
+	RUN(dock_reserve_top);
+	RUN(dock_reserve_zero);
+	RUN(arbiter_single_active);
+	RUN(tray_tap_activates);
 	RUN(md_wrap_breaks_lines);
 	RUN(md_wrap_long_word_own_line);
 	RUN(md_runs_concat_and_style);

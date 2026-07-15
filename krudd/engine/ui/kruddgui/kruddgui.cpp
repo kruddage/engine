@@ -766,6 +766,77 @@ static s7_pointer sp_kgui_rect(s7_scheme *sc, s7_pointer args)
 	return s7_unspecified(sc);
 }
 
+/* (kgui-line x0 y0 x1 y1 width r g b a) -> unspecified. A thick flat segment. */
+static s7_pointer sp_kgui_line(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer p = args;
+	double x0 = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double y0 = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double x1 = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double y1 = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double wd = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double r  = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double g  = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double b  = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double a  = s7_number_to_real(sc, s7_car(p));
+
+	kgui_batch_line(&s_batch, (float)x0, (float)y0, (float)x1, (float)y1,
+			(float)wd, s_white_u, s_white_v,
+			(float)r, (float)g, (float)b, (float)a);
+	return s7_unspecified(sc);
+}
+
+/*
+ * Segment count for a circle / ring of radius rad — enough facets to read as
+ * round at handle sizes without flooding the batch: ~one segment per 2px of
+ * circumference, clamped to [12, 48].
+ */
+static int kgui_circle_segs(double rad)
+{
+	int segs = (int)(rad * 0.9) + 8;
+
+	if (segs < 12) segs = 12;
+	if (segs > 48) segs = 48;
+	return segs;
+}
+
+/* (kgui-circle cx cy rad r g b a) -> unspecified. A filled flat disc. */
+static s7_pointer sp_kgui_circle(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer p = args;
+	double cx  = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double cy  = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double rad = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double r   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double g   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double b   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double a   = s7_number_to_real(sc, s7_car(p));
+
+	kgui_batch_circle(&s_batch, (float)cx, (float)cy, (float)rad,
+			  kgui_circle_segs(rad), s_white_u, s_white_v,
+			  (float)r, (float)g, (float)b, (float)a);
+	return s7_unspecified(sc);
+}
+
+/* (kgui-ring cx cy rad width r g b a) -> unspecified. A circle outline. */
+static s7_pointer sp_kgui_ring(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer p = args;
+	double cx  = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double cy  = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double rad = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double wd  = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double r   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double g   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double b   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double a   = s7_number_to_real(sc, s7_car(p));
+
+	kgui_batch_ring(&s_batch, (float)cx, (float)cy, (float)rad, (float)wd,
+			kgui_circle_segs(rad), s_white_u, s_white_v,
+			(float)r, (float)g, (float)b, (float)a);
+	return s7_unspecified(sc);
+}
+
 /*
  * (kgui-image x y w h tex [u0 v0 u1 v1] [r g b a]) -> unspecified. Draws the GL
  * texture handle `tex` into the (x y w h) box. Omit the UVs to map the whole
@@ -1086,6 +1157,12 @@ static void register_primitives(s7_scheme *sc)
 			   "(kgui-image x y w h tex [u0 v0 u1 v1] [r g b a])");
 	s7_define_function(sc, "kgui-rect", sp_kgui_rect, 8, 0, false,
 			   "(kgui-rect x y w h r g b a) filled rectangle");
+	s7_define_function(sc, "kgui-line", sp_kgui_line, 9, 0, false,
+			   "(kgui-line x0 y0 x1 y1 width r g b a) thick segment");
+	s7_define_function(sc, "kgui-circle", sp_kgui_circle, 7, 0, false,
+			   "(kgui-circle cx cy rad r g b a) filled disc");
+	s7_define_function(sc, "kgui-ring", sp_kgui_ring, 8, 0, false,
+			   "(kgui-ring cx cy rad width r g b a) circle outline");
 	s7_define_function(sc, "kgui-text", sp_kgui_text, 7, 1, false,
 			   "(kgui-text x y str r g b a [size]) atlas text run");
 	s7_define_function(sc, "kgui-text-metrics", sp_kgui_text_metrics, 1, 1,

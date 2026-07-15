@@ -1787,9 +1787,9 @@
 ;;! fields, an optional texture binding, and Save / Delete (or, for a read-only
 ;;! built-in, Clone). The texture editor is the generation parameters as live sliders
 ;;! plus the live baked Preview (kgui-image over krudd-texture-bake). The source
-;;! editors draw on the multiline field (kgui-field-multi); the one remaining gap
-;;! is the markdown *preview*, which still waits on an md_draw->kgui_batch port
-;;! (#492 item 3). Every other asset type falls through to the generic view.
+;;! editors draw on the multiline field (kgui-field-multi), and the text editor's
+;;! markdown Preview now renders on kruddgui's own text (kruddgui-md-draw, #492
+;;! item 3). Every other asset type falls through to the generic view.
 
 ;;! Material editor model — the kruddgui twins of Assets.scm's material statics,
 ;;! keyed by the material id they were loaded for. A material has no fields of its
@@ -2355,17 +2355,209 @@
 	(kruddgui-asset-clone-row L id path "script-clone-name"
 	    (lambda (nm) (krudd-asset-clone-script nm (krudd-asset-data id)))))))
 
-;;! (kruddgui-asset-text-editor L id) the authored-text inspector: the editable Source
-;;! and a Save that persists through krudd-asset-save-text (which has no compile gate,
-;;! so no tri-state result), then Save/Delete. Ported from Assets.scm's kruddboard-
-;;! draw-asset-text-editor minus the rendered markdown Preview — that is md_draw's
-;;! kgui_batch port, a later PR, so this ports only the SOURCE box + Save. Only reached
-;;! for a mutable (authored) text; a read-only text has no clone primitive and falls to
-;;! the catalog view, as it did under ImGui.
+;;! ------------------------------------------------------------------
+;;! Markdown preview — md_draw's ImGui shim re-authored on kruddgui (#492 item 3)
+;;! ------------------------------------------------------------------
+;;!
+;;! The old ImGui md-preview (a BeginChild + md_draw_blocks that scaled ImGui's
+;;! font and coloured **bold** / `code` spans) is re-authored here on kruddgui's
+;;! own text. Parsing and byte-accurate span splitting stay in C — (krudd-md-parse
+;;! text) hands back (type level (run ...)) blocks, run = (text . style) with style
+;;! 0 normal / 1 bold / 2 code — so this file only lays out and draws: heading
+;;! sizes (crisp whole-cell multiples), colour-carried emphasis (the bitmap font
+;;! has one face, exactly as md_draw carried emphasis in colour), a word wrap, and
+;;! a code-line background. Every helper is geometry-free and host-tested.
+
+;;! Body size (the atlas default) and the two larger heading sizes; 16/24/32 are
+;;! whole multiples of the 8px glyph cell so the nearest-sampled bitmap stays crisp.
+;;! -lead is the leading added to a text size for its line box; -gap the blank space
+;;! after a paragraph / heading / list; -indent the list-item hang past the bullet.
+(define kruddgui-md-body-size 16.0)
+(define kruddgui-md-lead 3.0)
+(define kruddgui-md-gap  6.0)
+(define kruddgui-md-indent 16.0)
+
+;;! Body text is the panel's idle grey; headings a cool blue; **bold** a warm
+;;! amber and `code` a cool cyan (the exact emphasis md_draw carried in colour);
+;;! code lines sit on a faint slab.
+(define kruddgui-md-head-fg '(0.62 0.80 0.98 1.0))
+(define kruddgui-md-bold-fg '(1.00 0.83 0.40 1.0))
+(define kruddgui-md-code-fg '(0.60 0.85 1.00 1.0))
+(define kruddgui-md-code-bg '(0.10 0.11 0.13 1.0))
+
+;;! (kruddgui-md-space? c) the wrap's word separators: ASCII space, tab, newline.
+(define (kruddgui-md-space? c)
+  (or (char=? c #\space) (char=? c #\newline) (char=? c #\tab)))
+
+;;! (kruddgui-md-run-color style default) the draw colour for a run: amber for
+;;! bold, cyan for code, else the block's own default colour.
+(define (kruddgui-md-run-color style default)
+  (cond ((= style 1) kruddgui-md-bold-fg)
+	((= style 2) kruddgui-md-code-fg)
+	(else default)))
+
+;;! (kruddgui-md-runs->text+bounds runs) flattens a block's styled runs into one
+;;! string plus a list of (end-pos . style) cumulative boundaries, so the wrap can
+;;! work on the plain text and the draw can recover each run's colour by position.
+(define (kruddgui-md-runs->text+bounds runs)
+  (let loop ((rs runs) (txt "") (bounds '()) (pos 0))
+    (if (null? rs)
+	(cons txt (reverse bounds))
+	(let* ((t  (caar rs))
+	       (st (cdar rs))
+	       (np (+ pos (string-length t))))
+	  (loop (cdr rs) (string-append txt t)
+		(cons (cons np st) bounds) np)))))
+
+;;! (kruddgui-md-style-at bounds p) the style covering character position p, and
+;;! (kruddgui-md-seg-end bounds p) the end of the run containing p — together they
+;;! walk a line as maximal single-style segments.
+(define (kruddgui-md-style-at bounds p)
+  (cond ((null? bounds) 0)
+	((> (caar bounds) p) (cdar bounds))
+	(else (kruddgui-md-style-at (cdr bounds) p))))
+(define (kruddgui-md-seg-end bounds p)
+  (cond ((null? bounds) p)
+	((> (caar bounds) p) (caar bounds))
+	(else (kruddgui-md-seg-end (cdr bounds) p))))
+
+;;! (kruddgui-md-words text) the non-whitespace word ranges (start . end) of text,
+;;! in order — the atoms the wrap packs into lines.
+(define (kruddgui-md-words text)
+  (let ((n (string-length text)))
+    (let loop ((i 0) (start #f) (acc '()))
+      (cond ((= i n) (reverse (if start (cons (cons start i) acc) acc)))
+	    ((kruddgui-md-space? (string-ref text i))
+	     (loop (+ i 1) #f (if start (cons (cons start i) acc) acc)))
+	    (else (loop (+ i 1) (or start i) acc))))))
+
+;;! (kruddgui-md-word-w text rng size) the pixel width of one word at size.
+(define (kruddgui-md-word-w text rng size)
+  (car (kgui-text-metrics (substring text (car rng) (cdr rng)) size)))
+
+;;! (kruddgui-md-wrap text width size) greedy word wrap: the list of (start . end)
+;;! line ranges over text that each fit within width at size. A single word wider
+;;! than width takes its own (overflowing, clipped) line rather than splitting mid-
+;;! word. Pure measurement, so the reflow is host-tested without a browser.
+(define (kruddgui-md-wrap text width size)
+  (let ((words (kruddgui-md-words text))
+	(sp    (car (kgui-text-metrics " " size))))
+    (if (null? words)
+	'()
+	(let loop ((ws (cdr words))
+		   (ls (caar words))
+		   (le (cdar words))
+		   (lw (kruddgui-md-word-w text (car words) size))
+		   (lines '()))
+	  (if (null? ws)
+	      (reverse (cons (cons ls le) lines))
+	      (let* ((w  (car ws))
+		     (ww (kruddgui-md-word-w text w size))
+		     (nw (+ lw sp ww)))
+		(if (<= nw width)
+		    (loop (cdr ws) ls (cdr w) nw lines)
+		    (loop (cdr ws) (car w) (cdr w) ww
+			  (cons (cons ls le) lines)))))))))
+
+;;! (kruddgui-md-draw-line text bounds ls le x y size default) paints one wrapped
+;;! line [ls, le) as maximal single-style segments, each in its run's colour,
+;;! advancing across the line by measured width.
+(define (kruddgui-md-draw-line text bounds ls le x y size default)
+  (let loop ((p ls) (cx x))
+    (when (< p le)
+      (let* ((be  (min le (kruddgui-md-seg-end bounds p)))
+	     (seg (substring text p be))
+	     (col (kruddgui-md-run-color (kruddgui-md-style-at bounds p)
+					 default)))
+	(kgui-text cx y seg (car col) (cadr col) (caddr col) (cadddr col) size)
+	(loop be (+ cx (car (kgui-text-metrics seg size))))))))
+
+;;! (kruddgui-md-emit L x w text bounds size default) wraps text to width w and
+;;! draws each line at x from the layout cursor, culling off-body lines and
+;;! advancing L past every line (drawn or not). The one text-flowing primitive the
+;;! heading / paragraph / list blocks share.
+(define (kruddgui-md-emit L x w text bounds size default)
+  (let ((lh (+ size kruddgui-md-lead)))
+    (for-each
+     (lambda (rng)
+       (let ((y (kruddgui-lay-cy L)))
+	 (when (kruddgui-lay-vis? L lh)
+	   (kruddgui-md-draw-line text bounds (car rng) (cdr rng)
+				  x y size default))
+	 (kruddgui-lay-adv! L lh)))
+     (kruddgui-md-wrap text w size))))
+
+;;! (kruddgui-md-heading-size level) the crisp heading size by level: h1 32, h2 24,
+;;! h3+ the body size (distinguished by the heading colour), all whole-cell so the
+;;! bitmap stays sharp.
+(define (kruddgui-md-heading-size level)
+  (cond ((<= level 1) 32.0) ((= level 2) 24.0) (else kruddgui-md-body-size)))
+
+;;! (kruddgui-md-block L block) draws one parsed block at the cursor: a heading in
+;;! its scaled blue, a code line on its slab, a bulleted list item, or a wrapped
+;;! paragraph — each with the emphasis colours its runs carry.
+(define (kruddgui-md-block L block)
+  (let* ((type   (car block))
+	 (level  (cadr block))
+	 (tb     (kruddgui-md-runs->text+bounds (caddr block)))
+	 (text   (car tb))
+	 (bounds (cdr tb))
+	 (x      (kruddgui-lay-x L))
+	 (w      (kruddgui-lay-w L)))
+    (cond
+     ;;! Heading — scaled, blue, then half a gap.
+     ((= type 1)
+      (kruddgui-md-emit L x w text bounds
+			(kruddgui-md-heading-size level) kruddgui-md-head-fg)
+      (kruddgui-lay-adv! L (/ kruddgui-md-gap 2)))
+     ;;! Code — one unwrapped line (md_parse emits a block per line) on a slab, in
+     ;;! cyan; consecutive code lines stack with no inter-line gap.
+     ((= type 3)
+      (let ((lh (+ kruddgui-md-body-size kruddgui-md-lead))
+	    (y  (kruddgui-lay-cy L)))
+	(when (kruddgui-lay-vis? L lh)
+	  (kruddgui-rect* (list x y w lh) kruddgui-md-code-bg)
+	  (kgui-text (+ x 4) y text
+		     (car kruddgui-md-code-fg) (cadr kruddgui-md-code-fg)
+		     (caddr kruddgui-md-code-fg) (cadddr kruddgui-md-code-fg)
+		     kruddgui-md-body-size))
+	(kruddgui-lay-adv! L lh)))
+     ;;! List item — a hanging bullet, the text wrapped in the indented column.
+     ((= type 2)
+      (let ((y (kruddgui-lay-cy L)))
+	(when (kruddgui-lay-vis? L (+ kruddgui-md-body-size kruddgui-md-lead))
+	  (kgui-text x y "-"
+		     (car kruddgui-idle-fg) (cadr kruddgui-idle-fg)
+		     (caddr kruddgui-idle-fg) (cadddr kruddgui-idle-fg)
+		     kruddgui-md-body-size)))
+      (kruddgui-md-emit L (+ x kruddgui-md-indent) (- w kruddgui-md-indent)
+			text bounds kruddgui-md-body-size kruddgui-idle-fg)
+      (kruddgui-lay-adv! L (/ kruddgui-md-gap 2)))
+     ;;! Paragraph — wrapped body text, then a gap.
+     (else
+      (kruddgui-md-emit L x w text bounds kruddgui-md-body-size
+			kruddgui-idle-fg)
+      (kruddgui-lay-adv! L kruddgui-md-gap)))))
+
+;;! (kruddgui-md-draw L text) parses text and draws its blocks down the layout
+;;! cursor — the whole markdown preview. (krudd-md-parse) returns () for empty or
+;;! non-string input, which draws nothing.
+(define (kruddgui-md-draw L text)
+  (for-each (lambda (b) (kruddgui-md-block L b)) (krudd-md-parse text)))
+
+;;! (kruddgui-asset-text-editor L id) the authored-text inspector: the editable
+;;! Source and a rendered markdown Preview of the live buffer, then a Save that
+;;! persists through krudd-asset-save-text (no compile gate, so no tri-state) and
+;;! Delete. Ported from Assets.scm's kruddboard-draw-asset-text-editor, now with the
+;;! Preview restored on kruddgui's own text (#492 item 3). Only reached for a mutable
+;;! (authored) text; a read-only text has no clone primitive and falls to the catalog
+;;! view, as it did under ImGui.
 (define (kruddgui-asset-text-editor L id)
   (kruddgui-assets-maybe-reload-edit id)
   (when (kruddgui-fold L "text-src-fold" "Source" #t)
     (kruddgui-asset-src-field L "asset-text-src"))
+  (when (kruddgui-fold L "text-preview-fold" "Preview" #f)
+    (kruddgui-md-draw L kruddgui-assets-edit-text))
   (kruddgui-scene-rule L)
   (let ((act (kruddgui-button-row L (list "Save" "Delete"))))
     (cond

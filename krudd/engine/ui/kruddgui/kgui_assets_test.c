@@ -1282,16 +1282,19 @@ static void test_mesh_source_save(void)
 static void test_text_editor_and_save(void)
 {
 	/*
-	 * A mutable text (type 7) shows the Source box + Save (no compile gate, no
-	 * tri-state). Source fold closed: Back (->94), path (->120), rule (->128),
-	 * source fold (->174), rule (->182), Save/Delete row at y 182..222.
+	 * A mutable text (type 7) shows the Source box, a markdown Preview fold and
+	 * Save (no compile gate, no tri-state). Both folds closed: Back (->94), path
+	 * (->120), rule (->128), source fold (->174), preview fold (->220), rule
+	 * (->228), Save/Delete row at y 228..268.
 	 */
 	set_sel(27);
 	draw();
 	assert(rec_has("text Source"));
+	assert(rec_has("text Preview"));
 	assert(rec_has("field-multi"));
-	eval("(set! kruddgui-fold-state (list (cons \"text-src-fold\" #f)))");
-	tap(100.0f, 200.0f);
+	eval("(set! kruddgui-fold-state (list (cons \"text-src-fold\" #f) "
+	     "(cons \"text-preview-fold\" #f)))");
+	tap(100.0f, 248.0f);
 	draw();
 	assert(rec_has("save-text"));
 	assert(g_blur_called >= 1);

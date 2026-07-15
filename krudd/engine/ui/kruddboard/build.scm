@@ -4,9 +4,8 @@
 		(wasm-flags "--std=c++17" "-fno-exceptions" "-fno-rtti")
 		(sources "kruddboard.cpp" (raw "${generated}/md_parse.scm.c"))
 		(private "." (raw "${generated}") (raw "../third_party")
-			(root "asset")
-			(raw "${imgui}") (raw "${imgui}/backends"))
-		(link "mesh_script" "texture_script" "imgui_plugin" "script" "log"
+			(root "asset"))
+		(link "mesh_script" "texture_script" "script" "log"
 			"memory" "subsystem" "subsystem_manager")))
 
  (native-only

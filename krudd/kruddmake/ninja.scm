@@ -352,12 +352,6 @@
 		  (string-append srcroot "/core/texture_script.scm")
 		  (string-append gen "/texture_script_scm.h") "TEXTURE_SCRIPT_SCM")
 		(krudd-embed-file
-		  (string-append srcroot "/ui/kruddboard/kruddboard.scm")
-		  (string-append gen "/kruddboard_scm.h") "KRUDDBOARD_SCM")
-		(krudd-embed-file
-		  (string-append srcroot "/ui/kruddboard/tabs/Assets.scm")
-		  (string-append gen "/assets_scm.h") "ASSETS_SCM")
-		(krudd-embed-file
 		  (string-append srcroot "/ui/kruddgui/kruddgui.scm")
 		  (string-append gen "/kruddgui_scm.h") "KRUDDGUI_SCM")
 		(krudd-embed-scheme-module
@@ -387,8 +381,6 @@
 		     "core/entity_script.scm"
 		     "core/mesh_script.scm"
 		     "core/texture_script.scm"
-		     "ui/kruddboard/kruddboard.scm"
-		     "ui/kruddboard/tabs/Assets.scm"
 		     "ui/kruddgui/kruddgui.scm"
 		     "ui/kruddboard/md_parse.scm"
 		     "math/math.scm"

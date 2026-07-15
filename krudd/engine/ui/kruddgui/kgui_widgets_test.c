@@ -94,6 +94,15 @@ static float g_region_fx, g_region_fy;
 static int   g_fm_active, g_fm_committed, g_fm_cline, g_fm_nlines;
 static float g_fm_caret_px;
 
+/*
+ * Steerable editor-toolbar accessors, standing in for the krudd-* bindings
+ * kruddboard registers against the live edit/scene apis: the sim mode
+ * (0 unsupported -> #f, 1 playing, 2 paused), the undo/redo availability, and
+ * counters a tap test reads to prove the right thunk (or none) fired.
+ */
+static int g_sim, g_can_undo, g_can_redo;
+static int g_undo_calls, g_redo_calls, g_toggle_calls;
+
 static void setup(void)
 {
 	s7_scheme *sc = script_s7();
@@ -107,6 +116,9 @@ static void setup(void)
 	g_fm_active    = g_fm_committed = 0;
 	g_fm_cline     = g_fm_nlines = 0;
 	g_fm_caret_px  = 0.0f;
+	g_sim          = 1;   /* playing, both histories empty by default */
+	g_can_undo     = g_can_redo = 0;
+	g_undo_calls   = g_redo_calls = g_toggle_calls = 0;
 
 	/* Reset the one-open-at-a-time picker and the fold set a prior test set. */
 	s7_eval_c_string(sc, "(set! kruddgui-open-picker #f)");
@@ -202,6 +214,50 @@ static s7_pointer st_field_multi(s7_scheme *sc, s7_pointer a)
 		       s7_make_integer(sc, g_fm_nlines));
 }
 
+/* (krudd-sim-mode) -> 'playing / 'paused / #f, as the harness has dialled it. */
+static s7_pointer st_sim_mode(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	if (g_sim == 1)
+		return s7_make_symbol(sc, "playing");
+	if (g_sim == 2)
+		return s7_make_symbol(sc, "paused");
+	return s7_f(sc);
+}
+
+static s7_pointer st_can_undo(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	return s7_make_boolean(sc, g_can_undo);
+}
+
+static s7_pointer st_can_redo(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	return s7_make_boolean(sc, g_can_redo);
+}
+
+static s7_pointer st_undo(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	g_undo_calls++;
+	return s7_unspecified(sc);
+}
+
+static s7_pointer st_redo(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	g_redo_calls++;
+	return s7_unspecified(sc);
+}
+
+static s7_pointer st_toggle_sim(s7_scheme *sc, s7_pointer a)
+{
+	(void)a;
+	g_toggle_calls++;
+	return s7_unspecified(sc);
+}
+
 static void def(s7_scheme *sc, const char *name, s7_function fn, int req)
 {
 	s7_define_function(sc, name, fn, req, 0, false, "stub");
@@ -222,6 +278,12 @@ static s7_scheme *setup_interp(void)
 	def(sc, "kgui-clip-none", st_nullary, 0);
 	def(sc, "kgui-region", st_region, 5);
 	def(sc, "kgui-field-multi", st_field_multi, 6);
+	def(sc, "krudd-sim-mode", st_sim_mode, 0);
+	def(sc, "krudd-can-undo", st_can_undo, 0);
+	def(sc, "krudd-can-redo", st_can_redo, 0);
+	def(sc, "krudd-undo", st_undo, 0);
+	def(sc, "krudd-redo", st_redo, 0);
+	def(sc, "krudd-toggle-sim", st_toggle_sim, 0);
 
 	assert(script_eval(KRUDDGUI_SCM) == 0);
 	return sc;
@@ -518,6 +580,102 @@ static void test_multi_field_unfocused_shows_top(void)
 	assert(!rec_has("text L6"));
 }
 
+/* ------------------------------------------------------------------ */
+/* Editor toolbar (play/pause + undo/redo)                             */
+/* ------------------------------------------------------------------ */
+
+/* Read the label of the nth (0-based) descriptor in a toolbar button list. */
+static const char *btn_label(s7_pointer btns, int n)
+{
+	return s7_string(s7_car(s7_list_ref(script_s7(), btns, n)));
+}
+
+/* Read the enabled flag (index 3) of the nth descriptor. */
+static int btn_enabled(s7_pointer btns, int n)
+{
+	return is_true(s7_list_ref(script_s7(),
+				   s7_list_ref(script_s7(), btns, n), 3));
+}
+
+/* Playing: the first chip is PAUSE, then UNDO/REDO greyed to their history. */
+static void test_toolbar_playing_shows_pause(void)
+{
+	s7_pointer bs;
+
+	g_sim = 1;
+	g_can_undo = 1;
+	g_can_redo = 0;
+	bs = eval("(kruddgui-toolbar-buttons)");
+	assert(s7_list_length(script_s7(), bs) == 3);
+	assert(strcmp(btn_label(bs, 0), "PAUSE") == 0);
+	assert(strcmp(btn_label(bs, 1), "UNDO") == 0);
+	assert(btn_enabled(bs, 1));            /* history present */
+	assert(strcmp(btn_label(bs, 2), "REDO") == 0);
+	assert(!btn_enabled(bs, 2));           /* nothing to redo */
+}
+
+/* Paused: the first chip flips to PLAY. */
+static void test_toolbar_paused_shows_play(void)
+{
+	s7_pointer bs;
+
+	g_sim = 2;
+	bs = eval("(kruddgui-toolbar-buttons)");
+	assert(strcmp(btn_label(bs, 0), "PLAY") == 0);
+}
+
+/* No pausing support: the play/pause chip is omitted, only undo/redo remain. */
+static void test_toolbar_no_sim_hides_playpause(void)
+{
+	s7_pointer bs;
+
+	g_sim = 0;
+	bs = eval("(kruddgui-toolbar-buttons)");
+	assert(s7_list_length(script_s7(), bs) == 2);
+	assert(strcmp(btn_label(bs, 0), "UNDO") == 0);
+	assert(strcmp(btn_label(bs, 1), "REDO") == 0);
+}
+
+/*
+ * A tap on the enabled play/pause chip fires the toggle. With n=3 chips of
+ * w92 g10 the row is tot=296; centred in vw=800 that puts the first chip at
+ * x0=252, y=margin(16), so its centre is (298, 38).
+ */
+static void test_toolbar_tap_toggles_sim(void)
+{
+	g_sim = 1;
+	g_can_undo = 0;
+	g_can_redo = 0;
+	tap(298.0f, 38.0f);
+	eval("(kruddgui-toolbar-draw 800.0 600.0)");
+	assert(g_toggle_calls == 1);
+}
+
+/*
+ * A tap on a *disabled* undo chip is swallowed by the toolbar region but runs
+ * nothing, while the enabled redo beside it still fires. With no play/pause the
+ * row is two chips (tot=194) centred in vw=800: UNDO at x0=303, REDO at 405.
+ */
+static void test_toolbar_disabled_undo_is_inert(void)
+{
+	g_sim = 0;
+	g_can_undo = 0;   /* UNDO disabled */
+	g_can_redo = 1;   /* REDO enabled  */
+	tap(303.0f + 46.0f, 16.0f + 22.0f);
+	eval("(kruddgui-toolbar-draw 800.0 600.0)");
+	assert(g_undo_calls == 0);
+}
+
+static void test_toolbar_enabled_redo_fires(void)
+{
+	g_sim = 0;
+	g_can_undo = 0;
+	g_can_redo = 1;
+	tap(405.0f + 46.0f, 16.0f + 22.0f);
+	eval("(kruddgui-toolbar-draw 800.0 600.0)");
+	assert(g_redo_calls == 1);
+}
+
 int main(void)
 {
 	setup_interp();
@@ -536,6 +694,12 @@ int main(void)
 	RUN(multi_top_math);
 	RUN(multi_field_culls_to_caret);
 	RUN(multi_field_unfocused_shows_top);
+	RUN(toolbar_playing_shows_pause);
+	RUN(toolbar_paused_shows_play);
+	RUN(toolbar_no_sim_hides_playpause);
+	RUN(toolbar_tap_toggles_sim);
+	RUN(toolbar_disabled_undo_is_inert);
+	RUN(toolbar_enabled_redo_fires);
 
 	printf("\n%d/%d kgui widget tests passed\n", tests_passed, tests_run);
 	return tests_passed == tests_run ? 0 : 1;

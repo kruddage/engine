@@ -130,6 +130,92 @@
     (kgui-panel-end)))
 
 ;;! ------------------------------------------------------------------
+;;! Editor toolbar — the board header's controls lifted onto kruddgui (#492)
+;;! ------------------------------------------------------------------
+
+;;! The ImGui board window's header carried three live controls: play/pause and
+;;! undo/redo. (Its "Show KB" toggle is gone — kruddgui's own fields raise and
+;;! dismiss the soft keyboard on focus, see field_sync in kruddgui.cpp.) They lift
+;;! here onto a persistent top-centre toolbar: always shown (unlike the selection-
+;;! gated mode-bar), each control its own trapped tap, driven by the shared krudd-
+;;! can-undo / krudd-undo / krudd-sim-mode accessors kruddboard registers — so the
+;;! ImGui board window (and draw_undo_redo / draw_sim_mode) is gone. Geometry keys
+;;! off kruddgui-btn so the chips read as finger targets alongside the mode-bar.
+(define kruddgui-tool-h 44)
+(define kruddgui-tool-w 92)
+
+;;! Play (running -> green) / Pause (paused -> amber) tints, and the greyed
+;;! backing / label an undo or redo chip takes when its history is empty.
+(define kruddgui-tool-play-bg  '(0.22 0.55 0.28 0.95))
+(define kruddgui-tool-pause-bg '(0.70 0.50 0.16 0.95))
+(define kruddgui-tool-dis-bg   '(0.12 0.13 0.15 0.85))
+(define kruddgui-tool-dis-fg   '(0.42 0.44 0.48 1.0))
+
+;;! (kruddgui-tool-button x y w h label bg fg enabled thunk) draw one toolbar
+;;! chip; when ENABLED and tapped, run THUNK. A disabled chip declares no button,
+;;! so a tap on it is swallowed by the toolbar's own region (never leaking to the
+;;! editor beneath) but does nothing — the touch-first form of ImGui's greyed
+;;! BeginDisabled button.
+(define (kruddgui-tool-button x y w h label bg fg enabled thunk)
+  (kruddgui-rect* (list x y w h) bg)
+  (kruddgui-label x y w h label fg)
+  (when (and enabled (kgui-button x y w h))
+    (thunk)))
+
+;;! (kruddgui-toolbar-buttons) the visible controls left->right, each a
+;;! (label bg fg enabled thunk) descriptor: the play/pause chip first (only when
+;;! the scene supports pausing — krudd-sim-mode returns #f otherwise), then undo
+;;! and redo, each greyed when its history is empty. Built as data so the layout
+;;! loop and the tests share one source of truth.
+(define (kruddgui-toolbar-buttons)
+  (let ((sim (krudd-sim-mode))
+	(cu  (krudd-can-undo))
+	(cr  (krudd-can-redo)))
+    (append
+     (cond ((eq? sim 'paused)
+	    (list (list "PLAY" kruddgui-tool-play-bg kruddgui-idle-fg
+			#t krudd-toggle-sim)))
+	   ((eq? sim 'playing)
+	    (list (list "PAUSE" kruddgui-tool-pause-bg kruddgui-idle-fg
+			#t krudd-toggle-sim)))
+	   (else '()))
+     (list (list "UNDO"
+		 (if cu kruddgui-idle-bg kruddgui-tool-dis-bg)
+		 (if cu kruddgui-idle-fg kruddgui-tool-dis-fg)
+		 cu krudd-undo)
+	   (list "REDO"
+		 (if cr kruddgui-idle-bg kruddgui-tool-dis-bg)
+		 (if cr kruddgui-idle-fg kruddgui-tool-dis-fg)
+		 cr krudd-redo)))))
+
+;;! (kruddgui-toolbar-draw vw vh) the toolbar: a centred row of chips at the top
+;;! margin, over a translucent backing that doubles as the input region so a down
+;;! anywhere on the bar is captured. It anchors top-centre, clear of the corner
+;;! consoles' collapsed handles (bottom-left) and the mode-bar (bottom); an open
+;;! console may overlap it, and — drawn earlier — is a dismissable read view on
+;;! top, exactly as the consoles once covered the ImGui header.
+(define (kruddgui-toolbar-draw vw vh)
+  (let* ((g    kruddgui-gap)
+	 (h    kruddgui-tool-h)
+	 (w    kruddgui-tool-w)
+	 (btns (kruddgui-toolbar-buttons))
+	 (n    (length btns))
+	 (tot  (+ (* n w) (* (- n 1) g)))
+	 (x0   (/ (- vw tot) 2))
+	 (y    kruddgui-margin)
+	 (fr   (kruddgui-modebar-frame x0 y tot h)))
+    (kgui-panel-begin "kgui-toolbar" (car fr) (cadr fr) (caddr fr) (cadddr fr))
+    (kruddgui-rect* fr kruddgui-panel-bg)
+    (let loop ((bs btns) (i 0))
+      (when (pair? bs)
+	(let ((b (car bs))
+	      (x (+ x0 (* i (+ w g)))))
+	  (kruddgui-tool-button x y w h (car b) (cadr b) (caddr b)
+				(list-ref b 3) (list-ref b 4)))
+	(loop (cdr bs) (+ i 1))))
+    (kgui-panel-end)))
+
+;;! ------------------------------------------------------------------
 ;;! Log console — the lifted kruddboard tab (#491)
 ;;! ------------------------------------------------------------------
 
@@ -260,9 +346,9 @@
 
 ;;! (kruddgui-log-draw-panel vw vh) the expanded console. It anchors top-left
 ;;! and stops short of the mode-bar's reserved band at the bottom, so the two
-;;! kruddgui panels never overlap; while open it does cover the ImGui board
+;;! kruddgui panels never overlap; while open it may cover the top toolbar
 ;;! beneath (a deliberate, dismissable read view), and its region traps every
-;;! tap so nothing leaks to the editor under it. The body is fed by
+;;! tap so nothing leaks to the viewport tools under it. The body is fed by
 ;;! (krudd-log-history) — (level . text) pairs oldest-first, or #f when the log
 ;;! subsystem is absent (the #f branch mirrors the old C null check). Drag and
 ;;! wheel accumulated on the region this frame move the scroll before redraw.
@@ -473,11 +559,11 @@
 
 ;;! (kruddgui-board-draw-panel vw vh) the expanded console. It anchors top-right
 ;;! and stops short of the mode-bar's reserved band at the bottom, so it never
-;;! overlaps the bottom mode-bar or the top-left Log console; while open it does
-;;! cover the ImGui board's right-hand controls (Show KB) beneath — a deliberate,
-;;! dismissable read view — and its region traps every tap so nothing leaks to
-;;! the editor under it. A drag/wheel accumulated on the region this frame scrolls
-;;! the body before it is redrawn (then re-clamped there).
+;;! overlaps the bottom mode-bar or the top-left Log console; while open it may
+;;! cover the top toolbar beneath — a deliberate, dismissable read view — and its
+;;! region traps every tap so nothing leaks to the viewport tools under it. A
+;;! drag/wheel accumulated on the region this frame scrolls the body before it is
+;;! redrawn (then re-clamped there).
 (define (kruddgui-board-draw-panel vw vh)
   (let* ((m      kruddgui-log-margin)
 	 (avail  (- vh m (kruddgui-modebar-reserve vw vh) kruddgui-gap))
@@ -1388,16 +1474,15 @@
 ;;! Assets console — the Assets tab lifted onto kruddgui (#492, PR6b)
 ;;! ------------------------------------------------------------------
 
-;;! The Assets tab — the heaviest ImGui board consumer — lifts onto kruddgui's own
-;;! widgets here, matching the Log / board / Scene consoles: a top-left console, a
-;;! bottom-left handle, its own input region. PR6a landed the foundations (slider,
-;;! colour picker) and the shared vocabulary (fold, button row); PR6b (this) ports
-;;! the asset *browser* — the package sections, the folder tree and the leaf grid,
-;;! plus the New Asset form — over that vocabulary, replacing PR6a's demo body. The
-;;! per-type material / texture / source editors the browser drills into land in
-;;! 6c; until then a tapped asset shows a read-only catalog view. The still-live
-;;! ImGui Assets tab (kruddboard-draw-assets over Assets.scm) coexists until it is
-;;! retired. State is held across frames like the other consoles.
+;;! The Assets tab — once the heaviest ImGui board consumer — is fully lifted onto
+;;! kruddgui's own widgets here, matching the Log / board / Scene consoles: a
+;;! top-left console, a bottom-left handle, its own input region. The browser (the
+;;! package sections, the folder tree, the leaf grid and the New Asset form) and
+;;! the per-type material / texture / source editors the browser drills into all
+;;! draw over the shared vocabulary (slider, colour picker, fold, button row). The
+;;! old ImGui Assets tab (kruddboard-draw-assets over Assets.scm) and the board
+;;! window that hosted it are gone (#492). State is held across frames like the
+;;! other consoles.
 (define kruddgui-assets-open #f)
 (define kruddgui-assets-scroll 0.0)
 (define kruddgui-assets-total 0.0)
@@ -1702,9 +1787,9 @@
 ;;! fields, an optional texture binding, and Save / Delete (or, for a read-only
 ;;! built-in, Clone). The texture editor is the generation parameters as live sliders
 ;;! plus the live baked Preview (kgui-image over krudd-texture-bake). The source
-;;! editors and the markdown preview stay on the ImGui Assets tab until their own
-;;! primitives land (a multiline field, an md_draw->kgui_batch port); every other
-;;! asset type still falls through to the generic view.
+;;! editors draw on the multiline field (kgui-field-multi); the one remaining gap
+;;! is the markdown *preview*, which still waits on an md_draw->kgui_batch port
+;;! (#492 item 3). Every other asset type falls through to the generic view.
 
 ;;! Material editor model — the kruddgui twins of Assets.scm's material statics,
 ;;! keyed by the material id they were loaded for. A material has no fields of its
@@ -2446,7 +2531,8 @@
     (kgui-panel-end)))
 
 ;;! (kruddgui-draw) the whole layer — the host's per-tick entry point. Draw the
-;;! mode-bar (row or column by orientation), then the Log console, the board
+;;! persistent top toolbar (play/pause, undo, redo), the mode-bar (row or column
+;;! by orientation, only with a selection), then the Log console, the board
 ;;! console, the Scene inspector and the Assets console (each expanded or
 ;;! collapsed). Every panel owns its own input region; drawn in order, so a later
 ;;! panel wins any overlap.
@@ -2455,6 +2541,7 @@
 	 (vw (car vp))
 	 (vh (cadr vp)))
     (when (and (> vw 0) (> vh 0))
+      (kruddgui-toolbar-draw vw vh)
       (when (>= (krudd-selected) 0)
 	(if (>= vw vh)
 	    (kruddgui-draw-row vw vh)

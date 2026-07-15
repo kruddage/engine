@@ -33,9 +33,6 @@
   (let ((target (getenv "KRUDD_TARGET")))
     (and target (string=? target "wasm"))))
 
-(if wasm-build?
-    (krudd-fetch "imgui" "https://github.com/ocornut/imgui.git" "v1.90.9"))
-
 (sh (string-append "mkdir -p " build-dir))
 
 ;;! The command ninja re-runs (via the `regen` generator edge) when a codegen

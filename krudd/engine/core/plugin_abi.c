@@ -13,32 +13,30 @@
  *
  * What must still live here are the EM_JS bridges below (get_device_pixel_ratio
  * and the text-input helpers): an EM_JS body has to be defined in the module
- * that links the JS glue, and the imgui plugin — compiled into this same module
- * — calls them.
+ * that links the JS glue, and kruddgui — compiled into this same module — calls
+ * them.
  */
 
 /*
  * Returns window.devicePixelRatio for high-DPI canvas scaling.
- * Called by the imgui plugin every tick; defined here so the JS function
- * lands in asmLibraryArg and is reachable from the plugin's code.
+ * Called by kruddgui every tick; defined here so the JS function lands in
+ * asmLibraryArg and is reachable from kruddgui's code.
  */
 EM_JS(double, get_device_pixel_ratio, (void), {
 	return window.devicePixelRatio || 1.0;
 })
 
 /*
- * kruddgui text-capture handoff.
+ * kruddgui text-capture flag.
  *
  * The keyboard bridge below (the hidden <input> and its char / key queues) is
- * one shared resource, drained each frame by whoever owns text input.  ImGui
- * owns it by default; when a kruddgui field takes focus, kruddgui raises this
- * flag so imgui_plugin steps aside — skipping its char / key drain and its
- * desktop WantTextInput auto-focus — and kruddgui drains the bridge into its
- * own focused field instead.  This is the text-input twin of the pointer-input
- * inversion (#489): kruddgui owns input, ImGui is downstream.
+ * kruddgui's: it drains the bridge into its own focused field. This flag marks
+ * the frames a kruddgui field holds focus, which kruddboard's global key handler
+ * reads to leave a focused field's own edit-undo alone (the twin of the pointer-
+ * input inversion, #489). It outlived ImGui, which used it to step aside.
  *
- * Plain C, not EM_JS: both plugins are compiled into this module and reach it
- * through the global symbol table, the same way they reach the EM_JS bridges.
+ * Plain C, not EM_JS: everything is compiled into this module and reaches it
+ * through the global symbol table, the same way it reaches the EM_JS bridges.
  */
 static int g_kgui_text_capture;
 
@@ -53,26 +51,25 @@ int krudd_text_input_capture(void)
 }
 
 /*
- * Web text-input bridge for Dear ImGui — desktop keyboard + mobile soft
- * keyboard support.
+ * Web text-input bridge — desktop keyboard + mobile soft keyboard support.
  *
  * A hidden <input type="text"> element is used as the keyboard capture
  * target.  On desktop it receives key events; on mobile, focusing it
- * raises the soft keyboard.  imgui_plugin.wasm drives the lifecycle
- * via the five functions below.
+ * raises the soft keyboard.  kruddgui drives the lifecycle via the five
+ * functions below.
  *
  * All five EM_JS bodies are defined here (main module) so they land in
- * asmLibraryArg; the imgui plugin, compiled into the same module, calls them.
+ * asmLibraryArg; kruddgui, compiled into the same module, calls them.
  */
 
 /*
- * krudd_text_input_init — call once at imgui_plugin startup.
+ * krudd_text_input_init — call once at kruddgui startup.
  *
  * Creates the hidden <input> element, attaches it to document.body,
  * and wires up the event listeners that populate the pending char
  * string and key-code queue consumed by drain/pop below.
  *
- * Key-code mapping (kept in sync with imgui_plugin.cpp):
+ * Key-code mapping (kept in sync with kruddgui.cpp's key drain):
  *   Backspace=1  Enter=2    Tab=3       Delete=4
  *   ArrowLeft=5  ArrowRight=6  ArrowUp=7  ArrowDown=8
  *   Home=9       End=10     Escape=11
@@ -84,7 +81,7 @@ int krudd_text_input_capture(void)
 EM_JS(void, krudd_text_input_init, (void), {
 	if (Module.__kruddText)
 		return;
-	/* chars: pending UTF-8 to feed ImGui.  keys: pending key codes.
+	/* chars: pending UTF-8 to feed the field.  keys: pending key codes.
 	 * emitted: code units of the active composition already pushed to
 	 * chars, so we never double-type (see emitSuffix). */
 	Module.__kruddText = { chars: "", keys: [], emitted: 0 };
@@ -116,7 +113,7 @@ EM_JS(void, krudd_text_input_init, (void), {
 	 * appeared until the word was committed ("typing doesn't show up until
 	 * I press Enter").
 	 *
-	 * Instead, emit the *suffix* of el.value not yet pushed to ImGui, on
+	 * Instead, emit the *suffix* of el.value not yet pushed to the field, on
 	 * every input event including composing ones, tracking how much we've
 	 * emitted so a character is never sent twice.  This shows text live as
 	 * it is typed while still de-duping the mid-composition + commit double
@@ -190,7 +187,7 @@ EM_JS(void, krudd_text_input_init, (void), {
  *
  * On desktop this begins capturing keyboard events.  On mobile this
  * raises the soft keyboard.  Must be called from within a user-gesture
- * handler on iOS (see imgui_plugin.cpp on_touch for the caveat).
+ * handler on iOS (see kruddgui.cpp on_touch for the caveat).
  */
 EM_JS(void, krudd_text_input_show, (void), {
 	if (Module.__kruddTextEl)
@@ -256,10 +253,10 @@ EM_JS(int, krudd_text_input_pop_key, (void), {
 /*
  * krudd_is_touch_device — true if the browser reports touch support.
  *
- * Lets imgui_plugin and kruddboard tell mobile browsers apart from desktop:
+ * Lets kruddgui tell mobile browsers apart from desktop:
  * on a touch device the soft keyboard is driven by an explicit on-screen
- * toggle instead of the WantTextInput-driven auto-focus used on desktop
- * (see imgui_plugin.cpp), since auto-focusing the hidden <input> there pops
+ * toggle instead of a focus-driven auto-raise (see kruddgui.cpp), since
+ * auto-focusing the hidden <input> there pops
  * the native keyboard on every tap into the debug UI.
  */
 EM_JS(int, krudd_is_touch_device, (void), {

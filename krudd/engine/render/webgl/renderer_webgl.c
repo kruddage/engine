@@ -606,9 +606,9 @@ static void webgl_cmd_end_render_pass(gpu_cmd_buf_t cmd)
 #ifdef __EMSCRIPTEN__
 	/*
 	 * Return to the default framebuffer so whatever renders next (a later
-	 * backbuffer pass, or the ImGui backend compositing an offscreen result
-	 * with ImGui::Image) draws to the canvas and never to a stale FBO. A
-	 * backbuffer pass was already bound to 0, so this is a no-op for it.
+	 * backbuffer pass, or kruddgui compositing an offscreen result through
+	 * kgui-image) draws to the canvas and never to a stale FBO. A backbuffer
+	 * pass was already bound to 0, so this is a no-op for it.
 	 */
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 #endif
@@ -748,9 +748,8 @@ static void webgl_texture_destroy(gpu_texture_t texture)
 
 /*
  * The GL texture name behind an opaque gpu_texture — the escape hatch a UI layer
- * uses to composite a render-target texture through its own stack (kruddboard
- * hands it to ImGui::Image as an ImTextureID). 0 for a null texture or a build
- * without a live GL context.
+ * uses to composite a render-target texture through its own stack (kruddgui hands
+ * it to kgui-image). 0 for a null texture or a build without a live GL context.
  */
 static uint32_t webgl_texture_native_handle(gpu_texture_t texture)
 {

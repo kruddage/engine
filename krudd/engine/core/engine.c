@@ -64,7 +64,6 @@ void entity_plugin_entry(struct subsystem_manager *mgr);
 void renderer_webgl_plugin_entry(struct subsystem_manager *mgr);
 void fg_plugin_entry(struct subsystem_manager *mgr);
 void scene_renderer_plugin_entry(struct subsystem_manager *mgr);
-void imgui_plugin_entry(struct subsystem_manager *mgr);
 void kruddboard_plugin_entry(struct subsystem_manager *mgr);
 void kruddgui_plugin_entry(struct subsystem_manager *mgr);
 
@@ -83,7 +82,6 @@ static const struct {
 	{ "renderer_webgl", renderer_webgl_plugin_entry },
 	{ "fg",             fg_plugin_entry             },
 	{ "scene_renderer", scene_renderer_plugin_entry },
-	{ "imgui",          imgui_plugin_entry          },
 	{ "kruddboard",     kruddboard_plugin_entry     },
 	{ "kruddgui",       kruddgui_plugin_entry       },
 };

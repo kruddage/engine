@@ -245,6 +245,6 @@
 	;;! Return the backend-native handle for a texture — the GL texture name on
 	;;! the WebGL backend, 0 when absent. An escape hatch for a UI layer that has
 	;;! to composite a render-target texture through its own graphics stack:
-	;;! kruddboard's ImGui::Image wants the raw GL name, and an opaque gpu-texture
+	;;! kruddgui's kgui-image wants the raw GL name, and an opaque gpu-texture
 	;;! hides it. Backends with no native handle (the null renderer) return 0.
 	(texture-native-handle (fn u32 ((texture gpu-texture)))))

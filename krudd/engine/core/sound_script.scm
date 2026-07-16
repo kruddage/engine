@@ -112,18 +112,29 @@
         (if (real? c) c fallback))
       fallback))
 
-;;! Parse and run SRC's sample procedure over FRAMES frames at RATE Hz with
-;;! PARAMS (an ((name . value) ...) alist) bound as the current (param ...)
-;;! scope, returning a float-vector of FRAMES interleaved stereo samples
-;;! (L R L R ...). sample is evaluated at t = i/RATE seconds for frame i, the
-;;! standard PCM convention, so the result is independent of RATE for a given
-;;! wall-clock time. A real result is mono, duplicated into both channels; a
-;;! (list L R) is stereo. A fault (a malformed form, or a sample body that
+;;! Reduce a sample result to a mono amplitude: a real is itself; a (list L R)
+;;! downmixes to (L+R)/2, so a stereo-authored sound still bakes mono (a
+;;! spatialized point source needs one channel) without losing either side.
+(define (snd-mono s)
+  (if (pair? s)
+      (let ((l (snd-chan s 0 0.0)))
+        (* 0.5 (+ l (snd-chan s 1 l))))
+      (if (real? s) s 0.0)))
+
+;;! Parse and run SRC's sample procedure over FRAMES frames at RATE Hz into
+;;! CHANNELS channels (1 mono, 2 stereo) with PARAMS (an ((name . value) ...)
+;;! alist) bound as the current (param ...) scope, returning a float-vector of
+;;! FRAMES*CHANNELS interleaved samples. sample is evaluated at t = i/RATE
+;;! seconds for frame i, the standard PCM convention, so the result is
+;;! independent of RATE for a given wall-clock time. CHANNELS is the host's
+;;! choice, not the sound's: a stereo bake writes a (list L R) as-is and a real
+;;! duplicated into both channels; a mono bake writes each frame downmixed to one
+;;! sample (see snd-mono). A fault (a malformed form, or a sample body that
 ;;! errors) is caught and logged, never taking the frame down, and degrades to
 ;;! #f — which the host marshals to "no sound". *params* is restored on both
 ;;! paths so a sound fault never leaks its params into a later texture or
 ;;! mesh call.
-(define (sound-script-run src params rate frames)
+(define (sound-script-run src params rate frames channels)
   (set! *params* params)
   (let ((result
           (catch #t
@@ -131,32 +142,37 @@
               (let ((sample (eval (with-input-from-string src
                                                           (lambda () (read)))
                                   (rootlet)))
-                    (buf (make-float-vector (* frames 2) 0.0)))
+                    (buf (make-float-vector (* frames channels) 0.0))
+                    (mono (= channels 1)))
                 (do ((i 0 (+ i 1)))
                     ((= i frames) buf)
                   (let* ((t (/ (exact->inexact i) rate))
                          (s (sample t))
-                         (j (* i 2)))
-                    (if (pair? s)
-                        (let ((l (snd-chan s 0 0.0)))
-                          (float-vector-set! buf j       (snd-clamp l))
-                          (float-vector-set! buf (+ j 1) (snd-clamp (snd-chan s 1 l))))
-                        (let ((m (snd-clamp (if (real? s) s 0.0))))
-                          (float-vector-set! buf j       m)
-                          (float-vector-set! buf (+ j 1) m)))))))
+                         (j (* i channels)))
+                    (if mono
+                        (float-vector-set! buf j (snd-clamp (snd-mono s)))
+                        (if (pair? s)
+                            (let ((l (snd-chan s 0 0.0)))
+                              (float-vector-set! buf j       (snd-clamp l))
+                              (float-vector-set! buf (+ j 1) (snd-clamp (snd-chan s 1 l))))
+                            (let ((m (snd-clamp (if (real? s) s 0.0))))
+                              (float-vector-set! buf j       m)
+                              (float-vector-set! buf (+ j 1) m))))))))
             (lambda args
               (krudd-log 2 (string-append "sound-script: fault: " src))
               #f))))
     (set! *params* '())
     result))
 
-;;! (sound-script-generate src params rate frames) -> a float-vector of FRAMES
-;;! interleaved stereo samples, or #f on fault / non-positive size. The one entry
-;;! point the C driver calls; see sound-script-run for the sampling contract.
-;;! RATE and FRAMES are integers the host chooses — the rate from its audio
-;;! context, the frame count from the sound's (duration ...) param times that
-;;! rate — so the script itself never names either.
-(define (sound-script-generate src params rate frames)
-  (if (and (integer? rate) (integer? frames) (> rate 0) (> frames 0))
-      (sound-script-run src params rate frames)
+;;! (sound-script-generate src params rate frames channels) -> a float-vector of
+;;! FRAMES*CHANNELS interleaved samples, or #f on fault / non-positive size /
+;;! unsupported channel count. The one entry point the C driver calls; see
+;;! sound-script-run for the sampling contract. RATE and FRAMES are integers the
+;;! host chooses — the rate from its audio context, the frame count from the
+;;! sound's (duration ...) param times that rate — and CHANNELS is 1 or 2, so
+;;! the script itself never names any of them.
+(define (sound-script-generate src params rate frames channels)
+  (if (and (integer? rate) (integer? frames) (> rate 0) (> frames 0)
+           (or (= channels 1) (= channels 2)))
+      (sound-script-run src params rate frames channels)
       #f))

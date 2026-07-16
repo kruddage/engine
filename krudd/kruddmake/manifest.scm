@@ -11,5 +11,6 @@
  "render/frame_graph"
  "render/scene_renderer"
  "asset"
+ "audio"
  "ui/kruddboard"
  "ui/kruddgui")

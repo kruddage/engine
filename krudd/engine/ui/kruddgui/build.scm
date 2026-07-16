@@ -35,9 +35,13 @@
 		(link "kgui_text_edit"))
 	(test "kgui_text_edit" "kgui_text_edit_test")
 
+	;;! kgui_font bakes an SDF atlas with the vendored stb_truetype
+	;;! (../third_party), which pulls in libm (floor/sqrt/pow/...).
 	(library "kgui_font"
 		(sources "kgui_font.c")
-		(public (current)))
+		(public (current))
+		(private (raw "../third_party"))
+		(link "m"))
 	(executable "kgui_font_test"
 		(sources "kgui_font_test.c")
 		(link "kgui_font" "kgui_batch"))

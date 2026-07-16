@@ -58,3 +58,71 @@ Set in `../krudd.sh` when compiling the tool:
 
 s7 is compiled with `-w`: it is upstream code, so the engine's warning flags are
 not enforced against it.
+
+---
+
+# stb_truetype (kruddgui's glyph baker) — vendored
+
+`stb_truetype.h` is Sean Barrett's single-file TrueType rasterizer, third-party
+source and **not** engine-authored code. It keeps its own upstream notice (public
+domain / MIT dual license — see `LICENSE.stb_truetype`) and is **not** stamped
+with the project's `GPL-2.0-or-later` line.
+
+kruddgui's `kgui_font.c` includes it with `STB_TRUETYPE_IMPLEMENTATION` and
+`STBTT_STATIC` (so every symbol is file-local, no link surface) to bake the
+embedded JetBrains Mono face into a signed-distance-field atlas at load. It is
+pure computation — no GL — so the same bake runs on the host under
+`kgui_font_test`.
+
+## Pin
+
+| Field    | Value |
+|----------|-------|
+| Version  | stb_truetype **v1.26** |
+| License  | Public domain (Unlicense) **or** MIT — dual, take your pick |
+| Upstream | https://github.com/nothings/stb (`stb_truetype.h`) |
+| sha256   | `ecd30b05e0dd4fea3a13c26810dd9e1992dc379049482c393d5a19e6b5090aab` |
+
+Re-vendoring means replacing `stb_truetype.h` and updating the checksum above.
+
+## License compatibility
+
+Public-domain / MIT combining into a `GPL-2.0-or-later` work is the standard
+permissive-inbound case; neither option imposes conditions that conflict, and
+being third-party it sits outside the project's CLA surface.
+
+---
+
+# JetBrains Mono (kruddgui's embedded face) — vendored
+
+The engine ships a single embedded typeface for kruddgui's text: **JetBrains
+Mono Regular**, subset to printable ASCII (U+0020..U+007E) and emitted as the
+byte array in `../engine/ui/kruddgui/jetbrains_mono.h`. It is font data, **not**
+engine-authored code, and keeps its upstream **SIL Open Font License 1.1** (see
+`LICENSE.jetbrains_mono`); the header carries an `SPDX-License-Identifier:
+OFL-1.1` line rather than the project's `GPL-2.0-or-later`.
+
+`kgui_font.c` bakes these bytes into the SDF atlas via the vendored
+`stb_truetype.h`; there is no runtime file I/O and no GL dependency.
+
+## Pin
+
+| Field       | Value |
+|-------------|-------|
+| Face        | JetBrains Mono **Regular** |
+| Coverage    | printable ASCII, U+0020..U+007E |
+| License     | SIL Open Font License 1.1 |
+| Upstream    | https://github.com/JetBrains/JetBrainsMono |
+| Full sha256 | `e6fd0d7e91550b3ed2b735d4312474362c4716edc4fc0577a0f61ed782d5aed1` (upstream `fonts/ttf/JetBrainsMono-Regular.ttf`) |
+| Subset sha256 | `25fc61bbeb720aa28ceaeb07e60f990c9e32e4457775dc00fe34dbff0d183e15` |
+
+Re-vendoring (new weight or wider coverage) means re-running the `pyftsubset`
+command recorded at the top of `jetbrains_mono.h`, re-emitting the array, and
+updating the checksums above.
+
+## License compatibility
+
+OFL-1.1 permits bundling and redistribution inside another work (including a
+GPL one); the font stays under OFL. The only conditions are that the font not be
+sold on its own and that the reserved name "JetBrains Mono" not be used for a
+modified version — neither of which the embedded, unmodified subset trips.

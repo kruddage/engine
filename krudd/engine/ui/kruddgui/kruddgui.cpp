@@ -14,8 +14,8 @@
  * (routing gestures to panels, the rest to the viewport overlay seam), drives the
  * hidden-<input> text bridge for its own fields, and composites over the 3D scene.
  *
- * Text stands on kruddgui's own baked glyph atlas (kgui_font): a code point
- * outside it has no glyph and is skipped. No ImGui remains.
+ * Text stands on kruddgui's own baked SDF glyph atlas (kgui_font, JetBrains
+ * Mono): a code point outside it has no glyph and is skipped. No ImGui remains.
  */
 
 extern "C" {
@@ -83,6 +83,7 @@ static GLuint s_vao;
 static GLuint s_vbo;
 static GLint  s_u_viewport;
 static GLint  s_u_tex;
+static GLint  s_u_sdf;
 static bool   s_gl_ready;
 
 static struct kgui_vertex s_verts[KGUI_MAX_VERTS];
@@ -149,15 +150,34 @@ static const char *k_vert_src =
 	"    v_col = a_col;\n"
 	"}\n";
 
+/*
+ * Two paths sharing one program. When u_sdf is set (glyphs and filled rects,
+ * which sample kruddgui's SDF atlas) the alpha channel is a signed distance:
+ * threshold it at 0.5 with a screen-space smoothstep (fwidth gives the per-pixel
+ * ramp) so text stays antialiased at any size, and colour comes from the vertex.
+ * A filled rect point-samples the atlas's solid "inside" texel, so its distance
+ * is a constant 1.0 and it resolves to full coverage with no special case. When
+ * u_sdf is clear (image quads) the sampled texture is a plain RGBA image, drawn
+ * as a straight tint * texel passthrough. highp keeps the distance and UVs exact
+ * across the atlas.
+ */
 static const char *k_frag_src =
 	"#version 300 es\n"
-	"precision mediump float;\n"
+	"precision highp float;\n"
 	"in vec2 v_uv;\n"
 	"in vec4 v_col;\n"
 	"uniform sampler2D u_tex;\n"
+	"uniform int u_sdf;\n"
 	"out vec4 frag;\n"
 	"void main() {\n"
-	"    frag = v_col * texture(u_tex, v_uv);\n"
+	"    if (u_sdf != 0) {\n"
+	"        float d = texture(u_tex, v_uv).a;\n"
+	"        float w = max(fwidth(d), 1.0 / 256.0);\n"
+	"        float cov = smoothstep(0.5 - w, 0.5 + w, d);\n"
+	"        frag = vec4(v_col.rgb, v_col.a * cov);\n"
+	"    } else {\n"
+	"        frag = v_col * texture(u_tex, v_uv);\n"
+	"    }\n"
 	"}\n";
 
 static GLuint compile_shader(GLenum type, const char *src)
@@ -203,6 +223,7 @@ static void gl_init(void)
 
 	s_u_viewport = glGetUniformLocation(s_prog, "u_viewport");
 	s_u_tex      = glGetUniformLocation(s_prog, "u_tex");
+	s_u_sdf      = glGetUniformLocation(s_prog, "u_sdf");
 
 	glGenVertexArrays(1, &s_vao);
 	glGenBuffers(1, &s_vbo);
@@ -226,15 +247,16 @@ static void gl_init(void)
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 
 	/*
-	 * Upload the baked glyph atlas as the sampled texture. NEAREST keeps the
-	 * bitmap font crisp (it is drawn at whole multiples of its 8px cell), and
-	 * clamping stops the edge columns of one glyph bleeding into its
+	 * Upload the baked SDF atlas as the sampled texture. LINEAR filtering is
+	 * what makes the distance field resolve smoothly between texels — the
+	 * shader smoothsteps the interpolated distance, so bilinear sampling is the
+	 * antialiasing. Clamping stops one glyph's field bleeding into its
 	 * neighbour. s_font must already be baked (kruddgui_init does it first).
 	 */
 	glGenTextures(1, &s_font_tex);
 	glBindTexture(GL_TEXTURE_2D, s_font_tex);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
@@ -276,6 +298,8 @@ static void gl_flush(GLuint atlas)
 	glUseProgram(s_prog);
 	glUniform2f(s_u_viewport, s_css_w, s_css_h);
 	glUniform1i(s_u_tex, 0);
+	/* `bound` starts at the atlas, so seed u_sdf to the atlas (SDF) path. */
+	glUniform1i(s_u_sdf, 1);
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, atlas);
 
@@ -293,12 +317,15 @@ static void gl_flush(GLuint atlas)
 			continue;
 		/*
 		 * An image command samples its own texture; every other command
-		 * samples the glyph atlas. Bind only on a change so a run of rects
-		 * and glyphs still issues its draws without redundant binds.
+		 * samples the SDF atlas. Bind only on a change so a run of rects
+		 * and glyphs still issues its draws without redundant binds. u_sdf
+		 * follows suit: the atlas commands go through the SDF path, an image
+		 * command through the straight passthrough.
 		 */
 		want = c->tex ? (GLuint)c->tex : atlas;
 		if (want != bound) {
 			glBindTexture(GL_TEXTURE_2D, want);
+			glUniform1i(s_u_sdf, c->tex ? 0 : 1);
 			bound = want;
 		}
 		if (c->clipped) {
@@ -915,8 +942,8 @@ static s7_pointer sp_kgui_image(s7_scheme *sc, s7_pointer args)
 /*
  * (kgui-text x y str r g b a [size]) -> unspecified. (x, y) is the text's
  * top-left. The optional size overrides the default text size (s_text_size) —
- * used by the markdown preview to scale headings; whole multiples of the 8px
- * glyph cell keep the bitmap crisp.
+ * used by the markdown preview to scale headings; the SDF atlas stays crisp at
+ * any size, so headings need not be whole multiples of the bake size.
  */
 static s7_pointer sp_kgui_text(s7_scheme *sc, s7_pointer args)
 {

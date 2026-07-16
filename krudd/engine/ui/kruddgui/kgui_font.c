@@ -1,8 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /*
- * kgui_font — see kgui_font.h. Bakes the embedded 8x8 bitmap face into an RGBA
- * atlas and answers kgui_batch's glyph queries from it. No GL, no ImGui.
+ * kgui_font — see kgui_font.h. Bakes the embedded JetBrains Mono face into an
+ * SDF RGBA atlas with stb_truetype and answers kgui_batch's glyph queries from
+ * it. No GL, no ImGui — pure computation, so kgui_font_test exercises the whole
+ * bake on the host.
  */
 
 #include "kgui_font.h"
@@ -10,113 +12,27 @@
 #include <string.h>
 
 /*
- * font8x8 (basic latin, U+0020..U+007F). Public domain: Daniel Hepper, after
- * Marcel Sondaar and the IBM PC BIOS VGA fonts. Each glyph is eight rows top to
- * bottom; within a row bit 0 (the low bit) is the leftmost column.
+ * The vendored rasteriser. STBTT_STATIC keeps every stb symbol file-local (no
+ * link surface leaks into kruddgui or the tests); the implementation lives in
+ * this one translation unit. That makes the stb entry points we do not call
+ * (the packing/name-table API) unused statics, which the engine's -Werror build
+ * would reject — so the upstream header is included under a diagnostic guard, as
+ * third-party code the engine's warning flags do not police.
  */
-static const unsigned char k_font8x8[KGUI_FONT_COUNT][KGUI_FONT_CELL] = {
-	{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, /* U+0020 (space) */
-	{ 0x18, 0x3C, 0x3C, 0x18, 0x18, 0x00, 0x18, 0x00 }, /* U+0021 (!) */
-	{ 0x36, 0x36, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, /* U+0022 (") */
-	{ 0x36, 0x36, 0x7F, 0x36, 0x7F, 0x36, 0x36, 0x00 }, /* U+0023 (#) */
-	{ 0x0C, 0x3E, 0x03, 0x1E, 0x30, 0x1F, 0x0C, 0x00 }, /* U+0024 ($) */
-	{ 0x00, 0x63, 0x33, 0x18, 0x0C, 0x66, 0x63, 0x00 }, /* U+0025 (%) */
-	{ 0x1C, 0x36, 0x1C, 0x6E, 0x3B, 0x33, 0x6E, 0x00 }, /* U+0026 (&) */
-	{ 0x06, 0x06, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00 }, /* U+0027 (') */
-	{ 0x18, 0x0C, 0x06, 0x06, 0x06, 0x0C, 0x18, 0x00 }, /* U+0028 (() */
-	{ 0x06, 0x0C, 0x18, 0x18, 0x18, 0x0C, 0x06, 0x00 }, /* U+0029 ()) */
-	{ 0x00, 0x66, 0x3C, 0xFF, 0x3C, 0x66, 0x00, 0x00 }, /* U+002A (*) */
-	{ 0x00, 0x0C, 0x0C, 0x3F, 0x0C, 0x0C, 0x00, 0x00 }, /* U+002B (+) */
-	{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C, 0x06 }, /* U+002C (,) */
-	{ 0x00, 0x00, 0x00, 0x3F, 0x00, 0x00, 0x00, 0x00 }, /* U+002D (-) */
-	{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x0C, 0x0C, 0x00 }, /* U+002E (.) */
-	{ 0x60, 0x30, 0x18, 0x0C, 0x06, 0x03, 0x01, 0x00 }, /* U+002F (/) */
-	{ 0x3E, 0x63, 0x73, 0x7B, 0x6F, 0x67, 0x3E, 0x00 }, /* U+0030 (0) */
-	{ 0x0C, 0x0E, 0x0C, 0x0C, 0x0C, 0x0C, 0x3F, 0x00 }, /* U+0031 (1) */
-	{ 0x1E, 0x33, 0x30, 0x1C, 0x06, 0x33, 0x3F, 0x00 }, /* U+0032 (2) */
-	{ 0x1E, 0x33, 0x30, 0x1C, 0x30, 0x33, 0x1E, 0x00 }, /* U+0033 (3) */
-	{ 0x38, 0x3C, 0x36, 0x33, 0x7F, 0x30, 0x78, 0x00 }, /* U+0034 (4) */
-	{ 0x3F, 0x03, 0x1F, 0x30, 0x30, 0x33, 0x1E, 0x00 }, /* U+0035 (5) */
-	{ 0x1C, 0x06, 0x03, 0x1F, 0x33, 0x33, 0x1E, 0x00 }, /* U+0036 (6) */
-	{ 0x3F, 0x33, 0x30, 0x18, 0x0C, 0x0C, 0x0C, 0x00 }, /* U+0037 (7) */
-	{ 0x1E, 0x33, 0x33, 0x1E, 0x33, 0x33, 0x1E, 0x00 }, /* U+0038 (8) */
-	{ 0x1E, 0x33, 0x33, 0x3E, 0x30, 0x18, 0x0E, 0x00 }, /* U+0039 (9) */
-	{ 0x00, 0x0C, 0x0C, 0x00, 0x00, 0x0C, 0x0C, 0x00 }, /* U+003A (:) */
-	{ 0x00, 0x0C, 0x0C, 0x00, 0x00, 0x0C, 0x0C, 0x06 }, /* U+003B (;) */
-	{ 0x18, 0x0C, 0x06, 0x03, 0x06, 0x0C, 0x18, 0x00 }, /* U+003C (<) */
-	{ 0x00, 0x00, 0x3F, 0x00, 0x00, 0x3F, 0x00, 0x00 }, /* U+003D (=) */
-	{ 0x06, 0x0C, 0x18, 0x30, 0x18, 0x0C, 0x06, 0x00 }, /* U+003E (>) */
-	{ 0x1E, 0x33, 0x30, 0x18, 0x0C, 0x00, 0x0C, 0x00 }, /* U+003F (?) */
-	{ 0x3E, 0x63, 0x7B, 0x7B, 0x7B, 0x03, 0x1E, 0x00 }, /* U+0040 (@) */
-	{ 0x0C, 0x1E, 0x33, 0x33, 0x3F, 0x33, 0x33, 0x00 }, /* U+0041 (A) */
-	{ 0x3F, 0x66, 0x66, 0x3E, 0x66, 0x66, 0x3F, 0x00 }, /* U+0042 (B) */
-	{ 0x3C, 0x66, 0x03, 0x03, 0x03, 0x66, 0x3C, 0x00 }, /* U+0043 (C) */
-	{ 0x1F, 0x36, 0x66, 0x66, 0x66, 0x36, 0x1F, 0x00 }, /* U+0044 (D) */
-	{ 0x7F, 0x46, 0x16, 0x1E, 0x16, 0x46, 0x7F, 0x00 }, /* U+0045 (E) */
-	{ 0x7F, 0x46, 0x16, 0x1E, 0x16, 0x06, 0x0F, 0x00 }, /* U+0046 (F) */
-	{ 0x3C, 0x66, 0x03, 0x03, 0x73, 0x66, 0x7C, 0x00 }, /* U+0047 (G) */
-	{ 0x33, 0x33, 0x33, 0x3F, 0x33, 0x33, 0x33, 0x00 }, /* U+0048 (H) */
-	{ 0x1E, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x1E, 0x00 }, /* U+0049 (I) */
-	{ 0x78, 0x30, 0x30, 0x30, 0x33, 0x33, 0x1E, 0x00 }, /* U+004A (J) */
-	{ 0x67, 0x66, 0x36, 0x1E, 0x36, 0x66, 0x67, 0x00 }, /* U+004B (K) */
-	{ 0x0F, 0x06, 0x06, 0x06, 0x46, 0x66, 0x7F, 0x00 }, /* U+004C (L) */
-	{ 0x63, 0x77, 0x7F, 0x7F, 0x6B, 0x63, 0x63, 0x00 }, /* U+004D (M) */
-	{ 0x63, 0x67, 0x6F, 0x7B, 0x73, 0x63, 0x63, 0x00 }, /* U+004E (N) */
-	{ 0x1C, 0x36, 0x63, 0x63, 0x63, 0x36, 0x1C, 0x00 }, /* U+004F (O) */
-	{ 0x3F, 0x66, 0x66, 0x3E, 0x06, 0x06, 0x0F, 0x00 }, /* U+0050 (P) */
-	{ 0x1E, 0x33, 0x33, 0x33, 0x3B, 0x1E, 0x38, 0x00 }, /* U+0051 (Q) */
-	{ 0x3F, 0x66, 0x66, 0x3E, 0x36, 0x66, 0x67, 0x00 }, /* U+0052 (R) */
-	{ 0x1E, 0x33, 0x07, 0x0E, 0x38, 0x33, 0x1E, 0x00 }, /* U+0053 (S) */
-	{ 0x3F, 0x2D, 0x0C, 0x0C, 0x0C, 0x0C, 0x1E, 0x00 }, /* U+0054 (T) */
-	{ 0x33, 0x33, 0x33, 0x33, 0x33, 0x33, 0x3F, 0x00 }, /* U+0055 (U) */
-	{ 0x33, 0x33, 0x33, 0x33, 0x33, 0x1E, 0x0C, 0x00 }, /* U+0056 (V) */
-	{ 0x63, 0x63, 0x63, 0x6B, 0x7F, 0x77, 0x63, 0x00 }, /* U+0057 (W) */
-	{ 0x63, 0x63, 0x36, 0x1C, 0x1C, 0x36, 0x63, 0x00 }, /* U+0058 (X) */
-	{ 0x33, 0x33, 0x33, 0x1E, 0x0C, 0x0C, 0x1E, 0x00 }, /* U+0059 (Y) */
-	{ 0x7F, 0x63, 0x31, 0x18, 0x4C, 0x66, 0x7F, 0x00 }, /* U+005A (Z) */
-	{ 0x1E, 0x06, 0x06, 0x06, 0x06, 0x06, 0x1E, 0x00 }, /* U+005B ([) */
-	{ 0x03, 0x06, 0x0C, 0x18, 0x30, 0x60, 0x40, 0x00 }, /* U+005C (\) */
-	{ 0x1E, 0x18, 0x18, 0x18, 0x18, 0x18, 0x1E, 0x00 }, /* U+005D (]) */
-	{ 0x08, 0x1C, 0x36, 0x63, 0x00, 0x00, 0x00, 0x00 }, /* U+005E (^) */
-	{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF }, /* U+005F (_) */
-	{ 0x0C, 0x0C, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00 }, /* U+0060 (`) */
-	{ 0x00, 0x00, 0x1E, 0x30, 0x3E, 0x33, 0x6E, 0x00 }, /* U+0061 (a) */
-	{ 0x07, 0x06, 0x06, 0x3E, 0x66, 0x66, 0x3B, 0x00 }, /* U+0062 (b) */
-	{ 0x00, 0x00, 0x1E, 0x33, 0x03, 0x33, 0x1E, 0x00 }, /* U+0063 (c) */
-	{ 0x38, 0x30, 0x30, 0x3E, 0x33, 0x33, 0x6E, 0x00 }, /* U+0064 (d) */
-	{ 0x00, 0x00, 0x1E, 0x33, 0x3F, 0x03, 0x1E, 0x00 }, /* U+0065 (e) */
-	{ 0x1C, 0x36, 0x06, 0x0F, 0x06, 0x06, 0x0F, 0x00 }, /* U+0066 (f) */
-	{ 0x00, 0x00, 0x6E, 0x33, 0x33, 0x3E, 0x30, 0x1F }, /* U+0067 (g) */
-	{ 0x07, 0x06, 0x36, 0x6E, 0x66, 0x66, 0x67, 0x00 }, /* U+0068 (h) */
-	{ 0x0C, 0x00, 0x0E, 0x0C, 0x0C, 0x0C, 0x1E, 0x00 }, /* U+0069 (i) */
-	{ 0x30, 0x00, 0x30, 0x30, 0x30, 0x33, 0x33, 0x1E }, /* U+006A (j) */
-	{ 0x07, 0x06, 0x66, 0x36, 0x1E, 0x36, 0x67, 0x00 }, /* U+006B (k) */
-	{ 0x0E, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x1E, 0x00 }, /* U+006C (l) */
-	{ 0x00, 0x00, 0x33, 0x7F, 0x7F, 0x6B, 0x63, 0x00 }, /* U+006D (m) */
-	{ 0x00, 0x00, 0x1F, 0x33, 0x33, 0x33, 0x33, 0x00 }, /* U+006E (n) */
-	{ 0x00, 0x00, 0x1E, 0x33, 0x33, 0x33, 0x1E, 0x00 }, /* U+006F (o) */
-	{ 0x00, 0x00, 0x3B, 0x66, 0x66, 0x3E, 0x06, 0x0F }, /* U+0070 (p) */
-	{ 0x00, 0x00, 0x6E, 0x33, 0x33, 0x3E, 0x30, 0x78 }, /* U+0071 (q) */
-	{ 0x00, 0x00, 0x3B, 0x6E, 0x66, 0x06, 0x0F, 0x00 }, /* U+0072 (r) */
-	{ 0x00, 0x00, 0x3E, 0x03, 0x1E, 0x30, 0x1F, 0x00 }, /* U+0073 (s) */
-	{ 0x08, 0x0C, 0x3E, 0x0C, 0x0C, 0x2C, 0x18, 0x00 }, /* U+0074 (t) */
-	{ 0x00, 0x00, 0x33, 0x33, 0x33, 0x33, 0x6E, 0x00 }, /* U+0075 (u) */
-	{ 0x00, 0x00, 0x33, 0x33, 0x33, 0x1E, 0x0C, 0x00 }, /* U+0076 (v) */
-	{ 0x00, 0x00, 0x63, 0x6B, 0x7F, 0x7F, 0x36, 0x00 }, /* U+0077 (w) */
-	{ 0x00, 0x00, 0x63, 0x36, 0x1C, 0x36, 0x63, 0x00 }, /* U+0078 (x) */
-	{ 0x00, 0x00, 0x33, 0x33, 0x33, 0x3E, 0x30, 0x1F }, /* U+0079 (y) */
-	{ 0x00, 0x00, 0x3F, 0x19, 0x0C, 0x26, 0x3F, 0x00 }, /* U+007A (z) */
-	{ 0x38, 0x0C, 0x0C, 0x07, 0x0C, 0x0C, 0x38, 0x00 }, /* U+007B ({) */
-	{ 0x18, 0x18, 0x18, 0x00, 0x18, 0x18, 0x18, 0x00 }, /* U+007C (|) */
-	{ 0x07, 0x0C, 0x0C, 0x38, 0x0C, 0x0C, 0x07, 0x00 }, /* U+007D (}) */
-	{ 0x6E, 0x3B, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, /* U+007E (~) */
-	{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, /* U+007F (DEL) */
-};
+#define STB_TRUETYPE_IMPLEMENTATION
+#define STBTT_STATIC
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#endif
+#include "stb_truetype.h"
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
-/* Advance for a blank glyph (space): a readable word gap in native px. */
-#define KGUI_FONT_BLANK_ADVANCE 4
+#include "jetbrains_mono.h" /* k_jetbrains_mono_ttf[], _LEN */
 
-/* Write one atlas texel as white with the given coverage in alpha. */
+/* Write one atlas texel: white RGB, `a` in alpha (the SDF distance). */
 static void put_texel(struct kgui_font *f, int x, int y, unsigned char a)
 {
 	unsigned char *px = &f->pixels[(y * KGUI_FONT_ATLAS_W + x) * 4];
@@ -127,61 +43,95 @@ static void put_texel(struct kgui_font *f, int x, int y, unsigned char a)
 	px[3] = a;
 }
 
-/* Bake one glyph's 8x8 bitmap into its atlas cell and fill in its metrics. */
-static void bake_glyph(struct kgui_font *f, int idx)
+/*
+ * Copy one glyph's stb SDF bitmap into its atlas cell (alpha channel) and record
+ * its metrics. `sdf` may be NULL (a blank glyph such as space): then only the
+ * advance is stored and the glyph emits no quad. The copy is clipped to the cell
+ * so an unexpectedly large bitmap can never write out of bounds.
+ */
+static void place_glyph(struct kgui_font *f, int idx, int cell_x, int cell_y,
+			const unsigned char *sdf, int w, int h,
+			int xoff, int yoff, int advance)
 {
-	const unsigned char     *rows = k_font8x8[idx];
-	struct kgui_font_metric *m    = &f->metrics[idx];
-	int  cell_x = (idx % KGUI_FONT_COLS) * KGUI_FONT_CELL;
-	int  cell_y = (idx / KGUI_FONT_COLS) * KGUI_FONT_CELL;
-	int  c0 = KGUI_FONT_CELL;
-	int  c1 = -1;
-	int  r, c;
+	struct kgui_font_metric *m = &f->metrics[idx];
+	int r, c;
 
-	for (r = 0; r < KGUI_FONT_CELL; r++) {
-		for (c = 0; c < KGUI_FONT_CELL; c++) {
-			int on = (rows[r] >> c) & 1;
-
-			put_texel(f, cell_x + c, cell_y + r,
-				  on ? 255 : 0);
-			if (on) {
-				if (c < c0)
-					c0 = c;
-				if (c > c1)
-					c1 = c;
-			}
-		}
-	}
-
-	if (c1 < c0) {
-		m->c0      = 0;
-		m->c1      = 0;
-		m->advance = KGUI_FONT_BLANK_ADVANCE;
+	if (!sdf || w <= 0 || h <= 0) {
+		m->ax = m->ay = 0;
+		m->w = m->h = 0;
+		m->xoff = m->yoff = 0;
+		m->advance = (uint8_t)advance;
 		m->visible = 0;
-	} else {
-		m->c0      = (uint8_t)c0;
-		m->c1      = (uint8_t)c1;
-		m->advance = (uint8_t)(c1 - c0 + 2); /* ink width + 1px gap */
-		m->visible = 1;
+		return;
 	}
+
+	if (w > KGUI_FONT_CELL_W)
+		w = KGUI_FONT_CELL_W;
+	if (h > KGUI_FONT_CELL_H)
+		h = KGUI_FONT_CELL_H;
+
+	for (r = 0; r < h; r++)
+		for (c = 0; c < w; c++)
+			put_texel(f, cell_x + c, cell_y + r,
+				  sdf[r * w + c]);
+
+	m->ax      = (uint16_t)cell_x;
+	m->ay      = (uint16_t)cell_y;
+	m->w       = (uint8_t)w;
+	m->h       = (uint8_t)h;
+	m->xoff    = (int8_t)xoff;
+	m->yoff    = (int8_t)yoff;
+	m->advance = (uint8_t)advance;
+	m->visible = 1;
 }
 
 void kgui_font_init(struct kgui_font *f)
 {
-	int white_y = KGUI_FONT_ROWS * KGUI_FONT_CELL;
+	stbtt_fontinfo info;
+	float scale;
+	float dist_scale = (float)KGUI_FONT_SDF_ONEDGE / (float)KGUI_FONT_SDF_PAD;
+	int white_y = KGUI_FONT_ROWS * KGUI_FONT_CELL_H;
+	int ascent, descent, line_gap;
 	int x, y, i;
 
-	memset(f->pixels, 0, sizeof(f->pixels));
+	/* Whole atlas: white RGB, alpha 0 (fully "outside" the field). */
+	for (y = 0; y < KGUI_FONT_ATLAS_H; y++)
+		for (x = 0; x < KGUI_FONT_ATLAS_W; x++)
+			put_texel(f, x, y, 0);
 
-	for (i = 0; i < KGUI_FONT_COUNT; i++)
-		bake_glyph(f, i);
+	stbtt_InitFont(&info, k_jetbrains_mono_ttf,
+		       stbtt_GetFontOffsetForIndex(k_jetbrains_mono_ttf, 0));
+	scale = stbtt_ScaleForPixelHeight(&info, (float)KGUI_FONT_BAKE_PX);
+	stbtt_GetFontVMetrics(&info, &ascent, &descent, &line_gap);
+	f->ascent = (float)ascent * scale;
 
-	/* Solid opaque-white strip below the glyphs, for filled rects. */
+	for (i = 0; i < KGUI_FONT_COUNT; i++) {
+		int cp = KGUI_FONT_FIRST + i;
+		int cell_x = (i % KGUI_FONT_COLS) * KGUI_FONT_CELL_W;
+		int cell_y = (i / KGUI_FONT_COLS) * KGUI_FONT_CELL_H;
+		int w = 0, h = 0, xoff = 0, yoff = 0, adv = 0, lsb;
+		unsigned char *sdf;
+
+		stbtt_GetCodepointHMetrics(&info, cp, &adv, &lsb);
+		adv = (int)((float)adv * scale + 0.5f);
+
+		sdf = stbtt_GetCodepointSDF(&info, scale, cp, KGUI_FONT_SDF_PAD,
+					    KGUI_FONT_SDF_ONEDGE, dist_scale,
+					    &w, &h, &xoff, &yoff);
+		place_glyph(f, i, cell_x, cell_y, sdf, w, h, xoff, yoff, adv);
+		stbtt_FreeSDF(sdf, NULL);
+	}
+
+	/*
+	 * Solid "inside" strip below the glyphs: alpha 255 reads as deep inside
+	 * the field, so a filled rect point-sampling it resolves to full coverage
+	 * through the same SDF shader the glyphs use.
+	 */
 	for (y = white_y; y < KGUI_FONT_ATLAS_H; y++)
 		for (x = 0; x < KGUI_FONT_ATLAS_W; x++)
 			put_texel(f, x, y, 255);
 
-	/* Sample the centre of a texel well inside the white strip. */
+	/* Sample the centre of a texel well inside the solid strip. */
 	f->white_u = (2.0f + 0.5f) / (float)KGUI_FONT_ATLAS_W;
 	f->white_v = ((float)white_y + 2.0f + 0.5f) / (float)KGUI_FONT_ATLAS_H;
 	f->size    = KGUI_FONT_SIZE;
@@ -191,45 +141,38 @@ int kgui_font_glyph(void *ud, uint32_t cp, float size, struct kgui_glyph *out)
 {
 	struct kgui_font              *f = (struct kgui_font *)ud;
 	const struct kgui_font_metric *m;
-	float s;
-	int   idx, cell_x, cell_y, ink_w;
+	float disp;
 
 	if (!f || cp < KGUI_FONT_FIRST || cp > KGUI_FONT_LAST)
 		return 0;
 
-	idx = (int)(cp - KGUI_FONT_FIRST);
-	m   = &f->metrics[idx];
-	s   = size / (float)KGUI_FONT_CELL;
+	m    = &f->metrics[cp - KGUI_FONT_FIRST];
+	disp = size / (float)KGUI_FONT_BAKE_PX;
 
 	if (!m->visible) {
 		out->x0 = out->y0 = out->x1 = out->y1 = 0.0f;
 		out->u0 = out->v0 = out->u1 = out->v1 = 0.0f;
-		out->advance = (float)m->advance * s;
+		out->advance = (float)m->advance * disp;
 		out->visible = 0;
 		return 1;
 	}
 
-	cell_x = (idx % KGUI_FONT_COLS) * KGUI_FONT_CELL;
-	cell_y = (idx / KGUI_FONT_COLS) * KGUI_FONT_CELL;
-	ink_w  = m->c1 - m->c0 + 1;
-
 	/*
-	 * Drawn flush at the pen (x0 = 0): the ink columns are sampled straight
-	 * to the glyph box, so the left bearing folds into the previous glyph's
-	 * advance and text stays tight. The full cell height is kept so every
-	 * glyph shares one baseline.
+	 * Box relative to the pen origin (a line's top-left). The baseline drops
+	 * f->ascent from the top; the glyph's bitmap sits (xoff, yoff) from the
+	 * pen on the baseline, so its top is (ascent + yoff) below the line top.
 	 */
-	out->x0 = 0.0f;
-	out->y0 = 0.0f;
-	out->x1 = (float)ink_w * s;
-	out->y1 = (float)KGUI_FONT_CELL * s;
+	out->x0 = (float)m->xoff * disp;
+	out->y0 = (f->ascent + (float)m->yoff) * disp;
+	out->x1 = ((float)m->xoff + (float)m->w) * disp;
+	out->y1 = (f->ascent + (float)m->yoff + (float)m->h) * disp;
 
-	out->u0 = (float)(cell_x + m->c0) / (float)KGUI_FONT_ATLAS_W;
-	out->u1 = (float)(cell_x + m->c1 + 1) / (float)KGUI_FONT_ATLAS_W;
-	out->v0 = (float)cell_y / (float)KGUI_FONT_ATLAS_H;
-	out->v1 = (float)(cell_y + KGUI_FONT_CELL) / (float)KGUI_FONT_ATLAS_H;
+	out->u0 = (float)m->ax / (float)KGUI_FONT_ATLAS_W;
+	out->u1 = (float)(m->ax + m->w) / (float)KGUI_FONT_ATLAS_W;
+	out->v0 = (float)m->ay / (float)KGUI_FONT_ATLAS_H;
+	out->v1 = (float)(m->ay + m->h) / (float)KGUI_FONT_ATLAS_H;
 
-	out->advance = (float)m->advance * s;
+	out->advance = (float)m->advance * disp;
 	out->visible = 1;
 	return 1;
 }

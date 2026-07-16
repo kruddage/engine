@@ -2924,6 +2924,26 @@ static const float GIZMO_AXIS_COL[3][4] = {
 };
 
 /*
+ * Pick radii in CSS pixels. The tip knob is the finger-first grab target: a
+ * 22px radius gives a ~44px touch target (the Apple/Material minimum) so a
+ * fingertip lands it without precision. The thin axis shaft stays grabbable at
+ * a tighter radius for mouse users who seize it mid-length; the knob pass wins
+ * near the tip, which also disambiguates near-parallel axes under a fingertip.
+ */
+#define GIZMO_KNOB_PICK 22.0f
+#define GIZMO_LINE_PICK  8.0f
+
+/*
+ * Rotate/scale drag sensitivity, expressed against the shorter viewport
+ * dimension so a fixed fraction of the screen means a fixed change regardless
+ * of resolution or DPI — unlike the old raw px*0.01 constant, which was
+ * pixel-tuned for a mouse on one display. A full-screen drag turns once / adds
+ * 4.0 to scale. Move needs no constant: it stays world-accurate via len/axis_px.
+ */
+#define GIZMO_ROT_FULL   6.2831853f /* radians per full shorter-dim drag */
+#define GIZMO_SCALE_FULL 4.0f       /* scale units per full shorter-dim drag */
+
+/*
  * Project a world point through view_proj into overlay pixels. view_proj is
  * column-major (m[col*4+row]); disp is the viewport size.  Returns false when
  * the point is at or behind the camera plane (w <= 0).
@@ -3058,15 +3078,32 @@ static bool gizmo_update_and_draw(void)
 	 * already in flight, so tapping the editor never grabs a handle.
 	 */
 	if (!g_kgui->over_ui(ptr.x, ptr.y) || g_gizmo_axis != GIZMO_AXIS_NONE) {
-		float best = 10.0f; /* px pick radius */
+		/* Primary pass: the fat tip knobs, finger-first. */
+		float best = GIZMO_KNOB_PICK;
 
 		for (int a = 0; a < 3; a++) {
 			if (!tip_ok[a])
 				continue;
-			float d = gizmo_seg_dist(ptr, o2d, tip2d[a]);
+			float dx = ptr.x - tip2d[a].x;
+			float dy = ptr.y - tip2d[a].y;
+			float d  = sqrtf(dx*dx + dy*dy);
 			if (d < best) {
 				best = d;
 				hot  = a;
+			}
+		}
+
+		/* Fallback: seize the thin shaft mid-length (mouse-friendly). */
+		if (hot == GIZMO_AXIS_NONE) {
+			best = GIZMO_LINE_PICK;
+			for (int a = 0; a < 3; a++) {
+				if (!tip_ok[a])
+					continue;
+				float d = gizmo_seg_dist(ptr, o2d, tip2d[a]);
+				if (d < best) {
+					best = d;
+					hot  = a;
+				}
 			}
 		}
 	}
@@ -3099,6 +3136,9 @@ static bool gizmo_update_and_draw(void)
 		float           mvy = ptr.y - g_gizmo_grab.y;
 		float           along = axis_px > 1e-3f
 					? (mvx*ax + mvy*ay) / axis_px : 0.0f;
+		/* Fraction of the shorter viewport dimension travelled. */
+		float           span   = dw < dh ? dw : dh;
+		float           travel = span > 1e-3f ? along / span : 0.0f;
 
 		if (g_gizmo_mode == GIZMO_MOVE) {
 			/* along px * (world units per px along this axis). */
@@ -3107,12 +3147,13 @@ static bool gizmo_update_and_draw(void)
 
 			t.position[a] = g_gizmo_start.position[a] + world;
 		} else if (g_gizmo_mode == GIZMO_SCALE) {
-			float s = g_gizmo_start.scale[a] + along * 0.01f;
+			float s = g_gizmo_start.scale[a]
+				  + travel * GIZMO_SCALE_FULL;
 
 			t.scale[a] = s < 0.01f ? 0.01f : s;
 		} else { /* GIZMO_ROTATE */
 			float axis[3] = { 0.0f, 0.0f, 0.0f };
-			float ang     = along * 0.01f;
+			float ang     = travel * GIZMO_ROT_FULL;
 			float dq[4];
 
 			axis[a] = 1.0f;
@@ -3146,19 +3187,24 @@ static bool gizmo_update_and_draw(void)
 		g_kgui->line(o2d.x, o2d.y, tip2d[a].x, tip2d[a].y, th,
 			     c[0], c[1], c[2], c[3]);
 
+		/*
+		 * Fat knobs so the tip reads as a finger target, not a dot:
+		 * sized to sit inside the GIZMO_KNOB_PICK grab radius rather
+		 * than the old mouse-precise 5px marks.
+		 */
 		if (g_gizmo_mode == GIZMO_MOVE) {
 			g_kgui->circle(tip2d[a].x, tip2d[a].y,
-				       (a == hot) ? 7.0f : 5.0f,
+				       (a == hot) ? 11.0f : 9.0f,
 				       c[0], c[1], c[2], c[3]);
 		} else if (g_gizmo_mode == GIZMO_SCALE) {
-			float r = (a == hot) ? 6.0f : 4.5f;
+			float r = (a == hot) ? 10.0f : 8.0f;
 
 			g_kgui->rect(tip2d[a].x - r, tip2d[a].y - r, 2.0f * r,
 				     2.0f * r, c[0], c[1], c[2], c[3]);
 		} else { /* rotate: a ring at the tip */
 			g_kgui->ring(tip2d[a].x, tip2d[a].y,
-				     (a == hot) ? 8.0f : 6.0f,
-				     (a == hot) ? 3.0f : 2.0f,
+				     (a == hot) ? 12.0f : 10.0f,
+				     (a == hot) ? 4.0f : 3.0f,
 				     c[0], c[1], c[2], c[3]);
 		}
 	}

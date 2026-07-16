@@ -144,15 +144,6 @@
 	(check "declaration forms do not leak into the header"
 	       (and (not (has? h "c-struct")) (not (has? h "c-handle")))))
 
-(display "introspect: fetch hardening\n")
-(let ((broken (string-append tmp "/broken-dep")))
-	(system (string-append "mkdir -p " broken))
-	(check "empty dir is not a valid checkout"
-	       (not (krudd-path-exists? (string-append broken "/.git"))))
-	(system (string-append "mkdir -p " broken "/.git"))
-	(check "dir with .git is a valid checkout"
-	       (krudd-path-exists? (string-append broken "/.git"))))
-
 (system (string-append "rm -rf " tmp))
 
 (if (= fail-count 0)

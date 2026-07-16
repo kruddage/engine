@@ -18,8 +18,8 @@ WASM module through the `script` library, but that is a separate deployment.
 
 `../krudd.sh` and both `run-tests.sh` harnesses source `sync.sh` before
 compiling anything that touches s7 — including the `krudd.sh` bootstrap
-itself, which needs `s7.c` before the `krudd` host tool (and its own
-`krudd-fetch`) exist. `sync.sh` is idempotent: since the committed
+itself, which needs `s7.c` before the `krudd` host tool exists. `sync.sh`
+is idempotent: since the committed
 `s7.c`/`s7.h` already match their pinned checksum, no network I/O happens in
 the common case — fetching only kicks in if the committed files are missing
 or a re-vendor bumped the pin.

@@ -67,7 +67,7 @@ krudd/
     math/        Vector/matrix math (math.scm spec → generated C) and camera
     render/      Rendering cluster — renderer interface spec + webgl/null backends,
                  frame_graph, scene_renderer
-    shader/      The shader DSL + transpiler (shader.scm) and node-graph reader (dag.scm)
+    shader/      The shader DSL + transpiler (shader.scm)
     asset/ entity/ edit/ ui/ …
                  Engine subsystems, all compiled into the single WASM module
 ```

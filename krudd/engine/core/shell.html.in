@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>@PROJECT_NAME@ @PROJECT_VERSION@</title>
 <!-- Inline SVG favicon (data URI, no network fetch) so browsers stop
      requesting /favicon.ico and logging a 404 on every load. -->

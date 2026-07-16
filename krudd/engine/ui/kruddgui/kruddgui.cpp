@@ -31,6 +31,7 @@ extern "C" {
 }
 
 #ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
 #include <emscripten/html5.h>
 #include <GLES3/gl3.h>
 #include <cstddef>
@@ -90,6 +91,37 @@ static struct kgui_batch  s_batch;
 /* Viewport for this tick, refreshed at the top of kruddgui_tick. */
 static float s_css_w, s_css_h;
 static int   s_phys_w, s_phys_h;
+
+/*
+ * Safe-area insets (top right bottom left, CSS px) — the padding a notch, a
+ * rounded corner or the home indicator eats out of the viewport on a phone.
+ * Read from CSS env(safe-area-inset-*) through a hidden probe div whose padding
+ * resolves those keywords; the values only become non-zero when the page's
+ * viewport meta opts in with viewport-fit=cover. A cached probe element (kept on
+ * Module) is measured on demand, so this is a getComputedStyle read, not a DOM
+ * build, per query. The Scheme dock layer insets its safe frame by these so the
+ * bottom mode-bar clears the home indicator and the top bar clears the notch.
+ */
+EM_JS(void, kgui_read_safe_insets, (float *out), {
+	var probe = Module.__kgSafeProbe;
+	if (!probe) {
+		probe = document.createElement("div");
+		probe.style.cssText =
+			"position:fixed;top:0;left:0;width:0;height:0;" +
+			"visibility:hidden;pointer-events:none;" +
+			"padding-top:env(safe-area-inset-top);" +
+			"padding-right:env(safe-area-inset-right);" +
+			"padding-bottom:env(safe-area-inset-bottom);" +
+			"padding-left:env(safe-area-inset-left);";
+		document.body.appendChild(probe);
+		Module.__kgSafeProbe = probe;
+	}
+	var cs = getComputedStyle(probe);
+	HEAPF32[(out >> 2) + 0] = parseFloat(cs.paddingTop)    || 0;
+	HEAPF32[(out >> 2) + 1] = parseFloat(cs.paddingRight)  || 0;
+	HEAPF32[(out >> 2) + 2] = parseFloat(cs.paddingBottom) || 0;
+	HEAPF32[(out >> 2) + 3] = parseFloat(cs.paddingLeft)   || 0;
+});
 
 /*
  * The owned glyph atlas and its GL texture. s_font is baked once in
@@ -1153,6 +1185,24 @@ static s7_pointer sp_kgui_viewport_size(s7_scheme *sc, s7_pointer args)
 		       s7_make_real(sc, (s7_double)s_css_h));
 }
 
+/*
+ * (kgui-safe-insets) -> (top right bottom left) CSS px. Zero everywhere the
+ * platform reports no inset (all desktop browsers, and phones until the page
+ * opts into viewport-fit=cover). The Scheme fallback returns zeros too, so the
+ * dock layer works whether or not this primitive is registered.
+ */
+static s7_pointer sp_kgui_safe_insets(s7_scheme *sc, s7_pointer args)
+{
+	float v[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+	(void)args;
+	kgui_read_safe_insets(v);
+	return s7_list(sc, 4, s7_make_real(sc, (s7_double)v[0]),
+		       s7_make_real(sc, (s7_double)v[1]),
+		       s7_make_real(sc, (s7_double)v[2]),
+		       s7_make_real(sc, (s7_double)v[3]));
+}
+
 } /* extern "C" */
 
 static void register_primitives(s7_scheme *sc)
@@ -1201,6 +1251,9 @@ static void register_primitives(s7_scheme *sc)
 			   "(kgui-clip-none) clear the clip");
 	s7_define_function(sc, "kgui-viewport-size", sp_kgui_viewport_size, 0, 0,
 			   false, "(kgui-viewport-size) -> (w h) CSS px");
+	s7_define_function(sc, "kgui-safe-insets", sp_kgui_safe_insets, 0, 0,
+			   false,
+			   "(kgui-safe-insets) -> (top right bottom left) CSS px");
 }
 
 /*

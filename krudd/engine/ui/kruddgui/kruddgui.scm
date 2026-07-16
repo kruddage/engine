@@ -86,46 +86,171 @@
   (let ((p kruddgui-gap))
     (list (- x p) (- y p) (+ w (* 2 p)) (+ h (* 2 p)))))
 
-;;! Landscape (wide) layout: a horizontal row of three chips centred along the
-;;! bottom. Chip width grows to fill but is clamped so the row always fits.
-(define (kruddgui-draw-row vw vh)
+;;! ==================================================================
+;;! Dock layout — the inter-panel shell
+;;! ==================================================================
+;;!
+;;! Where the panels above hand-computed corner geometry against (vw vh) — and
+;;! collided on a phone, since two near-full-width consoles anchored to opposite
+;;! corners land on the same rect and occlude — the dock layer gives them a shell
+;;! to place *into*. A safe frame that bars reserve bands out of, one breakpoint
+;;! mode, and an arbiter that keeps at most one console in the main area with the
+;;! rest parked as tray pills. Threaded through a single (kruddgui-draw) tick;
+;;! (kruddgui-lay …) above is the twin one level down — rows inside a body.
+
+;;! Width breakpoints (CSS px). Below -narrow is a portrait phone: one console at
+;;! a time, the rest in the tray. -wide and up is a desktop, where the arbiter
+;;! could later relax to side-by-side; between the two is a landscape phone.
+(define kruddgui-bp-narrow 600)
+(define kruddgui-bp-wide   900)
+
+;;! Tray metrics — the pill row that replaces the four hand-stacked corner
+;;! handles. One finger-tall row; pill width clamps down to share the band.
+(define kruddgui-tray-h      40)
+(define kruddgui-tray-pill-w 104)
+
+;;! (kruddgui-layout-mode vw vh) -> 'phone-portrait | 'phone-landscape | 'desktop.
+;;! Keyed off width alone for now; orientation (vw vs vh) can refine it later.
+(define (kruddgui-layout-mode vw vh)
+  (cond ((< vw kruddgui-bp-narrow) 'phone-portrait)
+	((< vw kruddgui-bp-wide)   'phone-landscape)
+	(else                      'desktop)))
+
+;;! (kruddgui-insets) -> (top right bottom left) CSS px. The host primitive when
+;;! the WASM build registered it (kgui-safe-insets, reading env(safe-area-inset-*)),
+;;! zeros otherwise — so the native test image, which stubs the kgui-* set but not
+;;! this one, lays out against a plain margin.
+(define (kruddgui-insets)
+  (if (defined? 'kgui-safe-insets) (kgui-safe-insets) '(0 0 0 0)))
+
+;;! A dock context: the viewport, the layout mode, and the running *free rect*
+;;! (x y w h) — the space still available to lay out in, which bars carve bands
+;;! from. A mutable vector threaded through one tick.
+(define (kruddgui-dock vw vh mode x y w h) (vector vw vh mode x y w h))
+(define (kruddgui-dock-vw   D) (vector-ref D 0))
+(define (kruddgui-dock-vh   D) (vector-ref D 1))
+(define (kruddgui-dock-mode D) (vector-ref D 2))
+(define (kruddgui-dock-x    D) (vector-ref D 3))
+(define (kruddgui-dock-y    D) (vector-ref D 4))
+(define (kruddgui-dock-w    D) (vector-ref D 5))
+(define (kruddgui-dock-h    D) (vector-ref D 6))
+(define (kruddgui-dock-rect D)
+  (list (kruddgui-dock-x D) (kruddgui-dock-y D)
+	(kruddgui-dock-w D) (kruddgui-dock-h D)))
+
+;;! (kruddgui-layout-begin vw vh) -> a fresh dock whose free rect is the safe
+;;! frame: the viewport inset by the safe-area insets and then one margin on every
+;;! side, so nothing the docks place lands under a notch or a home indicator.
+(define (kruddgui-layout-begin vw vh)
+  (let* ((ins (kruddgui-insets))
+	 (it  (car ins)) (ir (cadr ins)) (ib (caddr ins)) (il (cadddr ins))
+	 (m   kruddgui-margin))
+    (kruddgui-dock vw vh (kruddgui-layout-mode vw vh)
+		   (+ il m) (+ it m)
+		   (- vw il ir (* 2 m)) (- vh it ib (* 2 m)))))
+
+;;! (kruddgui-dock-reserve! D side extent) carve a band of thickness EXTENT (px)
+;;! off SIDE ('top 'bottom 'left 'right) of the free rect, shrink the free rect by
+;;! EXTENT plus a gap, and return the band's rect (x y w h). A zero (or negative)
+;;! EXTENT reserves nothing and returns a degenerate band, so a hidden bar — the
+;;! mode-bar with no selection — costs no space.
+(define (kruddgui-dock-reserve! D side extent)
+  (let ((x (kruddgui-dock-x D)) (y (kruddgui-dock-y D))
+	(w (kruddgui-dock-w D)) (h (kruddgui-dock-h D))
+	(g kruddgui-gap))
+    (if (<= extent 0)
+	(list x y (if (memq side '(top bottom)) w 0)
+		  (if (memq side '(top bottom)) 0 h))
+	(let ((step (+ extent g)))
+	  (case side
+	    ((top)    (vector-set! D 4 (+ y step)) (vector-set! D 6 (- h step))
+		      (list x y w extent))
+	    ((bottom) (vector-set! D 6 (- h step))
+		      (list x (- (+ y h) extent) w extent))
+	    ((left)   (vector-set! D 3 (+ x step)) (vector-set! D 5 (- w step))
+		      (list x y extent h))
+	    ((right)  (vector-set! D 5 (- w step))
+		      (list (- (+ x w) extent) y extent h)))))))
+
+;;! The console arbiter. At most one console occupies the main area; the others
+;;! are pills in the tray. -active is its id ('log 'board 'scene 'assets) or #f.
+;;! (kruddgui-console-toggle! id) flips that console: tapping the active one parks
+;;! it (#f), tapping any other makes it the sole active console — so two near-full-
+;;! width consoles can never stack and occlude on a phone. (The per-console -open
+;;! flags survive only as the native tests' hook for driving a body in isolation.)
+(define kruddgui-active-console #f)
+(define (kruddgui-console-active? id) (eq? kruddgui-active-console id))
+(define (kruddgui-console-toggle! id)
+  (set! kruddgui-active-console
+	(if (eq? kruddgui-active-console id) #f id)))
+
+;;! The consoles in tray order, each (id . label). Registration order is the pill
+;;! order, stable as consoles are added — no hand-threaded stacking offsets.
+(define kruddgui-consoles
+  '((log . "LOG") (board . "STATS") (scene . "SCENE") (assets . "ASSETS")))
+
+;;! (kruddgui-tray-draw D) draw the tray: one row of console pills reserved off the
+;;! top of the free rect (below the toolbar, clear of the bottom mode-bar). The
+;;! active console's pill reads as the bright accent; tapping a pill toggles that
+;;! console through the arbiter. One captured region for the whole row.
+(define (kruddgui-tray-draw D)
+  (let* ((n    (length kruddgui-consoles))
+	 (g    kruddgui-gap)
+	 (h    kruddgui-tray-h)
+	 (band (kruddgui-dock-reserve! D 'top h))
+	 (bx   (car band)) (by (cadr band)) (bw (caddr band))
+	 (pw   (min kruddgui-tray-pill-w (/ (- bw (* (- n 1) g)) n))))
+    (kgui-panel-begin "kgui-tray" bx by bw h)
+    (let loop ((cs kruddgui-consoles) (i 0))
+      (when (pair? cs)
+	(let* ((id  (caar cs))
+	       (lbl (cdar cs))
+	       (x   (+ bx (* i (+ pw g))))
+	       (act (kruddgui-console-active? id)))
+	  (kruddgui-rect* (list x by pw h)
+			  (if act kruddgui-active-bg kruddgui-idle-bg))
+	  (kruddgui-label x by pw h lbl
+			  (if act kruddgui-active-fg kruddgui-idle-fg))
+	  (when (kgui-button x by pw h)
+	    (kruddgui-console-toggle! id)))
+	(loop (cdr cs) (+ i 1))))
+    (kgui-panel-end)))
+
+;;! (kruddgui-console-draw-active D) draw whichever console the arbiter holds
+;;! active into the main rect (the free rect left after the bars and tray). Each
+;;! console's -draw-into paints its own header/body/scroll given that rect; #f
+;;! (nothing active) leaves the viewport clear.
+(define (kruddgui-console-draw-active D)
+  (case kruddgui-active-console
+    ((log)    (apply kruddgui-log-draw-into    (kruddgui-dock-rect D)))
+    ((board)  (apply kruddgui-board-draw-into  (kruddgui-dock-rect D)))
+    ((scene)  (apply kruddgui-scene-draw-into  (kruddgui-dock-rect D)))
+    ((assets) (apply kruddgui-assets-draw-into (kruddgui-dock-rect D)))
+    (else #f)))
+
+;;! (kruddgui-modebar-draw D) the tool mode-bar: a horizontal row of the three
+;;! gizmo chips (MOVE / ROTATE / SCALE) centred in a band reserved off the bottom
+;;! of the free rect — one thumb-reachable row in every orientation, replacing the
+;;! old portrait-column / landscape-row split. Chip width grows to fill but clamps
+;;! so the row always fits. Only drawn with a selection (see kruddgui-draw), so its
+;;! band is reserved here rather than up front and costs nothing when hidden.
+(define (kruddgui-modebar-draw D)
   (let* ((n    (length kruddgui-modes))
-	 (m    kruddgui-margin)
 	 (g    kruddgui-gap)
 	 (h    kruddgui-btn)
-	 (maxw (/ (- vw (* 2 m) (* (- n 1) g)) n))
+	 (band (kruddgui-dock-reserve! D 'bottom h))
+	 (bx   (car band)) (by (cadr band)) (bw (caddr band))
+	 (maxw (/ (- bw (* (- n 1) g)) n))
 	 (w    (max kruddgui-btn-min-w (min 140 maxw)))
 	 (tot  (+ (* n w) (* (- n 1) g)))
-	 (x0   (/ (- vw tot) 2))
-	 (y    (- vh m h))
-	 (fr   (kruddgui-modebar-frame x0 y tot h)))
+	 (x0   (+ bx (/ (- bw tot) 2)))
+	 (fr   (kruddgui-modebar-frame x0 by tot h)))
     (kgui-panel-begin "kgui-modebar" (car fr) (cadr fr) (caddr fr) (cadddr fr))
     (kruddgui-rect* fr kruddgui-panel-bg)
     (let loop ((ms kruddgui-modes) (i 0))
       (when (pair? ms)
 	(let ((x (+ x0 (* i (+ w g)))))
-	  (kruddgui-button x y w h (caar ms) (cdar ms)))
-	(loop (cdr ms) (+ i 1))))
-    (kgui-panel-end)))
-
-;;! Portrait (tall) layout: a vertical column of three chips anchored bottom-
-;;! right, within thumb reach. Column width is clamped to the viewport.
-(define (kruddgui-draw-col vw vh)
-  (let* ((n   (length kruddgui-modes))
-	 (m   kruddgui-margin)
-	 (g   kruddgui-gap)
-	 (h   kruddgui-btn)
-	 (w   (min kruddgui-col-w (- vw (* 2 m))))
-	 (x   (- vw m w))
-	 (tot (+ (* n h) (* (- n 1) g)))
-	 (y0  (- vh m tot))
-	 (fr  (kruddgui-modebar-frame x y0 w tot)))
-    (kgui-panel-begin "kgui-modebar" (car fr) (cadr fr) (caddr fr) (cadddr fr))
-    (kruddgui-rect* fr kruddgui-panel-bg)
-    (let loop ((ms kruddgui-modes) (i 0))
-      (when (pair? ms)
-	(let ((y (+ y0 (* i (+ h g)))))
-	  (kruddgui-button x y w h (caar ms) (cdar ms)))
+	  (kruddgui-button x by w h (caar ms) (cdar ms)))
 	(loop (cdr ms) (+ i 1))))
     (kgui-panel-end)))
 
@@ -202,7 +327,7 @@
 	 (n    (length btns))
 	 (tot  (+ (* n w) (* (- n 1) g)))
 	 (x0   (/ (- vw tot) 2))
-	 (y    kruddgui-margin)
+	 (y    (+ (car (kruddgui-insets)) kruddgui-margin))
 	 (fr   (kruddgui-modebar-frame x0 y tot h)))
     (kgui-panel-begin "kgui-toolbar" (car fr) (cadr fr) (caddr fr) (cadddr fr))
     (kruddgui-rect* fr kruddgui-panel-bg)
@@ -284,7 +409,7 @@
     (kruddgui-rect* (list bx by bs bs) kruddgui-idle-bg)
     (kruddgui-label bx by bs bs "x" kruddgui-idle-fg)
     (when (kgui-button bx by bs bs)
-      (set! kruddgui-log-open #f))
+      (set! kruddgui-active-console #f))
     (let loop ((cs kruddgui-log-chips) (i 0))
       (when (pair? cs)
 	(let* ((lbl    (caar cs))
@@ -333,33 +458,21 @@
 	    (loop (cdr rs) (+ i 1)))))))
     (kgui-clip-none)))
 
-;;! (kruddgui-modebar-reserve vw vh) the height the mode-bar occupies at the
-;;! bottom of the viewport, so the Log console can size itself to clear it: the
-;;! tall three-chip column in portrait, the single-chip row in landscape.
+;;! (kruddgui-modebar-reserve vw vh) the height the mode-bar occupies at the bottom
+;;! of the viewport — now a single horizontal chip row in every orientation. Kept
+;;! for the console -draw-panel wrappers (the native tests' isolation entry point);
+;;! the live dock path reserves the band directly via (kruddgui-modebar-draw).
 (define (kruddgui-modebar-reserve vw vh)
-  (let ((n (length kruddgui-modes)))
-    (if (>= vw vh)
-	(+ kruddgui-margin kruddgui-btn kruddgui-gap)
-	(+ kruddgui-margin
-	   (+ (* n kruddgui-btn) (* (- n 1) kruddgui-gap))
-	   kruddgui-gap))))
+  (+ kruddgui-margin kruddgui-btn kruddgui-gap))
 
-;;! (kruddgui-log-draw-panel vw vh) the expanded console. It anchors top-left
-;;! and stops short of the mode-bar's reserved band at the bottom, so the two
-;;! kruddgui panels never overlap; while open it may cover the top toolbar
-;;! beneath (a deliberate, dismissable read view), and its region traps every
-;;! tap so nothing leaks to the viewport tools under it. The body is fed by
+;;! (kruddgui-log-draw-into x y w h) paint the Log console into the dock's main
+;;! rect: header, then the scissor-clipped body. Its region traps every tap so
+;;! nothing leaks to the viewport tools under it. The body is fed by
 ;;! (krudd-log-history) — (level . text) pairs oldest-first, or #f when the log
 ;;! subsystem is absent (the #f branch mirrors the old C null check). Drag and
 ;;! wheel accumulated on the region this frame move the scroll before redraw.
-(define (kruddgui-log-draw-panel vw vh)
-  (let* ((m      kruddgui-log-margin)
-	 (avail  (- vh m (kruddgui-modebar-reserve vw vh) kruddgui-gap))
-	 (w      (min kruddgui-log-max-w (- vw (* 2 m))))
-	 (h      (max 120.0 (min (* vh 0.5) avail)))
-	 (x      m)
-	 (y      m)
-	 (hdr    kruddgui-log-header-h)
+(define (kruddgui-log-draw-into x y w h)
+  (let* ((hdr    kruddgui-log-header-h)
 	 (body-y (+ y hdr))
 	 (body-h (- h hdr)))
     (kgui-panel-begin "kgui-log" x y w h)
@@ -377,24 +490,6 @@
 	    (kruddgui-log-draw-body x body-y w body-h
 				    (kruddgui-log-filter-rows hist)
 				    (kruddgui-log-line-height)))))
-    (kgui-panel-end)))
-
-;;! (kruddgui-log-draw-handle vw vh) the collapsed console: a small pill in the
-;;! bottom-left corner — a zone clear of both the ImGui board's header controls
-;;! (so the editor's Show-KB toggle is never covered) and the mode-bar at the
-;;! opposite bottom corner — that expands the console on tap, its own captured
-;;! input region.
-(define (kruddgui-log-draw-handle vw vh)
-  (let* ((m  kruddgui-log-margin)
-	 (hw kruddgui-log-handle-w)
-	 (hh kruddgui-log-handle-h)
-	 (x  m)
-	 (y  (- vh m hh)))
-    (kgui-panel-begin "kgui-log" x y hw hh)
-    (kruddgui-rect* (list x y hw hh) kruddgui-log-panel-bg)
-    (kruddgui-label x y hw hh "LOG" kruddgui-idle-fg)
-    (when (kgui-button x y hw hh)
-      (set! kruddgui-log-open #t))
     (kgui-panel-end)))
 
 ;;! ------------------------------------------------------------------
@@ -528,7 +623,7 @@
     (kruddgui-rect* (list bx by bs bs) kruddgui-idle-bg)
     (kruddgui-label bx by bs bs "x" kruddgui-idle-fg)
     (when (kgui-button bx by bs bs)
-      (set! kruddgui-board-open #f))))
+      (set! kruddgui-active-console #f))))
 
 ;;! (kruddgui-board-draw-body x y w h rows lh) draws the scrolling list, anchored
 ;;! to the top: at scroll 0 the first row sits at the body's top edge and a drag
@@ -557,21 +652,12 @@
 	    (loop (cdr rs) (+ i 1)))))))
     (kgui-clip-none)))
 
-;;! (kruddgui-board-draw-panel vw vh) the expanded console. It anchors top-right
-;;! and stops short of the mode-bar's reserved band at the bottom, so it never
-;;! overlaps the bottom mode-bar or the top-left Log console; while open it may
-;;! cover the top toolbar beneath — a deliberate, dismissable read view — and its
-;;! region traps every tap so nothing leaks to the viewport tools under it. A
-;;! drag/wheel accumulated on the region this frame scrolls the body before it is
-;;! redrawn (then re-clamped there).
-(define (kruddgui-board-draw-panel vw vh)
-  (let* ((m      kruddgui-log-margin)
-	 (avail  (- vh m (kruddgui-modebar-reserve vw vh) kruddgui-gap))
-	 (w      (min kruddgui-board-max-w (- vw (* 2 m))))
-	 (h      (max 140.0 (min (* vh 0.6) avail)))
-	 (x      (- vw m w))
-	 (y      m)
-	 (hdr    kruddgui-board-header-h)
+;;! (kruddgui-board-draw-into x y w h) paint the board (KRUDD stats) console into
+;;! the dock's main rect: header, then the scrolled read-only body. Its region
+;;! traps every tap so nothing leaks to the viewport tools under it. A drag/wheel
+;;! accumulated on the region this frame scrolls the body (then re-clamped there).
+(define (kruddgui-board-draw-into x y w h)
+  (let* ((hdr    kruddgui-board-header-h)
 	 (body-y (+ y hdr))
 	 (body-h (- h hdr)))
     (kgui-panel-begin "kgui-board" x y w h)
@@ -584,23 +670,6 @@
     (kruddgui-board-draw-body x body-y w body-h
 			      (kruddgui-board-rows)
 			      (kruddgui-board-line-height))
-    (kgui-panel-end)))
-
-;;! (kruddgui-board-draw-handle vw vh) the collapsed console: a small pill in the
-;;! bottom-left corner, stacked directly above the Log handle so the two consoles
-;;! share a tidy corner clear of both the ImGui board header (top) and the mode-
-;;! bar (bottom-right / centre). Tap expands the console; its own captured region.
-(define (kruddgui-board-draw-handle vw vh)
-  (let* ((m  kruddgui-log-margin)
-	 (hw kruddgui-log-handle-w)
-	 (hh kruddgui-log-handle-h)
-	 (x  m)
-	 (y  (- vh m hh hh kruddgui-gap)))
-    (kgui-panel-begin "kgui-board" x y hw hh)
-    (kruddgui-rect* (list x y hw hh) kruddgui-board-panel-bg)
-    (kruddgui-label x y hw hh "STATS" kruddgui-idle-fg)
-    (when (kgui-button x y hw hh)
-      (set! kruddgui-board-open #t))
     (kgui-panel-end)))
 
 ;;! ------------------------------------------------------------------
@@ -1160,20 +1229,13 @@
     (kruddgui-rect* (list bx by bs bs) kruddgui-idle-bg)
     (kruddgui-label bx by bs bs "x" kruddgui-idle-fg)
     (when (kgui-button bx by bs bs)
-      (set! kruddgui-scene-open #f))))
+      (set! kruddgui-active-console #f))))
 
-;;! (kruddgui-scene-draw-panel vw vh) the expanded console: a top-left overlay
-;;! (drawn last, so it wins any overlap with the Log/board consoles) that stops
-;;! short of the mode-bar's reserved band. Drag/wheel on the region scrolls the
-;;! body before it is redrawn (then re-clamped there).
-(define (kruddgui-scene-draw-panel vw vh)
-  (let* ((m      kruddgui-log-margin)
-	 (avail  (- vh m (kruddgui-modebar-reserve vw vh) kruddgui-gap))
-	 (w      (min kruddgui-scene-max-w (- vw (* 2 m))))
-	 (h      (max 160.0 (min (* vh 0.72) avail)))
-	 (x      m)
-	 (y      m)
-	 (hdr    kruddgui-scene-header-h)
+;;! (kruddgui-scene-draw-into x y w h) paint the Scene inspector into the dock's
+;;! main rect: header, then the scrolled entity/component body. Drag/wheel on the
+;;! region scrolls the body before it is redrawn (then re-clamped there).
+(define (kruddgui-scene-draw-into x y w h)
+  (let* ((hdr    kruddgui-scene-header-h)
 	 (body-y (+ y hdr))
 	 (body-h (- h hdr)))
     (kgui-panel-begin "kgui-scene" x y w h)
@@ -1186,20 +1248,14 @@
     (kruddgui-scene-body x body-y w body-h (krudd-world-caps))
     (kgui-panel-end)))
 
-;;! (kruddgui-scene-draw-handle vw vh) the collapsed console: a pill in the bottom-
-;;! left stack, above the STATS handle (STATS above LOG). Tap expands the console.
-(define (kruddgui-scene-draw-handle vw vh)
-  (let* ((m  kruddgui-log-margin)
-	 (hw kruddgui-log-handle-w)
-	 (hh kruddgui-log-handle-h)
-	 (x  m)
-	 (y  (- vh m hh hh hh (* 2 kruddgui-gap))))
-    (kgui-panel-begin "kgui-scene" x y hw hh)
-    (kruddgui-rect* (list x y hw hh) kruddgui-scene-panel-bg)
-    (kruddgui-label x y hw hh "SCENE" kruddgui-idle-fg)
-    (when (kgui-button x y hw hh)
-      (set! kruddgui-scene-open #t))
-    (kgui-panel-end)))
+;;! (kruddgui-scene-draw-panel vw vh) the native tests' isolation entry point: size
+;;! the console as the dock's main area does and draw it there.
+(define (kruddgui-scene-draw-panel vw vh)
+  (let* ((m     kruddgui-log-margin)
+	 (avail (- vh m (kruddgui-modebar-reserve vw vh) kruddgui-gap))
+	 (w     (min kruddgui-scene-max-w (- vw (* 2 m))))
+	 (h     (max 160.0 (min (* vh 0.72) avail))))
+    (kruddgui-scene-draw-into m m w h)))
 
 ;;! ------------------------------------------------------------------
 ;;! Widget foundations — the draggable slider and 2D colour picker (#492, PR6a)
@@ -2682,19 +2738,13 @@
     (kruddgui-rect* (list bx by bs bs) kruddgui-idle-bg)
     (kruddgui-label bx by bs bs "x" kruddgui-idle-fg)
     (when (kgui-button bx by bs bs)
-      (set! kruddgui-assets-open #f))))
+      (set! kruddgui-active-console #f))))
 
-;;! (kruddgui-assets-draw-panel vw vh) the expanded console: a top-left overlay
-;;! stopping short of the mode-bar band, drawn last so it wins any overlap. A
-;;! drag/wheel on the body region scrolls it (then re-clamped in the body).
-(define (kruddgui-assets-draw-panel vw vh)
-  (let* ((m      kruddgui-log-margin)
-	 (avail  (- vh m (kruddgui-modebar-reserve vw vh) kruddgui-gap))
-	 (w      (min kruddgui-assets-max-w (- vw (* 2 m))))
-	 (h      (max 160.0 (min (* vh 0.72) avail)))
-	 (x      m)
-	 (y      m)
-	 (hdr    kruddgui-assets-header-h)
+;;! (kruddgui-assets-draw-into x y w h) paint the Assets console into the dock's
+;;! main rect: header, then the scrolled asset browser body. A drag/wheel on the
+;;! region scrolls it (then re-clamped in the body).
+(define (kruddgui-assets-draw-into x y w h)
+  (let* ((hdr    kruddgui-assets-header-h)
 	 (body-y (+ y hdr))
 	 (body-h (- h hdr)))
     (kgui-panel-begin "kgui-assets" x y w h)
@@ -2707,46 +2757,35 @@
     (kruddgui-assets-body x body-y w body-h)
     (kgui-panel-end)))
 
-;;! (kruddgui-assets-draw-handle vw vh) the collapsed console: a pill in the bottom-
-;;! left stack, above the SCENE handle. Tap expands the console.
-(define (kruddgui-assets-draw-handle vw vh)
-  (let* ((m  kruddgui-log-margin)
-	 (hw kruddgui-log-handle-w)
-	 (hh kruddgui-log-handle-h)
-	 (x  m)
-	 (y  (- vh m (* 4 hh) (* 3 kruddgui-gap))))
-    (kgui-panel-begin "kgui-assets" x y hw hh)
-    (kruddgui-rect* (list x y hw hh) kruddgui-scene-panel-bg)
-    (kruddgui-label x y hw hh "ASSETS" kruddgui-idle-fg)
-    (when (kgui-button x y hw hh)
-      (set! kruddgui-assets-open #t))
-    (kgui-panel-end)))
+;;! (kruddgui-assets-draw-panel vw vh) the native tests' isolation entry point: size
+;;! the console as the dock's main area does and draw it there.
+(define (kruddgui-assets-draw-panel vw vh)
+  (let* ((m     kruddgui-log-margin)
+	 (avail (- vh m (kruddgui-modebar-reserve vw vh) kruddgui-gap))
+	 (w     (min kruddgui-assets-max-w (- vw (* 2 m))))
+	 (h     (max 160.0 (min (* vh 0.72) avail))))
+    (kruddgui-assets-draw-into m m w h)))
 
-;;! (kruddgui-draw) the whole layer — the host's per-tick entry point. Draw the
-;;! persistent top toolbar (play/pause, undo, redo), the mode-bar (row or column
-;;! by orientation, only with a selection), then the Log console, the board
-;;! console, the Scene inspector and the Assets console (each expanded or
-;;! collapsed). Every panel owns its own input region; drawn in order, so a later
-;;! panel wins any overlap.
+;;! (kruddgui-draw) the whole layer — the host's per-tick entry point, laid out
+;;! through the dock shell. Off a safe frame it reserves the top toolbar band
+;;! (play/pause, undo, redo), then the bottom mode-bar band (only with a selection),
+;;! then the tray row of console pills; whatever free rect is left is the main area,
+;;! where the one active console (if any) draws. Each piece owns its input region.
+;;! The arbiter keeps at most one console in main, so two near-full-width consoles
+;;! can no longer stack and occlude on a phone — the rest wait as tray pills.
 (define (kruddgui-draw)
   (let* ((vp (kgui-viewport-size))
 	 (vw (car vp))
 	 (vh (cadr vp)))
     (when (and (> vw 0) (> vh 0))
-      (kruddgui-toolbar-draw vw vh)
-      (when (>= (krudd-selected) 0)
-	(if (>= vw vh)
-	    (kruddgui-draw-row vw vh)
-	    (kruddgui-draw-col vw vh)))
-      (if kruddgui-log-open
-	  (kruddgui-log-draw-panel vw vh)
-	  (kruddgui-log-draw-handle vw vh))
-      (if kruddgui-board-open
-	  (kruddgui-board-draw-panel vw vh)
-	  (kruddgui-board-draw-handle vw vh))
-      (if kruddgui-scene-open
-	  (kruddgui-scene-draw-panel vw vh)
-	  (kruddgui-scene-draw-handle vw vh))
-      (if kruddgui-assets-open
-	  (kruddgui-assets-draw-panel vw vh)
-	  (kruddgui-assets-draw-handle vw vh)))))
+      (let ((D (kruddgui-layout-begin vw vh)))
+	;;! Top toolbar: drawn at the safe-frame top, its band reserved so the
+	;;! tray and main area sit below it.
+	(kruddgui-toolbar-draw vw vh)
+	(kruddgui-dock-reserve! D 'top kruddgui-tool-h)
+	;;! Bottom mode-bar: reserves its own band (only with a selection).
+	(when (>= (krudd-selected) 0)
+	  (kruddgui-modebar-draw D))
+	;;! Tray of console pills, then the active console into the main rect.
+	(kruddgui-tray-draw D)
+	(kruddgui-console-draw-active D)))))

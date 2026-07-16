@@ -23,11 +23,6 @@
 		  (list->string (reverse cs))
 		  (loop (cons c cs) (read-char port)))))))
 
-(define (krudd-path-exists? p)
-	(if (defined? 'file-exists?)
-	    (file-exists? p)
-	    (= 0 (system (string-append "test -e \"" p "\"")))))
-
 (define (krudd-repo-root) (or (getenv "KRUDD_ROOT") "."))
 
 (define (krudd-version)
@@ -55,16 +50,6 @@
 (define (krudd-build-date)
 	(let ((d (krudd-strip (system "date -u +%Y-%m-%d" #t))))
 		(if (> (string-length d) 0) d "unknown")))
-
-(define (krudd-fetch-dir name)
-	(string-append (krudd-repo-root) "/build/_deps/" name))
-
-(define (krudd-fetch name repo tag)
-	(let ((dir (krudd-fetch-dir name)))
-		(if (not (krudd-path-exists? (string-append dir "/.git")))
-		    (run (string-append "rm -rf \"" dir "\" && git clone --depth 1 "
-					"--branch " tag " " repo " \"" dir "\"")))
-		dir))
 
 (define (krudd-split s ch)
 	(let loop ((i 0) (start 0) (out '()))

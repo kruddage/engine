@@ -4,7 +4,6 @@
  "log"
  "memory"
  "math"
- "render"
  "edit"
  "entity"
  "render/null"

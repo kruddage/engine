@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
 # Stages only the web-facing build outputs into a clean directory for GitHub
-# Pages publishing. The raw build tree must NOT be published: it contains
-# _deps/ (a dependency checkout whose imgui-src is a git gitlink), which makes
-# the GitHub Pages branch build fail with "No url found for submodule path".
+# Pages publishing. The raw build tree must NOT be published wholesale: it can
+# carry intermediate artifacts and dependency checkouts that don't belong on
+# the Pages branch, so this script whitelists only the files the site needs.
 #
 # Usage: .github/scripts/stage-site.sh [BUILD_DIR] [OUT_DIR]
 #        defaults: BUILD_DIR=build, OUT_DIR=public

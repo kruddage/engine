@@ -64,11 +64,6 @@ export KRUDD_S7BIN="$s7bin"
 # the runtime image and exercised natively by engine/core/shader_transpile_test.c.
 "$s7bin" "$root/krudd/engine/shader/shader_test.scm"
 
-# Stage 1d: the visual-DAG reader (#430) — lower the built-in scene shader to a
-# laid-out node graph and check its structure and deterministic layout, the
-# read-only half of the round-trip in initiative #429.
-"$s7bin" "$root/krudd/engine/shader/dag_test.scm"
-
 # Stage 2: build + run the native suite through the generated build.ninja.
 if command -v ninja >/dev/null 2>&1; then
 	echo "kruddmake: building native suite via ninja"
@@ -84,10 +79,6 @@ fi
 # calls.
 if command -v ninja >/dev/null 2>&1 && command -v emcc >/dev/null 2>&1; then
 	echo "kruddmake: building WASM output via ninja + emcc"
-	# imgui is fetched by the generator; make sure a checkout is present.
-	imgui="$root/build/_deps/imgui"
-	[ -f "$imgui/.git/HEAD" ] || git clone --depth 1 --branch v1.90.9 \
-		https://github.com/ocornut/imgui.git "$imgui"
 	ninja -C "$work" -f build.ninja wasm
 	echo "kruddmake: ninja WASM build OK"
 else

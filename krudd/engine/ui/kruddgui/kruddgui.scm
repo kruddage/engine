@@ -36,6 +36,13 @@
 (define kruddgui-btn 56)
 (define kruddgui-btn-min-w 96)
 (define kruddgui-col-w 128)
+;;! Console-header control sizes. The close box and the Scene "< Back" chip are
+;;! the smallest targets on a phone and sit in the corners, so they are sized up
+;;! toward the finger-target minimum — as large as the 36px header band allows
+;;! (a fuller 44px would need a taller header). Back is wider than tall so the
+;;! two-glyph label breathes.
+(define kruddgui-close-bs 32)
+(define kruddgui-back-w 72)
 
 ;;! The three tools, in gizmo-mode order (0 move, 1 rotate, 2 scale).
 (define kruddgui-modes '((0 . "MOVE") (1 . "ROTATE") (2 . "SCALE")))
@@ -63,6 +70,20 @@
 	 (tx (+ x (/ (- w tw) 2)))
 	 (ty (+ y (/ (- h th) 2))))
     (kgui-text tx ty label (car c) (cadr c) (caddr c) (cadddr c))))
+
+;;! (kruddgui-close-box x y w hdr) draw a console's close box at the right edge of
+;;! its header band and collapse the active console when tapped. Every console
+;;! header (log / board / scene / assets) drew this same box by hand; lifting it
+;;! here keeps the finger target one size in one place. The box is vertically
+;;! centred in the header and inset one small margin from the right edge.
+(define (kruddgui-close-box x y w hdr)
+  (let* ((bs kruddgui-close-bs)
+	 (bx (- (+ x w) 8 bs))
+	 (by (+ y (/ (- hdr bs) 2))))
+    (kruddgui-rect* (list bx by bs bs) kruddgui-idle-bg)
+    (kruddgui-label bx by bs bs "x" kruddgui-idle-fg)
+    (when (kgui-button bx by bs bs)
+      (set! kruddgui-active-console #f))))
 
 ;;! (kruddgui-button x y w h idx label) draw one mode chip and, on tap, switch
 ;;! the shared gizmo tool to IDX. The active tool is highlighted. (kgui-button)
@@ -401,15 +422,9 @@
   (let* ((cw   kruddgui-log-chip-w)
 	 (ch   kruddgui-log-chip-h)
 	 (cy   (+ y (/ (- hdr ch) 2)))
-	 (cx0  (+ x 52))
-	 (bs   26)
-	 (bx   (- (+ x w) 8 bs))
-	 (by   (+ y (/ (- hdr bs) 2))))
+	 (cx0  (+ x 52)))
     (kruddgui-label x y 52 hdr "LOG" kruddgui-idle-fg)
-    (kruddgui-rect* (list bx by bs bs) kruddgui-idle-bg)
-    (kruddgui-label bx by bs bs "x" kruddgui-idle-fg)
-    (when (kgui-button bx by bs bs)
-      (set! kruddgui-active-console #f))
+    (kruddgui-close-box x y w hdr)
     (let loop ((cs kruddgui-log-chips) (i 0))
       (when (pair? cs)
 	(let* ((lbl    (caar cs))
@@ -616,14 +631,8 @@
 ;;! (kruddgui-board-draw-header x y w hdr) draws the title and the close box.
 ;;! The close tap is trapped by the console region, so it never reaches ImGui.
 (define (kruddgui-board-draw-header x y w hdr)
-  (let* ((bs 26)
-	 (bx (- (+ x w) 8 bs))
-	 (by (+ y (/ (- hdr bs) 2))))
-    (kruddgui-label x y 96 hdr "ENGINE" kruddgui-idle-fg)
-    (kruddgui-rect* (list bx by bs bs) kruddgui-idle-bg)
-    (kruddgui-label bx by bs bs "x" kruddgui-idle-fg)
-    (when (kgui-button bx by bs bs)
-      (set! kruddgui-active-console #f))))
+  (kruddgui-label x y 96 hdr "ENGINE" kruddgui-idle-fg)
+  (kruddgui-close-box x y w hdr))
 
 ;;! (kruddgui-board-draw-body x y w h rows lh) draws the scrolling list, anchored
 ;;! to the top: at scroll 0 the first row sits at the body's top edge and a drag
@@ -1215,21 +1224,19 @@
 ;;! drilled in, and the close box. Back returns to the list; close collapses the
 ;;! console. Both taps are trapped by the console region.
 (define (kruddgui-scene-draw-header x y w hdr)
-  (let* ((bs 26)
-	 (bx (- (+ x w) 8 bs))
-	 (by (+ y (/ (- hdr bs) 2))))
+  (let* ((bh kruddgui-close-bs)
+	 (bw kruddgui-back-w)
+	 (bx (+ x 6))
+	 (by (+ y (/ (- hdr bh) 2))))
     (if (= kruddgui-scene-sel -1)
 	(kruddgui-label x y 120 hdr "SCENE" kruddgui-idle-fg)
 	(begin
-	  (kruddgui-rect* (list (+ x 6) by 64 bs) kruddgui-idle-bg)
-	  (kruddgui-label (+ x 6) by 64 bs "< Back" kruddgui-idle-fg)
-	  (when (kgui-button (+ x 6) by 64 bs)
+	  (kruddgui-rect* (list bx by bw bh) kruddgui-idle-bg)
+	  (kruddgui-label bx by bw bh "< Back" kruddgui-idle-fg)
+	  (when (kgui-button bx by bw bh)
 	    (set! kruddgui-scene-sel -1)
 	    (set! kruddgui-scene-open-combo #f))))
-    (kruddgui-rect* (list bx by bs bs) kruddgui-idle-bg)
-    (kruddgui-label bx by bs bs "x" kruddgui-idle-fg)
-    (when (kgui-button bx by bs bs)
-      (set! kruddgui-active-console #f))))
+    (kruddgui-close-box x y w hdr)))
 
 ;;! (kruddgui-scene-draw-into x y w h) paint the Scene inspector into the dock's
 ;;! main rect: header, then the scrolled entity/component body. Drag/wheel on the
@@ -2731,14 +2738,8 @@
 ;;! (kruddgui-assets-draw-header x y w hdr) the title and the close box; the close
 ;;! tap is trapped by the console region so it never reaches ImGui.
 (define (kruddgui-assets-draw-header x y w hdr)
-  (let* ((bs 26)
-	 (bx (- (+ x w) 8 bs))
-	 (by (+ y (/ (- hdr bs) 2))))
-    (kruddgui-label x y 120 hdr "ASSETS" kruddgui-idle-fg)
-    (kruddgui-rect* (list bx by bs bs) kruddgui-idle-bg)
-    (kruddgui-label bx by bs bs "x" kruddgui-idle-fg)
-    (when (kgui-button bx by bs bs)
-      (set! kruddgui-active-console #f))))
+  (kruddgui-label x y 120 hdr "ASSETS" kruddgui-idle-fg)
+  (kruddgui-close-box x y w hdr))
 
 ;;! (kruddgui-assets-draw-into x y w h) paint the Assets console into the dock's
 ;;! main rect: header, then the scrolled asset browser body. A drag/wheel on the

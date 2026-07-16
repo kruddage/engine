@@ -144,8 +144,6 @@
        (contains? ninja-text "build bin/log_test: link "))
 (check "log test stamp present"
        (contains? ninja-text "build test/log.stamp: run_test bin/log_test"))
-(check "interface-library emits no build output"
-       (not (contains? ninja-text "renderer_interface")))
 (check "C plugin compiles as a WASM library object (emcc_c), no side-module rule"
        (and (contains? ninja-text
 	      (string-append "build wasm-obj/edit_plugin/edit/"

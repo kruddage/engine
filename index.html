@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>krudd 17.12.0</title>
 <!-- Inline SVG favicon (data URI, no network fetch) so browsers stop
      requesting /favicon.ico and logging a 404 on every load. -->
@@ -296,7 +296,7 @@ footer {
 <header>
 	<span class="wordmark">KRUDD</span>
 	<span class="version" id="version" title="click for build info">17.12.0</span>
-	<span class="version-detail" id="version-detail">commit c7b93fb &middot; built 2026-07-15</span>
+	<span class="version-detail" id="version-detail">commit eba71e6 &middot; built 2026-07-16</span>
 </header>
 
 <div class="canvas-wrap">
@@ -422,13 +422,13 @@ footer {
 var Module = {
 	locateFile: function (path, prefix) {
 		if (path.endsWith('.wasm'))
-			return prefix + path.replace(/\.wasm$/, '.c7b93fb.wasm');
+			return prefix + path.replace(/\.wasm$/, '.eba71e6.wasm');
 		return prefix + path;
 	}
 };
 </script>
 
-<script async type="text/javascript" src="index.c7b93fb.js"></script>
+<script async type="text/javascript" src="index.eba71e6.js"></script>
 
 </body>
 </html>

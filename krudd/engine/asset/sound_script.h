@@ -15,16 +15,18 @@
  *
  * Evaluate SRC — a (sound NAME [(params ...)] (sample (t) ...)) form, see
  * core/sound_script.scm — against the shared s7 image, sampling its sample
- * clause frame by frame, and marshal the interleaved-stereo float32 result into
- * a heap-allocated sound_blob. SAMPLE_RATE is the output rate the caller
- * chooses (the script is rate-independent); 0 defaults to
- * SOUND_SCRIPT_DEFAULT_RATE and the value is clamped to
- * [SOUND_SCRIPT_MIN_RATE, SOUND_SCRIPT_MAX_RATE]. The frame count is derived
- * from the sound's (duration ...) param (SOUND_SCRIPT_DEFAULT_DURATION seconds
- * when the sound declares none) times the rate, clamped to
- * SOUND_SCRIPT_MAX_FRAMES. PARAMS (PLEN bytes, or NULL) is the tight-packed
- * override the sample body reads through (param ...); missing/short params fall
- * back to their declared defaults.
+ * clause frame by frame, and marshal the interleaved float32 result into a
+ * heap-allocated sound_blob. SAMPLE_RATE is the output rate the caller chooses
+ * (the script is rate-independent); 0 defaults to SOUND_SCRIPT_DEFAULT_RATE and
+ * the value is clamped to [SOUND_SCRIPT_MIN_RATE, SOUND_SCRIPT_MAX_RATE].
+ * CHANNELS is SOUND_CHANNELS_MONO or SOUND_CHANNELS_STEREO — the count to bake,
+ * a choice of the caller, not the sound (a mono bake downmixes a stereo frame,
+ * a stereo bake duplicates a mono one); any other value defaults to stereo. The
+ * frame count is derived from the sound's (duration ...) param
+ * (SOUND_SCRIPT_DEFAULT_DURATION seconds when the sound declares none) times the
+ * rate, clamped to SOUND_SCRIPT_MAX_FRAMES. PARAMS (PLEN bytes, or NULL) is the
+ * tight-packed override the sample body reads through (param ...); missing/short
+ * params fall back to their declared defaults.
  *
  * The caller owns the returned buffer and frees it with mem->free; *out_size
  * (may be NULL) receives the total byte count. Returns NULL when the
@@ -43,6 +45,7 @@ struct sound_blob *sound_script_generate(const char *src,
 					 const uint8_t *params,
 					 uint32_t plen,
 					 uint32_t sample_rate,
+					 uint32_t channels,
 					 const struct memory_api *mem,
 					 uint32_t *out_size);
 

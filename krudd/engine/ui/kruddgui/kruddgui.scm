@@ -2779,13 +2779,13 @@
 	 (vh (cadr vp)))
     (when (and (> vw 0) (> vh 0))
       (let ((D (kruddgui-layout-begin vw vh)))
-	;; Top toolbar: drawn at the safe-frame top, its band reserved so the
-	;; tray and main area sit below it.
+	;;! Top toolbar: drawn at the safe-frame top, its band reserved so the
+	;;! tray and main area sit below it.
 	(kruddgui-toolbar-draw vw vh)
 	(kruddgui-dock-reserve! D 'top kruddgui-tool-h)
-	;; Bottom mode-bar: reserves its own band (only with a selection).
+	;;! Bottom mode-bar: reserves its own band (only with a selection).
 	(when (>= (krudd-selected) 0)
 	  (kruddgui-modebar-draw D))
-	;; Tray of console pills, then the active console into the main rect.
+	;;! Tray of console pills, then the active console into the main rect.
 	(kruddgui-tray-draw D)
 	(kruddgui-console-draw-active D)))))

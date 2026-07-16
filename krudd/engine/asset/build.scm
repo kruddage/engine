@@ -21,6 +21,15 @@
 	(public "." (root "abi"))
 	(private (root "core/include") (raw "../third_party"))
 	(link "script"))
+ ;;! The sound-script bridge (source -> sound_blob) as a shared library, the
+ ;;! audio twin of texture_script: a consumer bakes an ASSET_TYPE_SOUND asset
+ ;;! through one copy of sound_script_generate rather than each compiling the
+ ;;! source into the single WASM module.
+ (library "sound_script"
+	(sources "sound_script.c")
+	(public "." (root "abi"))
+	(private (root "core/include") (raw "../third_party"))
+	(link "script"))
  (native-only
 	(executable "asset_test" (sources "asset_test.c")
 		(link "asset_plugin" "log" "memory"))
@@ -56,4 +65,10 @@
 		(sources "texture_script_test.c")
 		(private "." (root "abi") (raw "../third_party"))
 		(link "texture_script" "script" "memory" "log"))
-	(test "texture_script" "texture_script_test")))
+	(test "texture_script" "texture_script_test")
+
+	(executable "sound_script_test"
+		(sources "sound_script_test.c")
+		(private "." (root "abi") (raw "../third_party"))
+		(link "sound_script" "script" "memory" "log"))
+	(test "sound_script" "sound_script_test")))

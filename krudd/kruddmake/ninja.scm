@@ -348,6 +348,9 @@
 		  (string-append srcroot "/core/texture_script.scm")
 		  (string-append gen "/texture_script_scm.h") "TEXTURE_SCRIPT_SCM")
 		(krudd-embed-file
+		  (string-append srcroot "/core/sound_script.scm")
+		  (string-append gen "/sound_script_scm.h") "SOUND_SCRIPT_SCM")
+		(krudd-embed-file
 		  (string-append srcroot "/ui/kruddgui/kruddgui.scm")
 		  (string-append gen "/kruddgui_scm.h") "KRUDDGUI_SCM")
 		(krudd-embed-scheme-module
@@ -377,6 +380,7 @@
 		     "core/entity_script.scm"
 		     "core/mesh_script.scm"
 		     "core/texture_script.scm"
+		     "core/sound_script.scm"
 		     "ui/kruddgui/kruddgui.scm"
 		     "ui/kruddboard/md_parse.scm"
 		     "math/math.scm"

@@ -34,6 +34,7 @@
 #define ASSET_TYPE_SCENE    6
 #define ASSET_TYPE_TEXT     7
 #define ASSET_TYPE_SCRIPT   8
+#define ASSET_TYPE_SOUND    9
 
 /*
  * Per-entry snapshot filled by asset_api.info().  path points into the

@@ -5,6 +5,7 @@
 #include "builtin_scripts.h"
 #include "builtin_mesh_scripts.h"
 #include "builtin_texture_scripts.h"
+#include "builtin_sound_scripts.h"
 #include "asset_edit.h"
 #include "edit_api.h"
 #include "subsystem.h"
@@ -384,6 +385,36 @@ static uint32_t seed_texture(const char *path, const char *src)
 	return e->id;
 }
 
+/*
+ * Seed one built-in sound from NUL-terminated Scheme source, the same shape as
+ * seed_texture: the (sound NAME (sample (t) ...)) text becomes the asset's
+ * bytes, so a consumer bakes it to a real sound_blob on demand via
+ * sound_script_generate() (asset/sound_script.c) at whatever sample rate its
+ * audio context runs, rather than at seed time. There is no separate "sound
+ * script" type: every ASSET_TYPE_SOUND asset is one of these.
+ */
+static void seed_sound(const char *path, const char *src)
+{
+	struct asset_entry *e;
+	uint32_t            n;
+
+	e = alloc_entry(path);
+	if (!e)
+		return;
+	n = (uint32_t)strlen(src) + 1;
+	e->data = g_mem->alloc(n);
+	if (!e->data) {
+		e->state = ASSET_ERROR;
+		return;
+	}
+	memcpy(e->data, src, n);
+	e->size      = n;
+	e->state     = ASSET_LOADED;
+	e->kind      = ASSET_KIND_PRIMITIVE;
+	e->read_only = 1;
+	e->type      = ASSET_TYPE_SOUND;
+}
+
 static void seed_builtins(void)
 {
 	if (builtins_seeded)
@@ -447,6 +478,15 @@ static void seed_builtins(void)
 					       checker, 256, 256);
 		}
 	}
+
+	/*
+	 * Built-in sounds, authored the same way as the textures: each is a
+	 * (sound NAME (sample (t) ...)) source, baked to a sound_blob on demand
+	 * at whatever sample rate the audio context runs.
+	 */
+	seed_sound("builtin://sound/beep",        BEEP_SOUND_SCRIPT_SRC);
+	seed_sound("builtin://sound/blip",        BLIP_SOUND_SCRIPT_SRC);
+	seed_sound("builtin://sound/noise-burst", NOISE_BURST_SOUND_SCRIPT_SRC);
 }
 
 #ifdef __EMSCRIPTEN__

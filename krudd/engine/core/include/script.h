@@ -116,6 +116,19 @@ int script_mesh_params(const char *src, struct shader_param *out,
 int script_texture_params(const char *src, struct shader_param *out,
 			  uint32_t max, uint32_t *total_size);
 
+/*
+ * Introspect a sound script's (params ...) clause as editable parameters, the
+ * audio-side twin of script_texture_params: same tight packing, same reported
+ * shape, so one marshaller and one set of editor widgets serve sounds too. The
+ * sound_script driver also reads the (duration ...) field through this to size
+ * a bake. Fills out[] with up to `max` fields (in declaration order), writes the
+ * tight-packed block size to *total_size (may be NULL), and returns the field
+ * count (>= 0), or -1 on the same failure conditions. A sound with no params
+ * yields 0 fields — not an error. SRC is the (sound ...) source.
+ */
+int script_sound_params(const char *src, struct shader_param *out,
+			uint32_t max, uint32_t *total_size);
+
 /* Call the Scheme (tick) procedure if the image defines one. */
 void script_tick(void);
 

@@ -19,6 +19,7 @@
 #include "entity_script_scm.h"
 #include "mesh_script_scm.h"
 #include "texture_script_scm.h"
+#include "sound_script_scm.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -82,6 +83,15 @@ void script_init(void)
 	 * *params* slot come from the entity-script image both reuse.
 	 */
 	script_eval(TEXTURE_SCRIPT_SCM);
+	/*
+	 * Load the sound-script dispatcher: the (sound ...) form, the snd-*
+	 * oscillator/envelope vocabulary, and sound-script-generate. The asset
+	 * plugin's sound_script.c calls it to bake a bound ASSET_TYPE_SOUND
+	 * asset's source into a sound_blob. Like the texture image, it reuses
+	 * the entity-script (params ...) reader and *params* slot, so it loads
+	 * after them.
+	 */
+	script_eval(SOUND_SCRIPT_SCM);
 }
 
 s7_scheme *script_s7(void)
@@ -254,6 +264,12 @@ int script_texture_params(const char *src, struct shader_param *out,
 			  uint32_t max, uint32_t *total_size)
 {
 	return query_params("texture-script-params", src, out, max, total_size);
+}
+
+int script_sound_params(const char *src, struct shader_param *out,
+			uint32_t max, uint32_t *total_size)
+{
+	return query_params("sound-script-params", src, out, max, total_size);
 }
 
 void script_tick(void)

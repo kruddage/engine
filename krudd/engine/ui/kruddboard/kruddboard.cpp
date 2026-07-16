@@ -37,13 +37,13 @@ extern "C" {
 #include "script.h"
 #include "mesh_script.h"
 #include "texture_script.h"
+#include "renderer.h"		/* gpu_api — texture bakes ride the device seam */
 #endif
 }
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #include <emscripten/html5.h>
-#include <GLES3/gl3.h>
 #include <string.h>
 #include <math.h>
 #include "md_parse.h"
@@ -1863,13 +1863,15 @@ static s7_pointer sp_krudd_texture_values(s7_scheme *sc, s7_pointer args)
 }
 
 /*
- * Live texture-preview cache. One GL texture is baked from the inspected
- * texture's (source, params, resolution) and re-uploaded only when that key
+ * Live texture-preview cache. One device texture is baked from the inspected
+ * texture's (source, params, resolution) and re-baked only when that key
  * changes, so a still frame costs nothing and dragging a slider re-bakes. The
- * single object is reused across selections (glTexImage2D reallocates its
- * storage), so there is nothing to free until the module unloads.
+ * bake rides the renderer's gpu_api (texture_create/destroy) rather than raw
+ * GL, so this file stays backend-agnostic ahead of the WebGPU move; kruddgui
+ * blits the texture's native handle with kgui-image. texture_create uploads
+ * level 0 once, so a re-bake drops the old texture and creates a fresh one.
  */
-static GLuint   g_tex_prev_gl;    /* 0 = not yet allocated                 */
+static gpu_texture_t g_tex_prev_tex; /* NULL = not yet allocated            */
 static uint32_t g_tex_prev_ref;   /* asset id of the last successful bake  */
 static uint32_t g_tex_prev_res;   /* edge length of the last bake          */
 static uint32_t g_tex_prev_hash;  /* FNV-1a of the last packed params      */
@@ -1887,27 +1889,31 @@ static uint32_t tex_prev_hash(const uint8_t *b, uint32_t n)
 }
 
 /*
- * bake_texture_preview(sc, tex_ref, values, res) -> the GL texture id holding a
- * live res x res bake of the texture, or 0 when it can't be baked (source gone,
- * memory api absent, or the shade clause faults). field-values is the per-field
- * list the Parameters sliders edit; it is packed into the texture's tight params
- * layout (the same packing the entity texture-param save does, minus the world
- * write) and fed to texture_script_generate, so a slider drag re-bakes. res is
- * clamped to a preview-sized edge. The one cached GL texture is re-uploaded only
- * when (ref, res, packed-params) changes, so a still frame costs nothing.
- * sp_krudd_texture_bake hands the resulting handle to kruddgui's kgui-image.
+ * bake_texture_preview(sc, tex_ref, values, res) -> the backend-native texture
+ * handle (the GL name on WebGL) holding a live res x res bake of the texture, or
+ * 0 when it can't be baked (source gone, renderer/memory api absent, or the
+ * shade clause faults). field-values is the per-field list the Parameters
+ * sliders edit; it is packed into the texture's tight params layout (the same
+ * packing the entity texture-param save does, minus the world write) and fed to
+ * texture_script_generate, so a slider drag re-bakes. res is clamped to a
+ * preview-sized edge. The cached texture is re-baked only when (ref, res,
+ * packed-params) changes, so a still frame costs nothing. sp_krudd_texture_bake
+ * hands the resulting handle to kruddgui's kgui-image.
  */
-static GLuint bake_texture_preview(s7_scheme *sc, uint32_t tex_ref,
-				   s7_pointer values, uint32_t res)
+static uint32_t bake_texture_preview(s7_scheme *sc, uint32_t tex_ref,
+				     s7_pointer values, uint32_t res)
 {
-	const char         *src = shader_src_cstr(tex_ref);
-	struct shader_param p[MATERIAL_MAX_PARAMS];
-	uint8_t             bytes[WORLD_TEXTURE_PARAM_CAP];
-	uint32_t            total = 0, len, hash;
-	int                 n, i;
-	s7_pointer          fv = values;
+	const char           *src = shader_src_cstr(tex_ref);
+	const struct gpu_api *gpu = g_mgr ?
+		(const struct gpu_api *)
+			subsystem_manager_get_api(g_mgr, "renderer") : NULL;
+	struct shader_param   p[MATERIAL_MAX_PARAMS];
+	uint8_t               bytes[WORLD_TEXTURE_PARAM_CAP];
+	uint32_t              total = 0, len, hash;
+	int                   n, i;
+	s7_pointer            fv = values;
 
-	if (!src || res == 0)
+	if (!src || res == 0 || !gpu)
 		return 0;
 	if (res > 256)
 		res = 256;
@@ -1946,37 +1952,41 @@ static GLuint bake_texture_preview(s7_scheme *sc, uint32_t tex_ref,
 		g_tex_prev_hash  = hash;
 		g_tex_prev_valid = (b != NULL);
 		if (b) {
-			if (!g_tex_prev_gl) {
-				glGenTextures(1, &g_tex_prev_gl);
-				glBindTexture(GL_TEXTURE_2D, g_tex_prev_gl);
-				glTexParameteri(GL_TEXTURE_2D,
-						GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-				glTexParameteri(GL_TEXTURE_2D,
-						GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-				glTexParameteri(GL_TEXTURE_2D,
-						GL_TEXTURE_WRAP_S,
-						GL_CLAMP_TO_EDGE);
-				glTexParameteri(GL_TEXTURE_2D,
-						GL_TEXTURE_WRAP_T,
-						GL_CLAMP_TO_EDGE);
-			} else {
-				glBindTexture(GL_TEXTURE_2D, g_tex_prev_gl);
-			}
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (GLsizei)res,
-				     (GLsizei)res, 0, GL_RGBA, GL_UNSIGNED_BYTE,
-				     (const uint8_t *)(b + 1));
-			glBindTexture(GL_TEXTURE_2D, 0);
+			struct gpu_texture_desc td;
+
+			/*
+			 * texture_create uploads level 0 at create time and never
+			 * re-uploads, so a re-bake drops the previous texture and
+			 * makes a fresh one. The backend picks the sampler state
+			 * (the same it uses for procedural material textures), so
+			 * the preview samples exactly as the scene does.
+			 */
+			if (g_tex_prev_tex)
+				gpu->texture_destroy(g_tex_prev_tex);
+
+			memset(&td, 0, sizeof(td));
+			td.format       = GPU_FORMAT_RGBA8_UNORM;
+			td.width        = b->width;
+			td.height       = b->height;
+			td.mip_levels   = 1;
+			td.sample_count = 1;
+			td.initial_data = texture_blob_pixels(b);
+
+			g_tex_prev_tex   = gpu->texture_create(&td);
+			g_tex_prev_valid = (g_tex_prev_tex != NULL);
 			g_mem->free(b);
 		}
 	}
 
-	return (g_tex_prev_valid && g_tex_prev_gl) ? g_tex_prev_gl : 0;
+	return (g_tex_prev_valid && g_tex_prev_tex) ?
+		gpu->texture_native_handle(g_tex_prev_tex) : 0;
 }
 
 /*
- * (krudd-texture-bake texture-ref field-values res) -> the GL texture id of the
- * live bake, or 0 when it can't be baked. kruddgui draws the returned handle
- * itself with kgui-image, so the baked pixels present through its own quad batch.
+ * (krudd-texture-bake texture-ref field-values res) -> the native texture handle
+ * of the live bake, or 0 when it can't be baked. kruddgui draws the returned
+ * handle itself with kgui-image, so the baked pixels present through its own
+ * quad batch.
  */
 static s7_pointer sp_krudd_texture_bake(s7_scheme *sc, s7_pointer args)
 {

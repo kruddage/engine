@@ -3,13 +3,13 @@
  * sound_script — host side of the sound scripting layer.
  *
  * Reads a bound ASSET_TYPE_SOUND asset's (duration ...) param to size the bake,
- * calls the shared s7 image's (sound-script-generate src params rate frames) —
- * see core/sound_script.scm — and copies its float-vector result (frame_count
- * interleaved stereo samples) into a sound_blob. Mirrors texture_script.c's
- * host/image seam: the synthesis lives in Scheme, this file only resolves the
- * param override, derives the frame count from the rate, and marshals the flat
- * buffer into the wire format (s7 float-vectors hold C doubles; the blob stores
- * float32, so the copy narrows each sample).
+ * calls the shared s7 image's (sound-script-generate src params rate frames
+ * channels) — see core/sound_script.scm — and copies its float-vector result
+ * (frame_count * channels interleaved samples) into a sound_blob. Mirrors
+ * texture_script.c's host/image seam: the synthesis lives in Scheme, this file
+ * only resolves the param override, derives the frame count from the rate, and
+ * marshals the flat buffer into the wire format (s7 float-vectors hold C
+ * doubles; the blob stores float32, so the copy narrows each sample).
  */
 #include "sound_script.h"
 
@@ -110,6 +110,7 @@ struct sound_blob *sound_script_generate(const char *src,
 					 const uint8_t *params,
 					 uint32_t plen,
 					 uint32_t sample_rate,
+					 uint32_t channels,
 					 const struct memory_api *mem,
 					 uint32_t *out_size)
 {
@@ -129,6 +130,8 @@ struct sound_blob *sound_script_generate(const char *src,
 		sample_rate = SOUND_SCRIPT_MIN_RATE;
 	if (sample_rate > SOUND_SCRIPT_MAX_RATE)
 		sample_rate = SOUND_SCRIPT_MAX_RATE;
+	if (channels != SOUND_CHANNELS_MONO && channels != SOUND_CHANNELS_STEREO)
+		channels = SOUND_CHANNELS_STEREO;
 
 	duration = ss_duration(src, params, plen);
 	if (!(duration > 0.0f))
@@ -150,25 +153,26 @@ struct sound_blob *sound_script_generate(const char *src,
 		return NULL;
 
 	res = s7_call(sc, fn,
-		      s7_list(sc, 4, s7_make_string(sc, src),
+		      s7_list(sc, 5, s7_make_string(sc, src),
 			      ss_param_values(sc, src, params, plen),
 			      s7_make_integer(sc, sample_rate),
-			      s7_make_integer(sc, frames)));
+			      s7_make_integer(sc, frames),
+			      s7_make_integer(sc, channels)));
 	if (!s7_is_float_vector(res))
 		return NULL;
 
-	sample_count = sound_blob_sample_count(frames, SOUND_BLOB_CHANNELS);
+	sample_count = sound_blob_sample_count(frames, channels);
 	if ((uint32_t)s7_vector_length(res) != sample_count)
 		return NULL;
 
-	total = sound_blob_size(frames, SOUND_BLOB_CHANNELS);
+	total = sound_blob_size(frames, channels);
 	b = mem->alloc(total);
 	if (!b)
 		return NULL;
 	b->magic       = SOUND_BLOB_MAGIC;
 	b->frame_count = frames;
 	b->sample_rate = sample_rate;
-	b->channels    = SOUND_BLOB_CHANNELS;
+	b->channels    = channels;
 	b->format      = SOUND_FORMAT_F32;
 
 	/* s7 float-vectors are C doubles; the blob is float32, so narrow each

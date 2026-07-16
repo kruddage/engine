@@ -22,26 +22,31 @@
  *
  * Float32 is the only stored format: it is what Web Audio's AudioBuffer and a
  * float mixer consume, so a baked blob plays with no per-sample conversion.
- * Every clip is stored stereo (channels == 2); a (sample ...) clause returning
- * a single real is mono content duplicated into both channels, exactly as a
- * short pixel list defaults its missing texture channels. The channels field is
- * carried explicitly so a future mono-native format can set it to 1.
+ *
+ * channels is 1 (mono) or 2 (stereo interleaved, L R per frame) — the count the
+ * baker was asked for, not a property of the sound. The same (sound ...) source
+ * bakes either way: a mono request downmixes a stereo (list L R) frame to
+ * (L+R)/2, a stereo request duplicates a mono (real) frame into both channels
+ * (as a short pixel list defaults its missing texture channels). The caller
+ * picks per use — a spatialized point source bakes mono because Web Audio's
+ * PannerNode only accepts mono input, while a UI or music clip bakes stereo.
  */
 #define SOUND_BLOB_MAGIC 0x30444e53u /* 'SND0' sentinel, not a version */
 
 /* format discriminator; 0 = F32 interleaved (the only kind today). */
 #define SOUND_FORMAT_F32 0u
 
+/* Interleave widths a blob may store. */
+#define SOUND_CHANNELS_MONO   1u
+#define SOUND_CHANNELS_STEREO 2u
+
 struct sound_blob {
 	uint32_t magic;       /* SOUND_BLOB_MAGIC */
 	uint32_t frame_count; /* frames (samples per channel) */
 	uint32_t sample_rate; /* Hz, e.g. 48000 */
-	uint32_t channels;    /* interleave width; 2 (stereo) today */
+	uint32_t channels;    /* interleave width; 1 (mono) or 2 (stereo) */
 	uint32_t format;      /* sound_format; 0 = F32 interleaved */
 };
-
-/* Interleave width every blob stores today (stereo: L R per frame). */
-#define SOUND_BLOB_CHANNELS 2u
 
 /* Borrow the interleaved float sample array packed after the header. */
 static inline const float *sound_blob_samples(const struct sound_blob *b)

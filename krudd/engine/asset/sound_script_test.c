@@ -2,12 +2,13 @@
 /*
  * sound_script — the sound scripting path end to end: boot the real s7 image
  * (which loads the embedded sound_script.scm), call sound_script_generate()
- * against a hand-authored (sound ...) source at two sample rates, and check the
- * returned sound_blob's header and samples. The load-bearing property is
- * sample-rate independence: the same script yields the same amplitude at the
- * same wall-clock time whether it bakes at 8k or 16k, because sample is a pure
- * function of the time t in seconds and never sees a rate. The texture test's
- * resolution independence, now for audio.
+ * against a hand-authored (sound ...) source at two sample rates and both
+ * channel counts, and check the returned sound_blob's header and samples. The
+ * load-bearing property is sample-rate independence: the same script yields the
+ * same amplitude at the same wall-clock time whether it bakes at 8k or 16k,
+ * because sample is a pure function of the time t in seconds and never sees a
+ * rate. The texture test's resolution independence, now for audio — plus the
+ * channel count, which is the caller's choice, not the sound's.
  */
 #include "sound_script.h"
 #include "builtin_sound_scripts.h"
@@ -43,7 +44,8 @@ static const char *RAMP_SRC =
 	"  (sample (t) t))\n";
 
 /* A stereo frame: left +0.5, right -0.5, constant — checks the (list L R) path
- * and that the two channels land where authored, not swapped or collapsed. */
+ * and that the two channels land where authored, not swapped or collapsed. Its
+ * mono downmix is (0.5 + -0.5)/2 = 0, which the mono-bake test relies on. */
 static const char *STEREO_SRC =
 	"(sound stereo\n"
 	"  (params (duration float (edit range 0.02 4) (default 0.25)))\n"
@@ -74,13 +76,14 @@ static void test_hand_authored_ramp(void)
 	struct sound_blob *b;
 	uint32_t           size = 0, expect = frames_for(8000, 0.5f), i;
 
-	b = sound_script_generate(RAMP_SRC, NULL, 0, 8000, g_mem, &size);
+	b = sound_script_generate(RAMP_SRC, NULL, 0, 8000,
+				  SOUND_CHANNELS_STEREO, g_mem, &size);
 	assert(b != NULL);
-	assert(size == sound_blob_size(expect, SOUND_BLOB_CHANNELS));
+	assert(size == sound_blob_size(expect, SOUND_CHANNELS_STEREO));
 	assert(b->magic       == SOUND_BLOB_MAGIC);
 	assert(b->frame_count == expect);
 	assert(b->sample_rate == 8000);
-	assert(b->channels    == SOUND_BLOB_CHANNELS);
+	assert(b->channels    == SOUND_CHANNELS_STEREO);
 	assert(b->format      == SOUND_FORMAT_F32);
 
 	/* Every frame: value == i/rate, mono duplicated into both channels. */
@@ -102,8 +105,10 @@ static void test_rate_independence(void)
 {
 	struct sound_blob *lo, *hi;
 
-	lo = sound_script_generate(RAMP_SRC, NULL, 0, 8000, g_mem, NULL);
-	hi = sound_script_generate(RAMP_SRC, NULL, 0, 16000, g_mem, NULL);
+	lo = sound_script_generate(RAMP_SRC, NULL, 0, 8000,
+				   SOUND_CHANNELS_STEREO, g_mem, NULL);
+	hi = sound_script_generate(RAMP_SRC, NULL, 0, 16000,
+				   SOUND_CHANNELS_STEREO, g_mem, NULL);
 	assert(lo != NULL && hi != NULL);
 	assert(hi->frame_count == lo->frame_count * 2); /* 16k over 8k, same dur */
 
@@ -120,8 +125,10 @@ static void test_stereo_and_short_frames(void)
 {
 	struct sound_blob *st, *sh;
 
-	st = sound_script_generate(STEREO_SRC, NULL, 0, 8000, g_mem, NULL);
-	sh = sound_script_generate(SHORT_SRC, NULL, 0, 8000, g_mem, NULL);
+	st = sound_script_generate(STEREO_SRC, NULL, 0, 8000,
+				   SOUND_CHANNELS_STEREO, g_mem, NULL);
+	sh = sound_script_generate(SHORT_SRC, NULL, 0, 8000,
+				   SOUND_CHANNELS_STEREO, g_mem, NULL);
 	assert(st != NULL && sh != NULL);
 
 	/* Authored (list 0.5 -0.5): left and right land distinct, as written. */
@@ -133,6 +140,48 @@ static void test_stereo_and_short_frames(void)
 
 	g_mem->free(st);
 	g_mem->free(sh);
+}
+
+/*
+ * Channel count is the caller's choice, not the sound's. A mono bake of the
+ * ramp is one sample per frame (channels == 1, half the bytes), still valued
+ * i/rate — proof the same source bakes either way and the header carries the
+ * count the caller asked for.
+ */
+static void test_mono_bake(void)
+{
+	struct sound_blob *b;
+	uint32_t           size = 0, expect = frames_for(8000, 0.5f), i;
+
+	b = sound_script_generate(RAMP_SRC, NULL, 0, 8000,
+				  SOUND_CHANNELS_MONO, g_mem, &size);
+	assert(b != NULL);
+	assert(b->channels    == SOUND_CHANNELS_MONO);
+	assert(b->frame_count == expect);
+	assert(size == sound_blob_size(expect, SOUND_CHANNELS_MONO));
+
+	for (i = 0; i < b->frame_count; i++) {
+		float t = (float)i / 8000.0f;
+		assert(fabsf(frame(b, i)[0] - t) <= EPS); /* one sample / frame */
+	}
+	g_mem->free(b);
+}
+
+/*
+ * A mono bake of a stereo-authored sound downmixes each frame to (L+R)/2, so a
+ * spatialized point source keeps both sides rather than dropping one. The
+ * stereo (0.5 -0.5) collapses to exactly 0.
+ */
+static void test_mono_downmix(void)
+{
+	struct sound_blob *b;
+
+	b = sound_script_generate(STEREO_SRC, NULL, 0, 8000,
+				  SOUND_CHANNELS_MONO, g_mem, NULL);
+	assert(b != NULL);
+	assert(b->channels == SOUND_CHANNELS_MONO);
+	assert(fabsf(frame(b, 0)[0]) <= EPS); /* (0.5 + -0.5) / 2 == 0 */
+	g_mem->free(b);
 }
 
 /*
@@ -171,7 +220,7 @@ static void test_duration_override_resizes(void)
 	struct sound_blob *b;
 
 	b = sound_script_generate(RAMP_SRC, (const uint8_t *)two, sizeof(two),
-				  8000, g_mem, NULL);
+				  8000, SOUND_CHANNELS_STEREO, g_mem, NULL);
 	assert(b != NULL);
 	assert(b->frame_count == frames_for(8000, 2.0f));
 	assert(fabsf(frame(b, 800)[0] - 0.1f) <= EPS); /* waveform unchanged */
@@ -188,33 +237,37 @@ static void test_malformed_source_yields_no_sound(void)
 {
 	const float neg[1] = { -1.0f };
 
-	assert(sound_script_generate("(not-a-sound-form)", NULL, 0,
-				     8000, g_mem, NULL) == NULL);
+	assert(sound_script_generate("(not-a-sound-form)", NULL, 0, 8000,
+				     SOUND_CHANNELS_STEREO, g_mem, NULL) == NULL);
 	assert(sound_script_generate(
 		       "(sound broken (sample (t) (car '())))",
-		       NULL, 0, 8000, g_mem, NULL) == NULL);
-	assert(sound_script_generate(NULL, NULL, 0, 8000, g_mem, NULL) == NULL);
+		       NULL, 0, 8000, SOUND_CHANNELS_STEREO, g_mem, NULL) == NULL);
+	assert(sound_script_generate(NULL, NULL, 0, 8000,
+				     SOUND_CHANNELS_STEREO, g_mem, NULL) == NULL);
 	/* A negative duration override -> no frames -> NULL. */
-	assert(sound_script_generate(RAMP_SRC, (const uint8_t *)neg,
-				     sizeof(neg), 8000, g_mem, NULL) == NULL);
+	assert(sound_script_generate(RAMP_SRC, (const uint8_t *)neg, sizeof(neg),
+				     8000, SOUND_CHANNELS_STEREO, g_mem, NULL)
+	       == NULL);
 }
 
 /*
  * Every shipped built-in must bake cleanly at a real audio rate with no override
- * (defaults only) — beep, blip, and the value-noise burst whose sin/floor hash
- * is the most likely to fault. A valid blob whose every sample sits in [-1,1] is
- * the bar; the waveform itself is the author's business.
+ * (defaults only), in both channel counts — beep, blip, and the value-noise
+ * burst whose sin/floor hash is the most likely to fault. A valid blob whose
+ * every sample sits in [-1,1] is the bar; the waveform itself is the author's
+ * business.
  */
-static void bake_builtin_ok(const char *src)
+static void bake_builtin_ok(const char *src, uint32_t channels)
 {
 	struct sound_blob *b;
 	const float       *s;
 	uint32_t           i, n, size = 0;
 
-	b = sound_script_generate(src, NULL, 0, 48000, g_mem, &size);
+	b = sound_script_generate(src, NULL, 0, 48000, channels, g_mem, &size);
 	assert(b != NULL);
 	assert(b->frame_count > 0);
-	assert(size == sound_blob_size(b->frame_count, SOUND_BLOB_CHANNELS));
+	assert(b->channels == channels);
+	assert(size == sound_blob_size(b->frame_count, channels));
 	assert(b->sample_rate == 48000);
 	s = sound_blob_samples(b);
 	n = sound_blob_sample_count(b->frame_count, b->channels);
@@ -225,9 +278,12 @@ static void bake_builtin_ok(const char *src)
 
 static void test_builtins_bake(void)
 {
-	bake_builtin_ok(BEEP_SOUND_SCRIPT_SRC);
-	bake_builtin_ok(BLIP_SOUND_SCRIPT_SRC);
-	bake_builtin_ok(NOISE_BURST_SOUND_SCRIPT_SRC);
+	bake_builtin_ok(BEEP_SOUND_SCRIPT_SRC, SOUND_CHANNELS_STEREO);
+	bake_builtin_ok(BLIP_SOUND_SCRIPT_SRC, SOUND_CHANNELS_STEREO);
+	bake_builtin_ok(NOISE_BURST_SOUND_SCRIPT_SRC, SOUND_CHANNELS_STEREO);
+	bake_builtin_ok(BEEP_SOUND_SCRIPT_SRC, SOUND_CHANNELS_MONO);
+	bake_builtin_ok(BLIP_SOUND_SCRIPT_SRC, SOUND_CHANNELS_MONO);
+	bake_builtin_ok(NOISE_BURST_SOUND_SCRIPT_SRC, SOUND_CHANNELS_MONO);
 }
 
 int main(void)
@@ -239,6 +295,8 @@ int main(void)
 	test_hand_authored_ramp();
 	test_rate_independence();
 	test_stereo_and_short_frames();
+	test_mono_bake();
+	test_mono_downmix();
 	test_duration_param_declared();
 	test_duration_override_resizes();
 	test_malformed_source_yields_no_sound();

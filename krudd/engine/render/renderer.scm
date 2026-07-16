@@ -107,6 +107,12 @@
 
 (c-define gpu-max-color-attachments 8)
 
+;;! blend-enable / disable-depth-test are pipeline state (as in WebGPU), applied
+;;! at cmd-set-pipeline. Both default to 0, which reproduces the opaque forward
+;;! draw every scene pipeline already relies on: no blending, depth test on. A 2D
+;;! overlay (kruddgui) sets blend-enable 1 for straight-alpha compositing
+;;! (src-alpha, one-minus-src-alpha) and disable-depth-test 1 so later quads draw
+;;! over earlier ones instead of being rejected by a same-depth test.
 (c-struct gpu-pipeline-desc
 	(color-formats      (array gpu-format gpu-max-color-attachments))
 	(color-format-count u32)
@@ -116,7 +122,9 @@
 	(sample-count       u32)
 	(vertex-layout      gpu-vertex-layout)
 	(vert               gpu-shader-source)
-	(frag               gpu-shader-source))
+	(frag               gpu-shader-source)
+	(blend-enable       u32)
+	(disable-depth-test u32))
 
 (c-section "Render passes")
 
@@ -226,6 +234,22 @@
 
 	(cmd-draw-indexed
 	  (fn void ((cmd gpu-cmd-buf) (args (ptr (const gpu-draw-indexed-args))))))
+
+	;;! Non-indexed draw (the gpu-cap-draw-direct path): pull vertex-count
+	;;! vertices from the bound vertex buffer starting at first-vertex, no index
+	;;! buffer. instance-count 1 / first-instance 0 is the ordinary case. Used by
+	;;! a 2D batch (kruddgui) that streams triangles with no shared vertices.
+	(cmd-draw
+	  (fn void ((cmd gpu-cmd-buf) (vertex-count u32) (instance-count u32)
+		    (first-vertex u32) (first-instance u32))))
+
+	;;! Restrict subsequent draws in this pass to a rectangle, in framebuffer
+	;;! pixels with the origin at the bottom-left (GL / WebGPU scissor space).
+	;;! The caller passes the full target rect to clear the restriction; a pass's
+	;;! draws are otherwise unscissored.
+	(cmd-set-scissor
+	  (fn void ((cmd gpu-cmd-buf) (x i32) (y i32) (width u32) (height u32))))
+
 	(cmd-dispatch
 	  (fn void ((cmd gpu-cmd-buf) (x u32) (y u32) (z u32))))
 
@@ -245,6 +269,18 @@
 	;;! Return the backend-native handle for a texture — the GL texture name on
 	;;! the WebGL backend, 0 when absent. An escape hatch for a UI layer that has
 	;;! to composite a render-target texture through its own graphics stack:
-	;;! kruddgui's kgui-image wants the raw GL name, and an opaque gpu-texture
-	;;! hides it. Backends with no native handle (the null renderer) return 0.
-	(texture-native-handle (fn u32 ((texture gpu-texture)))))
+	;;! kruddgui's kgui-image draws a preview/bake by native handle, and an opaque
+	;;! gpu-texture hides it. Backends with no native handle (the null renderer)
+	;;! return 0.
+	(texture-native-handle (fn u32 ((texture gpu-texture))))
+
+	;;! Bind a texture to a unit by its backend-native handle (the value
+	;;! texture-native-handle returned), for a UI layer that only holds the raw
+	;;! handle — kruddgui's kgui-image, whose image quads carry an external
+	;;! texture name (a scene bake or offscreen preview) rather than a gpu-texture.
+	;;! The symmetric partner to texture-native-handle: it keeps the glBindTexture
+	;;! off the UI side so the draw goes through the device. GL-specific like the
+	;;! handle it consumes; a WebGPU backend revisits both together. A 0 handle
+	;;! unbinds the unit. The null renderer no-ops.
+	(cmd-bind-texture-native
+	  (fn void ((cmd gpu-cmd-buf) (unit u32) (native-handle u32)))))

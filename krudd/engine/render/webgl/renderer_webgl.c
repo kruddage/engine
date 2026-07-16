@@ -35,6 +35,8 @@ struct gpu_pipeline {
 	unsigned int program;     /* GLuint; 0 until shaders are compiled */
 	unsigned int gl_topology; /* GLenum translated from gpu_topology */
 	unsigned int vao;         /* GLuint; attribute layout captured here */
+	int          blend;       /* 1 = straight-alpha blend, 0 = opaque */
+	int          depth_test;  /* 1 = depth test on (default), 0 = off */
 	struct gpu_vertex_layout layout;
 };
 
@@ -208,7 +210,9 @@ webgl_pipeline_create(const struct gpu_pipeline_desc *desc)
 	p = g_mem->alloc(sizeof(*p));
 	if (!p)
 		return NULL;
-	p->layout = desc->vertex_layout;
+	p->layout     = desc->vertex_layout;
+	p->blend      = desc->blend_enable ? 1 : 0;
+	p->depth_test = desc->disable_depth_test ? 0 : 1;
 #ifdef __EMSCRIPTEN__
 	p->program     = build_program(desc);
 	p->gl_topology = translate_topology(desc->topology);
@@ -369,6 +373,23 @@ static void webgl_cmd_set_pipeline(gpu_cmd_buf_t cmd,
 	if (p->program)
 		glUseProgram(p->program);
 	g_topology = p->gl_topology;
+	/*
+	 * Blend and depth test are pipeline state. The defaults (no blend, depth
+	 * on) match what begin_render_pass establishes for the opaque forward
+	 * pass, so a scene pipeline re-asserts the same state; a blended, depth-off
+	 * overlay pipeline (kruddgui) flips both here without the UI touching GL.
+	 */
+	if (p->blend) {
+		glEnable(GL_BLEND);
+		glBlendEquation(GL_FUNC_ADD);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	} else {
+		glDisable(GL_BLEND);
+	}
+	if (p->depth_test)
+		glEnable(GL_DEPTH_TEST);
+	else
+		glDisable(GL_DEPTH_TEST);
 #else
 	(void)p;
 #endif
@@ -640,6 +661,42 @@ static void webgl_cmd_draw_indexed(gpu_cmd_buf_t cmd,
 #endif
 }
 
+static void webgl_cmd_draw(gpu_cmd_buf_t cmd, uint32_t vertex_count,
+			   uint32_t instance_count, uint32_t first_vertex,
+			   uint32_t first_instance)
+{
+	(void)cmd;
+	(void)first_instance; /* WebGL 2 has no first-instance for array draws */
+#ifdef __EMSCRIPTEN__
+	glDrawArraysInstanced(g_topology, (GLint)first_vertex,
+			      (GLsizei)vertex_count, (GLsizei)instance_count);
+#else
+	(void)vertex_count;
+	(void)instance_count;
+	(void)first_vertex;
+#endif
+}
+
+static void webgl_cmd_set_scissor(gpu_cmd_buf_t cmd, int32_t x, int32_t y,
+				  uint32_t width, uint32_t height)
+{
+	(void)cmd;
+#ifdef __EMSCRIPTEN__
+	/*
+	 * Enable the scissor test and set the box. The pass leaves it disabled
+	 * (begin_render_pass), so a pass that never sets a scissor is unclipped;
+	 * a caller clears its clip by passing the full target rect.
+	 */
+	glEnable(GL_SCISSOR_TEST);
+	glScissor((GLint)x, (GLint)y, (GLsizei)width, (GLsizei)height);
+#else
+	(void)x;
+	(void)y;
+	(void)width;
+	(void)height;
+#endif
+}
+
 static void *webgl_gpu_malloc(size_t size)
 {
 	return g_mem->alloc(size);
@@ -728,6 +785,26 @@ static void webgl_cmd_bind_texture(gpu_cmd_buf_t cmd, uint32_t unit,
 #endif
 }
 
+/*
+ * Bind a texture to a unit by its raw GL name — the escape hatch for a UI layer
+ * (kruddgui) that composites an external texture it only holds by native handle
+ * (a kruddboard bake or a scene-preview target). Mirrors webgl_cmd_bind_texture
+ * but takes the name directly instead of a gpu_texture. Handle 0 unbinds.
+ */
+static void webgl_cmd_bind_texture_native(gpu_cmd_buf_t cmd, uint32_t unit,
+					  uint32_t native_handle)
+{
+	(void)cmd;
+#ifdef __EMSCRIPTEN__
+	glActiveTexture(GL_TEXTURE0 + unit);
+	glBindTexture(GL_TEXTURE_2D, (GLuint)native_handle);
+	glActiveTexture(GL_TEXTURE0); /* leave unit 0 active for the next binder */
+#else
+	(void)unit;
+	(void)native_handle;
+#endif
+}
+
 static void webgl_texture_destroy(gpu_texture_t texture)
 {
 	struct gpu_texture *t = (struct gpu_texture *)texture;
@@ -776,6 +853,8 @@ static const struct gpu_api webgl_api = {
 	.cmd_end_render_pass    = webgl_cmd_end_render_pass,
 	.cmd_barrier            = webgl_cmd_barrier,
 	.cmd_draw_indexed       = webgl_cmd_draw_indexed,
+	.cmd_draw               = webgl_cmd_draw,
+	.cmd_set_scissor        = webgl_cmd_set_scissor,
 	.cmd_dispatch           = NULL, /* no compute shaders in WebGL 2 */
 	.gpu_malloc             = webgl_gpu_malloc,
 	.gpu_free               = webgl_gpu_free,
@@ -785,6 +864,7 @@ static const struct gpu_api webgl_api = {
 	.texture_destroy        = webgl_texture_destroy,
 	.cmd_bind_texture       = webgl_cmd_bind_texture,
 	.texture_native_handle  = webgl_texture_native_handle,
+	.cmd_bind_texture_native = webgl_cmd_bind_texture_native,
 };
 
 static void renderer_webgl_init(void)

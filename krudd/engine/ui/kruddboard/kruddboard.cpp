@@ -3073,13 +3073,52 @@ static bool gizmo_update_and_draw(void)
 	if (!gizmo_project(vp.m, origin, disp, &o2d))
 		return false; /* entity behind the camera */
 
-	/* Project each axis tip; bail an axis that clips behind the camera. */
-	bool tip_ok[3];
-	for (int a = 0; a < 3; a++) {
-		float tip[3] = { origin[0], origin[1], origin[2] };
+	/*
+	 * Project each axis into screen space. A world-length handle whose tip
+	 * points toward the camera can cross the near plane and fling its
+	 * projected tip out to the far edge of the screen — the axis line then
+	 * "wraps" clear across the viewport. To keep every handle a bounded,
+	 * stable on-screen size, sample the axis with a world step that shrinks
+	 * until it projects within a pixel cap: that yields a reliable screen
+	 * direction, a local world-per-pixel drag scale, and a tip we lay at a
+	 * capped pixel length. In the common case the full step already fits, so
+	 * d == the full projected length and the handle is unchanged.
+	 */
+	bool  tip_ok[3];
+	float axis_wpp[3]; /* world units per screen pixel along each axis */
+	float cap = 0.20f * (dw < dh ? dw : dh);
 
-		tip[a] += len;
-		tip_ok[a] = gizmo_project(vp.m, tip, disp, &tip2d[a]);
+	for (int a = 0; a < 3; a++) {
+		struct gv2 s2d;
+		float      s = len, d = 0.0f, dx = 0.0f, dy = 0.0f, k;
+		int        it;
+
+		tip_ok[a] = false;
+		for (it = 0; it < 12; it++) {
+			float step[3] = { origin[0], origin[1], origin[2] };
+
+			step[a] += s;
+			if (gizmo_project(vp.m, step, disp, &s2d)) {
+				dx = s2d.x - o2d.x;
+				dy = s2d.y - o2d.y;
+				d  = sqrtf(dx*dx + dy*dy);
+				if (d <= cap || it == 11) {
+					tip_ok[a] = true;
+					break;
+				}
+			}
+			s *= 0.5f;
+		}
+		if (!tip_ok[a]) {
+			axis_wpp[a] = 0.0f;
+			continue;
+		}
+		/* Local world-per-pixel from the (possibly shrunk) sample step. */
+		axis_wpp[a] = d > 1e-3f ? s / d : 0.0f;
+		/* Lay the tip along the sampled screen direction, capped in px. */
+		k          = (d > cap ? cap : d) / (d > 1e-3f ? d : 1.0f);
+		tip2d[a].x = o2d.x + dx * k;
+		tip2d[a].y = o2d.y + dy * k;
 	}
 
 	/*
@@ -3152,8 +3191,7 @@ static bool gizmo_update_and_draw(void)
 
 		if (g_gizmo_mode == GIZMO_MOVE) {
 			/* along px * (world units per px along this axis). */
-			float world = axis_px > 1e-3f
-				      ? along * (len / axis_px) : 0.0f;
+			float world = along * axis_wpp[a];
 
 			t.position[a] = g_gizmo_start.position[a] + world;
 		} else if (g_gizmo_mode == GIZMO_SCALE) {

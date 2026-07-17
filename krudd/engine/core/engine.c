@@ -66,6 +66,7 @@ void fg_plugin_entry(struct subsystem_manager *mgr);
 void scene_renderer_plugin_entry(struct subsystem_manager *mgr);
 void kruddboard_plugin_entry(struct subsystem_manager *mgr);
 void kruddgui_plugin_entry(struct subsystem_manager *mgr);
+void audio_scriptnode_plugin_entry(struct subsystem_manager *mgr);
 
 /*
  * The boot order, as data so the profiler can time each entry point and label
@@ -77,6 +78,7 @@ static const struct {
 	void      (*entry)(struct subsystem_manager *);
 } plugin_table[] = {
 	{ "asset",          asset_plugin_entry          },
+	{ "audio",          audio_scriptnode_plugin_entry },
 	{ "edit",           edit_plugin_entry           },
 	{ "entity",         entity_plugin_entry         },
 	{ "renderer_webgl", renderer_webgl_plugin_entry },

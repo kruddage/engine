@@ -643,6 +643,7 @@ static void seed_builtins(void)
 	seed_mesh("builtin://mesh/torus",        TORUS_MESH_SCRIPT_SRC);
 	seed_mesh("builtin://mesh/superquadric", SUPERQUADRIC_MESH_SCRIPT_SRC);
 	seed_mesh("builtin://mesh/heightfield",  HEIGHTFIELD_MESH_SCRIPT_SRC);
+	seed_mesh("builtin://mesh/sdf-rook",     SDF_ROOK_MESH_SCRIPT_SRC);
 
 	seed_script("builtin://script/spinner", SPINNER_SCRIPT_SRC);
 	seed_script("builtin://script/bounce",  BOUNCE_SCRIPT_SRC);
@@ -1232,6 +1233,22 @@ static const struct asset_decl_field heightfield_mesh_decl[] = {
 };
 
 /*
+ * The implicit surface advertises the field it marches and the grid it marches
+ * it over, the way the parametric surfaces advertise their (u,v) resolution —
+ * the constructive-solid-geometry twin of a swept profile.
+ */
+static const struct asset_decl_field sdf_rook_mesh_decl[] = {
+	{ "format",     "krudd-mesh"                     },
+	{ "topology",   "triangles"                      },
+	{ "surface",    "signed distance field"          },
+	{ "segments",   "marching cubes 40^3"            },
+	{ "vertices",   "5962"                           },
+	{ "indices",    "35760"                          },
+	{ "attributes", "position, normal, uv0"          },
+	{ "csg",        "smooth-union, subtract"         },
+};
+
+/*
  * A texture asset is one (texture NAME (shade (u v) ...)) Scheme form. It
  * advertises its source format and its authored params — resolution-independent,
  * so it reports no fixed dimensions (the material picks the bake size), the way a
@@ -1301,6 +1318,8 @@ static const struct builtin_desc builtin_descs[] = {
 	  ARRAY_SIZE(superquadric_mesh_decl) },
 	{ "builtin://mesh/heightfield", heightfield_mesh_decl,
 	  ARRAY_SIZE(heightfield_mesh_decl) },
+	{ "builtin://mesh/sdf-rook", sdf_rook_mesh_decl,
+	  ARRAY_SIZE(sdf_rook_mesh_decl) },
 	{ "builtin://texture/checker", checker_texture_decl,
 	  ARRAY_SIZE(checker_texture_decl) },
 	{ "builtin://texture/gradient", gradient_texture_decl,

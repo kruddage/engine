@@ -456,6 +456,93 @@ static void test_box_partial_override_keeps_defaults(void)
 	g_mem->free(box);
 }
 
+/*
+ * A closed, oriented, genus-0 triangle surface satisfies Euler's formula
+ * V - E + F = 2 with every edge shared by two triangles (E = 3F/2), which
+ * reduces to 2V - F = 4. It needs no edge bookkeeping yet still catches the
+ * ways a marching-cubes triangle table goes wrong: a hole (missing triangles)
+ * or a doubled/torn seam both break the identity. mesh-sdf welds shared edge
+ * vertices, so its output is exactly such a surface for a solid field.
+ */
+static int is_closed_genus0(const struct mesh_blob *b)
+{
+	int64_t v = b->vertex_count;
+	int64_t f = b->index_count / 3;
+
+	return 2 * v - f == 4;
+}
+
+/*
+ * The marching-cubes path, oracle-tested against a sphere field the way
+ * superquadric's default is checked against the analytic ellipsoid. A radius
+ * 0.4 sphere marched over a 24^3 grid must come back a closed genus-0 solid
+ * whose every vertex sits on the 0.4 isosurface (to within a cell) and whose
+ * every normal — from the field gradient, not a face — is unit and points
+ * radially outward. A wrong triangle-table entry or a flipped interpolation
+ * fails one of these; together they pin the whole lattice down.
+ */
+static void test_sdf_sphere_marches(void)
+{
+	static const char *SRC =
+		"(mesh sdf-sphere-test\n"
+		"  (generate ()\n"
+		"    (mesh-sdf (sdf-sphere 0.4) 24\n"
+		"      (list -0.5 -0.5 -0.5) (list 0.5 0.5 0.5))))\n";
+	struct mesh_blob         *b;
+	const struct mesh_vertex *v;
+	const uint16_t           *idx;
+	uint32_t                   i;
+
+	b = mesh_script_generate(SRC, NULL, 0, g_mem, NULL);
+	assert(b != NULL);
+	assert(b->index_count % 3 == 0);
+	assert(b->vertex_count < 65536); /* uint16 indices */
+	assert(is_closed_genus0(b));
+
+	v   = mesh_blob_vertices(b);
+	idx = mesh_blob_indices(b);
+	for (i = 0; i < b->index_count; i++)
+		assert(idx[i] < b->vertex_count);
+	for (i = 0; i < b->vertex_count; i++) {
+		/* dot of the gradient normal with the outward position ray. */
+		float r   = vlen(v[i].position);
+		float dot = v[i].normal[0] * v[i].position[0]
+			  + v[i].normal[1] * v[i].position[1]
+			  + v[i].normal[2] * v[i].position[2];
+
+		assert(fabsf(r - 0.4f) <= 0.03f);       /* on the isosurface */
+		assert(fabsf(vlen(v[i].normal) - 1.0f) <= EPS); /* unit */
+		assert(dot > 0.0f);                     /* points outward */
+	}
+	g_mem->free(b);
+}
+
+/*
+ * The built-in sdf-rook — the constructive-solid-geometry showcase. Its exact
+ * vertex/index counts are the geometry's fingerprint (they move only when the
+ * field or the 40^3 grid in builtin_mesh_scripts.h does), and gen_checked
+ * confirms the shared contract: unit normals, in-range indices, whole tris.
+ * Beyond that it must be one closed genus-0 solid — the collar ring really is
+ * fused to the shaft, not a floating torus — and sit inside the envelope the
+ * fields carve: radius within the 0.34 foot, height within its box.
+ */
+static void test_builtin_sdf_rook(void)
+{
+	struct mesh_blob         *b = gen_checked(SDF_ROOK_MESH_SCRIPT_SRC,
+						  5962, 35760);
+	const struct mesh_vertex *v = mesh_blob_vertices(b);
+	uint32_t                   i;
+
+	assert(b->vertex_count < 65536); /* under the uint16 index cap */
+	assert(is_closed_genus0(b));     /* one welded solid, no stray shell */
+	for (i = 0; i < b->vertex_count; i++) {
+		assert(radius_xz(&v[i]) <= 0.34f + EPS);
+		assert(v[i].position[1] >= -0.5f - EPS);
+		assert(v[i].position[1] <=  0.44f + EPS);
+	}
+	g_mem->free(b);
+}
+
 int main(void)
 {
 	mem_init();
@@ -473,6 +560,8 @@ int main(void)
 	test_superquadric_params_reshape();
 	test_builtin_heightfield();
 	test_heightfield_amp_flattens();
+	test_sdf_sphere_marches();
+	test_builtin_sdf_rook();
 	test_repeat_call_is_stable();
 	test_malformed_source_yields_no_mesh();
 	test_box_params_declared();

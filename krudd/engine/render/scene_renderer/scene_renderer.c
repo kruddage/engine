@@ -67,7 +67,7 @@ static const struct asset_api   *g_asset;
 
 /* Persistent resources, created once against the device (never per-frame). */
 static gpu_pipeline_t g_default_pso;  /* the built-in scene pipeline; fallback */
-static gpu_buffer_t   g_ubo;         /* 2 * mat4: { view_proj, model } */
+static gpu_buffer_t   g_ubo;         /* Camera: { view_proj, model, cam_pos } */
 static gpu_buffer_t   g_material_ubo; /* the active material's std140 params */
 static int            g_ready;
 
@@ -157,7 +157,17 @@ static const char *OUTLINE_SHADER_SRC =
 	"                      (swizzle color rgb) edge)))\n"
 	"      (set frag_color (vec4 col 1.0)))))\n";
 
-#define SCENE_UBO_FLOATS 32          /* view_proj[16] + model[16] */
+/*
+ * The shared Camera uniform block, std140-packed: view_proj[16] + model[16] +
+ * cam_pos (a vec3 that std140 aligns to a vec4, so 3 floats + 1 pad). A scene
+ * shader that only needs the matrices (scene-textured, the selection mask)
+ * declares just { view_proj, model } and reads the leading 128 bytes; the pbr
+ * shader adds cam_pos and reads all 144, for a view direction that tracks the
+ * real camera. The renderer uploads the full block regardless, so both kinds of
+ * shader bind the same buffer.
+ */
+#define SCENE_UBO_FLOATS 36          /* view_proj[16] + model[16] + cam_pos[4] */
+#define SCENE_UBO_CAMPOS 32          /* float offset of cam_pos within the block */
 
 /*
  * A material's wire form (v3): a uint32 shader-ref (asset id, first-class — a
@@ -1242,6 +1252,10 @@ static uint32_t scene_preview_render_mesh(uint32_t mesh_ref,
 
 	memcpy(&ubo[0],  cam.view_proj.m, 16 * sizeof(float));
 	memcpy(&ubo[16], model.m,         16 * sizeof(float));
+	ubo[SCENE_UBO_CAMPOS + 0] = cam.eye[0];
+	ubo[SCENE_UBO_CAMPOS + 1] = cam.eye[1];
+	ubo[SCENE_UBO_CAMPOS + 2] = cam.eye[2];
+	ubo[SCENE_UBO_CAMPOS + 3] = 0.0f; /* std140 vec3 tail pad */
 
 	/* Material params: the shader's Material block, or a white tint fallback. */
 	pbytes = material_params(material_ref, &plen);
@@ -1504,6 +1518,11 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 		return;
 
 	memcpy(&ubo[0], g_cam.view_proj.m, 16 * sizeof(float));
+	/* cam_pos is constant across the frame; only model changes per draw. */
+	ubo[SCENE_UBO_CAMPOS + 0] = g_cam.eye[0];
+	ubo[SCENE_UBO_CAMPOS + 1] = g_cam.eye[1];
+	ubo[SCENE_UBO_CAMPOS + 2] = g_cam.eye[2];
+	ubo[SCENE_UBO_CAMPOS + 3] = 0.0f; /* std140 vec3 tail pad */
 
 	for (i = 0; i < w->count; i++) {
 		static const float            WHITE[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
@@ -1684,6 +1703,12 @@ static void mask_pass(struct fg_pass_ctx *ctx, void *userdata)
 	memcpy(&ubo[0], g_cam.view_proj.m, 16 * sizeof(float));
 	mat4_from_transform(&model, &w->world_xform[sel]);
 	memcpy(&ubo[16], model.m, 16 * sizeof(float));
+	/* The mask shader reads only the matrices, but the block is uploaded
+	 * whole — fill cam_pos so no uninitialised stack reaches the buffer. */
+	ubo[SCENE_UBO_CAMPOS + 0] = g_cam.eye[0];
+	ubo[SCENE_UBO_CAMPOS + 1] = g_cam.eye[1];
+	ubo[SCENE_UBO_CAMPOS + 2] = g_cam.eye[2];
+	ubo[SCENE_UBO_CAMPOS + 3] = 0.0f;
 
 	gpu->cmd_set_pipeline(cmd, g_mask_pso);
 	gpu->buffer_update(g_ubo, 0, ubo, (uint32_t)sizeof(ubo));

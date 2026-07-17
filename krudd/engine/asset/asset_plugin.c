@@ -231,10 +231,10 @@ static const float DEFAULT_MATERIAL_COLOR[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
  * F0 = mix(0.04, base_color, metallic).  Direct light is one fixed directional
  * key; a cheap sky/ground hemisphere stands in for image-based lighting so
  * metals still read instead of going black under a single light.  The view
- * direction is a fixed world-space constant here — a pure-parametric first cut
- * that needs no engine change; threading the real camera position through the
- * Camera block (for correct view-dependent specular) is a follow-up.  It
- * samples no albedo texture, so a material naming it carries no texture slot.
+ * direction is the real one — cam_pos (added to the Camera block, uploaded by
+ * scene_renderer) minus the interpolated world position — so specular
+ * highlights track the camera.  It samples no albedo texture, so a material
+ * naming it carries no texture slot.
  */
 static const char *PBR_SHADER_SRC =
 	"(shader pbr\n"
@@ -245,22 +245,25 @@ static const char *PBR_SHADER_SRC =
 	"  (uniforms\n"
 	"    (Camera (block 0) (layout std140)\n"
 	"      (view_proj mat4)\n"
-	"      (model     mat4))\n"
+	"      (model     mat4)\n"
+	"      (cam_pos   vec3))\n"
 	"    (Material (block 1) (layout std140)\n"
 	"      (base_color vec4  (edit color) (default 0.82 0.82 0.85 1.0))\n"
 	"      (metallic   float (edit range 0.0 1.0) (default 0.1))\n"
 	"      (roughness  float (edit range 0.0 1.0) (default 0.5))))\n"
 	"  (varyings\n"
-	"    (v_normal vec3))\n"
+	"    (v_normal   vec3)\n"
+	"    (v_worldpos vec3))\n"
 	"  (targets\n"
 	"    (frag_color vec4 (location 0)))\n"
 	"  (vertex\n"
 	"    (set v_normal (* (mat3 model) a_normal))\n"
+	"    (set v_worldpos (swizzle (* model (vec4 a_pos 1.0)) xyz))\n"
 	"    (set position (* view_proj model (vec4 a_pos 1.0))))\n"
 	"  (fragment\n"
 	"    (let* ((n      (normalize v_normal))\n"
 	"           (l      (normalize (vec3 0.5 0.8 0.4)))\n"
-	"           (v      (normalize (vec3 0.0 0.4 1.0)))\n"
+	"           (v      (normalize (- cam_pos v_worldpos)))\n"
 	"           (h      (normalize (+ l v)))\n"
 	"           (ndl    (max (dot n l) 0.0))\n"
 	"           (ndv    (max (dot n v) 0.0001))\n"

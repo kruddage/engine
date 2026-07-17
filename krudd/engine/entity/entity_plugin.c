@@ -2,6 +2,7 @@
 #include "world.h"
 #include "entity_api.h"
 #include "entity_script.h"
+#include "scene_script.h"
 #include "scene.h"
 #include "scene_edit.h"
 #include "edit_api.h"
@@ -73,6 +74,16 @@ static int32_t scene_load(const char *path)
 static const struct world *scene_get_world(void)
 {
 	return &g_world;
+}
+
+/*
+ * Build a (scene ...) Scheme form into the live world (see scene_script.c). A
+ * boot-time populate, not an editor edit, so it bypasses the undo history — the
+ * scene is the starting state, not a recordable change on top of one.
+ */
+static int32_t scene_build_scm(const char *src)
+{
+	return scene_script_build(&g_world, g_asset, src);
 }
 
 static int32_t scene_create_entity(int32_t parent,
@@ -249,6 +260,7 @@ static void scene_set_paused(int32_t paused)
 static const struct entity_api g_entity_api = {
 	.get_world      = scene_get_world,
 	.load_scene     = scene_load,
+	.build_scene_scm = scene_build_scm,
 	.create_entity  = scene_create_entity,
 	.destroy_entity = scene_destroy_entity,
 	.set_transform  = scene_set_transform,
@@ -279,6 +291,8 @@ static void scene_init(void)
 	g_paused = 0;
 	/* Register the entity-* primitives so bound scripts can drive entities. */
 	entity_script_init();
+	/* Register the scene-* primitives so a (scene ...) form can build a world. */
+	scene_script_init();
 }
 
 static void scene_tick(void)

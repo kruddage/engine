@@ -20,6 +20,7 @@
 #include "mesh_script_scm.h"
 #include "texture_script_scm.h"
 #include "sound_script_scm.h"
+#include "scene_script_scm.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -92,6 +93,13 @@ void script_init(void)
 	 * after them.
 	 */
 	script_eval(SOUND_SCRIPT_SCM);
+	/*
+	 * Load the scene-script builder: the (scene ...) form and scene-build.
+	 * The entity plugin registers the scene-* host primitives its clauses
+	 * call (scene_script_init); those only run during a build, so loading
+	 * this image before they exist is fine, exactly like the entity image.
+	 */
+	script_eval(SCENE_SCRIPT_SCM);
 }
 
 s7_scheme *script_s7(void)

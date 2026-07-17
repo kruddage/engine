@@ -153,6 +153,39 @@ static void test_unknown_path_is_inert(void)
 	assert(!(w.mask[0] & COMPONENT_RENDER));
 }
 
+/*
+ * A (children ...) clause nests entities under their declaring parent: the count
+ * covers the whole subtree, each child records its parent, and a mesh-less parent
+ * (the X group) carries a name but no render component.
+ */
+static void test_children_nest_under_parent(void)
+{
+	int32_t n;
+
+	world_reset(&w);
+	n = scene_script_build(&w, &fake_asset,
+			       "(scene s"
+			       "  (entity (name \"x\") (at 0 0.15 0)"
+			       "          (children"
+			       "            (entity (mesh \"builtin://mesh/box\")"
+			       "                    (rotate 0 45 0))"
+			       "            (entity (mesh \"builtin://mesh/box\")"
+			       "                    (rotate 0 -45 0)))))");
+	assert(n == 3);               /* the parent plus its two bars */
+	assert(w.count == 3);
+
+	/* Entity 0 is the group: named, positioned, but nothing to draw. */
+	assert(strcmp(world_entity_name(&w, 0), "x") == 0);
+	assert(!(w.mask[0] & COMPONENT_RENDER));
+	assert(feq(w.local[0].position[1], 0.15f));
+
+	/* Entities 1 and 2 are the bars, each parented to the group. */
+	assert(w.parent[1] == 0);
+	assert(w.parent[2] == 0);
+	assert(w.render_ref[1] == 12);
+	assert(w.render_ref[2] == 12);
+}
+
 /* A non-scene form is rejected cleanly: nothing spawns, no crash. */
 static void test_not_a_scene_form(void)
 {
@@ -190,6 +223,7 @@ int main(void)
 
 	test_build_binds_everything();
 	test_rotate_builds_quaternion();
+	test_children_nest_under_parent();
 	test_unknown_path_is_inert();
 	test_not_a_scene_form();
 	test_entity_fault_is_isolated();

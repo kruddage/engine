@@ -86,6 +86,17 @@ static int32_t scene_build_scm(const char *src)
 	return scene_script_build(&g_world, g_asset, src);
 }
 
+/*
+ * Run an image function with the live world bound (see scene_script_call). The
+ * event-driven twin of scene_build_scm: a game's Scheme rules mutate the world
+ * in response to a click. Not recorded on the undo history — gameplay is not an
+ * editor edit.
+ */
+static int32_t scene_dispatch_scm(const char *fn, int32_t arg)
+{
+	return scene_script_call(&g_world, g_asset, fn, arg);
+}
+
 static int32_t scene_create_entity(int32_t parent,
 				   const struct transform *local,
 				   uint32_t mask, uint32_t render_ref)
@@ -261,6 +272,7 @@ static const struct entity_api g_entity_api = {
 	.get_world      = scene_get_world,
 	.load_scene     = scene_load,
 	.build_scene_scm = scene_build_scm,
+	.dispatch_scm   = scene_dispatch_scm,
 	.create_entity  = scene_create_entity,
 	.destroy_entity = scene_destroy_entity,
 	.set_transform  = scene_set_transform,

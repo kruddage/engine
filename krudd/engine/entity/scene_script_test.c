@@ -186,6 +186,35 @@ static void test_children_nest_under_parent(void)
 	assert(w.render_ref[2] == 12);
 }
 
+/*
+ * The runtime seam: scene_script_call invokes a named image fn with the world
+ * bound (so scene-* primitives work) and returns its int; scene-entity-name reads
+ * a live entity's name. This is what a game's event rules run on.
+ */
+static void test_dispatch_and_entity_name(void)
+{
+	int32_t r;
+
+	world_reset(&w);
+	assert(scene_script_build(&w, &fake_asset,
+		"(scene s (entity (name \"alpha\")) (entity (name \"beta\")))") == 2);
+
+	/* A one-off rule: spawn a child of the entity iff its name reads "beta" —
+	 * proving the world is bound (scene-spawn lands) and the name resolves. */
+	script_eval("(define (probe id)"
+		    "  (if (string=? (scene-entity-name id) \"beta\")"
+		    "      (begin (scene-spawn id) 1) 0))");
+
+	r = scene_script_call(&w, &fake_asset, "probe", 1);   /* id 1 is beta */
+	assert(r == 1);
+	assert(w.count == 3);            /* the child spawned */
+	assert(w.parent[2] == 1);       /* parented to beta */
+
+	r = scene_script_call(&w, &fake_asset, "probe", 0);   /* id 0 is alpha */
+	assert(r == 0);
+	assert(w.count == 3);            /* no spawn on the non-match */
+}
+
 /* A non-scene form is rejected cleanly: nothing spawns, no crash. */
 static void test_not_a_scene_form(void)
 {
@@ -224,6 +253,7 @@ int main(void)
 	test_build_binds_everything();
 	test_rotate_builds_quaternion();
 	test_children_nest_under_parent();
+	test_dispatch_and_entity_name();
 	test_unknown_path_is_inert();
 	test_not_a_scene_form();
 	test_entity_fault_is_isolated();

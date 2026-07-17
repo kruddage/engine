@@ -34,6 +34,14 @@ struct entity_api {
 	 * against the shared image — the source-authored twin of load_scene.
 	 */
 	int32_t             (*build_scene_scm)(const char *src);
+	/*
+	 * Invoke image function `fn` (an integer -> integer procedure) with `arg`,
+	 * the live world bound so image-side game rules can spawn and mutate in
+	 * response — the runtime twin of build_scene_scm. Returns fn's integer
+	 * result, or -1 if the interpreter is down or fn is undefined. A game
+	 * plugin uses this to hand a picked cell to its Scheme rules.
+	 */
+	int32_t             (*dispatch_scm)(const char *fn, int32_t arg);
 
 	/*
 	 * Append an entity under parent (-1 = root) with the given local

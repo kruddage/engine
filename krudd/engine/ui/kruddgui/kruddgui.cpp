@@ -1272,6 +1272,25 @@ static s7_pointer sp_kgui_safe_insets(s7_scheme *sc, s7_pointer args)
 
 } /* extern "C" */
 
+/*
+ * (kgui-play-sound id) -> plays sound asset ID through the "audio" subsystem's
+ * play, resolved lazily (it boots before kruddgui, like the renderer). A no-op
+ * off the browser, where no audio backend registers. The tap that calls this is
+ * itself the user gesture that unlocks the audio context, so the first Play both
+ * enables audio and sounds.
+ */
+static const struct audio_api *s_audio;
+static s7_pointer sp_kgui_play_sound(s7_scheme *sc, s7_pointer args)
+{
+	if (!s_audio && g_mgr)
+		s_audio = (const struct audio_api *)
+			subsystem_manager_get_api(g_mgr, "audio");
+	if (s_audio && s7_is_integer(s7_car(args)))
+		s_audio->play((uint32_t)s7_integer(s7_car(args)),
+			      0.8f, 0.0f, 1.0f);
+	return s7_nil(sc);
+}
+
 static void register_primitives(s7_scheme *sc)
 {
 	s7_define_function(sc, "kgui-image", sp_kgui_image, 5, 8, false,
@@ -1323,25 +1342,6 @@ static void register_primitives(s7_scheme *sc)
 			   "(kgui-safe-insets) -> (top right bottom left) CSS px");
 	s7_define_function(sc, "kgui-play-sound", sp_kgui_play_sound, 1, 0,
 			   false, "(kgui-play-sound id) play sound asset id");
-}
-
-/*
- * (kgui-play-sound id) -> plays sound asset ID through the "audio" subsystem's
- * play, resolved lazily (it boots before kruddgui, like the renderer). A no-op
- * off the browser, where no audio backend registers. The tap that calls this is
- * itself the user gesture that unlocks the audio context, so the first Play both
- * enables audio and sounds.
- */
-static const struct audio_api *s_audio;
-static s7_pointer sp_kgui_play_sound(s7_scheme *sc, s7_pointer args)
-{
-	if (!s_audio && g_mgr)
-		s_audio = (const struct audio_api *)
-			subsystem_manager_get_api(g_mgr, "audio");
-	if (s_audio && s7_is_integer(s7_car(args)))
-		s_audio->play((uint32_t)s7_integer(s7_car(args)),
-			      0.8f, 0.0f, 1.0f);
-	return s7_nil(sc);
 }
 
 /*

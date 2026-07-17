@@ -174,10 +174,18 @@ static void evict_entry(struct asset_entry *e)
  * stage actually uses (see scene_renderer.c), so Camera (vertex-only) lands
  * at slot 0 and Material (fragment-only) at slot 1. It also adds a v_uv
  * varying and an `albedo` sampler2D (its own texture unit, not the Material
- * block); the fragment stage shades from the world normal (readable 3D, no
- * lighting), multiplies in the material tint, then multiplies in the sampled
+ * block); the fragment stage shades from the world normal and the sun's
+ * direction, multiplies in the material tint, then multiplies in the sampled
  * albedo — a material naming this shader is what makes a procedural texture
  * actually appear on a mesh.
+ *
+ * Like the pbr shader it reads the sun from the Sun block (slot 2) and casts
+ * the sun's shadows: it declares the same std140 Sun block (so it reads the
+ * same uploaded bytes), projects each vertex into light space (v_lightpos), and
+ * does the same 3x3 PCF depth compare against the shadow_map, attenuating only
+ * the directional half of its lighting. Two samplers now — albedo and
+ * shadow_map — which the backend's alphabetical rule lands on units 0 and 1;
+ * the scene renderer binds them to match.
  */
 static const char *SCENE_TEXTURED_SHADER_SRC =
 	"(shader scene-textured\n"
@@ -191,21 +199,50 @@ static const char *SCENE_TEXTURED_SHADER_SRC =
 	"      (model     mat4))\n"
 	"    (Material (block 1) (layout std140)\n"
 	"      (base_color vec4 (edit color)))\n"
-	"    (albedo sampler2D))\n"
+	"    (Sun (block 2) (layout std140)\n"
+	"      (light_dir       vec3)\n"
+	"      (light_radiance  vec3)\n"
+	"      (light_view_proj mat4))\n"
+	"    (albedo     sampler2D)\n"
+	"    (shadow_map sampler2D))\n"
 	"  (varyings\n"
-	"    (v_normal vec3)\n"
-	"    (v_uv     vec2))\n"
+	"    (v_normal   vec3)\n"
+	"    (v_uv       vec2)\n"
+	"    (v_lightpos vec4))\n"
 	"  (targets\n"
 	"    (frag_color vec4 (location 0)))\n"
 	"  (vertex\n"
 	"    (set v_normal (* (mat3 model) a_normal))\n"
 	"    (set v_uv a_uv0)\n"
+	"    (set v_lightpos (* light_view_proj model (vec4 a_pos 1.0)))\n"
 	"    (set position (* view_proj model (vec4 a_pos 1.0))))\n"
 	"  (fragment\n"
 	"    (let* ((n    (normalize v_normal))\n"
 	"           (base (+ 0.5 (* 0.5 n)))\n"
-	"           (diff (max (dot n (normalize (vec3 0.5 0.8 0.4))) 0.0))\n"
-	"           (lit  (* base (+ 0.35 (* 0.65 diff))))\n"
+	"           (diff (max (dot n (normalize light_dir)) 0.0))\n"
+	"           (proj  (/ (swizzle v_lightpos xyz) (swizzle v_lightpos w)))\n"
+	"           (uvw   (+ (* proj 0.5) 0.5))\n"
+	"           (su    (swizzle uvw x))\n"
+	"           (sv    (swizzle uvw y))\n"
+	"           (fragd (swizzle uvw z))\n"
+	"           (bias  (max (* 0.0025 (- 1.0 diff)) 0.0006))\n"
+	"           (edge  (- fragd bias))\n"
+	"           (tx    0.00048828125)\n"
+	"           (b     (vec2 su sv))\n"
+	"           (s0 (step edge (swizzle (sample shadow_map (+ b (vec2 (- 0.0 tx) (- 0.0 tx)))) r)))\n"
+	"           (s1 (step edge (swizzle (sample shadow_map (+ b (vec2 0.0 (- 0.0 tx)))) r)))\n"
+	"           (s2 (step edge (swizzle (sample shadow_map (+ b (vec2 tx (- 0.0 tx)))) r)))\n"
+	"           (s3 (step edge (swizzle (sample shadow_map (+ b (vec2 (- 0.0 tx) 0.0))) r)))\n"
+	"           (s4 (step edge (swizzle (sample shadow_map b) r)))\n"
+	"           (s5 (step edge (swizzle (sample shadow_map (+ b (vec2 tx 0.0))) r)))\n"
+	"           (s6 (step edge (swizzle (sample shadow_map (+ b (vec2 (- 0.0 tx) tx))) r)))\n"
+	"           (s7 (step edge (swizzle (sample shadow_map (+ b (vec2 0.0 tx))) r)))\n"
+	"           (s8 (step edge (swizzle (sample shadow_map (+ b (vec2 tx tx))) r)))\n"
+	"           (pcf   (* (+ s0 s1 s2 s3 s4 s5 s6 s7 s8) 0.1111111))\n"
+	"           (inrng (* (step 0.0 su) (step su 1.0) (step 0.0 sv)\n"
+	"                     (step sv 1.0) (step fragd 1.0)))\n"
+	"           (shadow (mix 1.0 pcf inrng))\n"
+	"           (lit  (* base (+ 0.35 (* 0.65 diff shadow))))\n"
 	"           (tex  (sample albedo v_uv)))\n"
 	"      (set frag_color\n"
 	"           (vec4 (* lit (swizzle base_color rgb) (swizzle tex rgb)) 1.0)))))\n";

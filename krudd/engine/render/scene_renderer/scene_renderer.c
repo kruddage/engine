@@ -1542,10 +1542,13 @@ static uint32_t scene_preview_render_mesh(uint32_t mesh_ref,
 	gpu->buffer_update(g_material_ubo, 0, params, plen);
 	gpu->cmd_bind_uniform_buffer(cmd, 1, g_material_ubo, 0, plen);
 	bind_light(gpu, cmd); /* Sun at slot 2, so a pbr thumbnail lights right */
-	/* The preview renders no shadow pass, so bind the fully-lit dummy at unit
-	 * 0 — a pbr thumbnail's shadow_map lookup then reads "unoccluded". */
-	if (g_shadow_dummy)
+	/* The preview renders no shadow pass, so bind the fully-lit dummy where
+	 * each shader's shadow_map lands — unit 0 (pbr) and unit 1 (scene-
+	 * textured) — so a thumbnail's shadow lookup reads "unoccluded". */
+	if (g_shadow_dummy) {
 		gpu->cmd_bind_texture(cmd, 0, g_shadow_dummy);
+		gpu->cmd_bind_texture(cmd, 1, g_shadow_dummy);
+	}
 	gpu->cmd_bind_vertex_buffer(cmd, 0, g_prev_vbo, 0);
 	gpu->cmd_bind_index_buffer(cmd, g_prev_ebo, 0, GPU_INDEX_FORMAT_UINT16);
 
@@ -1974,13 +1977,15 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 		gpu->cmd_bind_uniform_buffer(cmd, 1, g_material_ubo, 0, plen);
 
 		/*
-		 * Bind this material's baked procedural texture, if it names one,
-		 * to the albedo unit the scene-textured shader samples (unit 0).
-		 * The combo is already resident (ensure_textures ran off-frame).
-		 * A material with no texture (the pbr path) instead gets the sun
-		 * shadow map on that same unit — the pbr shader's only sampler —
-		 * so its shadow_map lookup reads real depth; the scene-textured
-		 * shader ignores it and samples its albedo.
+		 * Bind the sun shadow map and this material's texture. The two
+		 * built-in scene shaders name their samplers so the backend's
+		 * alphabetical rule assigns matching units:
+		 *   scene-textured -> albedo (unit 0), shadow_map (unit 1)
+		 *   pbr            -> shadow_map (unit 0, its only sampler)
+		 * So a textured material binds its albedo to unit 0 and the shadow
+		 * map to unit 1; an untextured (pbr) material binds the shadow map
+		 * to unit 0. The albedo combo is already resident (ensure_textures
+		 * ran off-frame).
 		 */
 		{
 			uint32_t       tex_ref, tw, th, tplen = 0;
@@ -2000,6 +2005,8 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 				t = find_texture(tex_ref, tw, th, tparams, tplen);
 				if (t)
 					gpu->cmd_bind_texture(cmd, 0, t->tex);
+				if (shadow_tex)
+					gpu->cmd_bind_texture(cmd, 1, shadow_tex);
 			} else if (shadow_tex) {
 				gpu->cmd_bind_texture(cmd, 0, shadow_tex);
 			}

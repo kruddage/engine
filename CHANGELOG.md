@@ -1,5 +1,13 @@
 # Changelog
 
+## [17.15.0](https://github.com/kruddage/engine/compare/v17.14.0...v17.15.0) (2026-07-17)
+
+
+### Features
+
+* **mesh:** add an SDF + marching-cubes shape engine and an sdf-rook built-in ([#547](https://github.com/kruddage/engine/issues/547)) ([39af780](https://github.com/kruddage/engine/commit/39af780970145166805c47cbeaafe099e4fb217e))
+* **render:** shadow-mapped sun light ([#548](https://github.com/kruddage/engine/issues/548)) ([7acc670](https://github.com/kruddage/engine/commit/7acc6705017a4829348c0cc240843f0140d927ba))
+
 ## [17.14.0](https://github.com/kruddage/engine/compare/v17.13.0...v17.14.0) (2026-07-17)
 
 

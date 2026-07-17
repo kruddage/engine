@@ -9,6 +9,7 @@
  */
 #include "entity_api.h"
 #include "subsystem_manager.h"
+#include "game.h"
 #include "script.h"
 
 #include "tictactoe_scene_scm.h"
@@ -17,7 +18,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Resolved before register() so init/tick can reach the world and rules. */
+/* Resolved before register() so init/tick/load can reach the world and rules. */
 static const struct entity_api *g_scene;
 
 /* Last selection dispatched, so a held selection fires the rules only once. */
@@ -25,10 +26,26 @@ static int32_t g_last_sel = -1;
 
 static void tictactoe_init(void)
 {
-	/* Load the rules into the shared image, then build the board scene. */
+	/*
+	 * Load the rules into the shared image once. The board is NOT built here —
+	 * the launcher builds it via tictactoe_load when the game is chosen, so
+	 * boot lands on the menu, not a board.
+	 */
 	script_eval(TICTACTOE_RULES_SCM);
-	if (g_scene && g_scene->build_scene_scm)
+}
+
+/* Launcher entry: clear whatever was showing, build the board, reset the game. */
+static void tictactoe_load(void)
+{
+	if (!g_scene)
+		return;
+	if (g_scene->clear_world)
+		g_scene->clear_world();
+	if (g_scene->build_scene_scm)
 		g_scene->build_scene_scm(TICTACTOE_SCENE_SCM);
+	if (g_scene->dispatch_scm)
+		g_scene->dispatch_scm("ttt-reset", 0);
+	g_last_sel = -1;
 }
 
 /*
@@ -63,4 +80,6 @@ void tictactoe_plugin_entry(struct subsystem_manager *mgr)
 	/* The "scene" api is the entity plugin, registered before this one. */
 	g_scene = subsystem_manager_get_api(mgr, "scene");
 	subsystem_manager_register(mgr, &tictactoe_desc);
+	/* Offer the game on the launcher rather than building it at boot. */
+	game_register("Tic-Tac-Toe", tictactoe_load);
 }

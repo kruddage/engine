@@ -21,7 +21,7 @@
 	(wasm-modules "asset_plugin" "edit_plugin" "entity_plugin"
 		"renderer_webgl" "frame_graph" "scene_renderer"
 		"kruddboard" "kruddgui" "audio_scriptnode"
-		"tictactoe_game"))
+		"demo_game" "tictactoe_game"))
 
  (native-only
 	(executable "subsystem_test"

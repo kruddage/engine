@@ -279,4 +279,38 @@
 	"            (list x h z)))\n" \
 	"        24 24))))\n"
 
+/*
+ * sdf-rook — the implicit-surface showcase: a chess rook built as a signed
+ * distance field and polygonised by marching cubes (mesh-sdf, see
+ * core/mesh_script.scm), the third shape engine after the lathe and the
+ * parametric grid. Where those emit an explicit surface, this one composes a
+ * *field* and lets the marcher recover the mesh — so the whole piece is
+ * constructive solid geometry: a flared foot, a decorative collar ring, a
+ * shaft, and a battlement rim are fused with sdf-smooth-union (their seams
+ * become rounded fillets no lathe profile gives for free), then the
+ * crenellations and the central bore are sdf-subtracted as a crossed pair of
+ * boxes and a cylinder. Normals come from the field's own gradient, so the
+ * surface shades smoothly across every CSG seam. Marched on a 40^3 grid over a
+ * box a little larger than the piece; 5962 verts / 11920 triangles, one closed
+ * genus-0 solid. The heaviest built-in to bake, but a param-less pure field, so
+ * it is generated once and cached like any other.
+ */
+#define SDF_ROOK_MESH_SCRIPT_SRC \
+	"(mesh sdf-rook\n" \
+	"  (generate ()\n" \
+	"    (let* ((foot    (sdf-translate (sdf-cylinder 0.34 0.10) 0.0 -0.40 0.0))\n" \
+	"           (collar  (sdf-translate (sdf-torus 0.20 0.07)    0.0 -0.24 0.0))\n" \
+	"           (shaft   (sdf-translate (sdf-cylinder 0.17 0.34) 0.0 -0.02 0.0))\n" \
+	"           (rim     (sdf-translate (sdf-cylinder 0.29 0.14) 0.0  0.30 0.0))\n" \
+	"           (solid   (sdf-smooth-union\n" \
+	"                      (sdf-smooth-union\n" \
+	"                        (sdf-smooth-union foot shaft 0.08)\n" \
+	"                        collar 0.04)\n" \
+	"                      rim 0.05))\n" \
+	"           (bore    (sdf-translate (sdf-cylinder 0.13 0.10)  0.0 0.40 0.0))\n" \
+	"           (notch-x (sdf-translate (sdf-box 0.40 0.10 0.075) 0.0 0.44 0.0))\n" \
+	"           (notch-z (sdf-translate (sdf-box 0.075 0.10 0.40) 0.0 0.44 0.0))\n" \
+	"           (piece   (sdf-subtract solid (sdf-union bore notch-x notch-z))))\n" \
+	"      (mesh-sdf piece 40 (list -0.42 -0.56 -0.42) (list 0.42 0.56 0.42)))))\n"
+
 #endif /* BUILTIN_MESH_SCRIPTS_H */

@@ -3,6 +3,7 @@
 #include "renderer_null.h"
 #include "fg.h"
 #include "entity_api.h"
+#include "camera_api.h"
 #include "asset_api.h"
 #include "mesh.h"
 #include "builtin_mesh_scripts.h"
@@ -279,6 +280,56 @@ static void build_world_shaders(uint32_t box_ref)
 	set_identity_xform(&g_world.world_xform[1], 1.0f, 0.0f, 0.0f);
 }
 
+/* Place a transform-only, named entity at slot i — the way a scene's "Camera"
+ * entity looks to the renderer: COMPONENT_NAME, no mesh, a bare position. */
+static void set_named_entity(uint32_t i, const char *name,
+			     float px, float py, float pz)
+{
+	uint32_t off = g_world.name_bytes;
+	uint32_t n   = (uint32_t)strlen(name) + 1;
+
+	g_world.alive[i]    = 1;
+	g_world.mask[i]     = COMPONENT_NAME;
+	g_world.name_off[i] = off;
+	memcpy(g_world.names + off, name, n);
+	g_world.name_bytes  = off + n;
+	set_identity_xform(&g_world.world_xform[i], px, py, pz);
+}
+
+/*
+ * The camera eye follows whatever entity a scene names "Camera", resolved by
+ * name every frame so it survives a world clear. The second world is the
+ * regression the by-name lookup fixes: switching games rebuilds ids from zero,
+ * so the slot the old camera held is reused by an ordinary entity and the new
+ * camera lands elsewhere — the eye must track the entity actually named
+ * "Camera", not the stale slot (which would sink it into a floor-level cell and
+ * hide the board).
+ */
+static void test_camera_follows_named_entity(struct subsystem_manager *mgr)
+{
+	const struct camera_api *cam = subsystem_manager_get_api(mgr, "camera");
+	float eye[3];
+
+	assert(cam);
+
+	memset(&g_world, 0, sizeof(g_world));
+	g_world.count = 1;
+	set_named_entity(0, "Camera", 3.0f, 4.0f, 5.0f);
+	renderer_null_reset_log();
+	subsystem_manager_tick(mgr);
+	cam->get_eye(eye);
+	assert(eye[0] == 3.0f && eye[1] == 4.0f && eye[2] == 5.0f);
+
+	memset(&g_world, 0, sizeof(g_world));
+	g_world.count = 2;
+	set_named_entity(0, "cell-4", 0.0f, 0.02f, 0.0f); /* reuses the old slot */
+	set_named_entity(1, "Camera", 0.0f, 4.0f, 3.5f);
+	renderer_null_reset_log();
+	subsystem_manager_tick(mgr);
+	cam->get_eye(eye);
+	assert(eye[0] == 0.0f && eye[1] == 4.0f && eye[2] == 3.5f);
+}
+
 int main(void)
 {
 	static const struct subsystem static_table[] = {
@@ -333,6 +384,8 @@ int main(void)
 	subsystem_manager_tick(&mgr);
 	assert(count_calls(GPU_CALL_PIPELINE_CREATE) == 0);
 	assert(count_draws(NULL) == 2);
+
+	test_camera_follows_named_entity(&mgr);
 
 	subsystem_manager_shutdown(&mgr);
 	mem_shutdown();

@@ -173,6 +173,25 @@ footer {
 	margin-bottom: 14px;
 }
 
+/*
+ * Until the engine has rendered its first frame the launcher is painted (static
+ * HTML) but not yet armed: the game list and its prompt are hidden and a
+ * "loading" note stands in, so an impatient click has no button to hit. The
+ * engine flips the .loading class off via kruddSetReady once it is live.
+ */
+.launcher-loading {
+	display: none;
+	font-size: 12px;
+	color: #666;
+	letter-spacing: 0.15em;
+	text-transform: uppercase;
+}
+
+.launcher.loading .launcher-loading { display: block; }
+
+.launcher.loading .launcher-sub,
+.launcher.loading .launcher-games { display: none; }
+
 .launcher-games {
 	display: flex;
 	flex-direction: column;
@@ -390,10 +409,11 @@ footer {
 	<span id="status">loading</span>
 </footer>
 
-<div class="launcher" id="launcher">
+<div class="launcher loading" id="launcher">
 	<div class="launcher-panel">
 		<div class="launcher-title">KRUDD</div>
 		<div class="launcher-sub">choose a scene</div>
+		<div class="launcher-loading" id="launcher-loading">loading&hellip;</div>
 		<div class="launcher-games" id="launcher-games"></div>
 	</div>
 </div>
@@ -495,6 +515,18 @@ footer {
 	/* Signal that the engine is running (called after Module init) */
 	window.kruddSetRunning = function () {
 		document.getElementById('status').textContent = 'running';
+	};
+
+	/*
+	 * Arm the launcher once the first frame is on screen (called from
+	 * engine_tick). Dropping the 'loading' class reveals the game buttons;
+	 * before this the list is hidden, so a game cannot be picked into an
+	 * engine that has not rendered yet.
+	 */
+	window.kruddSetReady = function () {
+		var el = document.getElementById('launcher');
+		if (el)
+			el.classList.remove('loading');
 	};
 
 	document.getElementById('version').addEventListener('click', function () {

@@ -162,6 +162,19 @@ EM_JS(void, krudd_signal_running, (void), {
 	if (typeof window.kruddSetRunning === 'function')
 		window.kruddSetRunning();
 })
+
+/*
+ * Tell the shell the first frame is on screen, so it can arm the launcher.
+ * The launcher overlay is painted from static HTML while the module is still
+ * downloading, but a game can only be loaded once the subsystems are up and the
+ * scene has actually rendered — picking one before then builds into a world the
+ * renderer has not framed yet. Gating on the first tick, not on init, is what
+ * makes "impatient" clicks wait for a live engine rather than bug out.
+ */
+EM_JS(void, krudd_signal_ready, (void), {
+	if (typeof window.kruddSetReady === 'function')
+		window.kruddSetReady();
+})
 #endif
 
 void engine_init(void)
@@ -236,6 +249,13 @@ void engine_tick(void)
 	if (frame_count % 60 == 0)
 		LOG_DEBUG("engine: frame %d", frame_count);
 	subsystem_manager_tick(&manager);
+#ifdef __EMSCRIPTEN__
+	/* The first tick has now rendered a frame: arm the launcher (see
+	 * krudd_signal_ready). Runs after the render so a click that follows
+	 * lands on a live, framed engine. */
+	if (frame_count == 1)
+		krudd_signal_ready();
+#endif
 }
 
 void engine_shutdown(void)

@@ -301,12 +301,19 @@ static uint32_t           g_texture_count;
 static struct camera g_cam;
 
 /*
- * The world entity that owns the camera's eye (proof of life), or -1
- * when none is bound. A camera "behavior" is just a COMPONENT_SCRIPT entity
- * like any other — scene_renderer_tick copies its animated world_xform
- * position into g_cam.eye each frame, after the scene subsystem has ticked
- * scripts (see the "scene" before "scene_renderer" registration order in
- * engine.c). target/up/fov stay fixed for this proof of life; only eye moves.
+ * The world entity that owns the camera's eye, or -1 when none is bound. The
+ * camera is whatever live entity a scene names "Camera": the boot demo seeds
+ * one bound to orbit-camera, and each launcher scene authors its own — a fixed
+ * eye for tic-tac-toe, an orbit for the demo. scene_renderer_tick copies its
+ * world_xform position into g_cam.eye each frame, after the scene subsystem has
+ * ticked scripts (see the "scene" before "scene_renderer" registration order in
+ * engine.c). target/up/fov stay fixed; only eye moves.
+ *
+ * This holds only a cache hint: it is re-validated by name every frame (see
+ * resolve_camera_entity). Trusting it blindly would break on a world clear —
+ * switching games tombstones the old camera and restarts entity ids from zero,
+ * so a stale id would point at some other scene's entity (a board cell down at
+ * floor level, say, hiding the board it was meant to frame).
  */
 static int32_t g_camera_entity_id = -1;
 
@@ -2139,6 +2146,41 @@ static void composite_pass(struct fg_pass_ctx *ctx, void *userdata)
 	gpu->cmd_draw_indexed(cmd, &draw);
 }
 
+/* A live entity's name, or NULL — a self-contained twin of world_entity_name
+ * so the renderer need not link the entity module for one lookup. */
+static const char *camera_entity_name(const struct world *w, uint32_t e)
+{
+	if (e >= w->count || !(w->mask[e] & COMPONENT_NAME) ||
+	    w->name_off[e] == WORLD_NO_NAME)
+		return NULL;
+	return w->names + w->name_off[e];
+}
+
+/* Is e a live entity named "Camera"? */
+static int is_camera_entity(const struct world *w, int32_t e)
+{
+	const char *nm;
+
+	if (e < 0 || (uint32_t)e >= w->count || !w->alive[e])
+		return 0;
+	nm = camera_entity_name(w, (uint32_t)e);
+	return nm && strcmp(nm, "Camera") == 0;
+}
+
+/* The live "Camera" entity: the cached hint when still valid, else a scan for
+ * whatever the current scene named "Camera", else -1. */
+static int32_t resolve_camera_entity(const struct world *w)
+{
+	uint32_t i;
+
+	if (is_camera_entity(w, g_camera_entity_id))
+		return g_camera_entity_id;
+	for (i = 0; i < w->count; i++)
+		if (is_camera_entity(w, (int32_t)i))
+			return (int32_t)i;
+	return -1;
+}
+
 static void scene_renderer_tick(void)
 {
 	static const float  CLEAR[4]      = { 0.10f, 0.11f, 0.13f, 1.0f };
@@ -2163,9 +2205,9 @@ static void scene_renderer_tick(void)
 
 	w = g_scene->get_world();
 
-	if (g_camera_entity_id >= 0) {
-		if (w && (uint32_t)g_camera_entity_id < w->count &&
-		    w->alive[g_camera_entity_id]) {
+	if (w) {
+		g_camera_entity_id = resolve_camera_entity(w);
+		if (g_camera_entity_id >= 0) {
 			const struct transform *x =
 				&w->world_xform[g_camera_entity_id];
 

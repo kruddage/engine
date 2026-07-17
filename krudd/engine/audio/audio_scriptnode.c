@@ -84,7 +84,7 @@ EM_JS(void, krudd_sp_attach, (int buf_size), {
 		var n = out.length;
 		var ptr = Module._audio_sp_render(n);
 		var base = ptr >> 2;
-		var heap = Module.HEAPF32;
+		var heap = HEAPF32;
 		var l = out.getChannelData(0);
 		var r = out.getChannelData(1);
 		for (var i = 0; i < n; i++) {

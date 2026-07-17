@@ -4296,6 +4296,30 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       },
   };
   
+  var fillMouseEventData = (eventStruct, e, target) => {
+      assert(eventStruct % 4 == 0);
+      HEAPF64[((eventStruct)>>3)] = e.timeStamp;
+      var idx = ((eventStruct)>>2);
+      HEAP32[idx + 2] = e.screenX;
+      HEAP32[idx + 3] = e.screenY;
+      HEAP32[idx + 4] = e.clientX;
+      HEAP32[idx + 5] = e.clientY;
+      HEAP8[eventStruct + 24] = e.ctrlKey;
+      HEAP8[eventStruct + 25] = e.shiftKey;
+      HEAP8[eventStruct + 26] = e.altKey;
+      HEAP8[eventStruct + 27] = e.metaKey;
+      HEAP16[idx*2 + 14] = e.button;
+      HEAP16[idx*2 + 15] = e.buttons;
+  
+      HEAP32[idx + 8] = e["movementX"];
+  
+      HEAP32[idx + 9] = e["movementY"];
+  
+      // Note: rect contains doubles (truncated to placate SAFE_HEAP, which is the same behaviour when writing to HEAP32 anyway)
+      var rect = getBoundingClientRect(target);
+      HEAP32[idx + 10] = e.clientX - (rect.left | 0);
+      HEAP32[idx + 11] = e.clientY - (rect.top  | 0);
+    };
   
   
   
@@ -4312,6 +4336,37 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       assert(wasmTable.get(funcPtr) == func, 'table mirror is out of date');
       return func;
     };
+  var registerMouseEventCallback = (target, userData, useCapture, callbackfunc, eventTypeId, eventTypeString, targetThread) => {
+      var eventSize = 64;
+      JSEvents.mouseEvent ||= _malloc(eventSize);
+      target = findEventTarget(target);
+  
+      var mouseEventHandlerFunc = (e) => {
+        // TODO: Make this access thread safe, or this could update live while app is reading it.
+        fillMouseEventData(JSEvents.mouseEvent, e, target);
+  
+        if (getWasmTableEntry(callbackfunc)(eventTypeId, JSEvents.mouseEvent, userData)) e.preventDefault();
+      };
+  
+      var eventHandler = {
+        target,
+        allowsDeferredCalls: eventTypeString != 'mousemove' && eventTypeString != 'mouseenter' && eventTypeString != 'mouseleave', // Mouse move events do not allow fullscreen/pointer lock requests to be handled in them!
+        eventTypeString,
+        eventTypeId,
+        userData,
+        callbackfunc,
+        handlerFunc: mouseEventHandlerFunc,
+        useCapture
+      };
+      return JSEvents.registerOrRemoveHandler(eventHandler);
+    };
+  var _emscripten_set_click_callback_on_thread = (target, userData, useCapture, callbackfunc, targetThread) =>
+      registerMouseEventCallback(target, userData, useCapture, callbackfunc, 4, "click", targetThread);
+
+  
+  
+  
+  
   var registerKeyEventCallback = (target, userData, useCapture, callbackfunc, eventTypeId, eventTypeString, targetThread) => {
       var eventSize = 160;
       JSEvents.keyEvent ||= _malloc(eventSize);
@@ -4666,58 +4721,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       setMainLoop(iterFunc, fps, simulateInfiniteLoop);
     };
 
-  
-  var fillMouseEventData = (eventStruct, e, target) => {
-      assert(eventStruct % 4 == 0);
-      HEAPF64[((eventStruct)>>3)] = e.timeStamp;
-      var idx = ((eventStruct)>>2);
-      HEAP32[idx + 2] = e.screenX;
-      HEAP32[idx + 3] = e.screenY;
-      HEAP32[idx + 4] = e.clientX;
-      HEAP32[idx + 5] = e.clientY;
-      HEAP8[eventStruct + 24] = e.ctrlKey;
-      HEAP8[eventStruct + 25] = e.shiftKey;
-      HEAP8[eventStruct + 26] = e.altKey;
-      HEAP8[eventStruct + 27] = e.metaKey;
-      HEAP16[idx*2 + 14] = e.button;
-      HEAP16[idx*2 + 15] = e.buttons;
-  
-      HEAP32[idx + 8] = e["movementX"];
-  
-      HEAP32[idx + 9] = e["movementY"];
-  
-      // Note: rect contains doubles (truncated to placate SAFE_HEAP, which is the same behaviour when writing to HEAP32 anyway)
-      var rect = getBoundingClientRect(target);
-      HEAP32[idx + 10] = e.clientX - (rect.left | 0);
-      HEAP32[idx + 11] = e.clientY - (rect.top  | 0);
-    };
-  
-  
-  
-  var registerMouseEventCallback = (target, userData, useCapture, callbackfunc, eventTypeId, eventTypeString, targetThread) => {
-      var eventSize = 64;
-      JSEvents.mouseEvent ||= _malloc(eventSize);
-      target = findEventTarget(target);
-  
-      var mouseEventHandlerFunc = (e) => {
-        // TODO: Make this access thread safe, or this could update live while app is reading it.
-        fillMouseEventData(JSEvents.mouseEvent, e, target);
-  
-        if (getWasmTableEntry(callbackfunc)(eventTypeId, JSEvents.mouseEvent, userData)) e.preventDefault();
-      };
-  
-      var eventHandler = {
-        target,
-        allowsDeferredCalls: eventTypeString != 'mousemove' && eventTypeString != 'mouseenter' && eventTypeString != 'mouseleave', // Mouse move events do not allow fullscreen/pointer lock requests to be handled in them!
-        eventTypeString,
-        eventTypeId,
-        userData,
-        callbackfunc,
-        handlerFunc: mouseEventHandlerFunc,
-        useCapture
-      };
-      return JSEvents.registerOrRemoveHandler(eventHandler);
-    };
   var _emscripten_set_mousedown_callback_on_thread = (target, userData, useCapture, callbackfunc, targetThread) =>
       registerMouseEventCallback(target, userData, useCapture, callbackfunc, 5, "mousedown", targetThread);
 
@@ -6573,10 +6576,17 @@ function krudd_text_input_hide() { if (Module.__kruddTextEl) Module.__kruddTextE
 function krudd_text_input_drain_chars(buf,cap) { if (!Module.__kruddText || !Module.__kruddText.chars) return 0; var str = Module.__kruddText.chars; var bytes = lengthBytesUTF8(str); if (bytes >= cap) { var truncated = ""; var used = 0; for (var i = 0; i < str.length; i++) { var cp = str.codePointAt(i); var clen = cp > 0x7FF ? (cp > 0xFFFF ? 4 : 3) : (cp > 0x7F ? 2 : 1); if (used + clen >= cap) break; truncated += str[i]; if (cp > 0xFFFF) i++; used += clen; } str = truncated; } stringToUTF8(str, buf, cap); Module.__kruddText.chars = ""; return lengthBytesUTF8(str); }
 function krudd_text_input_pop_key() { if (!Module.__kruddText || !Module.__kruddText.keys.length) return 0; return Module.__kruddText.keys.shift(); }
 function krudd_is_touch_device() { return (('ontouchstart' in window) || navigator.maxTouchPoints > 0) ? 1 : 0; }
+function krudd_sp_create_context() { var AC = window.AudioContext || window.webkitAudioContext; if (!AC) return 0; var ctx = new AC(); Module.__kruddAudioCtx = ctx; return ctx.sampleRate | 0; }
+function krudd_sp_attach(buf_size) { var ctx = Module.__kruddAudioCtx; if (!ctx) return; var node = ctx.createScriptProcessor(buf_size, 0, 2); node.onaudioprocess = function (e) { var out = e.outputBuffer; var n = out.length; var ptr = Module._audio_sp_render(n); var base = ptr >> 2; var heap = Module.HEAPF32; var l = out.getChannelData(0); var r = out.getChannelData(1); for (var i = 0; i < n; i++) { l[i] = heap[base + 2 * i]; r[i] = heap[base + 2 * i + 1]; } }; node.connect(ctx.destination); Module.__kruddAudioNode = node; }
+function krudd_sp_resume() { var ctx = Module.__kruddAudioCtx; if (ctx && ctx.state !== 'running' && ctx.resume) ctx.resume(); }
 function kgui_read_safe_insets(out) { var probe = Module.__kgSafeProbe; if (!probe) { probe = document.createElement("div"); probe.style.cssText = "position:fixed;top:0;left:0;width:0;height:0;" + "visibility:hidden;pointer-events:none;" + "padding-top:env(safe-area-inset-top);" + "padding-right:env(safe-area-inset-right);" + "padding-bottom:env(safe-area-inset-bottom);" + "padding-left:env(safe-area-inset-left);"; document.body.appendChild(probe); Module.__kgSafeProbe = probe; } var cs = getComputedStyle(probe); HEAPF32[(out >> 2) + 0] = parseFloat(cs.paddingTop) || 0; HEAPF32[(out >> 2) + 1] = parseFloat(cs.paddingRight) || 0; HEAPF32[(out >> 2) + 2] = parseFloat(cs.paddingBottom) || 0; HEAPF32[(out >> 2) + 3] = parseFloat(cs.paddingLeft) || 0; }
 
 // Imports from the Wasm binary.
 var _main = Module['_main'] = makeInvalidEarlyAccess('_main');
+var _audio_sp_render = Module['_audio_sp_render'] = makeInvalidEarlyAccess('_audio_sp_render');
+var _audio_test_beep = Module['_audio_test_beep'] = makeInvalidEarlyAccess('_audio_test_beep');
+var _audio_test_blip = Module['_audio_test_blip'] = makeInvalidEarlyAccess('_audio_test_blip');
+var _audio_test_noise = Module['_audio_test_noise'] = makeInvalidEarlyAccess('_audio_test_noise');
 var _subsystem_manager_get_api = Module['_subsystem_manager_get_api'] = makeInvalidEarlyAccess('_subsystem_manager_get_api');
 var _subsystem_manager_register = Module['_subsystem_manager_register'] = makeInvalidEarlyAccess('_subsystem_manager_register');
 var _free = makeInvalidEarlyAccess('_free');
@@ -6622,6 +6632,10 @@ var wasmTable = makeInvalidEarlyAccess('wasmTable');
 
 function assignWasmExports(wasmExports) {
   assert(typeof wasmExports['main'] != 'undefined', 'missing Wasm export: main');
+  assert(typeof wasmExports['audio_sp_render'] != 'undefined', 'missing Wasm export: audio_sp_render');
+  assert(typeof wasmExports['audio_test_beep'] != 'undefined', 'missing Wasm export: audio_test_beep');
+  assert(typeof wasmExports['audio_test_blip'] != 'undefined', 'missing Wasm export: audio_test_blip');
+  assert(typeof wasmExports['audio_test_noise'] != 'undefined', 'missing Wasm export: audio_test_noise');
   assert(typeof wasmExports['subsystem_manager_get_api'] != 'undefined', 'missing Wasm export: subsystem_manager_get_api');
   assert(typeof wasmExports['subsystem_manager_register'] != 'undefined', 'missing Wasm export: subsystem_manager_register');
   assert(typeof wasmExports['free'] != 'undefined', 'missing Wasm export: free');
@@ -6663,6 +6677,10 @@ function assignWasmExports(wasmExports) {
   assert(typeof wasmExports['memory'] != 'undefined', 'missing Wasm export: memory');
   assert(typeof wasmExports['__indirect_function_table'] != 'undefined', 'missing Wasm export: __indirect_function_table');
   _main = Module['_main'] = createExportWrapper('main', wasmExports['main'], 2);
+  _audio_sp_render = Module['_audio_sp_render'] = createExportWrapper('audio_sp_render', wasmExports['audio_sp_render'], 1);
+  _audio_test_beep = Module['_audio_test_beep'] = createExportWrapper('audio_test_beep', wasmExports['audio_test_beep'], 0);
+  _audio_test_blip = Module['_audio_test_blip'] = createExportWrapper('audio_test_blip', wasmExports['audio_test_blip'], 0);
+  _audio_test_noise = Module['_audio_test_noise'] = createExportWrapper('audio_test_noise', wasmExports['audio_test_noise'], 0);
   _subsystem_manager_get_api = Module['_subsystem_manager_get_api'] = createExportWrapper('subsystem_manager_get_api', wasmExports['subsystem_manager_get_api'], 2);
   _subsystem_manager_register = Module['_subsystem_manager_register'] = createExportWrapper('subsystem_manager_register', wasmExports['subsystem_manager_register'], 2);
   _free = createExportWrapper('free', wasmExports['free'], 1);
@@ -6750,6 +6768,8 @@ var wasmImports = {
   emscripten_resize_heap: _emscripten_resize_heap,
   /** @export */
   emscripten_set_canvas_element_size: _emscripten_set_canvas_element_size,
+  /** @export */
+  emscripten_set_click_callback_on_thread: _emscripten_set_click_callback_on_thread,
   /** @export */
   emscripten_set_keydown_callback_on_thread: _emscripten_set_keydown_callback_on_thread,
   /** @export */
@@ -6918,6 +6938,12 @@ var wasmImports = {
   krudd_is_touch_device,
   /** @export */
   krudd_signal_running,
+  /** @export */
+  krudd_sp_attach,
+  /** @export */
+  krudd_sp_create_context,
+  /** @export */
+  krudd_sp_resume,
   /** @export */
   krudd_text_input_drain_chars,
   /** @export */

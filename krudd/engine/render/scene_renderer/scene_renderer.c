@@ -1413,6 +1413,7 @@ static void seed_demo_scene(void)
 		{ "builtin://mesh/box",     { -1.5f, 0.0f,  0.0f }, { 1.0f, 1.0f, 1.0f }, "builtin://script/spinner", "builtin://material/pbr-plastic", "Box"     },
 		{ "builtin://mesh/sphere",  {  0.0f, 0.0f, -1.0f }, { 1.0f, 1.0f, 1.0f }, "builtin://script/bounce",  "builtin://material/pbr-metal",   "Sphere"  },
 		{ "builtin://mesh/pyramid", {  1.5f, 0.0f,  0.5f }, { 1.0f, 1.0f, 1.0f }, "builtin://script/wobble",  "builtin://material/checker",     "Pyramid" },
+		{ "builtin://mesh/sdf-rook",{  0.0f, 0.0f,  1.4f }, { 1.0f, 1.0f, 1.0f }, "builtin://script/spinner", "builtin://material/pbr-metal",   "Rook"    },
 	};
 	/* The floor bakes the checker at a denser scale than the built-in
 	 * default so it reads as a checkerboard rather than one giant tile. */
@@ -1436,11 +1437,13 @@ static void seed_demo_scene(void)
 	 * scene never rests in the "no material" state (forward_pass skips any
 	 * entity with no COMPONENT_MATERIAL — how an entity keeps its mesh for
 	 * picking/collision but stops drawing). The mix shows off both scene
-	 * shaders side by side: the sphere and box wear the physically based
+	 * shaders side by side: the sphere, box, and rook wear the physically based
 	 * metal/plastic materials, while the floor and pyramid wear the textured
-	 * checker so the procedural-texture path stays exercised too. A material
-	 * that fails to resolve falls back to the checker rather than going
-	 * undrawn.
+	 * checker so the procedural-texture path stays exercised too. The rook is
+	 * the marching-cubes/SDF mesh — its gradient normals catch the pbr key
+	 * light — so the demo now covers all three mesh shape engines (lathe,
+	 * parametric grid, implicit surface). A material that fails to resolve
+	 * falls back to the checker rather than going undrawn.
 	 */
 	checker = asset_id_by_path("builtin://material/checker");
 

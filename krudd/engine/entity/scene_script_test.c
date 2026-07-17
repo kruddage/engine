@@ -215,6 +215,33 @@ static void test_dispatch_and_entity_name(void)
 	assert(w.count == 3);            /* no spawn on the non-match */
 }
 
+/*
+ * scene-destroy-named! tombstones every entity of a given name and cascades to
+ * their children, leaving other names untouched — the sweep a game uses to clear
+ * the board. Returns the match count (named roots, not the cascaded children).
+ */
+static void test_destroy_named(void)
+{
+	int32_t r;
+
+	world_reset(&w);
+	assert(scene_script_build(&w, &fake_asset,
+		"(scene s"
+		"  (entity (name \"mark\") (children (entity (name \"bar\"))))"
+		"  (entity (name \"keep\"))"
+		"  (entity (name \"mark\")))") == 4);
+	/* ids: 0 mark(parent), 1 bar(child of 0), 2 keep, 3 mark */
+
+	script_eval("(define (clear ignore) (scene-destroy-named! \"mark\"))");
+	r = scene_script_call(&w, &fake_asset, "clear", 0);
+
+	assert(r == 2);            /* two entities named "mark" matched */
+	assert(!w.alive[0]);       /* the mark parent is gone */
+	assert(!w.alive[1]);       /* its child cascaded away */
+	assert(w.alive[2]);        /* an unrelated name survives */
+	assert(!w.alive[3]);       /* the second mark is gone */
+}
+
 /* A non-scene form is rejected cleanly: nothing spawns, no crash. */
 static void test_not_a_scene_form(void)
 {
@@ -254,6 +281,7 @@ int main(void)
 	test_rotate_builds_quaternion();
 	test_children_nest_under_parent();
 	test_dispatch_and_entity_name();
+	test_destroy_named();
 	test_unknown_path_is_inert();
 	test_not_a_scene_form();
 	test_entity_fault_is_isolated();

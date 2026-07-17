@@ -51,6 +51,27 @@ int krudd_text_input_capture(void)
 }
 
 /*
+ * Editor-chrome visibility — the switch between "editor" and a game's clean
+ * play view. When off, kruddgui's panels and the selection gizmo/outline are
+ * suppressed (kruddgui.cpp, kruddboard.cpp, scene_renderer.c all read this),
+ * while click-to-pick keeps running so a game still receives its clicks. The
+ * launcher resets it on every game load (game.c) and a game that wants the bare
+ * board — tic-tac-toe — turns it off from its own load callback. Editor by
+ * default, the same plain-C shared-symbol pattern as the capture flag above.
+ */
+static int g_editor_chrome = 1;
+
+void krudd_set_editor_chrome(int on)
+{
+	g_editor_chrome = on ? 1 : 0;
+}
+
+int krudd_editor_chrome(void)
+{
+	return g_editor_chrome;
+}
+
+/*
  * Web text-input bridge — desktop keyboard + mobile soft keyboard support.
  *
  * A hidden <input type="text"> element is used as the keyboard capture

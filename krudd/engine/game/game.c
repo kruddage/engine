@@ -24,6 +24,9 @@ static struct {
 static int g_count;
 
 #ifdef __EMSCRIPTEN__
+/* Editor-chrome toggle (plugin_abi.c, main module): reset per game load. */
+void krudd_set_editor_chrome(int on);
+
 /*
  * Append a launcher button for a freshly registered game. The button calls back
  * into the exported krudd_load_game with this game's index; UTF8ToString marshals
@@ -79,6 +82,13 @@ void game_load(int index)
  */
 EMSCRIPTEN_KEEPALIVE void krudd_load_game(int index)
 {
+	/*
+	 * Every scene starts in the editor by default; a game that wants a clean
+	 * play view turns the chrome off from its load callback, which runs
+	 * inside game_load below. Resetting here means leaving a chrome-less game
+	 * for an ordinary one restores the editor.
+	 */
+	krudd_set_editor_chrome(1);
 	game_load(index);
 	game_launcher_hide();
 }

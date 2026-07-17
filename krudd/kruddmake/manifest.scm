@@ -13,4 +13,5 @@
  "asset"
  "audio"
  "ui/kruddboard"
- "ui/kruddgui")
+ "ui/kruddgui"
+ "games/tictactoe")

@@ -26,6 +26,9 @@
 ;;!   (at X Y Z)        authored position       (default 0 0 0)
 ;;!   (rotate X Y Z)    authored euler degrees   (default 0 0 0)
 ;;!   (scale X Y Z)     authored scale          (default 1 1 1)
+;;!   (children E ...)  nested (entity ...) forms, spawned under this one — their
+;;!                     transforms are local to it, so a group moves as a unit
+;;!                     (a mesh-less parent + two crossed bars is one X piece)
 
 ;;! (scene-vec3 xs a b c) -> the first three of XS, each defaulting to a/b/c when
 ;;! XS runs short — so (at 0 0 0), a bare (at), or an over-long clause all yield a
@@ -35,14 +38,17 @@
         (if (and (pair? xs) (pair? (cdr xs))) (cadr xs) b)
         (if (and (pair? xs) (pair? (cdr xs)) (pair? (cddr xs))) (caddr xs) c)))
 
-;;! (scene-entity-build e) -> id: spawn one (entity CLAUSE ...) and apply its
-;;! clauses. Transform clauses accumulate into pos/rot/scl and land in a single
-;;! scene-xform! after the walk; binding clauses take effect immediately. An
-;;! unknown clause is ignored, so a newer scene degrades gracefully on an older
-;;! engine rather than faulting the whole build.
-(define (scene-entity-build e)
-  (let ((id  (scene-spawn))
-        (pos '()) (rot '()) (scl '()))
+;;! (scene-entity-build e parent) -> subtree entity count: spawn one
+;;! (entity CLAUSE ...) under PARENT (an id, or -1 for a root), apply its clauses,
+;;! then recurse into any (children ...). Transform clauses accumulate into
+;;! pos/rot/scl and land in a single scene-xform! after the walk; binding clauses
+;;! take effect immediately. An unknown clause is ignored, so a newer scene
+;;! degrades gracefully on an older engine rather than faulting the whole build.
+;;! The return value counts this entity plus every descendant, so scene-build can
+;;! report the true total.
+(define (scene-entity-build e parent)
+  (let ((id  (scene-spawn parent))
+        (pos '()) (rot '()) (scl '()) (kids '()) (count 1))
     (for-each
       (lambda (c)
         (when (pair? c)
@@ -54,12 +60,18 @@
             ((at)       (set! pos (cdr c)))
             ((rotate)   (set! rot (cdr c)))
             ((scale)    (set! scl (cdr c)))
+            ((children) (set! kids (cdr c)))
             (else #f))))
       (cdr e))
     (apply scene-xform! id (append (scene-vec3 pos 0 0 0)
                                    (scene-vec3 rot 0 0 0)
                                    (scene-vec3 scl 1 1 1)))
-    id))
+    (for-each
+      (lambda (k)
+        (when (and (pair? k) (eq? (car k) 'entity))
+          (set! count (+ count (scene-entity-build k id)))))
+      kids)
+    count))
 
 ;;! (scene-build src) -> entity count. Parse SRC (a (scene NAME (entity ...) ...)
 ;;! form as text) and spawn its entities into the world the host has bound. A
@@ -75,7 +87,7 @@
                 (lambda (c)
                   (when (and (pair? c) (eq? (car c) 'entity))
                     (catch #t
-                      (lambda () (scene-entity-build c) (set! n (+ n 1)))
+                      (lambda () (set! n (+ n (scene-entity-build c -1))))
                       (lambda args (krudd-log 2 "scene: entity build fault")))))
                 (cddr form))
               n)

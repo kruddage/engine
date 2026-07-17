@@ -82,20 +82,26 @@ static uint32_t resolve_asset(const char *path)
 	return 0;
 }
 
-/* (scene-spawn) -> id: a root entity, identity transform, empty component mask. */
+/*
+ * (scene-spawn [parent]) -> id: a new entity with an identity transform and an
+ * empty component mask. PARENT is the entity id to nest under, or -1 / omitted
+ * for a root entity. A child's transform clauses are read as local to its parent
+ * (world_tick composes the two each frame), so a composite piece — an X built
+ * from two crossed bars — moves and scales as one when its parent does.
+ */
 static s7_pointer sp_scene_spawn(s7_scheme *sc, s7_pointer args)
 {
 	struct transform t;
-	int32_t          id;
+	int32_t          parent = WORLD_NO_PARENT;
 
-	(void)args;
 	if (!g_w)
 		return s7_make_integer(sc, -1);
+	if (s7_is_pair(args) && s7_is_integer(s7_car(args)))
+		parent = (int32_t)s7_integer(s7_car(args));
 	memset(&t, 0, sizeof(t));
 	t.rotation[3] = 1.0f;                       /* identity quaternion */
 	t.scale[0] = t.scale[1] = t.scale[2] = 1.0f;
-	id = world_create_entity(g_w, WORLD_NO_PARENT, &t, 0u);
-	return s7_make_integer(sc, id);
+	return s7_make_integer(sc, world_create_entity(g_w, parent, &t, 0u));
 }
 
 /*
@@ -184,8 +190,8 @@ void scene_script_init(void)
 	sc = script_s7();
 	if (!sc)
 		return;
-	s7_define_function(sc, "scene-spawn", sp_scene_spawn, 0, 0, false,
-			   "(scene-spawn) -> new root entity id");
+	s7_define_function(sc, "scene-spawn", sp_scene_spawn, 0, 1, false,
+			   "(scene-spawn [parent]) -> new entity id under parent");
 	s7_define_function(sc, "scene-xform!", sp_scene_xform, 10, 0, false,
 			   "(scene-xform! id px py pz rx ry rz sx sy sz)");
 	s7_define_function(sc, "scene-mesh!", sp_scene_mesh, 2, 0, false,

@@ -338,7 +338,21 @@ static s7_pointer st_asset_info(s7_scheme *sc, s7_pointer a)
 		return ainfo(sc, "notes/readme", 7, 0, 1, 0, 0, 0, 1);
 	if (id == 29)
 		return ainfo(sc, "builtin://text/license", 7, 1, 1, 0, 0, 1, 0);
+	/* A read-only built-in sound and an authored one, for the Play button. */
+	if (id == 30)
+		return ainfo(sc, "builtin://sound/beep", 9, 1, 1, 0, 0, 1, 0);
+	if (id == 31)
+		return ainfo(sc, "sfx/jump", 9, 0, 1, 0, 0, 0, 1);
 	return s7_f(sc);
+}
+
+/* (kgui-play-sound id) -> records the id the Play button asked to play. */
+static int g_last_play = -1;
+static s7_pointer st_play_sound(s7_scheme *sc, s7_pointer a)
+{
+	g_last_play = (int)s7_integer(s7_car(a));
+	rec("play-sound %d", g_last_play);
+	return s7_nil(sc);
 }
 
 static const char *arg1_str(s7_scheme *sc, s7_pointer a)
@@ -666,6 +680,7 @@ static s7_scheme *setup_interp(void)
 	s7_define_function(sc, "krudd-asset-clone-material", st_clone_material,
 			   3, 3, false, "stub");
 	def(sc, "krudd-asset-delete", st_asset_delete, 1);
+	def(sc, "kgui-play-sound", st_play_sound, 1);
 
 	/* Accessors + primitive the texture editor reads / draws. */
 	def(sc, "krudd-texture-params", st_texture_params, 1);
@@ -1311,6 +1326,38 @@ static void test_read_only_text_is_catalog(void)
 	assert(!rec_has("field-multi"));
 }
 
+static void test_sound_editor_renders(void)
+{
+	/* A read-only built-in sound shows the Sound label + Play button, then
+	 * the catalog details below it. */
+	set_sel(30);
+	draw();
+	assert(rec_has("text builtin://sound/beep")); /* the asset path */
+	assert(rec_has("text Play"));                 /* the Play button */
+	assert(rec_has("text Read-only"));            /* the generic tail */
+}
+
+static void test_sound_play_routes(void)
+{
+	/* Tapping Play calls kgui-play-sound with the asset's id. */
+	set_sel(30);
+	g_last_play = -1;
+	tap(200.0f, 174.0f);
+	draw();
+	assert(rec_has("play-sound 30"));
+	assert(g_last_play == 30);
+}
+
+static void test_sound_authored_delete(void)
+{
+	/* An authored sound offers Delete (a built-in does not). */
+	set_sel(31);
+	tap(200.0f, 228.0f);
+	draw();
+	assert(rec_has("asset-delete 31"));
+	assert(get_sel() == 0);
+}
+
 int main(void)
 {
 	setup_interp();
@@ -1353,6 +1400,9 @@ int main(void)
 	RUN(mesh_source_save);
 	RUN(text_editor_and_save);
 	RUN(read_only_text_is_catalog);
+	RUN(sound_editor_renders);
+	RUN(sound_play_routes);
+	RUN(sound_authored_delete);
 
 	printf("\n%d/%d kgui assets tests passed\n", tests_passed, tests_run);
 	return tests_passed == tests_run ? 0 : 1;

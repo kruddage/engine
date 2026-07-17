@@ -50,11 +50,24 @@ static int32_t status(void)
 	return scene_script_call(&w, NULL, "ttt-status", 0);
 }
 
+/* The X and O tallies, unpacked from ttt-score's X*1000 + O packing. */
+static int32_t score_x(void)
+{
+	return scene_script_call(&w, NULL, "ttt-score", 0) / 1000;
+}
+
+static int32_t score_o(void)
+{
+	return scene_script_call(&w, NULL, "ttt-score", 0) % 1000;
+}
+
 static void reset_board(void)
 {
 	world_reset(&w);
 	assert(scene_script_build(&w, NULL, BOARD) == 9);
 	scene_script_call(&w, NULL, "ttt-reset", 0);
+	/* Zero the tally too, so each check starts from a clean scoreboard. */
+	scene_script_call(&w, NULL, "ttt-score-reset", 0);
 }
 
 /* Placement, occupied-cell rejection, non-cell rejection, and turn alternation. */
@@ -112,6 +125,43 @@ static void test_draw(void)
 	assert(status() == 3);           /* draw */
 }
 
+/*
+ * A win strikes the line through and credits the winner; the tally then survives
+ * the restart that clears the marks. The winning move spawns X (parent + two bars)
+ * plus the one-entity strike bar — four new entities — which is how the strike is
+ * observed without a GPU.
+ */
+static void test_strike_and_score(void)
+{
+	uint32_t base;
+
+	reset_board();
+
+	play(0);            /* X */
+	play(3);            /* O */
+	play(1);            /* X */
+	play(4);            /* O */
+
+	base = w.count;
+	assert(play(2) == 1);            /* X completes row 0-1-2 */
+	assert(status() == 1);           /* X wins */
+	assert(w.count == base + 4);     /* X (3) + the strike bar (1) */
+	assert(score_x() == 1);          /* credited to X */
+	assert(score_o() == 0);
+
+	/* A click restarts: marks and the strike are swept, but the tally carries. */
+	assert(play(0) == 1);
+	assert(status() == 0);
+	assert(score_x() == 1);
+	assert(score_o() == 0);
+
+	/* A second X win adds to the same tally rather than resetting it. */
+	play(0); play(3); play(1); play(4); play(2);
+	assert(status() == 1);
+	assert(score_x() == 2);
+	assert(score_o() == 0);
+}
+
 int main(void)
 {
 	log_init();
@@ -122,6 +172,7 @@ int main(void)
 	test_placement_and_turns();
 	test_win_then_restart();
 	test_draw();
+	test_strike_and_score();
 
 	printf("tictactoe_test: ok\n");
 	return 0;

@@ -217,6 +217,80 @@ static const char *SCENE_TEXTURED_SHADER_SRC =
  */
 static const float DEFAULT_MATERIAL_COLOR[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
 
+/*
+ * A physically based (metallic-roughness) scene shader.  It speaks the same
+ * vertex/Camera IO contract as scene-textured (a_pos/a_normal/a_uv0 in, Camera
+ * at block 0, Material at block 1), so it drops into the scene pipeline exactly
+ * like a custom material shader — only its shading differs.  The Material block
+ * is { base_color vec4; metallic float; roughness float; }, which the editor
+ * turns into a colour swatch and two 0..1 sliders straight from the (edit ...)
+ * hints; the renderer packs those bytes std140 with no schema of its own.
+ *
+ * The fragment is a Cook-Torrance BRDF: a GGX (Trowbridge-Reitz) normal
+ * distribution, a Smith/Schlick-GGX geometry term, and a Schlick Fresnel with
+ * F0 = mix(0.04, base_color, metallic).  Direct light is one fixed directional
+ * key; a cheap sky/ground hemisphere stands in for image-based lighting so
+ * metals still read instead of going black under a single light.  The view
+ * direction is a fixed world-space constant here — a pure-parametric first cut
+ * that needs no engine change; threading the real camera position through the
+ * Camera block (for correct view-dependent specular) is a follow-up.  It
+ * samples no albedo texture, so a material naming it carries no texture slot.
+ */
+static const char *PBR_SHADER_SRC =
+	"(shader pbr\n"
+	"  (inputs\n"
+	"    (a_pos    vec3 (location 0))\n"
+	"    (a_normal vec3 (location 1))\n"
+	"    (a_uv0    vec2 (location 2)))\n"
+	"  (uniforms\n"
+	"    (Camera (block 0) (layout std140)\n"
+	"      (view_proj mat4)\n"
+	"      (model     mat4))\n"
+	"    (Material (block 1) (layout std140)\n"
+	"      (base_color vec4  (edit color) (default 0.82 0.82 0.85 1.0))\n"
+	"      (metallic   float (edit range 0.0 1.0) (default 0.1))\n"
+	"      (roughness  float (edit range 0.0 1.0) (default 0.5))))\n"
+	"  (varyings\n"
+	"    (v_normal vec3))\n"
+	"  (targets\n"
+	"    (frag_color vec4 (location 0)))\n"
+	"  (vertex\n"
+	"    (set v_normal (* (mat3 model) a_normal))\n"
+	"    (set position (* view_proj model (vec4 a_pos 1.0))))\n"
+	"  (fragment\n"
+	"    (let* ((n      (normalize v_normal))\n"
+	"           (l      (normalize (vec3 0.5 0.8 0.4)))\n"
+	"           (v      (normalize (vec3 0.0 0.4 1.0)))\n"
+	"           (h      (normalize (+ l v)))\n"
+	"           (ndl    (max (dot n l) 0.0))\n"
+	"           (ndv    (max (dot n v) 0.0001))\n"
+	"           (ndh    (max (dot n h) 0.0))\n"
+	"           (vdh    (max (dot v h) 0.0))\n"
+	"           (albedo (swizzle base_color rgb))\n"
+	"           (f0     (mix (vec3 0.04 0.04 0.04) albedo metallic))\n"
+	"           (a      (* roughness roughness))\n"
+	"           (a2     (* a a))\n"
+	"           (dnm    (+ (* ndh ndh (- a2 1.0)) 1.0))\n"
+	"           (ndf    (/ a2 (* 3.14159265 dnm dnm)))\n"
+	"           (k      (/ (* (+ roughness 1.0) (+ roughness 1.0)) 8.0))\n"
+	"           (gv     (/ ndv (+ (* ndv (- 1.0 k)) k)))\n"
+	"           (gl     (/ ndl (+ (* ndl (- 1.0 k)) k)))\n"
+	"           (g      (* gv gl))\n"
+	"           (fres   (+ f0 (* (- (vec3 1.0 1.0 1.0) f0) (pow (- 1.0 vdh) 5.0))))\n"
+	"           (spec   (/ (* ndf g fres) (+ (* 4.0 ndv ndl) 0.0001)))\n"
+	"           (kd     (* (- (vec3 1.0 1.0 1.0) fres) (- 1.0 metallic)))\n"
+	"           (diff   (* kd albedo 0.31831))\n"
+	"           (radiance (vec3 1.0 1.0 1.0))\n"
+	"           (lo     (* (+ diff spec) radiance ndl))\n"
+	"           (sky    (vec3 0.55 0.62 0.75))\n"
+	"           (ground (vec3 0.20 0.19 0.17))\n"
+	"           (hemi   (mix ground sky (+ 0.5 (* 0.5 (swizzle n y)))))\n"
+	"           (amb    (* 0.45 (+ (* hemi albedo (- 1.0 metallic)) (* hemi f0))))\n"
+	"           (color  (+ amb lo))\n"
+	"           (mapped (/ color (+ color (vec3 1.0 1.0 1.0))))\n"
+	"           (gamma  (pow mapped (vec3 0.4545 0.4545 0.4545))))\n"
+	"      (set frag_color (vec4 gamma 1.0)))))\n";
+
 static int builtins_seeded;
 
 /*
@@ -287,6 +361,49 @@ static void seed_textured_material(const char *path, uint32_t shader_ref,
 	memcpy(p, &tex_ref, sizeof(tex_ref));                          p += 4;
 	memcpy(p, &width, sizeof(width));                              p += 4;
 	memcpy(p, &height, sizeof(height));
+	e->size      = n;
+	e->state     = ASSET_LOADED;
+	e->kind      = ASSET_KIND_PRIMITIVE;
+	e->read_only = 1;
+	e->type      = ASSET_TYPE_MATERIAL;
+}
+
+/*
+ * Seed a built-in PBR material: the v3 wire form with no texture trailer, just
+ * [shader-ref u32][Material block std140].  The pbr shader's Material block is
+ * { base_color vec4; metallic float; roughness float; }, which std140-packs to
+ * 32 bytes (base_color @0, metallic @16, roughness @20, the block rounded up to
+ * 32), so the material is 4 + 32 = 36 bytes with the trailing pad left zero.
+ * There is no texture slot: material_texture reads none because the bytes end
+ * exactly at header + block, so the shader renders its pure parametric shading.
+ * A zero shader_ref makes this a no-op.
+ */
+static void seed_pbr_material(const char *path, uint32_t shader_ref,
+			      const float rgba[4], float metallic,
+			      float roughness)
+{
+	struct asset_entry *e;
+	uint32_t            n;
+	unsigned char      *p;
+
+	if (!shader_ref)
+		return;
+	e = alloc_entry(path);
+	if (!e)
+		return;
+	n = (uint32_t)(sizeof(uint32_t)      /* shader-ref                 */
+		       + 8 * sizeof(float)); /* std140 Material block (32B) */
+	e->data = g_mem->alloc(n);
+	if (!e->data) {
+		e->state = ASSET_ERROR;
+		return;
+	}
+	memset(e->data, 0, n);            /* leaves the block's tail pad zero */
+	p = (unsigned char *)e->data;
+	memcpy(p,      &shader_ref, sizeof(shader_ref)); /* @0  shader-ref  */
+	memcpy(p + 4,  rgba, 4 * sizeof(float));         /* @4  base_color  */
+	memcpy(p + 20, &metallic,  sizeof(metallic));    /* @20 metallic    */
+	memcpy(p + 24, &roughness, sizeof(roughness));   /* @24 roughness   */
 	e->size      = n;
 	e->state     = ASSET_LOADED;
 	e->kind      = ASSET_KIND_PRIMITIVE;
@@ -477,6 +594,26 @@ static void seed_builtins(void)
 					       tshader, DEFAULT_MATERIAL_COLOR,
 					       checker, 256, 256);
 		}
+	}
+
+	/*
+	 * The physically based shader and two materials that exercise it — a
+	 * metal and a dielectric — so the metallic/roughness workflow ships with
+	 * ready-to-bind examples the way the checker ships for the textured
+	 * shader.  Neither carries a texture slot: the pbr shader is pure
+	 * parametric (base_color/metallic/roughness), so seed_pbr_material writes
+	 * only the shader-ref and the std140 Material block.
+	 */
+	{
+		static const float GOLD[4]   = { 1.00f, 0.78f, 0.34f, 1.0f };
+		static const float PLASTIC[4] = { 0.85f, 0.13f, 0.16f, 1.0f };
+		uint32_t pshader = seed_shader("builtin://shader/pbr",
+					       PBR_SHADER_SRC);
+
+		seed_pbr_material("builtin://material/pbr-metal", pshader,
+				  GOLD, 1.0f, 0.30f);
+		seed_pbr_material("builtin://material/pbr-plastic", pshader,
+				  PLASTIC, 0.0f, 0.45f);
 	}
 
 	/*
@@ -854,6 +991,33 @@ static const struct asset_decl_field checker_material_decl[] = {
 };
 
 /*
+ * The physically based shader advertises its format and stages like the scene
+ * shader, plus the Material params it exposes — base_color/metallic/roughness —
+ * the way a script decl lists its params, so the inspector shows what a pbr
+ * material is made of.  It adds no sampler (pure parametric shading).
+ */
+static const struct asset_decl_field pbr_shader_decl[] = {
+	{ "format", "krudd-shader"                      },
+	{ "stages", "vertex, fragment"                  },
+	{ "params", "base_color, metallic, roughness"   },
+};
+
+/* The two built-in pbr materials advertise their shader and the metallic/
+ * roughness point each one picks, the way the checker material advertises its
+ * shader and texture. */
+static const struct asset_decl_field pbr_metal_material_decl[] = {
+	{ "format", "krudd-material"        },
+	{ "shader", "builtin://shader/pbr"  },
+	{ "params", "metallic 1.0, roughness 0.30" },
+};
+
+static const struct asset_decl_field pbr_plastic_material_decl[] = {
+	{ "format", "krudd-material"        },
+	{ "shader", "builtin://shader/pbr"  },
+	{ "params", "metallic 0.0, roughness 0.45" },
+};
+
+/*
  * A script asset is one (script NAME ...) Scheme form.  It advertises its
  * source format and the lifecycle hooks the built-in defines, the way a shader
  * advertises its stages.
@@ -1018,6 +1182,12 @@ static const struct builtin_desc builtin_descs[] = {
 	  ARRAY_SIZE(scene_textured_shader_decl) },
 	{ "builtin://material/checker", checker_material_decl,
 	  ARRAY_SIZE(checker_material_decl) },
+	{ "builtin://shader/pbr", pbr_shader_decl,
+	  ARRAY_SIZE(pbr_shader_decl) },
+	{ "builtin://material/pbr-metal", pbr_metal_material_decl,
+	  ARRAY_SIZE(pbr_metal_material_decl) },
+	{ "builtin://material/pbr-plastic", pbr_plastic_material_decl,
+	  ARRAY_SIZE(pbr_plastic_material_decl) },
 	{ "builtin://script/spinner", spinner_script_decl,
 	  ARRAY_SIZE(spinner_script_decl) },
 	{ "builtin://script/bounce", bounce_script_decl,

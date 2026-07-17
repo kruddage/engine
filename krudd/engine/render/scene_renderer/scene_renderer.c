@@ -69,6 +69,7 @@ static const struct asset_api   *g_asset;
 static gpu_pipeline_t g_default_pso;  /* the built-in scene pipeline; fallback */
 static gpu_buffer_t   g_ubo;         /* Camera: { view_proj, model, cam_pos } */
 static gpu_buffer_t   g_material_ubo; /* the active material's std140 params */
+static gpu_buffer_t   g_light_ubo;    /* Sun: { light_dir, light_radiance } std140 */
 static int            g_ready;
 
 /*
@@ -168,6 +169,15 @@ static const char *OUTLINE_SHADER_SRC =
  */
 #define SCENE_UBO_FLOATS 36          /* view_proj[16] + model[16] + cam_pos[4] */
 #define SCENE_UBO_CAMPOS 32          /* float offset of cam_pos within the block */
+
+/*
+ * The Sun uniform block (the pbr shader's directional key), std140-packed:
+ * light_dir (vec3 -> vec4) + light_radiance (vec3 -> vec4) = 8 floats. Bound at
+ * slot 2; the block name "Sun" sorts after "Camera"/"Material", which is how the
+ * webgl backend (alphabetical block-name order) lands it on binding 2. A shader
+ * without a Sun block (scene-textured, the mask) simply ignores the slot.
+ */
+#define LIGHT_UBO_FLOATS 8           /* light_dir[4] + light_radiance[4] */
 
 /*
  * A material's wire form (v3): a uint32 shader-ref (asset id, first-class — a
@@ -300,6 +310,60 @@ static const struct camera_api g_camera_api = {
 	camera_get_eye,
 	camera_set_viewport,
 };
+
+/*
+ * The scene's directional key light in world space, as the Sun block wants it.
+ * Defaults to the historical fixed sun so a scene with no light entity looks
+ * exactly as it did before lights existed; scene_renderer_tick overrides the
+ * direction from the first live COMPONENT_LIGHT entity's world rotation. The
+ * direction need not be unit length — the shader normalizes it. radiance is a
+ * constant white for now; per-light colour/intensity is the next increment.
+ */
+static struct { float dir[3]; float radiance[3]; } g_light = {
+	{ 0.5f, 0.8f, 0.4f },
+	{ 1.0f, 1.0f, 1.0f },
+};
+
+/*
+ * Rotate v by the unit quaternion q (xyzw); out must not alias v. Mirrors the
+ * entity system's quat_rotate — a light entity's direction is its transform
+ * rotation applied to the default sun vector, so rotating the entity (by gizmo
+ * or script) steers the light.
+ */
+static void light_quat_rotate(const float q[4], const float v[3], float out[3])
+{
+	float tx = 2.0f * (q[1] * v[2] - q[2] * v[1]);
+	float ty = 2.0f * (q[2] * v[0] - q[0] * v[2]);
+	float tz = 2.0f * (q[0] * v[1] - q[1] * v[0]);
+
+	out[0] = v[0] + q[3] * tx + (q[1] * tz - q[2] * ty);
+	out[1] = v[1] + q[3] * ty + (q[2] * tx - q[0] * tz);
+	out[2] = v[2] + q[3] * tz + (q[0] * ty - q[1] * tx);
+}
+
+/*
+ * Pack the current directional light into the Sun UBO and bind it at slot 2.
+ * The light is constant across a pass, so a caller does this once before its
+ * draw loop; a shader with no Sun block (scene-textured, the mask) ignores the
+ * slot. Shared by the forward pass and the mesh-preview render so a pbr
+ * thumbnail lights the same way the scene does.
+ */
+static void bind_light(const struct gpu_api *gpu, gpu_cmd_buf_t cmd)
+{
+	float lubo[LIGHT_UBO_FLOATS];
+
+	lubo[0] = g_light.dir[0];
+	lubo[1] = g_light.dir[1];
+	lubo[2] = g_light.dir[2];
+	lubo[3] = 0.0f;               /* std140 vec3 tail pad */
+	lubo[4] = g_light.radiance[0];
+	lubo[5] = g_light.radiance[1];
+	lubo[6] = g_light.radiance[2];
+	lubo[7] = 0.0f;
+	gpu->buffer_update(g_light_ubo, 0, lubo, (uint32_t)sizeof(lubo));
+	gpu->cmd_bind_uniform_buffer(cmd, 2, g_light_ubo, 0,
+				     (uint32_t)sizeof(lubo));
+}
 
 /*
  * Meshes are uploaded lazily, not from a fixed built-in list: ensure_meshes()
@@ -1296,6 +1360,7 @@ static uint32_t scene_preview_render_mesh(uint32_t mesh_ref,
 	gpu->cmd_bind_uniform_buffer(cmd, 0, g_ubo, 0, (uint32_t)sizeof(ubo));
 	gpu->buffer_update(g_material_ubo, 0, params, plen);
 	gpu->cmd_bind_uniform_buffer(cmd, 1, g_material_ubo, 0, plen);
+	bind_light(gpu, cmd); /* Sun at slot 2, so a pbr thumbnail lights right */
 	gpu->cmd_bind_vertex_buffer(cmd, 0, g_prev_vbo, 0);
 	gpu->cmd_bind_index_buffer(cmd, g_prev_ebo, 0, GPU_INDEX_FORMAT_UINT16);
 
@@ -1447,6 +1512,26 @@ static void seed_demo_scene(void)
 			g_camera_entity_id = cam_id;
 		}
 	}
+
+	/*
+	 * A light entity (proof of the light component): no mesh or material, just
+	 * COMPONENT_LIGHT. The tick reads its world rotation to steer the pbr
+	 * shader's key light; at identity rotation that reproduces the default sun,
+	 * so the scene looks the same as before but the light is now a real,
+	 * selectable entity you can rotate (bind a spinner to it to sweep the sun).
+	 */
+	{
+		struct transform lt;
+		int32_t          light_id;
+
+		memset(&lt, 0, sizeof(lt));
+		lt.rotation[3] = 1.0f;
+		lt.scale[0] = lt.scale[1] = lt.scale[2] = 1.0f;
+		light_id = g_scene->create_entity(WORLD_NO_PARENT, &lt,
+						  COMPONENT_LIGHT, 0u);
+		if (light_id >= 0 && g_scene->set_name)
+			g_scene->set_name(light_id, "Sun");
+	}
 }
 
 static void scene_renderer_init(void)
@@ -1480,6 +1565,11 @@ static void scene_renderer_init(void)
 		 */
 		bd.size = MATERIAL_UBO_MAX;
 		g_material_ubo = gpu->buffer_create(&bd);
+
+		/* The Sun block: the scene's one directional light, uploaded per
+		 * frame and bound at slot 2 for the pbr shader. */
+		bd.size = LIGHT_UBO_FLOATS * sizeof(float);
+		g_light_ubo = gpu->buffer_create(&bd);
 	}
 
 	build_outline_resources(gpu);
@@ -1529,6 +1619,9 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 	ubo[SCENE_UBO_CAMPOS + 1] = g_cam.eye[1];
 	ubo[SCENE_UBO_CAMPOS + 2] = g_cam.eye[2];
 	ubo[SCENE_UBO_CAMPOS + 3] = 0.0f; /* std140 vec3 tail pad */
+
+	/* The directional light is constant across the pass — bind it once. */
+	bind_light(gpu, cmd);
 
 	for (i = 0; i < w->count; i++) {
 		static const float            WHITE[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
@@ -1803,6 +1896,33 @@ static void scene_renderer_tick(void)
 		}
 	}
 
+	/*
+	 * Steer the directional light from the scene's first live light entity:
+	 * its world rotation turns the default sun vector, so rotating the entity
+	 * (gizmo or script) moves the light. With no light entity the default sun
+	 * stays, so a scene without one looks exactly as it did before. Radiance
+	 * is left at its constant white — per-light colour/intensity is the next
+	 * increment, when a per-entity light-data column earns its keep.
+	 */
+	{
+		static const float BASE_DIR[3] = { 0.5f, 0.8f, 0.4f };
+		uint32_t j;
+
+		g_light.dir[0] = BASE_DIR[0];
+		g_light.dir[1] = BASE_DIR[1];
+		g_light.dir[2] = BASE_DIR[2];
+		if (w) {
+			for (j = 0; j < w->count; j++) {
+				if (!w->alive[j] ||
+				    !(w->mask[j] & COMPONENT_LIGHT))
+					continue;
+				light_quat_rotate(w->world_xform[j].rotation,
+						  BASE_DIR, g_light.dir);
+				break;
+			}
+		}
+	}
+
 	camera_update(&g_cam);
 
 	/*
@@ -1894,6 +2014,8 @@ static void scene_renderer_shutdown(void)
 			gpu->buffer_destroy(g_ubo);
 		if (g_material_ubo)
 			gpu->buffer_destroy(g_material_ubo);
+		if (g_light_ubo)
+			gpu->buffer_destroy(g_light_ubo);
 		if (g_mask_pso)
 			gpu->pipeline_destroy(g_mask_pso);
 		if (g_outline_pso)

@@ -7,8 +7,16 @@
 ;;! which the marching-cubes shape engine builds from a signed-distance field. No
 ;;! rules and no input — it just runs, so picking it from the menu drops you into
 ;;! the procedural playground the editor has always shown.
+;;!
+;;! The "Camera" entity carries the scene's eye: scene_renderer reads whatever
+;;! entity is named "Camera" into the camera each frame, and the orbit-camera
+;;! script circles it about the origin. It is authored here (rather than inherited
+;;! from boot) because picking this game clears the world first — so the scene
+;;! rebuilds its own camera the same way tic-tac-toe does.
 
 (scene procedural-demo
+  (entity (name "Camera") (script "builtin://script/orbit-camera"))
+
   (entity (name "spinner")
           (mesh     "builtin://mesh/box")
           (material "builtin://material/pbr-plastic")

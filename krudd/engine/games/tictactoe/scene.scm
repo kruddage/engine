@@ -13,8 +13,18 @@
 ;;! The board plane's outward normal is +Y, so it lies flat in XZ; scaled by 3 it
 ;;! spans [-1.5, 1.5]. Cell centres sit on the unit grid (x,z in {-1, 0, 1}); the
 ;;! pads ride just above the board (y = 0.02) so a click hits a pad, not the slab.
+;;!
+;;! The "Camera" entity gives the scene its own eye: scene_renderer reads the
+;;! world position of whatever entity is named "Camera" into the camera eye each
+;;! frame (the view target stays the origin, where the board is centred). A flat
+;;! board seen edge-on is invisible, so this parks the eye high and in front for
+;;! a fixed 3/4 top-down view that reads the grid — no mesh, so it neither draws
+;;! nor gets picked. It is authored here rather than inherited because switching
+;;! to this game clears the world, taking the boot scene's orbit camera with it.
 
 (scene tic-tac-toe
+  (entity (name "Camera") (at 0 4 3.5))
+
   (entity (name "board")
           (mesh     "builtin://mesh/plane")
           (material "builtin://material/pbr-metal")

@@ -228,13 +228,22 @@ static const float DEFAULT_MATERIAL_COLOR[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
  *
  * The fragment is a Cook-Torrance BRDF: a GGX (Trowbridge-Reitz) normal
  * distribution, a Smith/Schlick-GGX geometry term, and a Schlick Fresnel with
- * F0 = mix(0.04, base_color, metallic).  Direct light is one fixed directional
- * key; a cheap sky/ground hemisphere stands in for image-based lighting so
- * metals still read instead of going black under a single light.  The view
- * direction is the real one — cam_pos (added to the Camera block, uploaded by
- * scene_renderer) minus the interpolated world position — so specular
- * highlights track the camera.  It samples no albedo texture, so a material
- * naming it carries no texture slot.
+ * F0 = mix(0.04, base_color, metallic).  Direct light is one directional key
+ * read from the Sun block — its world-space direction and radiance are uploaded
+ * by scene_renderer from the scene's light entity (a COMPONENT_LIGHT entity),
+ * or a default sun when the scene has none.  A cheap sky/ground hemisphere
+ * stands in for image-based lighting so metals still read instead of going
+ * black.  The view direction is the real one — cam_pos (in the Camera block)
+ * minus the interpolated world position — so specular highlights track the
+ * camera.  It samples no albedo texture, so a material naming it carries no
+ * texture slot.
+ *
+ * Block naming matters: the webgl backend assigns uniform-block binding slots
+ * by sorting block NAMES alphabetically (GLSL ES 300 has no layout(binding=N)),
+ * so the names must sort Camera < Material < Sun to land on slots 0/1/2 — the
+ * slots scene_renderer binds them to.  "Sun" is chosen to sort after "Material"
+ * for exactly that reason; renaming it below "Material" would silently swap the
+ * Material and light bindings.
  */
 static const char *PBR_SHADER_SRC =
 	"(shader pbr\n"
@@ -250,7 +259,10 @@ static const char *PBR_SHADER_SRC =
 	"    (Material (block 1) (layout std140)\n"
 	"      (base_color vec4  (edit color) (default 0.82 0.82 0.85 1.0))\n"
 	"      (metallic   float (edit range 0.0 1.0) (default 0.1))\n"
-	"      (roughness  float (edit range 0.0 1.0) (default 0.5))))\n"
+	"      (roughness  float (edit range 0.0 1.0) (default 0.5)))\n"
+	"    (Sun (block 2) (layout std140)\n"
+	"      (light_dir      vec3)\n"
+	"      (light_radiance vec3)))\n"
 	"  (varyings\n"
 	"    (v_normal   vec3)\n"
 	"    (v_worldpos vec3))\n"
@@ -262,7 +274,7 @@ static const char *PBR_SHADER_SRC =
 	"    (set position (* view_proj model (vec4 a_pos 1.0))))\n"
 	"  (fragment\n"
 	"    (let* ((n      (normalize v_normal))\n"
-	"           (l      (normalize (vec3 0.5 0.8 0.4)))\n"
+	"           (l      (normalize light_dir))\n"
 	"           (v      (normalize (- cam_pos v_worldpos)))\n"
 	"           (h      (normalize (+ l v)))\n"
 	"           (ndl    (max (dot n l) 0.0))\n"
@@ -283,8 +295,7 @@ static const char *PBR_SHADER_SRC =
 	"           (spec   (/ (* ndf g fres) (+ (* 4.0 ndv ndl) 0.0001)))\n"
 	"           (kd     (* (- (vec3 1.0 1.0 1.0) fres) (- 1.0 metallic)))\n"
 	"           (diff   (* kd albedo 0.31831))\n"
-	"           (radiance (vec3 1.0 1.0 1.0))\n"
-	"           (lo     (* (+ diff spec) radiance ndl))\n"
+	"           (lo     (* (+ diff spec) light_radiance ndl))\n"
 	"           (sky    (vec3 0.55 0.62 0.75))\n"
 	"           (ground (vec3 0.20 0.19 0.17))\n"
 	"           (hemi   (mix ground sky (+ 0.5 (* 0.5 (swizzle n y)))))\n"

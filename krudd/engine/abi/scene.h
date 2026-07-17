@@ -11,6 +11,16 @@ enum component_bit {
 	COMPONENT_RENDER   = 1u << 1,
 	COMPONENT_MATERIAL = 1u << 2,
 	COMPONENT_SCRIPT   = 1u << 3,
+	/*
+	 * A directional light. The entity contributes a light to the scene; the
+	 * renderer takes its world-space direction from the entity's transform
+	 * rotation (so moving/rotating the entity steers the light) and needs no
+	 * per-entity light data column yet — colour/intensity are engine
+	 * constants for now, a documented next increment. Carried in the mask
+	 * like every other component, so snapshot/undo and scene ingest/export
+	 * round-trip it for free.
+	 */
+	COMPONENT_LIGHT    = 1u << 4,
 };
 
 #define SCENE_NO_NAME 0xFFFFFFFFu

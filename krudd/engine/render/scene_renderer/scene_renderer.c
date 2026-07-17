@@ -1340,13 +1340,14 @@ static void seed_demo_scene(void)
 		const char *path;
 		float       pos[3];
 		float       scale[3];
-		const char *script; /* behavior script to bind, or NULL */
-		const char *name;   /* shown in the entity list */
+		const char *script;   /* behavior script to bind, or NULL      */
+		const char *material; /* material asset to wear                 */
+		const char *name;     /* shown in the entity list              */
 	} DEMO[] = {
-		{ "builtin://mesh/plane",   { 0.0f, -0.5f,  0.0f }, { 6.0f, 1.0f, 6.0f }, NULL,                        "Floor"   },
-		{ "builtin://mesh/box",     { -1.5f, 0.0f,  0.0f }, { 1.0f, 1.0f, 1.0f }, "builtin://script/spinner", "Box"     },
-		{ "builtin://mesh/sphere",  {  0.0f, 0.0f, -1.0f }, { 1.0f, 1.0f, 1.0f }, "builtin://script/bounce",  "Sphere"  },
-		{ "builtin://mesh/pyramid", {  1.5f, 0.0f,  0.5f }, { 1.0f, 1.0f, 1.0f }, "builtin://script/wobble",  "Pyramid" },
+		{ "builtin://mesh/plane",   { 0.0f, -0.5f,  0.0f }, { 6.0f, 1.0f, 6.0f }, NULL,                       "builtin://material/checker",     "Floor"   },
+		{ "builtin://mesh/box",     { -1.5f, 0.0f,  0.0f }, { 1.0f, 1.0f, 1.0f }, "builtin://script/spinner", "builtin://material/pbr-plastic", "Box"     },
+		{ "builtin://mesh/sphere",  {  0.0f, 0.0f, -1.0f }, { 1.0f, 1.0f, 1.0f }, "builtin://script/bounce",  "builtin://material/pbr-metal",   "Sphere"  },
+		{ "builtin://mesh/pyramid", {  1.5f, 0.0f,  0.5f }, { 1.0f, 1.0f, 1.0f }, "builtin://script/wobble",  "builtin://material/checker",     "Pyramid" },
 	};
 	/* The floor bakes the checker at a denser scale than the built-in
 	 * default so it reads as a checkerboard rather than one giant tile. */
@@ -1366,13 +1367,15 @@ static void seed_demo_scene(void)
 	}
 
 	/*
-	 * Every seeded entity wears the built-in checker material, so the world
-	 * scene never rests in the "no material" state — each renderable points
-	 * at a real, inspectable material rather than going undrawn
-	 * (forward_pass skips any entity with no COMPONENT_MATERIAL, which is
-	 * how an entity keeps its mesh for picking/collision but stops
-	 * drawing) — and the whole scene proves the procedural-texture path
-	 * renders, not just the floor.
+	 * Every seeded entity wears a real, inspectable material, so the world
+	 * scene never rests in the "no material" state (forward_pass skips any
+	 * entity with no COMPONENT_MATERIAL — how an entity keeps its mesh for
+	 * picking/collision but stops drawing). The mix shows off both scene
+	 * shaders side by side: the sphere and box wear the physically based
+	 * metal/plastic materials, while the floor and pyramid wear the textured
+	 * checker so the procedural-texture path stays exercised too. A material
+	 * that fails to resolve falls back to the checker rather than going
+	 * undrawn.
 	 */
 	checker = asset_id_by_path("builtin://material/checker");
 
@@ -1380,9 +1383,12 @@ static void seed_demo_scene(void)
 		struct transform t;
 		int32_t          id;
 		uint32_t         ref = asset_id_by_path(DEMO[i].path);
+		uint32_t         mat = asset_id_by_path(DEMO[i].material);
 
 		if (!ref)
 			continue;
+		if (!mat)
+			mat = checker;
 		memset(&t, 0, sizeof(t));
 		t.position[0] = DEMO[i].pos[0];
 		t.position[1] = DEMO[i].pos[1];
@@ -1392,8 +1398,8 @@ static void seed_demo_scene(void)
 		t.scale[1] = DEMO[i].scale[1];
 		t.scale[2] = DEMO[i].scale[2];
 		id = g_scene->create_entity(WORLD_NO_PARENT, &t, 0u, ref);
-		if (id >= 0 && checker && g_scene->set_material_ref)
-			g_scene->set_material_ref(id, checker);
+		if (id >= 0 && mat && g_scene->set_material_ref)
+			g_scene->set_material_ref(id, mat);
 		if (id >= 0 && g_scene->set_name)
 			g_scene->set_name(id, DEMO[i].name);
 

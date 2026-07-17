@@ -1477,7 +1477,7 @@ static void kruddgui_tick(void)
 
 	/*
 	 * Own the canvas's device-pixel size, which imgui_plugin sized before it
-	 * was removed (#492): the renderer and gl_flush draw into a framebuffer at
+	 * was removed (#492): the renderer and gpu_flush draw into a framebuffer at
 	 * this resolution while the panels lay out in the CSS pixels above.
 	 */
 	emscripten_set_canvas_element_size("#canvas", s_phys_w, s_phys_h);

@@ -1940,7 +1940,7 @@ static uint32_t bake_texture_preview(s7_scheme *sc, uint32_t tex_ref,
 	}
 	hash = tex_prev_hash(bytes, len);
 
-	if (!(g_tex_prev_gl && g_tex_prev_valid && g_tex_prev_ref == tex_ref &&
+	if (!(g_tex_prev_tex && g_tex_prev_valid && g_tex_prev_ref == tex_ref &&
 	      g_tex_prev_res == res && g_tex_prev_hash == hash)) {
 		struct texture_blob *b =
 			g_mem ? texture_script_generate(src, bytes, len, res, res,

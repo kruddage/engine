@@ -28,12 +28,12 @@ extern "C" {
 #include "kgui_text_edit.h"
 #include "kgui_font.h"
 #include "kruddgui_api.h"
+#include "renderer.h"		/* gpu_api — the panel batch draws through the device */
 }
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten/emscripten.h>
 #include <emscripten/html5.h>
-#include <GLES3/gl3.h>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -62,29 +62,33 @@ void krudd_text_input_set_capture(int on);
 }
 #endif
 
-static const struct log_api *g_log;
+static const struct log_api           *g_log;
+static const struct subsystem_manager *g_mgr; /* resolves the renderer gpu_api */
 
 #ifdef __EMSCRIPTEN__
 
 /* ------------------------------------------------------------------ */
-/* GL batch renderer                                                   */
+/* Batch renderer — panels drawn through the renderer's gpu_api        */
 /* ------------------------------------------------------------------ */
 
 /*
- * One VBO, one program, one draw call per flush. The batch is built in
- * CSS-pixel space (kgui_batch, GL-free) and this file only uploads and draws
- * it; the sampled texture is kruddgui's own baked glyph atlas (kgui_font),
- * rasterised once into s_font_tex below.
+ * The batch is built in CSS-pixel space (kgui_batch, GL-free) and this file
+ * uploads and draws it through the renderer's gpu_api — no direct GL. Device
+ * resources are created once in gpu_init: two pipelines sharing one vertex
+ * shader, differing only in fragment — s_pipe_sdf runs the SDF text/rect path,
+ * s_pipe_image the straight image passthrough (an interleaved image quad flips
+ * to it, then back). s_vbo streams the batch's vertices each frame; s_view_ubo
+ * carries the CSS-pixel viewport the vertex shader projects by; the sampled
+ * texture for the SDF path is kruddgui's own baked glyph atlas (s_font_tex).
  */
 #define KGUI_MAX_VERTS 16384
 
-static GLuint s_prog;
-static GLuint s_vao;
-static GLuint s_vbo;
-static GLint  s_u_viewport;
-static GLint  s_u_tex;
-static GLint  s_u_sdf;
-static bool   s_gl_ready;
+static const struct gpu_api *s_gpu;
+static gpu_pipeline_t         s_pipe_sdf;
+static gpu_pipeline_t         s_pipe_image;
+static gpu_buffer_t           s_vbo;
+static gpu_buffer_t           s_view_ubo;
+static bool                   s_gl_ready;
 
 static struct kgui_vertex s_verts[KGUI_MAX_VERTS];
 static struct kgui_batch  s_batch;
@@ -125,21 +129,29 @@ EM_JS(void, kgui_read_safe_insets, (float *out), {
 });
 
 /*
- * The owned glyph atlas and its GL texture. s_font is baked once in
- * kruddgui_init and uploaded to s_font_tex; s_white_u/s_white_v (the solid
- * texel a filled rect samples) and s_text_size are copied from it there.
+ * The owned glyph atlas and its device texture. s_font is baked once in
+ * kruddgui_init and uploaded to s_font_tex (via gpu_api texture_create);
+ * s_white_u/s_white_v (the solid texel a filled rect samples) and s_text_size
+ * are copied from it there.
  */
 static struct kgui_font s_font;
-static GLuint           s_font_tex;
+static gpu_texture_t    s_font_tex;
 static float            s_white_u, s_white_v;
 static float            s_text_size;
 
+/*
+ * The shared vertex shader. u_viewport (the CSS-pixel canvas size the batch is
+ * laid out in) rides a std140 uniform block, since the gpu_api has no loose
+ * uniforms — it is bound once per frame from s_view_ubo. The block is the only
+ * one in the program, so the backend assigns it binding 0 (see cmd-bind-uniform-
+ * buffer); kruddgui binds s_view_ubo to that slot.
+ */
 static const char *k_vert_src =
 	"#version 300 es\n"
 	"layout(location=0) in vec2 a_pos;\n"
 	"layout(location=1) in vec2 a_uv;\n"
 	"layout(location=2) in vec4 a_col;\n"
-	"uniform vec2 u_viewport;\n"
+	"layout(std140) uniform View { vec2 u_viewport; };\n"
 	"out vec2 v_uv;\n"
 	"out vec4 v_col;\n"
 	"void main() {\n"
@@ -151,200 +163,227 @@ static const char *k_vert_src =
 	"}\n";
 
 /*
- * Two paths sharing one program. When u_sdf is set (glyphs and filled rects,
- * which sample kruddgui's SDF atlas) the alpha channel is a signed distance:
- * threshold it at 0.5 with a screen-space smoothstep (fwidth gives the per-pixel
- * ramp) so text stays antialiased at any size, and colour comes from the vertex.
- * A filled rect point-samples the atlas's solid "inside" texel, so its distance
- * is a constant 1.0 and it resolves to full coverage with no special case. When
- * u_sdf is clear (image quads) the sampled texture is a plain RGBA image, drawn
- * as a straight tint * texel passthrough. highp keeps the distance and UVs exact
- * across the atlas.
+ * The SDF fragment path (s_pipe_sdf): glyphs and filled rects sample kruddgui's
+ * SDF atlas, whose alpha channel is a signed distance. Threshold it at 0.5 with
+ * a screen-space smoothstep (fwidth gives the per-pixel ramp) so text stays
+ * antialiased at any size; colour comes from the vertex. A filled rect
+ * point-samples the atlas's solid "inside" texel, so its distance is a constant
+ * 1.0 and it resolves to full coverage with no special case. highp keeps the
+ * distance and UVs exact across the atlas.
  */
-static const char *k_frag_src =
+static const char *k_frag_sdf_src =
 	"#version 300 es\n"
 	"precision highp float;\n"
 	"in vec2 v_uv;\n"
 	"in vec4 v_col;\n"
 	"uniform sampler2D u_tex;\n"
-	"uniform int u_sdf;\n"
 	"out vec4 frag;\n"
 	"void main() {\n"
-	"    if (u_sdf != 0) {\n"
-	"        float d = texture(u_tex, v_uv).a;\n"
-	"        float w = max(fwidth(d), 1.0 / 256.0);\n"
-	"        float cov = smoothstep(0.5 - w, 0.5 + w, d);\n"
-	"        frag = vec4(v_col.rgb, v_col.a * cov);\n"
-	"    } else {\n"
-	"        frag = v_col * texture(u_tex, v_uv);\n"
-	"    }\n"
+	"    float d = texture(u_tex, v_uv).a;\n"
+	"    float w = max(fwidth(d), 1.0 / 256.0);\n"
+	"    float cov = smoothstep(0.5 - w, 0.5 + w, d);\n"
+	"    frag = vec4(v_col.rgb, v_col.a * cov);\n"
 	"}\n";
 
-static GLuint compile_shader(GLenum type, const char *src)
+/*
+ * The image fragment path (s_pipe_image): an image quad's sampled texture is a
+ * plain RGBA image (a kruddboard bake or scene preview), drawn as a straight
+ * tint * texel passthrough. Splitting this off from the SDF path lets u_sdf
+ * become a pipeline choice rather than a per-draw uniform the gpu_api can't set.
+ */
+static const char *k_frag_image_src =
+	"#version 300 es\n"
+	"precision highp float;\n"
+	"in vec2 v_uv;\n"
+	"in vec4 v_col;\n"
+	"uniform sampler2D u_tex;\n"
+	"out vec4 frag;\n"
+	"void main() {\n"
+	"    frag = v_col * texture(u_tex, v_uv);\n"
+	"}\n";
+
+/* Build one panel pipeline: the shared vertex shader + the given fragment. */
+static gpu_pipeline_t make_pipeline(const char *frag_src)
 {
-	GLuint sh = glCreateShader(type);
-	GLint  ok = 0;
+	struct gpu_pipeline_desc pd;
 
-	glShaderSource(sh, 1, &src, nullptr);
-	glCompileShader(sh);
-	glGetShaderiv(sh, GL_COMPILE_STATUS, &ok);
-	if (!ok) {
-		char info[512];
+	memset(&pd, 0, sizeof(pd));
+	pd.color_formats[0]   = GPU_FORMAT_RGBA8_UNORM;
+	pd.color_format_count = 1;
+	pd.depth_format       = GPU_FORMAT_UNKNOWN;
+	pd.topology           = GPU_TOPOLOGY_TRIANGLE_LIST;
 
-		glGetShaderInfoLog(sh, (GLsizei)sizeof(info), nullptr, info);
-		if (g_log)
-			g_log->write(LOG_LEVEL_ERROR,
-				     "kruddgui: shader compile: %s", info);
-		glDeleteShader(sh);
-		return 0;
-	}
-	return sh;
+	/* kgui_vertex: pos(vec2)@0, uv(vec2)@8, col(vec4)@16, stride 32. */
+	pd.vertex_layout.attr_count = 3;
+	pd.vertex_layout.stride     = (uint32_t)sizeof(struct kgui_vertex);
+	pd.vertex_layout.attrs[0]   = (struct gpu_vertex_attr){
+		0, (uint32_t)offsetof(struct kgui_vertex, x), GPU_FORMAT_RG32_FLOAT };
+	pd.vertex_layout.attrs[1]   = (struct gpu_vertex_attr){
+		1, (uint32_t)offsetof(struct kgui_vertex, u), GPU_FORMAT_RG32_FLOAT };
+	pd.vertex_layout.attrs[2]   = (struct gpu_vertex_attr){
+		2, (uint32_t)offsetof(struct kgui_vertex, r), GPU_FORMAT_RGBA32_FLOAT };
+
+	pd.vert.src     = k_vert_src;
+	pd.vert.stage   = GPU_SHADER_STAGE_VERTEX;
+	pd.vert.dialect = GPU_SHADER_DIALECT_GLSL_ES_300;
+	pd.frag.src     = frag_src;
+	pd.frag.stage   = GPU_SHADER_STAGE_FRAGMENT;
+	pd.frag.dialect = GPU_SHADER_DIALECT_GLSL_ES_300;
+
+	/* A 2D overlay: straight-alpha blend, and no depth test so later quads
+	 * draw over earlier ones. Both are pipeline state the backend applies. */
+	pd.blend_enable       = 1;
+	pd.disable_depth_test = 1;
+
+	return s_gpu->pipeline_create(&pd);
 }
 
-static void gl_init(void)
+/*
+ * One-time device setup, through the renderer's gpu_api. Resolves the renderer
+ * subsystem (up before kruddgui, which loads after it), builds the two panel
+ * pipelines, the streamed vertex buffer, the viewport uniform buffer, and the
+ * baked SDF atlas texture. Leaves s_gl_ready false (a no-op draw) if anything is
+ * missing. s_font must already be baked (kruddgui_init does it first).
+ */
+static void gpu_init(void)
 {
-	GLuint vs, fs;
+	struct gpu_buffer_desc  vbd, ubd;
+	struct gpu_texture_desc td;
 
-	vs = compile_shader(GL_VERTEX_SHADER, k_vert_src);
-	if (!vs)
-		return;
-	fs = compile_shader(GL_FRAGMENT_SHADER, k_frag_src);
-	if (!fs) {
-		glDeleteShader(vs);
+	s_gpu = g_mgr ? (const struct gpu_api *)
+		subsystem_manager_get_api(g_mgr, "renderer") : nullptr;
+	if (!s_gpu) {
+		if (g_log)
+			g_log->write(LOG_LEVEL_ERROR,
+				     "kruddgui: renderer subsystem unavailable");
 		return;
 	}
 
-	s_prog = glCreateProgram();
-	glAttachShader(s_prog, vs);
-	glAttachShader(s_prog, fs);
-	glLinkProgram(s_prog);
-	glDeleteShader(vs);
-	glDeleteShader(fs);
+	s_pipe_sdf   = make_pipeline(k_frag_sdf_src);
+	s_pipe_image = make_pipeline(k_frag_image_src);
+	if (!s_pipe_sdf || !s_pipe_image)
+		return;
 
-	s_u_viewport = glGetUniformLocation(s_prog, "u_viewport");
-	s_u_tex      = glGetUniformLocation(s_prog, "u_tex");
-	s_u_sdf      = glGetUniformLocation(s_prog, "u_sdf");
+	/* One vertex buffer, re-uploaded each frame (buffer_update below). */
+	memset(&vbd, 0, sizeof(vbd));
+	vbd.size  = (size_t)KGUI_MAX_VERTS * sizeof(struct kgui_vertex);
+	vbd.usage = GPU_BUFFER_USAGE_VERTEX;
+	s_vbo = s_gpu->buffer_create(&vbd);
 
-	glGenVertexArrays(1, &s_vao);
-	glGenBuffers(1, &s_vbo);
-	glBindVertexArray(s_vao);
-	glBindBuffer(GL_ARRAY_BUFFER, s_vbo);
-
-	glEnableVertexAttribArray(0);
-	glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE,
-			      sizeof(struct kgui_vertex),
-			      (void *)offsetof(struct kgui_vertex, x));
-	glEnableVertexAttribArray(1);
-	glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE,
-			      sizeof(struct kgui_vertex),
-			      (void *)offsetof(struct kgui_vertex, u));
-	glEnableVertexAttribArray(2);
-	glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE,
-			      sizeof(struct kgui_vertex),
-			      (void *)offsetof(struct kgui_vertex, r));
-
-	glBindVertexArray(0);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	/* std140 vec2 viewport — the block rounds to 16 bytes. */
+	memset(&ubd, 0, sizeof(ubd));
+	ubd.size  = 16;
+	ubd.usage = GPU_BUFFER_USAGE_UNIFORM;
+	s_view_ubo = s_gpu->buffer_create(&ubd);
+	if (!s_vbo || !s_view_ubo)
+		return;
 
 	/*
-	 * Upload the baked SDF atlas as the sampled texture. LINEAR filtering is
-	 * what makes the distance field resolve smoothly between texels — the
-	 * shader smoothsteps the interpolated distance, so bilinear sampling is the
-	 * antialiasing. Clamping stops one glyph's field bleeding into its
-	 * neighbour. s_font must already be baked (kruddgui_init does it first).
+	 * Upload the baked SDF atlas. The backend's default sampler for a
+	 * procedural RGBA8 texture is LINEAR (the bilinear read the SDF smoothstep
+	 * relies on for antialiasing); the atlas bakes each glyph with padding, so
+	 * it never samples the atlas edge.
 	 */
-	glGenTextures(1, &s_font_tex);
-	glBindTexture(GL_TEXTURE_2D, s_font_tex);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA,
-		     KGUI_FONT_ATLAS_W, KGUI_FONT_ATLAS_H, 0,
-		     GL_RGBA, GL_UNSIGNED_BYTE, s_font.pixels);
-	glBindTexture(GL_TEXTURE_2D, 0);
+	memset(&td, 0, sizeof(td));
+	td.format       = GPU_FORMAT_RGBA8_UNORM;
+	td.width        = KGUI_FONT_ATLAS_W;
+	td.height       = KGUI_FONT_ATLAS_H;
+	td.mip_levels   = 1;
+	td.sample_count = 1;
+	td.initial_data = s_font.pixels;
+	s_font_tex = s_gpu->texture_create(&td);
+	if (!s_font_tex)
+		return;
 
 	s_gl_ready = true;
 }
 
 /*
- * Upload and draw the accumulated batch. Sets every piece of GL state it needs
- * (blend, no depth/cull, viewport, program, VAO, atlas texture) so it is
- * independent of whatever ImGui left bound; it runs at the end of the frame and
- * the next frame's renderers set their own state. The batch is one VBO but is
- * issued as one draw per clip command so a scroll body can be scissored: a
- * command's CSS-pixel clip is converted to a physical-pixel, y-up GL scissor.
+ * Upload and draw the accumulated batch through the gpu_api. Opens a backbuffer
+ * pass that loads (composites over) the 3D scene, streams the vertices, binds
+ * the viewport UBO, and issues one draw per clip command. Blend and depth-off
+ * are pipeline state; the SDF/image split is a pipeline choice (an image command
+ * flips to s_pipe_image, re-binding the vertex buffer for its VAO, then back). A
+ * command's CSS-pixel clip becomes a physical-pixel, y-up scissor.
  */
-static void gl_flush(GLuint atlas)
+static void gpu_flush(void)
 {
-	float scale_x = (s_css_w > 0.0f) ? (float)s_phys_w / s_css_w : 1.0f;
-	float scale_y = (s_css_h > 0.0f) ? (float)s_phys_h / s_css_h : 1.0f;
-	int   i;
+	const struct gpu_api        *gpu = s_gpu;
+	float  scale_x = (s_css_w > 0.0f) ? (float)s_phys_w / s_css_w : 1.0f;
+	float  scale_y = (s_css_h > 0.0f) ? (float)s_phys_h / s_css_h : 1.0f;
+	float  view[4] = { s_css_w, s_css_h, 0.0f, 0.0f }; /* std140 vec2 pad */
+	struct gpu_render_pass_desc  rp;
+	gpu_cmd_buf_t                cmd;
+	gpu_pipeline_t               cur;
+	int                          i;
 
-	if (!s_gl_ready || s_batch.count <= 0 || !atlas)
+	if (!s_gl_ready || !gpu || s_batch.count <= 0)
 		return;
 
-	glViewport(0, 0, s_phys_w, s_phys_h);
-	glDisable(GL_DEPTH_TEST);
-	glDisable(GL_CULL_FACE);
-	glDisable(GL_SCISSOR_TEST);
-	glEnable(GL_BLEND);
-	glBlendEquation(GL_FUNC_ADD);
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	cmd = gpu->cmd_buf_begin();
 
-	GLuint bound = atlas;
+	/* Composite over the scene already in the backbuffer (load, don't clear). */
+	memset(&rp, 0, sizeof(rp));
+	rp.color_count       = 1;
+	rp.color[0].texture  = nullptr;            /* the canvas backbuffer */
+	rp.color[0].load_op  = GPU_LOAD_OP_LOAD;
+	rp.color[0].store_op = GPU_STORE_OP_STORE;
+	rp.depth             = nullptr;
+	rp.depth_load_op     = GPU_LOAD_OP_LOAD;
+	gpu->cmd_begin_render_pass(cmd, &rp);
 
-	glUseProgram(s_prog);
-	glUniform2f(s_u_viewport, s_css_w, s_css_h);
-	glUniform1i(s_u_tex, 0);
-	/* `bound` starts at the atlas, so seed u_sdf to the atlas (SDF) path. */
-	glUniform1i(s_u_sdf, 1);
-	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, atlas);
+	gpu->buffer_update(s_vbo, 0, s_verts,
+			   (uint32_t)(s_batch.count * sizeof(struct kgui_vertex)));
+	gpu->buffer_update(s_view_ubo, 0, view, sizeof(view));
 
-	glBindVertexArray(s_vao);
-	glBindBuffer(GL_ARRAY_BUFFER, s_vbo);
-	glBufferData(GL_ARRAY_BUFFER,
-		     (GLsizeiptr)(s_batch.count * sizeof(struct kgui_vertex)),
-		     s_verts, GL_STREAM_DRAW);
+	cur = s_pipe_sdf;
+	gpu->cmd_set_pipeline(cmd, cur);
+	gpu->cmd_bind_vertex_buffer(cmd, 0, s_vbo, 0);
+	gpu->cmd_bind_uniform_buffer(cmd, 0, s_view_ubo, 0, (uint32_t)sizeof(view));
 
 	for (i = 0; i < s_batch.cmd_count; i++) {
 		const struct kgui_clip_cmd *c = &s_batch.cmds[i];
-		GLuint                      want;
+		gpu_pipeline_t              want;
 
 		if (c->count <= 0)
 			continue;
 		/*
-		 * An image command samples its own texture; every other command
-		 * samples the SDF atlas. Bind only on a change so a run of rects
-		 * and glyphs still issues its draws without redundant binds. u_sdf
-		 * follows suit: the atlas commands go through the SDF path, an image
-		 * command through the straight passthrough.
+		 * An image command samples its own external texture through the
+		 * passthrough pipeline; every other command samples the SDF atlas
+		 * through the SDF pipeline. Switching pipelines binds a different VAO,
+		 * so re-specify the vertex buffer against it; the UBO binding is
+		 * global and survives the switch. Runs of same-kind commands don't
+		 * switch, so a panel's rects and glyphs still issue back-to-back.
 		 */
-		want = c->tex ? (GLuint)c->tex : atlas;
-		if (want != bound) {
-			glBindTexture(GL_TEXTURE_2D, want);
-			glUniform1i(s_u_sdf, c->tex ? 0 : 1);
-			bound = want;
+		want = c->tex ? s_pipe_image : s_pipe_sdf;
+		if (want != cur) {
+			cur = want;
+			gpu->cmd_set_pipeline(cmd, cur);
+			gpu->cmd_bind_vertex_buffer(cmd, 0, s_vbo, 0);
 		}
+		if (c->tex)
+			gpu->cmd_bind_texture_native(cmd, 0, (uint32_t)c->tex);
+		else
+			gpu->cmd_bind_texture(cmd, 0, s_font_tex);
+
 		if (c->clipped) {
 			int sx = (int)(c->x * scale_x + 0.5f);
 			int sw = (int)(c->w * scale_x + 0.5f);
 			int sh = (int)(c->h * scale_y + 0.5f);
 			int sy = s_phys_h - (int)((c->y + c->h) * scale_y + 0.5f);
 
-			glEnable(GL_SCISSOR_TEST);
-			glScissor(sx, sy, sw < 0 ? 0 : sw, sh < 0 ? 0 : sh);
+			gpu->cmd_set_scissor(cmd, sx, sy,
+					     (uint32_t)(sw < 0 ? 0 : sw),
+					     (uint32_t)(sh < 0 ? 0 : sh));
 		} else {
-			glDisable(GL_SCISSOR_TEST);
+			gpu->cmd_set_scissor(cmd, 0, 0, (uint32_t)s_phys_w,
+					     (uint32_t)s_phys_h);
 		}
-		glDrawArrays(GL_TRIANGLES, c->first, c->count);
+		gpu->cmd_draw(cmd, (uint32_t)c->count, 1, (uint32_t)c->first, 0);
 	}
 
-	glDisable(GL_SCISSOR_TEST);
-	glBindVertexArray(0);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	gpu->cmd_end_render_pass(cmd);
+	gpu->cmd_buf_submit(cmd);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1394,12 +1433,12 @@ static void kruddgui_init(void)
 	kgui_batch_init(&s_batch, s_verts, KGUI_MAX_VERTS);
 	kgui_input_init(&s_input);
 
-	/* Bake the owned glyph atlas before gl_init uploads it to a texture. */
+	/* Bake the owned glyph atlas before gpu_init uploads it to a texture. */
 	kgui_font_init(&s_font);
 	s_white_u   = s_font.white_u;
 	s_white_v   = s_font.white_v;
 	s_text_size = s_font.size;
-	gl_init();
+	gpu_init();
 
 	/*
 	 * Create the hidden <input> and its listeners for the text-input bridge,
@@ -1438,7 +1477,7 @@ static void kruddgui_tick(void)
 
 	/*
 	 * Own the canvas's device-pixel size, which imgui_plugin sized before it
-	 * was removed (#492): the renderer and gl_flush draw into a framebuffer at
+	 * was removed (#492): the renderer and gpu_flush draw into a framebuffer at
 	 * this resolution while the panels lay out in the CSS pixels above.
 	 */
 	emscripten_set_canvas_element_size("#canvas", s_phys_w, s_phys_h);
@@ -1485,7 +1524,7 @@ static void kruddgui_tick(void)
 	/* Reconcile the soft keyboard + capture flag with the field focus. */
 	field_sync();
 
-	gl_flush(s_font_tex);
+	gpu_flush();
 #endif
 }
 
@@ -1505,6 +1544,7 @@ static const struct subsystem desc = {
 
 extern "C" void kruddgui_plugin_entry(struct subsystem_manager *mgr)
 {
+	g_mgr = mgr;
 #ifdef __EMSCRIPTEN__
 	g_log = (const struct log_api *)
 		subsystem_manager_get_api(mgr, "log");

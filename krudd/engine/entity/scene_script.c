@@ -180,6 +180,19 @@ static s7_pointer sp_scene_name(s7_scheme *sc, s7_pointer args)
 	return s7_unspecified(sc);
 }
 
+/*
+ * (scene-entity-name id) -> the entity's name, or "" when id has none or is not
+ * a live entity. Lets image-side game rules read the tag of the entity under a
+ * click (a "cell-N" pad) and decide what to do — the read twin of scene-name!.
+ */
+static s7_pointer sp_scene_entity_name(s7_scheme *sc, s7_pointer args)
+{
+	int32_t     id   = arg_id(args);
+	const char *name = id_ok(id) ? world_entity_name(g_w, (uint32_t)id) : NULL;
+
+	return s7_make_string(sc, name ? name : "");
+}
+
 void scene_script_init(void)
 {
 	static int registered;
@@ -202,7 +215,29 @@ void scene_script_init(void)
 			   "(scene-script! id path) bind script by path");
 	s7_define_function(sc, "scene-name!", sp_scene_name, 2, 0, false,
 			   "(scene-name! id name) set entity name");
+	s7_define_function(sc, "scene-entity-name", sp_scene_entity_name, 1, 0,
+			   false, "(scene-entity-name id) -> name string");
 	registered = 1;
+}
+
+/*
+ * Bind W/ASSET for the span of one image call — the scene-* primitives read them
+ * through g_w/g_asset — invoke FN with ARGS, then unbind. A primitive only runs
+ * synchronously inside this call, so it never sees a stale pointer, and the world
+ * is exposed to Scheme only while a build or a dispatched event is in flight.
+ */
+static s7_pointer scene_call_bound(struct world *w,
+				   const struct asset_api *asset,
+				   s7_pointer fn, s7_pointer args)
+{
+	s7_pointer res;
+
+	g_w     = w;
+	g_asset = asset;
+	res = s7_call(script_s7(), fn, args);
+	g_w     = NULL;
+	g_asset = NULL;
+	return res;
 }
 
 int32_t scene_script_build(struct world *w, const struct asset_api *asset,
@@ -221,11 +256,27 @@ int32_t scene_script_build(struct world *w, const struct asset_api *asset,
 	if (!s7_is_procedure(fn))
 		return -1;
 
-	g_w     = w;
-	g_asset = asset;
-	res = s7_call(sc, fn, s7_list(sc, 1, s7_make_string(sc, src)));
+	res = scene_call_bound(w, asset, fn,
+			       s7_list(sc, 1, s7_make_string(sc, src)));
 	count = s7_is_integer(res) ? (int32_t)s7_integer(res) : -1;
-	g_w     = NULL;
-	g_asset = NULL;
 	return count;
+}
+
+int32_t scene_script_call(struct world *w, const struct asset_api *asset,
+			  const char *fn, int32_t arg)
+{
+	s7_scheme *sc;
+	s7_pointer f, res;
+
+	if (!w || !fn)
+		return -1;
+	sc = script_s7();
+	if (!sc)
+		return -1;
+	f = s7_name_to_value(sc, fn);
+	if (!s7_is_procedure(f))
+		return -1;
+	res = scene_call_bound(w, asset, f,
+			       s7_list(sc, 1, s7_make_integer(sc, arg)));
+	return s7_is_integer(res) ? (int32_t)s7_integer(res) : 0;
 }

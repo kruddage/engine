@@ -1,64 +1,40 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
 
-;;! The tic-tac-toe scene — the first built-in game, and the proof that a game is
-;;! authored data (a (scene ...) form) on top of the engine's generic scene
-;;! builder, not new engine C. See core/scene_script.scm for the clause grammar.
+;;! The tic-tac-toe scene — the board and its nine empty cells. As of Slice 2 the
+;;! game is playable, so the scene starts empty: no pre-placed marks. Clicking a
+;;! cell runs the rules (games/tictactoe/rules.scm), which spawns a mark there.
 ;;!
-;;! Slice 1 is still static, but it is a real board now: a 3x3 plane wearing the
-;;! checker material, with proper marks. An O is the built-in torus (a ring lying
-;;! flat). An X is a composite — a mesh-less parent at the cell holding two
-;;! crossed box "bars" as children, so the two diagonals move and scale as one
-;;! piece. Later slices make the cells pickable and the marks a function of play;
-;;! the board and pieces stay exactly these assets.
+;;! Each cell is a flat pickable pad named "cell-N" (row-major, N = row*3 + col).
+;;! The engine's existing ray pick (kruddboard) already turns a viewport click
+;;! into the entity under it and selects it; the tictactoe plugin watches that
+;;! selection and hands a freshly-clicked "cell-N" to the rules. So the pads carry
+;;! two jobs: they are what the ray hits, and their name is the cell's identity.
 ;;!
-;;! The board plane's outward normal is +Y (see PLANE_MESH_SCRIPT_SRC), so it lies
-;;! flat in the XZ plane; scaled by 3 it spans [-1.5, 1.5], and the nine cell
-;;! centres sit at x,z in {-1, 0, 1}. Marks ride just above the surface (y = 0.15).
-;;! The sample position drawn here is
-;;!     O . X
-;;!     . X .
-;;!     X . O
+;;! The board plane's outward normal is +Y, so it lies flat in XZ; scaled by 3 it
+;;! spans [-1.5, 1.5]. Cell centres sit on the unit grid (x,z in {-1, 0, 1}); the
+;;! pads ride just above the board (y = 0.02) so a click hits a pad, not the slab.
 
 (scene tic-tac-toe
   (entity (name "board")
           (mesh     "builtin://mesh/plane")
-          (material "builtin://material/checker")
+          (material "builtin://material/pbr-metal")
           (at 0 0 0) (scale 3 3 3))
 
-  ;;! O — the built-in torus, standing in as a ring lying flat (axis +Y).
-  (entity (name "o-a1")
-          (mesh     "builtin://mesh/torus")
-          (material "builtin://material/pbr-metal")
-          (at -1 0.15 -1) (scale 0.38 0.38 0.38))
-  (entity (name "o-c3")
-          (mesh     "builtin://mesh/torus")
-          (material "builtin://material/pbr-metal")
-          (at 1 0.15 1) (scale 0.38 0.38 0.38))
-
-  ;;! X — a mesh-less parent at the cell holding two crossed bars. Each bar is the
-  ;;! unit box scaled long-and-flat and turned +/-45 degrees about Y; the parent
-  ;;! carries the cell position, so the pair reads as one X from above.
-  (entity (name "x-c1") (at 1 0.15 -1)
-          (children
-            (entity (mesh "builtin://mesh/box")
-                    (material "builtin://material/pbr-plastic")
-                    (rotate 0 45 0) (scale 0.6 0.09 0.14))
-            (entity (mesh "builtin://mesh/box")
-                    (material "builtin://material/pbr-plastic")
-                    (rotate 0 -45 0) (scale 0.6 0.09 0.14))))
-  (entity (name "x-b2") (at 0 0.15 0)
-          (children
-            (entity (mesh "builtin://mesh/box")
-                    (material "builtin://material/pbr-plastic")
-                    (rotate 0 45 0) (scale 0.6 0.09 0.14))
-            (entity (mesh "builtin://mesh/box")
-                    (material "builtin://material/pbr-plastic")
-                    (rotate 0 -45 0) (scale 0.6 0.09 0.14))))
-  (entity (name "x-a3") (at -1 0.15 1)
-          (children
-            (entity (mesh "builtin://mesh/box")
-                    (material "builtin://material/pbr-plastic")
-                    (rotate 0 45 0) (scale 0.6 0.09 0.14))
-            (entity (mesh "builtin://mesh/box")
-                    (material "builtin://material/pbr-plastic")
-                    (rotate 0 -45 0) (scale 0.6 0.09 0.14)))))
+  (entity (name "cell-0") (mesh "builtin://mesh/plane")
+          (material "builtin://material/checker") (at -1 0.02 -1) (scale 0.9 0.9 0.9))
+  (entity (name "cell-1") (mesh "builtin://mesh/plane")
+          (material "builtin://material/checker") (at 0 0.02 -1) (scale 0.9 0.9 0.9))
+  (entity (name "cell-2") (mesh "builtin://mesh/plane")
+          (material "builtin://material/checker") (at 1 0.02 -1) (scale 0.9 0.9 0.9))
+  (entity (name "cell-3") (mesh "builtin://mesh/plane")
+          (material "builtin://material/checker") (at -1 0.02 0) (scale 0.9 0.9 0.9))
+  (entity (name "cell-4") (mesh "builtin://mesh/plane")
+          (material "builtin://material/checker") (at 0 0.02 0) (scale 0.9 0.9 0.9))
+  (entity (name "cell-5") (mesh "builtin://mesh/plane")
+          (material "builtin://material/checker") (at 1 0.02 0) (scale 0.9 0.9 0.9))
+  (entity (name "cell-6") (mesh "builtin://mesh/plane")
+          (material "builtin://material/checker") (at -1 0.02 1) (scale 0.9 0.9 0.9))
+  (entity (name "cell-7") (mesh "builtin://mesh/plane")
+          (material "builtin://material/checker") (at 0 0.02 1) (scale 0.9 0.9 0.9))
+  (entity (name "cell-8") (mesh "builtin://mesh/plane")
+          (material "builtin://material/checker") (at 1 0.02 1) (scale 0.9 0.9 0.9)))

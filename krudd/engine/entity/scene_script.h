@@ -38,4 +38,16 @@ void scene_script_init(void);
 int32_t scene_script_build(struct world *w, const struct asset_api *asset,
 			   const char *src);
 
+/*
+ * Invoke image function FN (an integer -> integer procedure) with ARG, W and
+ * ASSET bound for the call so the scene-* primitives can spawn and mutate — the
+ * runtime, event-driven twin of scene_script_build. This is how stateful game
+ * rules living in the image respond to a click: place a mark, advance the turn.
+ * Returns FN's integer result (0 if it returns a non-integer), or -1 when the
+ * interpreter is unavailable or FN is undefined. W/ASSET are borrowed for the
+ * call only.
+ */
+int32_t scene_script_call(struct world *w, const struct asset_api *asset,
+			  const char *fn, int32_t arg);
+
 #endif /* SCENE_SCRIPT_H */

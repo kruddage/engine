@@ -173,6 +173,25 @@ footer {
 	margin-bottom: 14px;
 }
 
+/*
+ * Until the engine has rendered its first frame the launcher is painted (static
+ * HTML) but not yet armed: the game list and its prompt are hidden and a
+ * "loading" note stands in, so an impatient click has no button to hit. The
+ * engine flips the .loading class off via kruddSetReady once it is live.
+ */
+.launcher-loading {
+	display: none;
+	font-size: 12px;
+	color: #666;
+	letter-spacing: 0.15em;
+	text-transform: uppercase;
+}
+
+.launcher.loading .launcher-loading { display: block; }
+
+.launcher.loading .launcher-sub,
+.launcher.loading .launcher-games { display: none; }
+
 .launcher-games {
 	display: flex;
 	flex-direction: column;
@@ -377,7 +396,7 @@ footer {
 <header>
 	<span class="wordmark">KRUDD</span>
 	<span class="version" id="version" title="click for build info">17.15.0</span>
-	<span class="version-detail" id="version-detail">commit bc8e318 &middot; built 2026-07-17</span>
+	<span class="version-detail" id="version-detail">commit 5e58d93 &middot; built 2026-07-17</span>
 	<button class="menu-btn" id="menu-btn" title="back to the menu">&#9776; menu</button>
 </header>
 
@@ -390,10 +409,11 @@ footer {
 	<span id="status">loading</span>
 </footer>
 
-<div class="launcher" id="launcher">
+<div class="launcher loading" id="launcher">
 	<div class="launcher-panel">
 		<div class="launcher-title">KRUDD</div>
 		<div class="launcher-sub">choose a scene</div>
+		<div class="launcher-loading" id="launcher-loading">loading&hellip;</div>
 		<div class="launcher-games" id="launcher-games"></div>
 	</div>
 </div>
@@ -497,6 +517,18 @@ footer {
 		document.getElementById('status').textContent = 'running';
 	};
 
+	/*
+	 * Arm the launcher once the first frame is on screen (called from
+	 * engine_tick). Dropping the 'loading' class reveals the game buttons;
+	 * before this the list is hidden, so a game cannot be picked into an
+	 * engine that has not rendered yet.
+	 */
+	window.kruddSetReady = function () {
+		var el = document.getElementById('launcher');
+		if (el)
+			el.classList.remove('loading');
+	};
+
 	document.getElementById('version').addEventListener('click', function () {
 		document.getElementById('version-detail').classList.toggle('visible');
 	});
@@ -518,13 +550,13 @@ footer {
 var Module = {
 	locateFile: function (path, prefix) {
 		if (path.endsWith('.wasm'))
-			return prefix + path.replace(/\.wasm$/, '.bc8e318.wasm');
+			return prefix + path.replace(/\.wasm$/, '.5e58d93.wasm');
 		return prefix + path;
 	}
 };
 </script>
 
-<script async type="text/javascript" src="index.bc8e318.js"></script>
+<script async type="text/javascript" src="index.5e58d93.js"></script>
 
 </body>
 </html>

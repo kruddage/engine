@@ -220,6 +220,55 @@ footer {
 	color: #fff;
 }
 
+/* ── Scoreboard overlay ── */
+
+/*
+ * A game's HUD, revealed by the tictactoe plugin (games/tictactoe/tictactoe.c)
+ * and hidden again on the way back to the menu. It floats just under the header,
+ * centred over the canvas; pointer-events:none so a click passes through it to
+ * the board beneath.
+ */
+.scoreboard {
+	position: fixed;
+	top: 56px;
+	left: 50%;
+	transform: translateX(-50%);
+	display: flex;
+	gap: 10px;
+	z-index: 400;
+	pointer-events: none;
+}
+
+.scoreboard.hidden { display: none; }
+
+.score-side {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 2px;
+	min-width: 74px;
+	padding: 8px 16px;
+	background: rgba(20, 20, 20, 0.85);
+	border: 1px solid #333;
+}
+
+/* The accent bar matches each mark: X is the red plastic, O the gold metal. */
+.score-x { border-top: 3px solid #c0392b; }
+.score-o { border-top: 3px solid #e0a05a; }
+
+.score-label {
+	font-size: 11px;
+	color: #888;
+	letter-spacing: 0.12em;
+}
+
+.score-value {
+	font-size: 24px;
+	font-weight: bold;
+	color: #fff;
+	line-height: 1;
+}
+
 /* ── Error overlay ── */
 
 .error-backdrop {
@@ -409,6 +458,17 @@ footer {
 	<span id="status">loading</span>
 </footer>
 
+<div class="scoreboard hidden" id="ttt-scoreboard">
+	<div class="score-side score-x">
+		<span class="score-label">1P &times;</span>
+		<span class="score-value" id="ttt-score-x">0</span>
+	</div>
+	<div class="score-side score-o">
+		<span class="score-label">2P &#9711;</span>
+		<span class="score-value" id="ttt-score-o">0</span>
+	</div>
+</div>
+
 <div class="launcher loading" id="launcher">
 	<div class="launcher-panel">
 		<div class="launcher-title">KRUDD</div>
@@ -534,9 +594,14 @@ footer {
 	});
 
 	/* Reopen the launcher; the engine keeps running behind it, and picking a
-	 * game clears the world and builds the chosen scene (game.c). */
+	 * game clears the world and builds the chosen scene (game.c). The scoreboard
+	 * belongs to the game being left, so hide it — the next tic-tac-toe load
+	 * reveals it again, and any other game never wanted it. */
 	document.getElementById('menu-btn').addEventListener('click', function () {
 		document.getElementById('launcher').classList.remove('hidden');
+		var sb = document.getElementById('ttt-scoreboard');
+		if (sb)
+			sb.classList.add('hidden');
 	});
 
 	if ('serviceWorker' in navigator) {

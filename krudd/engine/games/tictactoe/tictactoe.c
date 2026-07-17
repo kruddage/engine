@@ -19,8 +19,32 @@
 #include <stdint.h>
 
 #ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+
 /* Editor-chrome toggle (plugin_abi.c, main module). */
 void krudd_set_editor_chrome(int on);
+
+/*
+ * Scoreboard bridge — the browser twin of the launcher's DOM buttons (game.c).
+ * The scoreboard markup lives dormant in the shell (core/shell.html.in); these
+ * reveal it for a game of tic-tac-toe and write the running tally into it. On a
+ * shell too old to carry the element every getElementById misses and each call is
+ * a safe no-op. ttt_scoreboard_set takes the two tallies already unpacked.
+ */
+EM_JS(void, ttt_scoreboard_show, (void), {
+	var el = document.getElementById('ttt-scoreboard');
+	if (el)
+		el.classList.remove('hidden');
+})
+
+EM_JS(void, ttt_scoreboard_set, (int x, int o), {
+	var ex = document.getElementById('ttt-score-x');
+	var eo = document.getElementById('ttt-score-o');
+	if (ex)
+		ex.textContent = x;
+	if (eo)
+		eo.textContent = o;
+})
 #endif
 
 /* Resolved before register() so init/tick/load can reach the world and rules. */
@@ -28,6 +52,13 @@ static const struct entity_api *g_scene;
 
 /* Last selection dispatched, so a held selection fires the rules only once. */
 static int32_t g_last_sel = -1;
+
+/*
+ * Last score pushed to the scoreboard, X*1000 + O as ttt-score packs it (game.c's
+ * dispatch convention), so the DOM is rewritten only when the tally actually moves
+ * and a fresh load re-pushes 0. -1 is "nothing shown yet".
+ */
+static int32_t g_last_score = -1;
 
 static void tictactoe_init(void)
 {
@@ -56,9 +87,38 @@ static void tictactoe_load(void)
 		g_scene->clear_world();
 	if (g_scene->build_scene_scm)
 		g_scene->build_scene_scm(TICTACTOE_SCENE_SCM);
-	if (g_scene->dispatch_scm)
+	if (g_scene->dispatch_scm) {
+		/* A fresh match: zero the scoreboard, then clear the board. */
+		g_scene->dispatch_scm("ttt-score-reset", 0);
 		g_scene->dispatch_scm("ttt-reset", 0);
+	}
 	g_last_sel = -1;
+	g_last_score = 0;
+#ifdef __EMSCRIPTEN__
+	ttt_scoreboard_show();
+	ttt_scoreboard_set(0, 0);
+#endif
+}
+
+/*
+ * Poll the packed tally (ttt-score) and, when it has moved, push the unpacked
+ * scores to the DOM scoreboard. The tally only ever changes as the result of a
+ * click, so this runs right after a dispatched selection rather than every frame.
+ * A dead interpreter returns -1, which never matches a real score, so it is skipped.
+ */
+static void tictactoe_refresh_score(void)
+{
+#ifdef __EMSCRIPTEN__
+	int32_t enc;
+
+	if (!g_scene->dispatch_scm)
+		return;
+	enc = g_scene->dispatch_scm("ttt-score", 0);
+	if (enc >= 0 && enc != g_last_score) {
+		g_last_score = enc;
+		ttt_scoreboard_set(enc / 1000, enc % 1000);
+	}
+#endif
 }
 
 /*
@@ -78,8 +138,10 @@ static void tictactoe_tick(void)
 	if (sel == g_last_sel)
 		return;
 	g_last_sel = sel;
-	if (sel >= 0)
+	if (sel >= 0) {
 		g_scene->dispatch_scm("ttt-on-selected", sel);
+		tictactoe_refresh_score();
+	}
 }
 
 static const struct subsystem tictactoe_desc = {

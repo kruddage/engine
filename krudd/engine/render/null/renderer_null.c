@@ -135,6 +135,27 @@ static void null_cmd_draw_indexed(gpu_cmd_buf_t cmd,
 	});
 }
 
+static void null_cmd_draw(gpu_cmd_buf_t cmd, uint32_t vertex_count,
+			  uint32_t instance_count, uint32_t first_vertex,
+			  uint32_t first_instance)
+{
+	(void)cmd;
+	(void)first_instance;
+	g_log->write(LOG_LEVEL_INFO,
+		     "renderer_null: cmd_draw vertex_count=%u instance_count=%u first_vertex=%u",
+		     vertex_count, instance_count, first_vertex);
+	/* No record type needed; the scene renderer test asserts on indexed draws. */
+}
+
+static void null_cmd_set_scissor(gpu_cmd_buf_t cmd, int32_t x, int32_t y,
+				 uint32_t width, uint32_t height)
+{
+	(void)cmd;
+	g_log->write(LOG_LEVEL_INFO,
+		     "renderer_null: cmd_set_scissor x=%d y=%d w=%u h=%u",
+		     x, y, width, height);
+}
+
 static void null_cmd_dispatch(gpu_cmd_buf_t cmd,
 			      uint32_t x, uint32_t y, uint32_t z)
 {
@@ -305,6 +326,16 @@ static uint32_t null_texture_native_handle(gpu_texture_t texture)
 	return 0u;
 }
 
+/* No GL objects to bind; the native-handle escape hatch is a no-op here. */
+static void null_cmd_bind_texture_native(gpu_cmd_buf_t cmd, uint32_t unit,
+					 uint32_t native_handle)
+{
+	(void)cmd;
+	g_log->write(LOG_LEVEL_INFO,
+		     "renderer_null: cmd_bind_texture_native unit=%u handle=%u",
+		     unit, native_handle);
+}
+
 static const struct gpu_api null_api = {
 	.caps                   = GPU_CAP_DRAW_INDEXED | GPU_CAP_COMPUTE,
 	.cmd_buf_begin          = null_cmd_buf_begin,
@@ -322,6 +353,8 @@ static const struct gpu_api null_api = {
 	.cmd_end_render_pass    = null_cmd_end_render_pass,
 	.cmd_barrier            = null_cmd_barrier,
 	.cmd_draw_indexed       = null_cmd_draw_indexed,
+	.cmd_draw               = null_cmd_draw,
+	.cmd_set_scissor        = null_cmd_set_scissor,
 	.cmd_dispatch           = null_cmd_dispatch,
 	.gpu_malloc             = null_gpu_malloc,
 	.gpu_free               = null_gpu_free,
@@ -331,6 +364,7 @@ static const struct gpu_api null_api = {
 	.texture_destroy        = null_texture_destroy,
 	.cmd_bind_texture       = null_cmd_bind_texture,
 	.texture_native_handle  = null_texture_native_handle,
+	.cmd_bind_texture_native = null_cmd_bind_texture_native,
 };
 
 static void renderer_null_init(void)

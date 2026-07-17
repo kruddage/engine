@@ -193,6 +193,33 @@ static s7_pointer sp_scene_entity_name(s7_scheme *sc, s7_pointer args)
 	return s7_make_string(sc, name ? name : "");
 }
 
+/*
+ * (scene-destroy-named! "name") -> count of matches destroyed. Tombstones every
+ * live entity whose name equals NAME; a destroy cascades to descendants, so
+ * removing a composite (a named X parent) takes its unnamed bars with it. This
+ * is how a game clears the board — sweep away every "mark" — without tracking
+ * spawned ids. The forward sweep is safe against the cascade: a child tombstoned
+ * by its parent's destroy is already dead when its own index comes up.
+ */
+static s7_pointer sp_scene_destroy_named(s7_scheme *sc, s7_pointer args)
+{
+	const char *name = arg_str(sc, args, 0);
+	uint32_t    i, n = 0;
+
+	if (g_w && name) {
+		for (i = 0; i < g_w->count; i++) {
+			const char *en = g_w->alive[i]
+				? world_entity_name(g_w, i) : NULL;
+
+			if (en && strcmp(en, name) == 0) {
+				world_destroy_entity(g_w, (int32_t)i);
+				n++;
+			}
+		}
+	}
+	return s7_make_integer(sc, n);
+}
+
 void scene_script_init(void)
 {
 	static int registered;
@@ -217,6 +244,9 @@ void scene_script_init(void)
 			   "(scene-name! id name) set entity name");
 	s7_define_function(sc, "scene-entity-name", sp_scene_entity_name, 1, 0,
 			   false, "(scene-entity-name id) -> name string");
+	s7_define_function(sc, "scene-destroy-named!", sp_scene_destroy_named, 1,
+			   0, false,
+			   "(scene-destroy-named! name) destroy entities by name");
 	registered = 1;
 }
 

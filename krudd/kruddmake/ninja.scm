@@ -159,7 +159,7 @@
 	  (string-append "mainflags = -sENVIRONMENT=web -sALLOW_MEMORY_GROWTH=1 "
 			 "-sGROWABLE_ARRAYBUFFERS=0 -sMALLOC=mimalloc "
 			 "-sFETCH=1 -sMAX_WEBGL_VERSION=2 "
-			 "-sEXPORTED_FUNCTIONS=_main")
+			 "-sEXPORTED_FUNCTIONS=_main,_krudd_load_game")
 	  ""
 	  "rule cc"
 	  "  command = $cc $cflags $includes -MMD -MF $out.d -c $in -o $out"
@@ -361,6 +361,10 @@
 		  (string-append srcroot "/games/tictactoe/rules.scm")
 		  (string-append gen "/tictactoe_rules_scm.h")
 		  "TICTACTOE_RULES_SCM")
+		(krudd-embed-file
+		  (string-append srcroot "/games/demo/demo.scm")
+		  (string-append gen "/demo_scene_scm.h")
+		  "DEMO_SCENE_SCM")
 		(krudd-embed-file
 		  (string-append srcroot "/ui/kruddgui/kruddgui.scm")
 		  (string-append gen "/kruddgui_scm.h") "KRUDDGUI_SCM")

@@ -14,4 +14,6 @@
  "audio"
  "ui/kruddboard"
  "ui/kruddgui"
+ "game"
+ "games/demo"
  "games/tictactoe")

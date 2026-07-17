@@ -42,6 +42,12 @@ struct entity_api {
 	 * plugin uses this to hand a picked cell to its Scheme rules.
 	 */
 	int32_t             (*dispatch_scm)(const char *fn, int32_t arg);
+	/*
+	 * Empty the world — tombstone every entity and clear the selection. The
+	 * launcher calls this before building a different scene, so switching
+	 * games starts from a clean world rather than layering one over another.
+	 */
+	void                (*clear_world)(void);
 
 	/*
 	 * Append an entity under parent (-1 = root) with the given local

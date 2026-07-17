@@ -97,6 +97,12 @@ static int32_t scene_dispatch_scm(const char *fn, int32_t arg)
 	return scene_script_call(&g_world, g_asset, fn, arg);
 }
 
+/* Reset the world to empty (the launcher's "unload current scene"). */
+static void scene_clear_world(void)
+{
+	world_reset(&g_world);
+}
+
 static int32_t scene_create_entity(int32_t parent,
 				   const struct transform *local,
 				   uint32_t mask, uint32_t render_ref)
@@ -273,6 +279,7 @@ static const struct entity_api g_entity_api = {
 	.load_scene     = scene_load,
 	.build_scene_scm = scene_build_scm,
 	.dispatch_scm   = scene_dispatch_scm,
+	.clear_world    = scene_clear_world,
 	.create_entity  = scene_create_entity,
 	.destroy_entity = scene_destroy_entity,
 	.set_transform  = scene_set_transform,

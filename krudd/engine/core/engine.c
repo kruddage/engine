@@ -67,6 +67,7 @@ void scene_renderer_plugin_entry(struct subsystem_manager *mgr);
 void kruddboard_plugin_entry(struct subsystem_manager *mgr);
 void kruddgui_plugin_entry(struct subsystem_manager *mgr);
 void audio_scriptnode_plugin_entry(struct subsystem_manager *mgr);
+void demo_plugin_entry(struct subsystem_manager *mgr);
 void tictactoe_plugin_entry(struct subsystem_manager *mgr);
 
 /*
@@ -88,10 +89,12 @@ static const struct {
 	{ "kruddboard",     kruddboard_plugin_entry     },
 	{ "kruddgui",       kruddgui_plugin_entry       },
 	/*
-	 * Built-in games register last: their scene build calls into the "scene"
-	 * api (entity plugin) and resolves asset paths against the catalog the
-	 * asset plugin seeded, so both must already be up.
+	 * Built-in games register last: they resolve the "scene" api (entity
+	 * plugin) and register on the launcher, which needs the asset catalog the
+	 * asset plugin seeded, so both must already be up. Registration order is
+	 * launcher-button order — the demo leads, then the games.
 	 */
+	{ "demo",           demo_plugin_entry           },
 	{ "tictactoe",      tictactoe_plugin_entry      },
 };
 #endif

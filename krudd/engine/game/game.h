@@ -1,0 +1,31 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+#ifndef GAME_H
+#define GAME_H
+
+/*
+ * game — the registry of loadable scenes the launcher offers. A game (or the
+ * procedural demo) registers a display name and a load callback at plugin-entry
+ * time instead of building itself at boot; the launcher lists what is registered
+ * and, on a click, loads exactly one. This is what lets several games live in one
+ * build without all of them spawning into a single world at startup.
+ *
+ * In the browser, registering also injects a button into the shell's launcher
+ * overlay, and the exported krudd_load_game(index) (see game.c) is what those
+ * buttons call — so the HTML menu is driven by whatever registered, no per-game
+ * wiring in the page.
+ */
+
+/*
+ * Register a loadable scene. NAME is the button label (must outlive the process —
+ * a string literal); LOAD builds it into the world when chosen. Ignored past a
+ * small fixed capacity, or on NULL args.
+ */
+void game_register(const char *name, void (*load)(void));
+
+/* Number of registered games. */
+int  game_count(void);
+
+/* Load the game at INDEX (runs its load callback). Out-of-range is a no-op. */
+void game_load(int index);
+
+#endif /* GAME_H */

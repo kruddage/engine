@@ -439,6 +439,77 @@ static void test_backbuffer_import(void)
 	teardown();
 }
 
+/* -------------------------------------------------------------------------
+ * Test: depth-only pass
+ *
+ * A pass whose only write is a depth-format transient (the sun-shadow map)
+ * begins a render pass with NO color attachment (color_count == 0), and the
+ * depth transient is created before the pass and destroyed after its reader —
+ * exactly the shape scene_renderer's shadow pass produces.
+ * -------------------------------------------------------------------------
+ */
+static void test_depth_only_pass(void)
+{
+	const struct gpu_call_record *log;
+	fg_resource_t d1;
+	fg_pass_t pa, pc;
+	uint32_t count, i;
+	int saw_zero_color   = 0;
+	int saw_depth_create = 0;
+	int saw_destroy      = 0;
+	int saw_draw         = 0;
+	fg_tex_desc td = {
+		.format = GPU_FORMAT_DEPTH32_FLOAT,
+		.width = 8, .height = 8,
+		.mip_levels = 1, .sample_count = 1,
+	};
+
+	setup();
+
+	d1 = fg_declare_transient(g_fg, "shadow", td);
+
+	pa = fg_pass_declare(g_fg, "shadow", NULL, 0, &d1, 1);
+	pc = fg_pass_declare(g_fg, "reader", &d1, 1, NULL, 0); /* terminal */
+
+	fg_pass_set_depth_clear(pa, 1.0f);
+	fg_pass_set_execute(pa, pass_a_cb, NULL);
+	fg_pass_set_execute(pc, pass_c_cb, NULL);
+
+	fg_compile(g_fg);
+	renderer_null_reset_log();
+	fg_execute(g_fg);
+
+	log = renderer_null_get_log(&count);
+	for (i = 0; i < count; i++) {
+		switch (log[i].type) {
+		case GPU_CALL_CMD_BEGIN_RENDER_PASS:
+			if (log[i].args.cmd_begin_render_pass.color_count == 0)
+				saw_zero_color = 1;
+			break;
+		case GPU_CALL_TEXTURE_CREATE:
+			if (log[i].args.texture_create.format ==
+			    GPU_FORMAT_DEPTH32_FLOAT)
+				saw_depth_create = 1;
+			break;
+		case GPU_CALL_TEXTURE_DESTROY:
+			saw_destroy = 1;
+			break;
+		case GPU_CALL_CMD_DRAW_INDEXED:
+			saw_draw = 1;
+			break;
+		default:
+			break;
+		}
+	}
+
+	assert(saw_zero_color);   /* the shadow pass has no color attachment */
+	assert(saw_depth_create); /* its depth transient was allocated */
+	assert(saw_destroy);      /* and freed after the reader */
+	assert(saw_draw);         /* the pass recorded its geometry */
+
+	teardown();
+}
+
 int main(void)
 {
 	RUN(topological_ordering);
@@ -447,6 +518,7 @@ int main(void)
 	RUN(transient_lifetime);
 	RUN(render_pass_setup);
 	RUN(backbuffer_import);
+	RUN(depth_only_pass);
 
 	printf("%d/%d tests passed\n", tests_passed, tests_run);
 	return tests_passed == tests_run ? 0 : 1;

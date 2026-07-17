@@ -549,26 +549,43 @@ webgl_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 		desc->color_count > 0
 			? (struct gpu_texture *)desc->color[0].texture
 			: NULL;
+	struct gpu_texture *dtex = (struct gpu_texture *)desc->depth;
 
-	if (color0) {
+	if (color0 || dtex) {
 		/*
-		 * Offscreen pass: the color attachment is a real texture (the
-		 * imported backbuffer's handle is NULL — see fg_import_backbuffer),
-		 * so bind the shared FBO, point its attachments at this pass's
-		 * textures, and size the viewport to the target. Depth is optional;
-		 * detach any stale depth from a previous offscreen pass when this
-		 * one supplies none.
+		 * Offscreen pass: a color and/or depth attachment is a real
+		 * texture (the imported backbuffer's handle is NULL — see
+		 * fg_import_backbuffer), so bind the shared FBO, point its
+		 * attachments at this pass's textures, and size the viewport to
+		 * the target. Either attachment is optional: a depth-only pass
+		 * (the sun-shadow map) supplies no color, so detach color and
+		 * point the draw/read buffers at NONE — a framebuffer with only a
+		 * depth image is still complete, and fragment color output is
+		 * discarded. A color pass detaches any stale depth (or attaches
+		 * its own) and restores COLOR_ATTACHMENT0 as the draw buffer,
+		 * since the FBO is shared and a prior depth-only pass may have
+		 * left it at NONE.
 		 */
-		struct gpu_texture *dtex = (struct gpu_texture *)desc->depth;
-
 		if (!g_offscreen_fbo)
 			glGenFramebuffers(1, &g_offscreen_fbo);
 		glBindFramebuffer(GL_FRAMEBUFFER, g_offscreen_fbo);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-				       GL_TEXTURE_2D, (GLuint)color0->gl_tex, 0);
+				       GL_TEXTURE_2D,
+				       color0 ? (GLuint)color0->gl_tex : 0, 0);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
 				       GL_TEXTURE_2D,
 				       dtex ? (GLuint)dtex->gl_tex : 0, 0);
+		if (color0) {
+			GLenum buf = GL_COLOR_ATTACHMENT0;
+
+			glDrawBuffers(1, &buf);
+			glReadBuffer(GL_COLOR_ATTACHMENT0);
+		} else {
+			GLenum buf = GL_NONE;
+
+			glDrawBuffers(1, &buf);
+			glReadBuffer(GL_NONE);
+		}
 		if (glCheckFramebufferStatus(GL_FRAMEBUFFER) !=
 		    GL_FRAMEBUFFER_COMPLETE) {
 			g_log->write(LOG_LEVEL_ERROR,
@@ -577,8 +594,8 @@ webgl_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 			glBindFramebuffer(GL_FRAMEBUFFER, 0);
 			return;
 		}
-		vw = (int)color0->width;
-		vh = (int)color0->height;
+		vw = (int)(color0 ? color0->width  : dtex->width);
+		vh = (int)(color0 ? color0->height : dtex->height);
 	} else {
 		/* Backbuffer pass: the canvas's default framebuffer. */
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);

@@ -224,9 +224,10 @@ static uint32_t count_material_binds(void)
 	return binds;
 }
 
-/* The forward pass binds the directional-light Sun UBO once at slot 2 (8 floats
- * — light_dir + light_radiance, std140), for the pbr shader; count those binds
- * so the light path is exercised even though this world has no pbr material. */
+/* The forward pass binds the directional-light Sun UBO once at slot 2 (24 floats
+ * — light_dir + light_radiance + light_view_proj, std140), for the pbr shader;
+ * count those binds so the light path is exercised even though this world has no
+ * pbr material. */
 static uint32_t count_light_binds(void)
 {
 	const struct gpu_call_record *log;
@@ -236,7 +237,7 @@ static uint32_t count_light_binds(void)
 	for (i = 0; i < count; i++) {
 		if (log[i].type == GPU_CALL_CMD_BIND_UNIFORM_BUFFER &&
 		    log[i].args.cmd_bind_uniform_buffer.slot == 2 &&
-		    log[i].args.cmd_bind_uniform_buffer.size == 8 * sizeof(float))
+		    log[i].args.cmd_bind_uniform_buffer.size == 24 * sizeof(float))
 			binds++;
 	}
 	return binds;

@@ -86,6 +86,40 @@ static gpu_buffer_t   g_fs_vbo;      /* full-screen triangle clip-space corners 
 static gpu_buffer_t   g_fs_ebo;
 static gpu_buffer_t   g_outline_ubo; /* std140 { vec2 texel; vec4 color; }       */
 
+/*
+ * Sun shadow-map resources (#sun-shadows). Before the forward pass the tick
+ * renders the scene's depth from the light's viewpoint into a square depth
+ * target, and the pbr shader compares against it to shade the sun's shadows.
+ * g_shadow_pso is the depth-only pipeline (a mask-style position-only shader),
+ * g_shadow_res is the per-frame depth transient the forward pass samples, and
+ * g_shadow_dummy is a 1x1 "fully lit" texture bound wherever no real shadow map
+ * is available (the off-frame mesh preview, or a frame that skips the pass) so
+ * the pbr shader's shadow sample reads "unoccluded" rather than garbage.
+ */
+static gpu_pipeline_t g_shadow_pso;
+static gpu_texture_t  g_shadow_dummy;
+static fg_resource_t  g_shadow_res;
+
+#define SHADOW_MAP_DIM 2048          /* sun depth-map resolution (matches tx below)*/
+
+/*
+ * A minimal depth-only shader for the sun-shadow pass: it speaks the scene
+ * vertex contract (a_pos at location 0, Camera at block 0) and writes only
+ * position, transformed by the light's view_proj (uploaded into the Camera
+ * block's view_proj slot). The colour output is declared but discarded — the
+ * pass has no colour attachment — so all that lands is depth from the light.
+ */
+static const char *SHADOW_SHADER_SRC =
+	"(shader sun_shadow\n"
+	"  (inputs (a_pos vec3 (location 0)))\n"
+	"  (uniforms\n"
+	"    (Camera (block 0) (layout std140)\n"
+	"      (view_proj mat4)\n"
+	"      (model     mat4)))\n"
+	"  (targets (frag_color vec4 (location 0)))\n"
+	"  (vertex   (set position (* view_proj model (vec4 a_pos 1.0))))\n"
+	"  (fragment (set frag_color (vec4 1.0 1.0 1.0 1.0))))\n";
+
 /* Last viewport pixel size the UI reported (0 = unknown -> no outline pass). */
 static float g_view_w, g_view_h;
 
@@ -172,12 +206,16 @@ static const char *OUTLINE_SHADER_SRC =
 
 /*
  * The Sun uniform block (the pbr shader's directional key), std140-packed:
- * light_dir (vec3 -> vec4) + light_radiance (vec3 -> vec4) = 8 floats. Bound at
- * slot 2; the block name "Sun" sorts after "Camera"/"Material", which is how the
- * webgl backend (alphabetical block-name order) lands it on binding 2. A shader
- * without a Sun block (scene-textured, the mask) simply ignores the slot.
+ * light_dir (vec3 -> vec4) + light_radiance (vec3 -> vec4) + light_view_proj
+ * (mat4) = 8 + 16 = 24 floats. Bound at slot 2; the block name "Sun" sorts
+ * after "Camera"/"Material", which is how the webgl backend (alphabetical
+ * block-name order) lands it on binding 2. A shader without a Sun block
+ * (scene-textured, the mask) simply ignores the slot. light_view_proj is the
+ * light's world->clip matrix the tick rebuilds each frame; the pbr shader uses
+ * it to project a fragment into the shadow map's space.
  */
-#define LIGHT_UBO_FLOATS 8           /* light_dir[4] + light_radiance[4] */
+#define LIGHT_UBO_FLOATS 24          /* light_dir[4] + light_radiance[4] + mat4[16] */
+#define LIGHT_UBO_VP     8           /* float offset of light_view_proj in the block */
 
 /*
  * A material's wire form (v3): a uint32 shader-ref (asset id, first-class — a
@@ -319,9 +357,17 @@ static const struct camera_api g_camera_api = {
  * direction need not be unit length — the shader normalizes it. radiance is a
  * constant white for now; per-light colour/intensity is the next increment.
  */
-static struct { float dir[3]; float radiance[3]; } g_light = {
+static struct {
+	float       dir[3];
+	float       radiance[3];
+	struct mat4 view_proj;   /* light world->clip, rebuilt each tick */
+} g_light = {
 	{ 0.5f, 0.8f, 0.4f },
 	{ 1.0f, 1.0f, 1.0f },
+	{ { 1.0f, 0.0f, 0.0f, 0.0f,
+	    0.0f, 1.0f, 0.0f, 0.0f,
+	    0.0f, 0.0f, 1.0f, 0.0f,
+	    0.0f, 0.0f, 0.0f, 1.0f } },
 };
 
 /*
@@ -339,6 +385,111 @@ static void light_quat_rotate(const float q[4], const float v[3], float out[3])
 	out[0] = v[0] + q[3] * tx + (q[1] * tz - q[2] * ty);
 	out[1] = v[1] + q[3] * ty + (q[2] * tx - q[0] * tz);
 	out[2] = v[2] + q[3] * tz + (q[0] * ty - q[1] * tx);
+}
+
+/*
+ * A symmetric orthographic projection (half-extent HALF on x and y, depth range
+ * [near, far]), right-handed with z mapped to GL NDC [-1, 1] — the same
+ * convention as mat4_perspective, so a shadow depth compared against gl_Position
+ * from this matrix matches the window depth the pass wrote. Column-major, filled
+ * directly (there is no mat4_ortho in the math library). A directional light has
+ * no perspective, so its shadow frustum is a box.
+ */
+static void light_ortho(struct mat4 *out, float half, float near, float far)
+{
+	float rl = 2.0f * half;      /* r - l with l = -half, r = +half */
+	float fn = far - near;
+
+	memset(out->m, 0, sizeof(out->m));
+	out->m[0]  = 2.0f / rl;
+	out->m[5]  = 2.0f / rl;
+	out->m[10] = -2.0f / fn;
+	out->m[14] = -(far + near) / fn;
+	out->m[15] = 1.0f;
+}
+
+/*
+ * Rebuild g_light.view_proj — the sun's world->clip matrix the shadow pass
+ * renders with and the pbr shader samples against. The light is directional, so
+ * it is framed as an ortho box that encloses the scene: fit a bounding sphere to
+ * the live drawable entities (their world positions padded by their scale, a
+ * cheap stand-in for real mesh extents), place the light back along its
+ * direction far enough to see the whole sphere, and look at the centre. With no
+ * drawable entity the scene is empty, so any valid matrix does — the shadow map
+ * clears to "far" and nothing is occluded.
+ */
+static void update_light_view_proj(const struct world *w)
+{
+	float    mn[3] = {  1e30f,  1e30f,  1e30f };
+	float    mx[3] = { -1e30f, -1e30f, -1e30f };
+	float    center[3], eye[3], up[3], dir[3], len, radius, dist;
+	uint32_t i, k, seen = 0;
+
+	if (w) {
+		for (i = 0; i < w->count; i++) {
+			const struct transform *t;
+			float                    ext;
+
+			if (!w->alive[i] || !(w->mask[i] & COMPONENT_RENDER) ||
+			    !(w->mask[i] & COMPONENT_MATERIAL))
+				continue;
+			t   = &w->world_xform[i];
+			ext = fabsf(t->scale[0]);
+			if (fabsf(t->scale[1]) > ext) ext = fabsf(t->scale[1]);
+			if (fabsf(t->scale[2]) > ext) ext = fabsf(t->scale[2]);
+			for (k = 0; k < 3; k++) {
+				float lo = t->position[k] - ext;
+				float hi = t->position[k] + ext;
+
+				if (lo < mn[k]) mn[k] = lo;
+				if (hi > mx[k]) mx[k] = hi;
+			}
+			seen++;
+		}
+	}
+
+	if (!seen) {
+		mn[0] = mn[1] = mn[2] = -1.0f;
+		mx[0] = mx[1] = mx[2] =  1.0f;
+	}
+
+	for (k = 0; k < 3; k++)
+		center[k] = 0.5f * (mn[k] + mx[k]);
+	radius = 0.5f * sqrtf((mx[0] - mn[0]) * (mx[0] - mn[0]) +
+			      (mx[1] - mn[1]) * (mx[1] - mn[1]) +
+			      (mx[2] - mn[2]) * (mx[2] - mn[2]));
+	if (radius < 1.0f)
+		radius = 1.0f;
+
+	/* g_light.dir points from the surface toward the sun, so the light sits
+	 * up-direction from the scene; step back along it to frame the sphere. */
+	dir[0] = g_light.dir[0];
+	dir[1] = g_light.dir[1];
+	dir[2] = g_light.dir[2];
+	len = sqrtf(dir[0]*dir[0] + dir[1]*dir[1] + dir[2]*dir[2]);
+	if (len < 1e-6f) {
+		dir[0] = 0.0f; dir[1] = 1.0f; dir[2] = 0.0f; len = 1.0f;
+	}
+	dir[0] /= len; dir[1] /= len; dir[2] /= len;
+
+	dist = radius * 2.5f;
+	for (k = 0; k < 3; k++)
+		eye[k] = center[k] + dir[k] * dist;
+
+	/* Pick an up hint not parallel to the light direction. */
+	if (fabsf(dir[1]) > 0.99f) {
+		up[0] = 0.0f; up[1] = 0.0f; up[2] = 1.0f;
+	} else {
+		up[0] = 0.0f; up[1] = 1.0f; up[2] = 0.0f;
+	}
+
+	{
+		struct mat4 view, proj;
+
+		mat4_look_at(&view, eye, center, up);
+		light_ortho(&proj, radius * 1.15f, 0.05f, dist + radius * 1.5f);
+		mat4_mul(&g_light.view_proj, &proj, &view);
+	}
 }
 
 /*
@@ -360,6 +511,7 @@ static void bind_light(const struct gpu_api *gpu, gpu_cmd_buf_t cmd)
 	lubo[5] = g_light.radiance[1];
 	lubo[6] = g_light.radiance[2];
 	lubo[7] = 0.0f;
+	memcpy(&lubo[LIGHT_UBO_VP], g_light.view_proj.m, 16 * sizeof(float));
 	gpu->buffer_update(g_light_ubo, 0, lubo, (uint32_t)sizeof(lubo));
 	gpu->cmd_bind_uniform_buffer(cmd, 2, g_light_ubo, 0,
 				     (uint32_t)sizeof(lubo));
@@ -715,6 +867,35 @@ static void build_outline_resources(const struct gpu_api *gpu)
 	bd.usage        = GPU_BUFFER_USAGE_UNIFORM;
 	bd.size         = OUTLINE_UBO_FLOATS * sizeof(float);
 	g_outline_ubo = gpu->buffer_create(&bd);
+}
+
+/*
+ * Compile the sun-shadow depth pipeline and bake the 1x1 "fully lit" dummy
+ * shadow map, off-frame. A failed compile leaves g_shadow_pso null, so the tick
+ * skips the shadow pass and the forward pass binds the dummy — the pbr shader
+ * then shades with the sun but casts no shadows, exactly as before this feature.
+ * The dummy is opaque white so its red channel reads 1.0 (the far plane), which
+ * the shader's depth compare always treats as unoccluded.
+ */
+static void build_shadow_resources(const struct gpu_api *gpu)
+{
+	static const unsigned char WHITE_TEXEL[4] = { 255, 255, 255, 255 };
+	struct gpu_texture_desc     td;
+
+	g_shadow_pso = create_pso(gpu, SHADOW_SHADER_SRC);
+	if (!g_shadow_pso)
+		g_log->write(LOG_LEVEL_WARN,
+			     "scene_renderer: shadow pipeline unavailable; "
+			     "sun casts no shadows");
+
+	memset(&td, 0, sizeof(td));
+	td.format       = GPU_FORMAT_RGBA8_UNORM;
+	td.width        = 1;
+	td.height       = 1;
+	td.mip_levels   = 1;
+	td.sample_count = 1;
+	td.initial_data = WHITE_TEXEL;
+	g_shadow_dummy  = gpu->texture_create(&td);
 }
 
 /*
@@ -1361,6 +1542,13 @@ static uint32_t scene_preview_render_mesh(uint32_t mesh_ref,
 	gpu->buffer_update(g_material_ubo, 0, params, plen);
 	gpu->cmd_bind_uniform_buffer(cmd, 1, g_material_ubo, 0, plen);
 	bind_light(gpu, cmd); /* Sun at slot 2, so a pbr thumbnail lights right */
+	/* The preview renders no shadow pass, so bind the fully-lit dummy where
+	 * each shader's shadow_map lands — unit 0 (pbr) and unit 1 (scene-
+	 * textured) — so a thumbnail's shadow lookup reads "unoccluded". */
+	if (g_shadow_dummy) {
+		gpu->cmd_bind_texture(cmd, 0, g_shadow_dummy);
+		gpu->cmd_bind_texture(cmd, 1, g_shadow_dummy);
+	}
 	gpu->cmd_bind_vertex_buffer(cmd, 0, g_prev_vbo, 0);
 	gpu->cmd_bind_index_buffer(cmd, g_prev_ebo, 0, GPU_INDEX_FORMAT_UINT16);
 
@@ -1576,6 +1764,7 @@ static void scene_renderer_init(void)
 	}
 
 	build_outline_resources(gpu);
+	build_shadow_resources(gpu);
 
 	/* A fixed camera framing the unit primitives at the origin. */
 	g_cam.eye[0]    = 2.5f; g_cam.eye[1]    = 2.0f; g_cam.eye[2]    = 4.0f;
@@ -1594,6 +1783,71 @@ static void scene_renderer_init(void)
 }
 
 /*
+ * The sun-shadow pass: render the scene's depth from the light's viewpoint into
+ * the shadow map. It walks the same drawable entities the forward pass does, but
+ * binds one depth-only pipeline and uploads the light's view_proj (into the
+ * Camera block's view_proj slot) instead of the camera's — so the depth left in
+ * the target is each fragment's distance from the sun, which the forward pass
+ * later compares against. No material, texture, or light state is bound; only
+ * geometry matters here. Skipped cleanly when the depth pipeline failed to
+ * compile (the forward pass then falls back to the fully-lit dummy map).
+ */
+static void shadow_pass(struct fg_pass_ctx *ctx, void *userdata)
+{
+	const struct gpu_api *gpu = fg_ctx_gpu(ctx);
+	gpu_cmd_buf_t         cmd = fg_ctx_cmd(ctx);
+	const struct world   *w;
+	uint32_t              i;
+	float                 ubo[SCENE_UBO_FLOATS];
+
+	(void)userdata;
+	if (!gpu || !g_scene || !g_shadow_pso)
+		return;
+	w = g_scene->get_world();
+	if (!w)
+		return;
+
+	/* The light matrix is the whole pass's view_proj; only model changes. */
+	memcpy(&ubo[0], g_light.view_proj.m, 16 * sizeof(float));
+	ubo[SCENE_UBO_CAMPOS + 0] = 0.0f;
+	ubo[SCENE_UBO_CAMPOS + 1] = 0.0f;
+	ubo[SCENE_UBO_CAMPOS + 2] = 0.0f;
+	ubo[SCENE_UBO_CAMPOS + 3] = 0.0f;
+
+	gpu->cmd_set_pipeline(cmd, g_shadow_pso);
+
+	for (i = 0; i < w->count; i++) {
+		struct gpu_draw_indexed_args draw;
+		struct mesh_gpu             *m;
+		struct mat4                  model;
+		const uint8_t               *mp;
+		uint32_t                     mplen;
+
+		if (!w->alive[i] || !(w->mask[i] & COMPONENT_RENDER) ||
+		    !(w->mask[i] & COMPONENT_MATERIAL))
+			continue;
+		mp = entity_mesh_params(w, i, &mplen);
+		m  = find_mesh(w->render_ref[i], mp, mplen);
+		if (!m)
+			continue;
+
+		mat4_from_transform(&model, &w->world_xform[i]);
+		memcpy(&ubo[16], model.m, 16 * sizeof(float));
+		gpu->buffer_update(g_ubo, 0, ubo, (uint32_t)sizeof(ubo));
+		gpu->cmd_bind_uniform_buffer(cmd, 0, g_ubo, 0,
+					     (uint32_t)sizeof(ubo));
+		gpu->cmd_bind_vertex_buffer(cmd, 0, m->vbo, 0);
+		gpu->cmd_bind_index_buffer(cmd, m->ebo, 0,
+					   GPU_INDEX_FORMAT_UINT16);
+
+		memset(&draw, 0, sizeof(draw));
+		draw.index_count    = m->index_count;
+		draw.instance_count = 1;
+		gpu->cmd_draw_indexed(cmd, &draw);
+	}
+}
+
+/*
  * The forward pass records real GPU commands on the lent context. It walks the
  * world the documented way, draws each COMPONENT_RENDER entity from its
  * world_xform and render_ref, and lets the context go. It never caches the
@@ -1608,6 +1862,7 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 	float                 ubo[SCENE_UBO_FLOATS];
 	gpu_pipeline_t        cur_pso = 0;
 	int                   have_pso = 0;
+	gpu_texture_t         shadow_tex;
 
 	(void)userdata;
 	if (!gpu || !g_scene)
@@ -1625,6 +1880,16 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 
 	/* The directional light is constant across the pass — bind it once. */
 	bind_light(gpu, cmd);
+
+	/*
+	 * The sun shadow map, for the pbr shader's shadow_map sampler (unit 0).
+	 * Prefer the depth target the shadow pass just wrote; if this frame ran no
+	 * shadow pass (or its pipeline is missing), fall back to the 1x1 lit dummy
+	 * so an untextured pbr draw samples "unoccluded" rather than stale texels.
+	 */
+	shadow_tex = g_shadow_res ? fg_ctx_resource(ctx, g_shadow_res) : NULL;
+	if (!shadow_tex)
+		shadow_tex = g_shadow_dummy;
 
 	for (i = 0; i < w->count; i++) {
 		static const float            WHITE[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
@@ -1715,10 +1980,15 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 		gpu->cmd_bind_uniform_buffer(cmd, 1, g_material_ubo, 0, plen);
 
 		/*
-		 * Bind this material's baked procedural texture, if it names one,
-		 * to the albedo unit the scene-textured shader samples. The combo
-		 * is already resident (ensure_textures ran off-frame); a miss just
-		 * skips the bind and the sampler reads whatever unit 0 holds.
+		 * Bind the sun shadow map and this material's texture. The two
+		 * built-in scene shaders name their samplers so the backend's
+		 * alphabetical rule assigns matching units:
+		 *   scene-textured -> albedo (unit 0), shadow_map (unit 1)
+		 *   pbr            -> shadow_map (unit 0, its only sampler)
+		 * So a textured material binds its albedo to unit 0 and the shadow
+		 * map to unit 1; an untextured (pbr) material binds the shadow map
+		 * to unit 0. The albedo combo is already resident (ensure_textures
+		 * ran off-frame).
 		 */
 		{
 			uint32_t       tex_ref, tw, th, tplen = 0;
@@ -1738,6 +2008,10 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 				t = find_texture(tex_ref, tw, th, tparams, tplen);
 				if (t)
 					gpu->cmd_bind_texture(cmd, 0, t->tex);
+				if (shadow_tex)
+					gpu->cmd_bind_texture(cmd, 1, shadow_tex);
+			} else if (shadow_tex) {
+				gpu->cmd_bind_texture(cmd, 0, shadow_tex);
 			}
 		}
 
@@ -1872,6 +2146,8 @@ static void scene_renderer_tick(void)
 	struct fg          *fg;
 	fg_resource_t       bb;
 	fg_pass_t           pass;
+	fg_resource_t       shadow;
+	fg_pass_t           spass;
 	const struct world *w;
 	uint32_t            sel = 0;
 	int                 outline;
@@ -1927,6 +2203,7 @@ static void scene_renderer_tick(void)
 	}
 
 	camera_update(&g_cam);
+	update_light_view_proj(w);
 
 	/*
 	 * The outline path adds two passes around the forward pass, so it only
@@ -1945,9 +2222,43 @@ static void scene_renderer_tick(void)
 		return;
 	bb = g_fg_api->import_backbuffer(fg);
 
+	/*
+	 * The sun-shadow pass runs first when its depth pipeline compiled: it
+	 * renders the scene's depth from the light into a square depth target the
+	 * forward pass then samples. Declaring it here (and reading it from the
+	 * forward pass) makes the frame graph order shadow-before-forward and keep
+	 * the depth map alive across the boundary. With no pipeline the pass is
+	 * skipped and the forward pass falls back to the fully-lit dummy map.
+	 */
+	shadow = 0;
+	spass  = 0;
+	if (g_shadow_pso && w) {
+		fg_tex_desc sdesc;
+
+		memset(&sdesc, 0, sizeof(sdesc));
+		sdesc.format       = GPU_FORMAT_DEPTH32_FLOAT;
+		sdesc.width        = SHADOW_MAP_DIM;
+		sdesc.height       = SHADOW_MAP_DIM;
+		sdesc.mip_levels   = 1;
+		sdesc.sample_count = 1;
+		shadow = g_fg_api->declare_transient(fg, "sun_shadow", sdesc);
+		spass  = g_fg_api->pass_declare(fg, "sun_shadow", NULL, 0,
+						&shadow, 1);
+	}
+	g_shadow_res = shadow;
+
 	if (!outline) {
-		pass = g_fg_api->pass_declare(fg, "forward", NULL, 0, &bb, 1);
-		if (pass) {
+		fg_resource_t freads[1];
+		uint32_t      frn = 0;
+
+		if (spass) { freads[0] = shadow; frn = 1; }
+		pass = g_fg_api->pass_declare(fg, "forward", frn ? freads : NULL,
+					      frn, &bb, 1);
+		if (pass && (!shadow || spass)) {
+			if (spass) {
+				g_fg_api->pass_set_depth_clear(spass, 1.0f);
+				g_fg_api->pass_set_execute(spass, shadow_pass, NULL);
+			}
 			g_fg_api->pass_set_color_clear(pass, 0, CLEAR);
 			g_fg_api->pass_set_depth_clear(pass, 1.0f);
 			g_fg_api->pass_set_execute(pass, forward_pass, NULL);
@@ -1958,7 +2269,8 @@ static void scene_renderer_tick(void)
 		uint32_t      vw = (uint32_t)g_view_w, vh = (uint32_t)g_view_h;
 		fg_tex_desc   cdesc, ddesc;
 		fg_resource_t scene_color, scene_depth, mask;
-		fg_resource_t fwrites[2], creads[2];
+		fg_resource_t fwrites[2], creads[2], freads[1];
+		uint32_t      frn = 0;
 		fg_pass_t     fpass, mpass, cpass;
 
 		memset(&cdesc, 0, sizeof(cdesc));
@@ -1979,13 +2291,19 @@ static void scene_renderer_tick(void)
 
 		fwrites[0] = scene_color;
 		fwrites[1] = scene_depth;
-		fpass = g_fg_api->pass_declare(fg, "forward", NULL, 0, fwrites, 2);
+		if (spass) { freads[0] = shadow; frn = 1; }
+		fpass = g_fg_api->pass_declare(fg, "forward", frn ? freads : NULL,
+					       frn, fwrites, 2);
 		mpass = g_fg_api->pass_declare(fg, "sel_mask", NULL, 0, &mask, 1);
 		creads[0] = scene_color;
 		creads[1] = mask;
 		cpass = g_fg_api->pass_declare(fg, "outline", creads, 2, &bb, 1);
 
-		if (fpass && mpass && cpass) {
+		if (fpass && mpass && cpass && (!shadow || spass)) {
+			if (spass) {
+				g_fg_api->pass_set_depth_clear(spass, 1.0f);
+				g_fg_api->pass_set_execute(spass, shadow_pass, NULL);
+			}
 			g_fg_api->pass_set_color_clear(fpass, 0, CLEAR);
 			g_fg_api->pass_set_depth_clear(fpass, 1.0f);
 			g_fg_api->pass_set_execute(fpass, forward_pass, NULL);
@@ -1997,6 +2315,7 @@ static void scene_renderer_tick(void)
 		}
 	}
 	g_fg_api->destroy(fg);
+	g_shadow_res = 0;
 }
 
 static void scene_renderer_shutdown(void)
@@ -2023,6 +2342,10 @@ static void scene_renderer_shutdown(void)
 			gpu->pipeline_destroy(g_mask_pso);
 		if (g_outline_pso)
 			gpu->pipeline_destroy(g_outline_pso);
+		if (g_shadow_pso)
+			gpu->pipeline_destroy(g_shadow_pso);
+		if (g_shadow_dummy)
+			gpu->texture_destroy(g_shadow_dummy);
 		if (g_fs_vbo)
 			gpu->buffer_destroy(g_fs_vbo);
 		if (g_fs_ebo)
@@ -2044,6 +2367,9 @@ static void scene_renderer_shutdown(void)
 	g_default_pso      = 0;
 	g_mask_pso         = 0;
 	g_outline_pso      = 0;
+	g_shadow_pso       = 0;
+	g_shadow_dummy     = 0;
+	g_shadow_res       = 0;
 	g_fs_vbo           = 0;
 	g_fs_ebo           = 0;
 	g_outline_ubo      = 0;

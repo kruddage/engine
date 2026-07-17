@@ -34,6 +34,18 @@ static const struct memory_api native_mem = {
 #endif
 
 /*
+ * Editor-chrome toggle (plugin_abi.c, main module): the selection outline is
+ * editor feedback, so it stands down in a game's clean play view. Native builds
+ * host no games and no chrome switch, so they always outline.
+ */
+#ifdef __EMSCRIPTEN__
+int krudd_editor_chrome(void);
+#define EDITOR_CHROME() krudd_editor_chrome()
+#else
+#define EDITOR_CHROME() 1
+#endif
+
+/*
  * Scene renderer — a pure frame-graph consumer (#172).
  *
  * It resolves "frame_graph", "scene" (entity_api) and "asset", and reads the
@@ -2255,7 +2267,7 @@ static void scene_renderer_tick(void)
 	 * selected) the renderer stays the single forward-to-backbuffer pass it
 	 * has always been, at zero added cost.
 	 */
-	outline = w && g_mask_pso && g_outline_pso &&
+	outline = EDITOR_CHROME() && w && g_mask_pso && g_outline_pso &&
 		  g_view_w > 0.0f && g_view_h > 0.0f &&
 		  outline_selected_entity(w, &sel);
 

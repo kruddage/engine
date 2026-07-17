@@ -18,6 +18,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef __EMSCRIPTEN__
+/* Editor-chrome toggle (plugin_abi.c, main module). */
+void krudd_set_editor_chrome(int on);
+#endif
+
 /* Resolved before register() so init/tick/load can reach the world and rules. */
 static const struct entity_api *g_scene;
 
@@ -39,6 +44,14 @@ static void tictactoe_load(void)
 {
 	if (!g_scene)
 		return;
+#ifdef __EMSCRIPTEN__
+	/*
+	 * A board game, not a scene to edit: drop the editor chrome (panels and
+	 * the selection gizmo/outline) so play is just the board. Click-to-pick
+	 * still runs, so cells still register their clicks.
+	 */
+	krudd_set_editor_chrome(0);
+#endif
 	if (g_scene->clear_world)
 		g_scene->clear_world();
 	if (g_scene->build_scene_scm)

@@ -55,6 +55,7 @@ extern "C" {
  * alone, the kruddgui replacement for ImGui's WantTextInput.
  */
 extern "C" int krudd_text_input_capture(void);
+extern "C" int krudd_editor_chrome(void);	/* 0 in a game's play view */
 #endif
 
 #include <cstdio>
@@ -3373,7 +3374,12 @@ static void draw_viewport_tools(void * /*userdata*/)
 	g_kgui->viewport(&dw, &dh);
 	if (g_camera_api && g_camera_api->set_viewport)
 		g_camera_api->set_viewport(dw, dh);
-	pick_update(gizmo_update_and_draw());
+	/*
+	 * The transform gizmo is editor chrome; a game's play view (chrome off)
+	 * suppresses it. Click-to-pick still runs — passed false, as if the gizmo
+	 * claimed nothing — so a game keeps receiving cell clicks.
+	 */
+	pick_update(krudd_editor_chrome() ? gizmo_update_and_draw() : false);
 }
 
 /* ------------------------------------------------------------------ */

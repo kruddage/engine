@@ -1659,7 +1659,7 @@
 (define (kruddgui-asset-type-label t)
   (cond ((= t 1) "Mesh") ((= t 2) "Texture") ((= t 3) "Material")
 	((= t 4) "Shader") ((= t 5) "Font") ((= t 6) "Scene")
-	((= t 7) "Text") ((= t 8) "Script") (else "?")))
+	((= t 7) "Text") ((= t 8) "Script") ((= t 9) "Sound") (else "?")))
 
 (define (kruddgui-asset-kind-label k) (if (= k 1) "Primitive" "Normal"))
 
@@ -2648,6 +2648,23 @@
   (kruddgui-scene-kv L "Read-only"
 		     (if (list-ref info 6) "yes" "no")))
 
+;;! (kruddgui-asset-sound-editor L id info editable?) the sound inspector: a Play
+;;! button that has the "audio" subsystem bake and mix the clip through
+;;! kgui-play-sound (a no-op off the browser, where no audio backend registers),
+;;! then the catalog details, and a Delete row when the sound is authored (a
+;;! built-in has none). The Play tap doubles as the user gesture that unlocks the
+;;! audio context, so a built-in sound plays on the first press. There is no
+;;! source editor yet — this is the audition surface for the mixer/backend.
+(define (kruddgui-asset-sound-editor L id info editable?)
+  (kruddgui-scene-label L "Sound")
+  (when (kruddgui-scene-btn L "Play" #t)
+    (kgui-play-sound id))
+  (kruddgui-scene-rule L)
+  (if editable?
+      (when (kruddgui-scene-btn L "Delete" #t)
+	(kruddgui-assets-do-delete id))
+      (kruddgui-asset-generic L info)))
+
 ;;! (kruddgui-asset-body L id info) dispatches to the per-type editor by asset type
 ;;! ahead of the generic catalog view — the twin of Assets.scm's
 ;;! kruddboard-draw-asset-body. ASSET_TYPE_MESH = 1, TEXTURE = 2, MATERIAL = 3,
@@ -2674,6 +2691,8 @@
 	  (kruddgui-asset-text-editor L id)))
      ((= type 8)
       (kruddgui-asset-script-editor L id (list-ref info 0) (not read-only)))
+     ((= type 9)
+      (kruddgui-asset-sound-editor L id info (not read-only)))
      (else (kruddgui-asset-generic L info)))))
 
 ;;! (kruddgui-asset-inspector L id) the drilled-in inspector: a "< Back" row, the

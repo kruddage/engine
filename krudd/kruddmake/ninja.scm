@@ -156,9 +156,16 @@
 	  "emcflags = -std=gnu11 -Wall -Werror -Wpedantic"
 	  "s7dir = $srcroot/../third_party"
 	  "s7flags = -O2 -w -DWITH_C_LOADER=0 -DWITH_MAIN=0 -I$s7dir"
+	  ;; AUDIO_WORKLET + WASM_WORKERS put the mixer render callback on the
+	  ;; real audio thread (audio/audio_webaudio.c). That thread shares the
+	  ;; wasm heap, so memory must be a growable SharedArrayBuffer —
+	  ;; GROWABLE_ARRAYBUFFERS flips 0->1 (a shared+growable memory needs it).
+	  ;; mimalloc stays: only the main thread allocates (baking); the audio
+	  ;; thread render path never calls malloc.
 	  (string-append "mainflags = -sENVIRONMENT=web -sALLOW_MEMORY_GROWTH=1 "
-			 "-sGROWABLE_ARRAYBUFFERS=0 -sMALLOC=mimalloc "
+			 "-sGROWABLE_ARRAYBUFFERS=1 -sMALLOC=mimalloc "
 			 "-sFETCH=1 -sMAX_WEBGL_VERSION=2 "
+			 "-sAUDIO_WORKLET=1 -sWASM_WORKERS=1 "
 			 "-sEXPORTED_FUNCTIONS=_main")
 	  ""
 	  "rule cc"

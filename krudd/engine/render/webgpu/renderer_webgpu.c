@@ -25,6 +25,7 @@
 #include <webgpu/webgpu.h>
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 static const struct log_api *g_log;
@@ -49,15 +50,16 @@ EM_JS(void, webgpu_announce_renderer, (void), {
 })
 
 /*
- * Surface the probe's progress on the footer status line (and the console), so
- * a browser without a working adapter/device reports where it stopped instead
- * of just showing a blank canvas. Diagnostic scaffolding for this first slice.
+ * Surface the probe's progress into the shell's scrolling WebGPU log panel (and
+ * the console), so a browser without a working adapter/device reports where it
+ * stopped, with full history, instead of just a blank canvas or a single
+ * overwritten footer line. Diagnostic scaffolding for this first slice; the
+ * kruddgui editor console takes over once WebGPU can drive the UI.
  */
 EM_JS(void, webgpu_status, (const char *msg), {
 	var s = UTF8ToString(msg);
-	var el = document.getElementById('status');
-	if (el)
-		el.textContent = s;
+	if (typeof window.kruddWebGPULog === 'function')
+		window.kruddWebGPULog(s);
 	if (typeof console !== 'undefined')
 		console.log('[webgpu] ' + s);
 })
@@ -119,6 +121,14 @@ static void configure_surface(void)
 	wgpuSurfaceConfigure(g_surface, &cfg);
 
 	wgpuSurfaceCapabilitiesFreeMembers(caps);
+
+	{
+		char buf[96];
+
+		snprintf(buf, sizeof(buf), "webgpu: surface %dx%d format=%d",
+			 w, h, (int)g_format);
+		webgpu_status(buf);
+	}
 }
 
 static void on_device(WGPURequestDeviceStatus status, WGPUDevice device,

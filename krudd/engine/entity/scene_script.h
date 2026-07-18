@@ -50,4 +50,34 @@ int32_t scene_script_build(struct world *w, const struct asset_api *asset,
 int32_t scene_script_call(struct world *w, const struct asset_api *asset,
 			  const char *fn, int32_t arg);
 
+/* Fires exactly once, synchronously, when a chunked build completes. */
+typedef void (*scene_build_done_fn)(void *ud);
+
+/*
+ * Chunked twin of scene_script_build: parses SRC once, then spawns its
+ * entities a few at a time across repeated scene_script_build_tick() calls
+ * instead of all inside this call — the shape a per-frame loading UI needs.
+ * W and ASSET are borrowed for the whole build, not just this call, so they
+ * must stay valid until it completes. ON_DONE (may be NULL) fires once,
+ * synchronously inside whichever scene_script_build_tick() call finishes the
+ * build — or from this call itself, immediately, if SRC is empty or
+ * malformed — with UD unchanged. Only one build may be in flight at a time;
+ * starting a new one before the last finished is a caller bug.
+ */
+void scene_script_build_begin(struct world *w, const struct asset_api *asset,
+			      const char *src, scene_build_done_fn on_done,
+			      void *ud);
+
+/*
+ * Advance the in-flight build (if any) by a small, fixed budget of entities.
+ * A no-op when no build is in flight. Call once per frame.
+ */
+void scene_script_build_tick(void);
+
+/* 1 while a chunked build is in flight, 0 otherwise. */
+int32_t scene_script_build_active(void);
+
+/* Fraction of the in-flight build's entities spawned so far, 0..1; 1.0 when idle. */
+float scene_script_build_progress(void);
+
 #endif /* SCENE_SCRIPT_H */

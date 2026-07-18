@@ -35,6 +35,9 @@ struct kruddgui_api {
 		       float r, float g, float b, float a);
 	void (*ring)(float cx, float cy, float rad, float width,
 		     float r, float g, float b, float a);
+	/* One line of text with its top-left at (x, y). Returns the advance width. */
+	float (*text)(float x, float y, const char *str, float size,
+		      float r, float g, float b, float a);
 
 	/* This tick's viewport size in CSS pixels. */
 	void (*viewport)(float *w, float *h);

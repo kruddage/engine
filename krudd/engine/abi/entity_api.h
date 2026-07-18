@@ -22,6 +22,9 @@
  * property panel and gizmo are set_transform / set_name / set_render_ref, and
  * all agree on the active entity via get_selected / set_selected.
  */
+/* Fires exactly once, synchronously, when a build_scene_scm_async build completes. */
+typedef void (*krudd_scene_loaded_fn)(void *ud);
+
 struct entity_api {
 	const struct world *(*get_world)(void);
 	/* Load and ingest a .scene asset by path; 0 on success, -1 otherwise. */
@@ -34,6 +37,18 @@ struct entity_api {
 	 * against the shared image — the source-authored twin of load_scene.
 	 */
 	int32_t             (*build_scene_scm)(const char *src);
+	/*
+	 * Chunked twin of build_scene_scm: spawns SRC's entities a few per frame
+	 * instead of all inside this call, so a loading UI can animate while a
+	 * big scene comes in (this plugin's own tick drives the stepping). ON_DONE
+	 * (may be NULL) fires once, the frame the build finishes — the launch
+	 * path's hook for post-load game state (score reset, DOM updates), the
+	 * chunked twin of calling that logic right after build_scene_scm returns.
+	 * Only one build may be in flight at a time.
+	 */
+	void                (*build_scene_scm_async)(const char *src,
+						      krudd_scene_loaded_fn on_done,
+						      void *ud);
 	/*
 	 * Invoke image function `fn` (an integer -> integer procedure) with `arg`,
 	 * the live world bound so image-side game rules can spawn and mutate in

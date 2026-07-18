@@ -1415,6 +1415,13 @@ static void kga_ring(float cx, float cy, float rad, float width,
 			s_white_u, s_white_v, r, g, b, a);
 }
 
+static float kga_text(float x, float y, const char *str, float size,
+		      float r, float g, float b, float a)
+{
+	return kgui_batch_text(&s_batch, x, y, str, size, r, g, b, a,
+			       kgui_font_glyph, &s_font);
+}
+
 static void kga_viewport(float *w, float *h)
 {
 	if (w) *w = s_css_w;
@@ -1439,6 +1446,7 @@ static int kga_over_ui(float x, float y)
 static const struct kruddgui_api g_kruddgui_api = {
 	kga_register_overlay,
 	kga_line, kga_rect, kga_circle, kga_ring,
+	kga_text,
 	kga_viewport,
 	kga_pointer, kga_pointer_down, kga_pointer_clicked, kga_pointer_released,
 	kga_over_ui,

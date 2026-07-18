@@ -11,9 +11,11 @@
 #include "memory_api.h"
 #include "stats_api.h"
 #include "subsystem_manager.h"
+#include "kruddgui_api.h"
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 /*
  * The runtime world is one large static instance, not a heap allocation: its
@@ -26,6 +28,9 @@ static const struct asset_api       *g_asset;  /* NULL = script source unavailab
 static const struct memory_api      *g_mem;
 static const struct stats_api       *g_stats;
 static const struct edit_api        *g_edit;   /* NULL = undo unavailable */
+static struct subsystem_manager     *g_mgr;
+static const struct kruddgui_api    *g_kgui;   /* fetched lazily; kruddgui registers after "scene" */
+static int32_t                       g_overlay_registered;
 
 /* Seconds since the scene subsystem started, the clock entity scripts read. */
 static float                         g_clock;
@@ -84,6 +89,13 @@ static const struct world *scene_get_world(void)
 static int32_t scene_build_scm(const char *src)
 {
 	return scene_script_build(&g_world, g_asset, src);
+}
+
+/* Chunked twin of scene_build_scm (see scene_script_build_begin). */
+static void scene_build_scm_async(const char *src, krudd_scene_loaded_fn on_done,
+				  void *ud)
+{
+	scene_script_build_begin(&g_world, g_asset, src, on_done, ud);
 }
 
 /*
@@ -278,6 +290,7 @@ static const struct entity_api g_entity_api = {
 	.get_world      = scene_get_world,
 	.load_scene     = scene_load,
 	.build_scene_scm = scene_build_scm,
+	.build_scene_scm_async = scene_build_scm_async,
 	.dispatch_scm   = scene_dispatch_scm,
 	.clear_world    = scene_clear_world,
 	.create_entity  = scene_create_entity,
@@ -314,10 +327,57 @@ static void scene_init(void)
 	scene_script_init();
 }
 
+/*
+ * Draw a centered progress bar + percentage while a chunked scene build is
+ * in flight; a no-op the rest of the time. Registered once, lazily, as a
+ * kruddgui viewport overlay (see the retry-until-available comment below) —
+ * it runs every kruddgui tick regardless of editor-chrome state, exactly
+ * like the transform gizmo it sits alongside.
+ */
+static void scene_draw_loading_overlay(void *ud)
+{
+	float vw, vh, bar_w, bar_h, x, y, frac;
+	char  pct[8];
+
+	(void)ud;
+	if (!g_kgui || !scene_script_build_active())
+		return;
+
+	g_kgui->viewport(&vw, &vh);
+	bar_w = vw * 0.4f;
+	bar_h = 18.0f;
+	x     = (vw - bar_w) * 0.5f;
+	y     = vh - 64.0f;
+	frac  = scene_script_build_progress();
+
+	g_kgui->rect(x, y, bar_w, bar_h, 0.15f, 0.15f, 0.15f, 0.85f);
+	g_kgui->rect(x, y, bar_w * frac, bar_h, 0.25f, 0.55f, 0.95f, 1.0f);
+
+	snprintf(pct, sizeof(pct), "%d%%", (int)(frac * 100.0f + 0.5f));
+	g_kgui->text(x + bar_w + 8.0f, y + 2.0f, pct, 14.0f, 1.0f, 1.0f, 1.0f, 1.0f);
+}
+
 static void scene_tick(void)
 {
 	/* tick() takes no args; read the frame delta from the "stats" api. */
 	float dt = g_stats ? g_stats->last_frame_ms : 0.0f;
+
+	/* Advance any in-flight chunked build regardless of pause state. */
+	scene_script_build_tick();
+
+	/*
+	 * Register the loading overlay once kruddgui is up. "scene" registers
+	 * before "kruddgui" in the boot order (engine.c's plugin_table), so this
+	 * can't be done at entity_plugin_entry — retry each tick until it's
+	 * available, mirroring kruddboard's viewport-tools registration.
+	 */
+	if (!g_overlay_registered) {
+		g_kgui = subsystem_manager_get_api(g_mgr, "kruddgui");
+		if (g_kgui) {
+			g_kgui->register_overlay(scene_draw_loading_overlay, NULL);
+			g_overlay_registered = 1;
+		}
+	}
 
 	if (g_paused)
 		return;
@@ -350,6 +410,8 @@ static const struct subsystem scene_desc = {
 
 void entity_plugin_entry(struct subsystem_manager *mgr)
 {
+	/* Kept for the lazy kruddgui-api fetch in scene_tick (see there). */
+	g_mgr = mgr;
 	/* Resolve service vtables before register(), which calls init at once. */
 	g_codec = subsystem_manager_get_api(mgr, "asset_codec");
 	g_asset = subsystem_manager_get_api(mgr, "asset");

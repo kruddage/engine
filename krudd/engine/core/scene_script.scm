@@ -38,58 +38,100 @@
         (if (and (pair? xs) (pair? (cdr xs))) (cadr xs) b)
         (if (and (pair? xs) (pair? (cdr xs)) (pair? (cddr xs))) (caddr xs) c)))
 
+;;! (scene-parse src) -> flat pre-order list of (clauses . parent-idx), or #f on
+;;! a malformed form. Pure — no scene-* host calls, no world mutation — so it can
+;;! run once up front and the resulting plan replayed a node or a few at a time
+;;! across frames by the C-side chunked builder (scene_script_build_tick), rather
+;;! than spawning an entire scene inside one call. parent-idx is the index of the
+;;! node's already-flattened parent in this same list, or -1 for a root; children
+;;! clauses are consumed here (they exist only to shape the walk) and do not
+;;! appear in the flattened CLAUSES.
+(define (scene-parse src)
+  (catch #t
+    (lambda ()
+      (let ((form (with-input-from-string src (lambda () (read))))
+            (flat '())
+            (next 0))
+        (define (children-of clauses)
+          (let ((kv (assq 'children clauses)))
+            (if kv (cdr kv) '())))
+        (define (walk entities parent)
+          (for-each
+            (lambda (e)
+              (when (and (pair? e) (eq? (car e) 'entity))
+                (let ((idx next))
+                  (set! flat (cons (cons (cdr e) parent) flat))
+                  (set! next (+ next 1))
+                  (walk (children-of (cdr e)) idx))))
+            entities))
+        (if (and (pair? form) (eq? (car form) 'scene))
+            (begin (walk (cddr form) -1) (reverse flat))
+            (begin (krudd-log 2 "scene: not a (scene ...) form") #f))))
+    (lambda args (krudd-log 2 "scene: parse fault") #f)))
+
+;;! (scene-plan-apply! parent-id clauses) -> new entity id, or -1 on a
+;;! per-entity fault (logged, never aborting the caller's loop — the shape
+;;! mesh-script-run uses). Spawns one entity under PARENT-ID (a live world id,
+;;! or -1 for a root) and applies its non-tree clauses; CLAUSES is one flattened
+;;! node's data from scene-parse, so children are never present here.
+(define (scene-plan-apply! parent-id clauses)
+  (catch #t
+    (lambda ()
+      (let ((id (scene-spawn parent-id)) (pos '()) (rot '()) (scl '()))
+        (for-each
+          (lambda (c)
+            (when (pair? c)
+              (case (car c)
+                ((name)     (scene-name!     id (cadr c)))
+                ((mesh)     (scene-mesh!     id (cadr c)))
+                ((material) (scene-material! id (cadr c)))
+                ((script)   (scene-script!   id (cadr c)))
+                ((at)       (set! pos (cdr c)))
+                ((rotate)   (set! rot (cdr c)))
+                ((scale)    (set! scl (cdr c)))
+                (else #f))))
+          clauses)
+        (apply scene-xform! id (append (scene-vec3 pos 0 0 0)
+                                       (scene-vec3 rot 0 0 0)
+                                       (scene-vec3 scl 1 1 1)))
+        id))
+    (lambda args (krudd-log 2 "scene: entity build fault") -1)))
+
 ;;! (scene-entity-build e parent) -> subtree entity count: spawn one
-;;! (entity CLAUSE ...) under PARENT (an id, or -1 for a root), apply its clauses,
-;;! then recurse into any (children ...). Transform clauses accumulate into
-;;! pos/rot/scl and land in a single scene-xform! after the walk; binding clauses
-;;! take effect immediately. An unknown clause is ignored, so a newer scene
-;;! degrades gracefully on an older engine rather than faulting the whole build.
-;;! The return value counts this entity plus every descendant, so scene-build can
-;;! report the true total.
+;;! (entity CLAUSE ...) immediately under PARENT (an id, or -1 for a root),
+;;! recursing into any (children ...) right away rather than through the
+;;! chunked plan scene-build uses. For a runtime dynamic spawn outside the
+;;! initial scene build — a handful of entities at a time, not hundreds — such
+;;! as a game placing one mark per click (rules.scm's ttt-place/ttt-strike).
 (define (scene-entity-build e parent)
-  (let ((id  (scene-spawn parent))
-        (pos '()) (rot '()) (scl '()) (kids '()) (count 1))
-    (for-each
-      (lambda (c)
-        (when (pair? c)
-          (case (car c)
-            ((name)     (scene-name!     id (cadr c)))
-            ((mesh)     (scene-mesh!     id (cadr c)))
-            ((material) (scene-material! id (cadr c)))
-            ((script)   (scene-script!   id (cadr c)))
-            ((at)       (set! pos (cdr c)))
-            ((rotate)   (set! rot (cdr c)))
-            ((scale)    (set! scl (cdr c)))
-            ((children) (set! kids (cdr c)))
-            (else #f))))
-      (cdr e))
-    (apply scene-xform! id (append (scene-vec3 pos 0 0 0)
-                                   (scene-vec3 rot 0 0 0)
-                                   (scene-vec3 scl 1 1 1)))
+  (let* ((clauses (cdr e))
+         (id (scene-plan-apply! parent clauses))
+         (count 1))
     (for-each
       (lambda (k)
         (when (and (pair? k) (eq? (car k) 'entity))
           (set! count (+ count (scene-entity-build k id)))))
-      kids)
+      (let ((kv (assq 'children clauses))) (if kv (cdr kv) '())))
     count))
 
 ;;! (scene-build src) -> entity count. Parse SRC (a (scene NAME (entity ...) ...)
-;;! form as text) and spawn its entities into the world the host has bound. A
-;;! malformed form, or a per-entity fault, is caught and logged, never taking the
-;;! frame or the rest of the build down — the shape mesh-script-run uses.
+;;! form as text) and spawn its entities into the world the host has bound, all
+;;! in one call — the synchronous convenience over scene-parse + scene-plan-apply!
+;;! for a caller (native builds, tests) that has no per-frame tick to chunk
+;;! across. A malformed form, or a per-entity fault, is caught and logged, never
+;;! taking the rest of the build down.
 (define (scene-build src)
-  (catch #t
-    (lambda ()
-      (let ((form (with-input-from-string src (lambda () (read)))))
-        (if (and (pair? form) (eq? (car form) 'scene))
-            (let ((n 0))
-              (for-each
-                (lambda (c)
-                  (when (and (pair? c) (eq? (car c) 'entity))
-                    (catch #t
-                      (lambda () (set! n (+ n (scene-entity-build c -1))))
-                      (lambda args (krudd-log 2 "scene: entity build fault")))))
-                (cddr form))
-              n)
-            (begin (krudd-log 2 "scene: not a (scene ...) form") 0))))
-    (lambda args (krudd-log 2 "scene: build fault") 0)))
+  (let ((plan (scene-parse src)))
+    (if plan
+        (let ((ids (make-vector (length plan) -1)) (i 0) (n 0))
+          (for-each
+            (lambda (node)
+              (let* ((parent-idx (cdr node))
+                     (parent-id (if (>= parent-idx 0) (vector-ref ids parent-idx) -1))
+                     (id (scene-plan-apply! parent-id (car node))))
+                (vector-set! ids i id)
+                (when (>= id 0) (set! n (+ n 1)))
+                (set! i (+ i 1))))
+            plan)
+          n)
+        0)))

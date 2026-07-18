@@ -79,6 +79,26 @@ static void tictactoe_init(void)
 	script_eval(TICTACTOE_RULES_SCM);
 }
 
+/*
+ * Fires once the board scene has finished (chunked) building: resets the
+ * match now that build_scene_scm_async's world actually exists to reset.
+ */
+static void tictactoe_on_loaded(void *ud)
+{
+	(void)ud;
+	if (g_scene->dispatch_scm) {
+		/* A fresh match: zero the scoreboard, then clear the board. */
+		g_scene->dispatch_scm("ttt-score-reset", 0);
+		g_scene->dispatch_scm("ttt-reset", 0);
+	}
+	g_last_sel = -1;
+	g_last_score = 0;
+#ifdef __EMSCRIPTEN__
+	ttt_scoreboard_show();
+	ttt_scoreboard_set(0, 0);
+#endif
+}
+
 /* Launcher entry: clear whatever was showing, build the board, reset the game. */
 static void tictactoe_load(void)
 {
@@ -94,19 +114,9 @@ static void tictactoe_load(void)
 #endif
 	if (g_scene->clear_world)
 		g_scene->clear_world();
-	if (g_scene->build_scene_scm)
-		g_scene->build_scene_scm(TICTACTOE_SCENE_SCM);
-	if (g_scene->dispatch_scm) {
-		/* A fresh match: zero the scoreboard, then clear the board. */
-		g_scene->dispatch_scm("ttt-score-reset", 0);
-		g_scene->dispatch_scm("ttt-reset", 0);
-	}
-	g_last_sel = -1;
-	g_last_score = 0;
-#ifdef __EMSCRIPTEN__
-	ttt_scoreboard_show();
-	ttt_scoreboard_set(0, 0);
-#endif
+	if (g_scene->build_scene_scm_async)
+		g_scene->build_scene_scm_async(TICTACTOE_SCENE_SCM,
+					       tictactoe_on_loaded, NULL);
 }
 
 /*

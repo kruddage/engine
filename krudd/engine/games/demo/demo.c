@@ -22,8 +22,8 @@ static void demo_load(void)
 		return;
 	if (g_scene->clear_world)
 		g_scene->clear_world();
-	if (g_scene->build_scene_scm)
-		g_scene->build_scene_scm(DEMO_SCENE_SCM);
+	if (g_scene->build_scene_scm_async)
+		g_scene->build_scene_scm_async(DEMO_SCENE_SCM, NULL, NULL);
 }
 
 void demo_plugin_entry(struct subsystem_manager *mgr)

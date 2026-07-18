@@ -310,3 +310,145 @@ int32_t scene_script_call(struct world *w, const struct asset_api *asset,
 			       s7_list(sc, 1, s7_make_integer(sc, arg)));
 	return s7_is_integer(res) ? (int32_t)s7_integer(res) : 0;
 }
+
+/*
+ * Entities spawned per scene_script_build_tick() call — bounds a chunked
+ * build's per-frame cost regardless of scene size. Small enough that even a
+ * modest scene animates over a few frames; tune up if bigger scenes need to
+ * finish sooner.
+ */
+#define SCENE_BUILD_STEP_BUDGET 6
+
+/*
+ * The one chunked build in flight, if any — a single g_w/g_asset-bound world
+ * only ever hosts one build at a time, the same assumption scene_call_bound
+ * already makes for the synchronous entry points above.
+ */
+static struct {
+	int                     active;
+	struct world           *w;
+	const struct asset_api *asset;
+	s7_pointer              remaining; /* tail of the gc-protected plan list */
+	s7_pointer              ids;       /* gc-protected vector: flat-idx -> spawned id */
+	s7_pointer              apply_fn;  /* scene-plan-apply!, resolved once */
+	s7_int                  plan_gc;
+	s7_int                  ids_gc;
+	int32_t                 total;
+	int32_t                 cursor;
+	scene_build_done_fn     on_done;
+	void                   *ud;
+} g_build;
+
+static void build_finish(void)
+{
+	scene_build_done_fn on_done = g_build.on_done;
+	void                *ud     = g_build.ud;
+	s7_scheme           *sc     = script_s7();
+
+	if (sc && g_build.active) {
+		s7_gc_unprotect_at(sc, g_build.plan_gc);
+		s7_gc_unprotect_at(sc, g_build.ids_gc);
+	}
+	g_build.active = 0;
+	if (on_done)
+		on_done(ud);
+}
+
+void scene_script_build_begin(struct world *w, const struct asset_api *asset,
+			      const char *src, scene_build_done_fn on_done,
+			      void *ud)
+{
+	s7_scheme *sc;
+	s7_pointer parse_fn, plan, p;
+	int32_t    total;
+
+	g_build.on_done = on_done;
+	g_build.ud      = ud;
+	g_build.active  = 0;
+
+	sc = w && src ? script_s7() : NULL;
+	if (!sc) {
+		if (on_done)
+			on_done(ud);
+		return;
+	}
+
+	parse_fn        = s7_name_to_value(sc, "scene-parse");
+	g_build.apply_fn = s7_name_to_value(sc, "scene-plan-apply!");
+	if (!s7_is_procedure(parse_fn) || !s7_is_procedure(g_build.apply_fn)) {
+		if (on_done)
+			on_done(ud);
+		return;
+	}
+
+	plan = s7_call(sc, parse_fn, s7_list(sc, 1, s7_make_string(sc, src)));
+	total = 0;
+	for (p = plan; s7_is_pair(p); p = s7_cdr(p))
+		total++;
+	if (total <= 0) {
+		if (on_done)
+			on_done(ud);
+		return;
+	}
+
+	g_build.w         = w;
+	g_build.asset     = asset;
+	g_build.remaining = plan;
+	g_build.plan_gc   = s7_gc_protect(sc, plan);
+	g_build.ids       = s7_make_vector(sc, total);
+	g_build.ids_gc    = s7_gc_protect(sc, g_build.ids);
+	g_build.total     = total;
+	g_build.cursor    = 0;
+	g_build.active    = 1;
+}
+
+void scene_script_build_tick(void)
+{
+	s7_scheme *sc;
+	int32_t    n;
+
+	if (!g_build.active)
+		return;
+	sc = script_s7();
+	if (!sc) {
+		build_finish();
+		return;
+	}
+
+	g_w     = g_build.w;
+	g_asset = g_build.asset;
+
+	for (n = 0; n < SCENE_BUILD_STEP_BUDGET && g_build.cursor < g_build.total;
+	     n++, g_build.cursor++) {
+		s7_pointer node       = s7_car(g_build.remaining);
+		s7_pointer clauses    = s7_car(node);
+		int32_t    parent_idx = (int32_t)s7_integer(s7_cdr(node));
+		int32_t    parent_id  = parent_idx >= 0
+			? (int32_t)s7_integer(s7_vector_ref(sc, g_build.ids, parent_idx))
+			: -1;
+		s7_pointer id = s7_call(sc, g_build.apply_fn,
+					s7_list(sc, 2, s7_make_integer(sc, parent_id),
+						clauses));
+		int32_t idv = s7_is_integer(id) ? (int32_t)s7_integer(id) : -1;
+
+		s7_vector_set(sc, g_build.ids, g_build.cursor, s7_make_integer(sc, idv));
+		g_build.remaining = s7_cdr(g_build.remaining);
+	}
+
+	g_w     = NULL;
+	g_asset = NULL;
+
+	if (g_build.cursor >= g_build.total)
+		build_finish();
+}
+
+int32_t scene_script_build_active(void)
+{
+	return g_build.active;
+}
+
+float scene_script_build_progress(void)
+{
+	return g_build.total > 0
+		? (float)g_build.cursor / (float)g_build.total : 1.0f;
+}

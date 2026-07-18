@@ -19,7 +19,7 @@
 		(root "abi"))
 	(link "subsystem" "subsystem_manager" "log" "memory" "script")
 	(wasm-modules "asset_plugin" "edit_plugin" "entity_plugin"
-		"renderer_webgl" "frame_graph" "scene_renderer"
+		"renderer_webgl" "renderer_webgpu" "frame_graph" "scene_renderer"
 		"kruddboard" "kruddgui" "audio_scriptnode"
 		"demo_game" "tictactoe_game"))
 

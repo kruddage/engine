@@ -163,6 +163,41 @@ const char *script_shader_transpile(const char *src, const char *stage)
 	return buf;
 }
 
+/*
+ * The WGSL twin of script_shader_transpile: call (shader-transpile-wgsl SRC
+ * STAGE) for the WebGPU backend. Same rotating-buffer contract so a caller can
+ * hold the vertex and fragment WGSL at once; NULL on #f / down interpreter /
+ * oversized result.
+ */
+const char *script_shader_transpile_wgsl(const char *src, const char *stage)
+{
+	static char g_wgsl[2][16384];
+	static int  slot;
+	s7_pointer  fn, res;
+	const char *out;
+	size_t      n;
+	char       *buf;
+
+	if (!g_s7 || !src || !stage)
+		return NULL;
+	fn = s7_name_to_value(g_s7, "shader-transpile-wgsl");
+	if (!s7_is_procedure(fn))
+		return NULL;
+	res = s7_call(g_s7, fn,
+		      s7_list(g_s7, 2, s7_make_string(g_s7, src),
+			      s7_make_string(g_s7, stage)));
+	if (!s7_is_string(res))
+		return NULL;
+	out = s7_string(res);
+	n   = strlen(out);
+	buf = g_wgsl[slot];
+	if (n + 1 > sizeof(g_wgsl[0]))
+		return NULL;
+	memcpy(buf, out, n + 1);
+	slot = (slot + 1) & 1;
+	return buf;
+}
+
 /* Copy a Scheme string field into a fixed C buffer, always NUL-terminated. */
 static void copy_field(char *dst, size_t cap, s7_pointer s)
 {

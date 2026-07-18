@@ -62,6 +62,32 @@ int main(void)
 	assert(script_shader_transpile(SCENE, "compute") == NULL);
 
 	/*
+	 * The WGSL twin path (the WebGPU backend's bind-time seam): the same DSL
+	 * lowers to WGSL, with struct-based IO, the qualified uniform read, and
+	 * the same missing-stage NULL contract.
+	 */
+	{
+		const char *wvs = script_shader_transpile_wgsl(SCENE, "vertex");
+		const char *wfs = script_shader_transpile_wgsl(SCENE, "fragment");
+
+		assert(wvs != NULL);
+		assert(strstr(wvs, "@vertex") != NULL);
+		assert(strstr(wvs,
+			      "fn vs_main(in : VertexInput) -> VertexOutput") != NULL);
+		assert(strstr(wvs,
+			      "out.position = (u_Camera.view_proj * u_Camera.model"
+			      " * vec4<f32>(in.a_pos, 1.0));") != NULL);
+
+		assert(wfs != NULL);
+		assert(strstr(wfs, "@fragment") != NULL);
+		assert(strstr(wfs,
+			      "fn fs_main(in : FragmentInput) -> FragmentOutput")
+		       != NULL);
+
+		assert(script_shader_transpile_wgsl(SCENE, "compute") == NULL);
+	}
+
+	/*
 	 * The Material-block introspection seam: the same image reports a
 	 * shader's editable parameters (std140 offsets + edit hints), which the
 	 * editor turns into widgets and the packer turns into material bytes.

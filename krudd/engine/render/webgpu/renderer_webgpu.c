@@ -54,6 +54,7 @@ static int               g_ready;    /* 1 once the device + surface are live */
 /* The triangle, now owned as ordinary gpu_api resources. */
 static gpu_pipeline_t g_tri_pso;
 static gpu_buffer_t   g_tri_vbuf;
+static gpu_buffer_t   g_tri_ubo;
 
 /*
  * The triangle authored in the krudd shader DSL — the same source of truth the
@@ -63,10 +64,28 @@ static gpu_buffer_t   g_tri_vbuf;
 static const char *TRI_SHADER =
 	"(shader tri"
 	"  (inputs (a_pos vec2 (location 0)) (a_col vec3 (location 1)))"
+	"  (uniforms"
+	"    (Camera (block 0) (layout std140)"
+	"      (view_proj mat4)))"
 	"  (varyings (v_col vec3))"
 	"  (targets (frag_color vec4 (location 0)))"
-	"  (vertex (set v_col a_col) (set position (vec4 a_pos 0.0 1.0)))"
+	"  (vertex (set v_col a_col)"
+	"          (set position (* view_proj (vec4 a_pos 0.0 1.0))))"
 	"  (fragment (set frag_color (vec4 v_col 1.0))))";
+
+/*
+ * The triangle's Camera block, holding an identity view_proj. Identity is the
+ * point: it makes the uniform path testable without changing the picture. If
+ * the buffer never reaches the shader the matrix reads as zeros, every vertex
+ * collapses to the origin, and the triangle vanishes — so an unchanged image
+ * is positive evidence the binding worked, not merely the absence of a change.
+ */
+static const float TRI_VIEW_PROJ[16] = {
+	1.0f, 0.0f, 0.0f, 0.0f,
+	0.0f, 1.0f, 0.0f, 0.0f,
+	0.0f, 0.0f, 1.0f, 0.0f,
+	0.0f, 0.0f, 0.0f, 1.0f,
+};
 
 /* 3 vertices, interleaved: pos.x pos.y  col.r col.g col.b (stride 20 bytes). */
 static const float TRI_VERTS[] = {
@@ -133,8 +152,48 @@ struct gpu_buffer {
 	uint32_t   size;
 };
 
+/*
+ * Uniform slots live in bind group 0, one binding per slot, mirroring the
+ * scheme shader.scm documents and its tests pin:
+ *   uniform block (block N) -> @group(0) @binding(N) var<uniform> u_<Name>
+ */
+#define WGPU_MAX_UNIFORM_SLOTS 8
+
+/*
+ * Bind groups are immutable, so one is needed per distinct set of bound
+ * resources. Eight per pipeline covers the engine's actual pattern — a scene
+ * shader rebinds the same few buffers every frame, so the cache hits after the
+ * first frame. A pipeline that cycles through more combinations than this
+ * evicts and rebuilds, which is correct but wasteful; if that ever shows up,
+ * the answer is dynamic offsets rather than a bigger cache.
+ */
+#define WGPU_BIND_GROUP_CACHE 8
+
+struct uniform_binding {
+	WGPUBuffer buf;
+	uint32_t   offset;
+	uint32_t   size;
+};
+
+struct bind_group_entry {
+	WGPUBindGroup          bg;
+	struct uniform_binding slots[WGPU_MAX_UNIFORM_SLOTS];
+	uint32_t               mask;
+	int                    valid;
+};
+
 struct gpu_pipeline {
 	WGPURenderPipeline pso;
+	/*
+	 * Which uniform slots this pipeline actually requires. Derived from the
+	 * generated WGSL rather than the DSL source, because the transpiler only
+	 * emits a block that the stage *uses* — a shader that declares Camera but
+	 * never reads it needs no binding, and building a bind group for it would
+	 * be a validation error.
+	 */
+	uint32_t uniform_mask;
+	struct bind_group_entry cache[WGPU_BIND_GROUP_CACHE];
+	uint32_t next_evict;
 };
 
 /*
@@ -151,6 +210,16 @@ struct gpu_cmd_buf_state {
 	WGPUTexture     surface_tex;
 	WGPUTextureView surface_view;
 	int             in_use;
+
+	/*
+	 * Pending uniform bindings. GL bound these straight into slot state the
+	 * next draw inherited; WebGPU has no such state, so they accumulate here
+	 * and resolve into an immutable bind group at draw time.
+	 */
+	struct gpu_pipeline   *pipeline;
+	struct uniform_binding uniforms[WGPU_MAX_UNIFORM_SLOTS];
+	uint32_t               uniform_mask;
+	int                    bindings_dirty;
 };
 
 static struct gpu_cmd_buf_state g_cmd;
@@ -359,6 +428,140 @@ static const char *lower_stage(const struct gpu_shader_source *src,
 	return script_shader_transpile_wgsl(src->src, stage_name);
 }
 
+/*
+ * Which uniform slots a lowered stage requires, as a bitmask over binding
+ * indices. Scans for the exact declaration shader.scm emits and its tests pin:
+ *
+ *   @group(0) @binding(N) var<uniform> u_Name : Name;
+ *
+ * Reading the generated WGSL rather than the DSL is deliberate: the transpiler
+ * emits a block only where the stage uses it, so this reflects what the
+ * pipeline genuinely requires. Bind group 1 (textures) is skipped here — that
+ * arrives with texture support.
+ */
+static uint32_t scan_uniform_slots(const char *wgsl)
+{
+	static const char NEEDLE[] = "@group(0) @binding(";
+	const size_t nlen = sizeof(NEEDLE) - 1;
+	uint32_t mask = 0;
+	const char *p = wgsl;
+
+	if (!wgsl)
+		return 0;
+
+	while ((p = strstr(p, NEEDLE)) != NULL) {
+		unsigned slot = 0;
+		const char *d = p + nlen;
+
+		if (*d < '0' || *d > '9') {
+			p = d;
+			continue;
+		}
+		while (*d >= '0' && *d <= '9')
+			slot = slot * 10u + (unsigned)(*d++ - '0');
+		if (slot < WGPU_MAX_UNIFORM_SLOTS)
+			mask |= 1u << slot;
+		else
+			g_log->write(LOG_LEVEL_ERROR,
+				     "renderer_webgpu: uniform slot %u exceeds %d",
+				     slot, WGPU_MAX_UNIFORM_SLOTS);
+		p = d;
+	}
+	return mask;
+}
+
+/*
+ * Find or build the bind group matching the currently pending uniform bindings
+ * for this pipeline. The cache key is the whole binding set, since a bind group
+ * is only reusable when every buffer, offset and size matches.
+ */
+static WGPUBindGroup resolve_bind_group(struct gpu_pipeline *p,
+					const struct uniform_binding *want)
+{
+	WGPUBindGroupEntry entries[WGPU_MAX_UNIFORM_SLOTS];
+	WGPUBindGroupDescriptor bd;
+	WGPUBindGroupLayout layout;
+	struct bind_group_entry *slot;
+	uint32_t i;
+	uint32_t n = 0;
+
+	for (i = 0; i < WGPU_BIND_GROUP_CACHE; i++) {
+		struct bind_group_entry *e = &p->cache[i];
+
+		if (!e->valid || e->mask != p->uniform_mask)
+			continue;
+		if (memcmp(e->slots, want, sizeof(e->slots)) == 0)
+			return e->bg;
+	}
+
+	memset(entries, 0, sizeof(entries));
+	for (i = 0; i < WGPU_MAX_UNIFORM_SLOTS; i++) {
+		if (!(p->uniform_mask & (1u << i)))
+			continue;
+		if (!want[i].buf) {
+			g_log->write(LOG_LEVEL_ERROR,
+				     "renderer_webgpu: pipeline needs uniform slot %u but nothing is bound",
+				     i);
+			return NULL;
+		}
+		entries[n].binding = i;
+		entries[n].buffer  = want[i].buf;
+		entries[n].offset  = want[i].offset;
+		entries[n].size    = want[i].size;
+		n++;
+	}
+
+	/*
+	 * Pipelines are created with an auto layout, so the layout Dawn derived
+	 * from the shader is the authority on what group 0 looks like — no need
+	 * to reconstruct it here and risk disagreeing with the shader.
+	 */
+	layout = wgpuRenderPipelineGetBindGroupLayout(p->pso, 0);
+	if (!layout)
+		return NULL;
+
+	memset(&bd, 0, sizeof(bd));
+	bd.layout     = layout;
+	bd.entryCount = n;
+	bd.entries    = entries;
+
+	slot = &p->cache[p->next_evict];
+	if (slot->valid && slot->bg)
+		wgpuBindGroupRelease(slot->bg);
+	p->next_evict = (p->next_evict + 1u) % WGPU_BIND_GROUP_CACHE;
+
+	slot->bg = wgpuDeviceCreateBindGroup(g_device, &bd);
+	memcpy(slot->slots, want, sizeof(slot->slots));
+	slot->mask  = p->uniform_mask;
+	slot->valid = slot->bg != NULL;
+
+	wgpuBindGroupLayoutRelease(layout);
+	return slot->bg;
+}
+
+/*
+ * Called before every draw. A pipeline that requires no uniforms skips the
+ * whole path, which is what keeps a bind-group-less pipeline (the probe before
+ * this slice) working unchanged.
+ */
+static int apply_bindings(struct gpu_cmd_buf_state *c)
+{
+	WGPUBindGroup bg;
+
+	if (!c->pipeline || !c->pipeline->uniform_mask)
+		return 1;
+	if (!c->bindings_dirty)
+		return 1;
+
+	bg = resolve_bind_group(c->pipeline, c->uniforms);
+	if (!bg)
+		return 0;
+
+	wgpuRenderPassEncoderSetBindGroup(c->pass, 0, bg, 0, NULL);
+	c->bindings_dirty = 0;
+	return 1;
+}
+
 static gpu_pipeline_t webgpu_pipeline_create(const struct gpu_pipeline_desc *desc)
 {
 	struct gpu_pipeline *p;
@@ -389,6 +592,8 @@ static gpu_pipeline_t webgpu_pipeline_create(const struct gpu_pipeline_desc *des
 	p = g_mem->alloc(sizeof(*p));
 	if (!p)
 		return NULL;
+	memset(p, 0, sizeof(*p));
+	p->uniform_mask = scan_uniform_slots(vs_wgsl) | scan_uniform_slots(fs_wgsl);
 
 	vmod = make_module(vs_wgsl);
 	fmod = make_module(fs_wgsl);
@@ -487,9 +692,14 @@ static gpu_pipeline_t webgpu_pipeline_create(const struct gpu_pipeline_desc *des
 static void webgpu_pipeline_destroy(gpu_pipeline_t pipeline)
 {
 	struct gpu_pipeline *p = (struct gpu_pipeline *)pipeline;
+	uint32_t i;
 
 	if (!p)
 		return;
+	for (i = 0; i < WGPU_BIND_GROUP_CACHE; i++) {
+		if (p->cache[i].valid && p->cache[i].bg)
+			wgpuBindGroupRelease(p->cache[i].bg);
+	}
 	if (p->pso)
 		wgpuRenderPipelineRelease(p->pso);
 	g_mem->free(p);
@@ -503,6 +713,12 @@ static void webgpu_cmd_set_pipeline(gpu_cmd_buf_t cmd, gpu_pipeline_t pipeline)
 	if (!c || !c->pass || !p || !p->pso)
 		return;
 	wgpuRenderPassEncoderSetPipeline(c->pass, p->pso);
+
+	/* A different pipeline may want a different bind group for the same
+	 * bindings, so the resolved group no longer necessarily applies. */
+	if (c->pipeline != p)
+		c->bindings_dirty = 1;
+	c->pipeline = p;
 }
 
 /* -------------------------------------------------------- render passes */
@@ -611,16 +827,39 @@ static void webgpu_cmd_bind_index_buffer(gpu_cmd_buf_t cmd, gpu_buffer_t buf,
 }
 
 /*
- * Uniform binding needs a bind group cache: WebGPU has no mutable slot state
- * for a draw to inherit, so bindings must be accumulated and resolved into an
- * immutable bind group at draw time. That is the next slice's whole subject.
+ * Record a uniform binding. Nothing reaches the GPU here: WebGPU has no mutable
+ * slot state a later draw could inherit, so the binding is staged and the draw
+ * resolves the whole set into an immutable bind group.
  */
 static void webgpu_cmd_bind_uniform_buffer(gpu_cmd_buf_t cmd, uint32_t slot,
 					   gpu_buffer_t buf, uint32_t offset,
 					   uint32_t size)
 {
-	(void)cmd; (void)slot; (void)buf; (void)offset; (void)size;
-	STUB_ONCE("cmd_bind_uniform_buffer (needs the bind group cache)");
+	struct gpu_cmd_buf_state *c = (struct gpu_cmd_buf_state *)cmd;
+	struct gpu_buffer *b = (struct gpu_buffer *)buf;
+	struct uniform_binding *u;
+
+	if (!c || slot >= WGPU_MAX_UNIFORM_SLOTS)
+		return;
+
+	u = &c->uniforms[slot];
+	if (!b || !b->buf) {
+		if (u->buf) {
+			memset(u, 0, sizeof(*u));
+			c->uniform_mask &= ~(1u << slot);
+			c->bindings_dirty = 1;
+		}
+		return;
+	}
+
+	if (u->buf == b->buf && u->offset == offset && u->size == size)
+		return;
+
+	u->buf    = b->buf;
+	u->offset = offset;
+	u->size   = size ? size : b->size - offset;
+	c->uniform_mask |= 1u << slot;
+	c->bindings_dirty = 1;
 }
 
 /* --------------------------------------------------------------- draws */
@@ -633,6 +872,8 @@ static void webgpu_cmd_draw(gpu_cmd_buf_t cmd, uint32_t vertex_count,
 
 	if (!c || !c->pass)
 		return;
+	if (!apply_bindings(c))
+		return;
 	wgpuRenderPassEncoderDraw(c->pass, vertex_count,
 				  instance_count ? instance_count : 1,
 				  first_vertex, first_instance);
@@ -644,6 +885,8 @@ static void webgpu_cmd_draw_indexed(gpu_cmd_buf_t cmd,
 	struct gpu_cmd_buf_state *c = (struct gpu_cmd_buf_state *)cmd;
 
 	if (!c || !c->pass)
+		return;
+	if (!apply_bindings(c))
 		return;
 	wgpuRenderPassEncoderDrawIndexed(c->pass, args->index_count,
 					 args->instance_count ? args->instance_count : 1,
@@ -851,7 +1094,13 @@ static void create_triangle(void)
 	bd.initial_data = TRI_VERTS;
 	g_tri_vbuf = webgpu_api.buffer_create(&bd);
 
-	webgpu_status((g_tri_pso && g_tri_vbuf)
+	memset(&bd, 0, sizeof(bd));
+	bd.size         = sizeof(TRI_VIEW_PROJ);
+	bd.usage        = GPU_BUFFER_USAGE_UNIFORM;
+	bd.initial_data = TRI_VIEW_PROJ;
+	g_tri_ubo = webgpu_api.buffer_create(&bd);
+
+	webgpu_status((g_tri_pso && g_tri_vbuf && g_tri_ubo)
 		      ? "webgpu: triangle pipeline ready"
 		      : "webgpu: triangle pipeline FAILED");
 }
@@ -975,9 +1224,11 @@ static void renderer_webgpu_tick(void)
 	rp.color[0].clear[3] = 1.0f;
 
 	webgpu_api.cmd_begin_render_pass(cmd, &rp);
-	if (g_tri_pso && g_tri_vbuf) {
+	if (g_tri_pso && g_tri_vbuf && g_tri_ubo) {
 		webgpu_api.cmd_set_pipeline(cmd, g_tri_pso);
 		webgpu_api.cmd_bind_vertex_buffer(cmd, 0, g_tri_vbuf, 0);
+		webgpu_api.cmd_bind_uniform_buffer(cmd, 0, g_tri_ubo, 0,
+						   sizeof(TRI_VIEW_PROJ));
 		webgpu_api.cmd_draw(cmd, 3, 1, 0, 0);
 	}
 	webgpu_api.cmd_end_render_pass(cmd);
@@ -986,10 +1237,13 @@ static void renderer_webgpu_tick(void)
 
 static void renderer_webgpu_shutdown(void)
 {
+	if (g_tri_ubo)
+		webgpu_api.buffer_destroy(g_tri_ubo);
 	if (g_tri_vbuf)
 		webgpu_api.buffer_destroy(g_tri_vbuf);
 	if (g_tri_pso)
 		webgpu_api.pipeline_destroy(g_tri_pso);
+	g_tri_ubo  = NULL;
 	g_tri_vbuf = NULL;
 	g_tri_pso  = NULL;
 	g_ready    = 0;

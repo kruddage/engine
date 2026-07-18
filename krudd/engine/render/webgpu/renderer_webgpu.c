@@ -55,6 +55,8 @@ static int               g_ready;    /* 1 once the device + surface are live */
 static gpu_pipeline_t g_tri_pso;
 static gpu_buffer_t   g_tri_vbuf;
 static gpu_buffer_t   g_tri_ubo;
+static gpu_texture_t  g_depth;
+static uint32_t       g_depth_w, g_depth_h;
 
 /*
  * The triangle authored in the krudd shader DSL — the same source of truth the
@@ -63,14 +65,14 @@ static gpu_buffer_t   g_tri_ubo;
  */
 static const char *TRI_SHADER =
 	"(shader tri"
-	"  (inputs (a_pos vec2 (location 0)) (a_col vec3 (location 1)))"
+	"  (inputs (a_pos vec3 (location 0)) (a_col vec3 (location 1)))"
 	"  (uniforms"
 	"    (Camera (block 0) (layout std140)"
 	"      (view_proj mat4)))"
 	"  (varyings (v_col vec3))"
 	"  (targets (frag_color vec4 (location 0)))"
 	"  (vertex (set v_col a_col)"
-	"          (set position (* view_proj (vec4 a_pos 0.0 1.0))))"
+	"          (set position (* view_proj (vec4 a_pos 1.0))))"
 	"  (fragment (set frag_color (vec4 v_col 1.0))))";
 
 /*
@@ -87,11 +89,29 @@ static const float TRI_VIEW_PROJ[16] = {
 	0.0f, 0.0f, 0.0f, 1.0f,
 };
 
-/* 3 vertices, interleaved: pos.x pos.y  col.r col.g col.b (stride 20 bytes). */
+/*
+ * Two coincident triangles, interleaved pos.xyz + col.rgb (stride 24 bytes).
+ *
+ * They occupy exactly the same screen area at different depths, and the far one
+ * is drawn second in flat magenta. That makes depth testing observable while
+ * keeping the picture unchanged: with depth working the near triangle wins
+ * every pixel and the image is identical to before this slice, and if depth
+ * silently fails the later draw covers the whole shape in magenta. Total
+ * occlusion rather than a partial overlap, so the test has no ambiguous middle
+ * ground to squint at.
+ */
+#define TRI_NEAR_Z 0.2f
+#define TRI_FAR_Z  0.8f
+
 static const float TRI_VERTS[] = {
-	 0.0f,  0.6f,   1.0f, 0.25f, 0.35f,
-	-0.6f, -0.5f,   0.25f, 1.0f, 0.4f,
-	 0.6f, -0.5f,   0.3f, 0.45f, 1.0f,
+	/* near — the original colours */
+	 0.0f,  0.6f, TRI_NEAR_Z,   1.0f, 0.25f, 0.35f,
+	-0.6f, -0.5f, TRI_NEAR_Z,   0.25f, 1.0f, 0.4f,
+	 0.6f, -0.5f, TRI_NEAR_Z,   0.3f, 0.45f, 1.0f,
+	/* far — flat magenta, drawn second, must lose every pixel */
+	 0.0f,  0.6f, TRI_FAR_Z,    1.0f, 0.0f, 1.0f,
+	-0.6f, -0.5f, TRI_FAR_Z,    1.0f, 0.0f, 1.0f,
+	 0.6f, -0.5f, TRI_FAR_Z,    1.0f, 0.0f, 1.0f,
 };
 
 /*
@@ -180,6 +200,15 @@ struct bind_group_entry {
 	struct uniform_binding slots[WGPU_MAX_UNIFORM_SLOTS];
 	uint32_t               mask;
 	int                    valid;
+};
+
+struct gpu_texture {
+	WGPUTexture     tex;
+	WGPUTextureView view;
+	uint32_t        width;
+	uint32_t        height;
+	uint32_t        mip_levels;
+	gpu_format      format;
 };
 
 struct gpu_pipeline {
@@ -728,6 +757,7 @@ static void webgpu_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 {
 	struct gpu_cmd_buf_state *c = (struct gpu_cmd_buf_state *)cmd;
 	WGPURenderPassColorAttachment color[GPU_MAX_COLOR_ATTACHMENTS];
+	WGPURenderPassDepthStencilAttachment depth_att;
 	WGPURenderPassDescriptor rp;
 	WGPUSurfaceTexture st;
 	uint32_t i;
@@ -761,8 +791,11 @@ static void webgpu_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 			}
 			color[i].view = c->surface_view;
 		} else {
-			STUB_ONCE("offscreen color attachments");
-			return;
+			struct gpu_texture *t = (struct gpu_texture *)a->texture;
+
+			if (!t->view)
+				return;
+			color[i].view = t->view;
 		}
 
 		color[i].depthSlice   = WGPU_DEPTH_SLICE_UNDEFINED;
@@ -778,12 +811,44 @@ static void webgpu_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 		color[i].clearValue.a = a->clear[3];
 	}
 
-	if (desc->depth)
-		STUB_ONCE("depth attachments");
-
 	memset(&rp, 0, sizeof(rp));
 	rp.colorAttachmentCount = count;
 	rp.colorAttachments     = color;
+
+	if (desc->depth) {
+		struct gpu_texture *d = (struct gpu_texture *)desc->depth;
+
+		memset(&depth_att, 0, sizeof(depth_att));
+		depth_att.view             = d->view;
+		depth_att.depthLoadOp      = to_load_op(desc->depth_load_op);
+		depth_att.depthStoreOp     = to_store_op(desc->depth_store_op);
+		depth_att.depthClearValue  = desc->clear_depth;
+		/*
+		 * Depth32Float carries no stencil, and WebGPU rejects stencil ops
+		 * on a format without one, so they stay Undefined rather than
+		 * mirroring the depth ops.
+		 */
+		depth_att.stencilLoadOp    = WGPULoadOp_Undefined;
+		depth_att.stencilStoreOp   = WGPUStoreOp_Undefined;
+		rp.depthStencilAttachment  = &depth_att;
+	}
+
+	/*
+	 * A depth-only pass (the sun shadow map) supplies no colour at all. The
+	 * count fallback above assumes the backbuffer, which is right for a
+	 * colour pass with no explicit attachment but wrong here, so drop the
+	 * colour attachments when depth is the only target.
+	 */
+	if (desc->color_count == 0 && desc->depth) {
+		rp.colorAttachmentCount = 0;
+		rp.colorAttachments     = NULL;
+		if (c->surface_view) {
+			wgpuTextureViewRelease(c->surface_view);
+			wgpuTextureRelease(c->surface_tex);
+			c->surface_view = NULL;
+			c->surface_tex  = NULL;
+		}
+	}
 
 	c->pass = wgpuCommandEncoderBeginRenderPass(c->enc, &rp);
 }
@@ -913,15 +978,71 @@ static void webgpu_cmd_set_scissor(gpu_cmd_buf_t cmd, int32_t x, int32_t y,
 
 static gpu_texture_t webgpu_texture_create(const struct gpu_texture_desc *desc)
 {
-	(void)desc;
-	STUB_ONCE("texture_create");
-	return NULL;
+	struct gpu_texture *t;
+	WGPUTextureDescriptor td;
+
+	if (!g_ready)
+		return NULL;
+
+	t = g_mem->alloc(sizeof(*t));
+	if (!t)
+		return NULL;
+	memset(t, 0, sizeof(*t));
+
+	t->width      = desc->width;
+	t->height     = desc->height;
+	t->format     = desc->format;
+	t->mip_levels = desc->mip_levels ? desc->mip_levels : 1;
+
+	memset(&td, 0, sizeof(td));
+	td.dimension     = WGPUTextureDimension_2D;
+	td.size.width    = desc->width;
+	td.size.height   = desc->height;
+	td.size.depthOrArrayLayers = 1;
+	td.format        = to_texture_format(desc->format);
+	td.mipLevelCount = t->mip_levels;
+	td.sampleCount   = desc->sample_count ? desc->sample_count : 1;
+	/*
+	 * Every texture the engine makes is either drawn into or sampled, and
+	 * usually both (a shadow map is a depth target this frame and a sampled
+	 * texture the next), so ask for both up front rather than guessing from
+	 * the descriptor. CopyDst covers pixel uploads.
+	 */
+	td.usage = WGPUTextureUsage_RenderAttachment |
+		   WGPUTextureUsage_TextureBinding |
+		   WGPUTextureUsage_CopyDst;
+
+	t->tex = wgpuDeviceCreateTexture(g_device, &td);
+	if (!t->tex) {
+		g_log->write(LOG_LEVEL_ERROR,
+			     "renderer_webgpu: texture_create failed (%ux%u fmt=%d)",
+			     desc->width, desc->height, (int)desc->format);
+		g_mem->free(t);
+		return NULL;
+	}
+	t->view = wgpuTextureCreateView(t->tex, NULL);
+
+	if (desc->initial_data)
+		STUB_ONCE("texture initial_data upload");
+	if (desc->generate_mips)
+		STUB_ONCE("generate_mips (needs a blit chain on WebGPU)");
+
+	return (gpu_texture_t)t;
 }
 
 static void webgpu_texture_destroy(gpu_texture_t texture)
 {
-	(void)texture;
-	STUB_ONCE("texture_destroy");
+	struct gpu_texture *t = (struct gpu_texture *)texture;
+
+	if (!t)
+		return;
+	if (t->view)
+		wgpuTextureViewRelease(t->view);
+	if (t->tex) {
+		wgpuTextureDestroy(t->tex);
+		wgpuTextureRelease(t->tex);
+	}
+	g_mem->free(t);
 }
 
 static void webgpu_cmd_bind_texture(gpu_cmd_buf_t cmd, uint32_t unit,
@@ -1058,6 +1179,37 @@ static void configure_surface(void)
  * — shader lowering, pipeline creation, buffer upload — now goes through the
  * gpu_api entry points the rest of the engine will use.
  */
+/*
+ * The probe's own depth target, sized to the surface. Once the scene renderer
+ * runs on this backend the frame graph owns depth as a transient resource and
+ * this goes away with the rest of the probe's frame.
+ */
+static void create_depth_target(void)
+{
+	struct gpu_texture_desc td;
+	double w = 0.0, h = 0.0;
+
+	emscripten_get_element_css_size("#canvas", &w, &h);
+	if (w < 1.0 || h < 1.0)
+		return;
+	if (g_depth && g_depth_w == (uint32_t)w && g_depth_h == (uint32_t)h)
+		return;
+
+	if (g_depth)
+		webgpu_api.texture_destroy(g_depth);
+
+	memset(&td, 0, sizeof(td));
+	td.format       = GPU_FORMAT_DEPTH32_FLOAT;
+	td.width        = (uint32_t)w;
+	td.height       = (uint32_t)h;
+	td.mip_levels   = 1;
+	td.sample_count = 1;
+
+	g_depth   = webgpu_api.texture_create(&td);
+	g_depth_w = td.width;
+	g_depth_h = td.height;
+}
+
 static void create_triangle(void)
 {
 	struct gpu_pipeline_desc pd;
@@ -1068,15 +1220,15 @@ static void create_triangle(void)
 	pd.color_format_count   = 0; /* backbuffer: take the surface format */
 	pd.topology             = GPU_TOPOLOGY_TRIANGLE_LIST;
 	pd.sample_count         = 1;
-	pd.depth_format         = GPU_FORMAT_UNKNOWN;
+	pd.depth_format         = GPU_FORMAT_DEPTH32_FLOAT;
 
 	pd.vertex_layout.attr_count   = 2;
-	pd.vertex_layout.stride       = 20;
+	pd.vertex_layout.stride       = 24;
 	pd.vertex_layout.attrs[0].location = 0;
 	pd.vertex_layout.attrs[0].offset   = 0;
-	pd.vertex_layout.attrs[0].format   = GPU_FORMAT_RG32_FLOAT;
+	pd.vertex_layout.attrs[0].format   = GPU_FORMAT_RGB32_FLOAT;
 	pd.vertex_layout.attrs[1].location = 1;
-	pd.vertex_layout.attrs[1].offset   = 8;
+	pd.vertex_layout.attrs[1].offset   = 12;
 	pd.vertex_layout.attrs[1].format   = GPU_FORMAT_RGB32_FLOAT;
 
 	pd.vert.src     = TRI_SHADER;
@@ -1100,7 +1252,9 @@ static void create_triangle(void)
 	bd.initial_data = TRI_VIEW_PROJ;
 	g_tri_ubo = webgpu_api.buffer_create(&bd);
 
-	webgpu_status((g_tri_pso && g_tri_vbuf && g_tri_ubo)
+	create_depth_target();
+
+	webgpu_status((g_tri_pso && g_tri_vbuf && g_tri_ubo && g_depth)
 		      ? "webgpu: triangle pipeline ready"
 		      : "webgpu: triangle pipeline FAILED");
 }
@@ -1222,6 +1376,10 @@ static void renderer_webgpu_tick(void)
 	rp.color[0].clear[1] = 0.04f;
 	rp.color[0].clear[2] = 0.07f;
 	rp.color[0].clear[3] = 1.0f;
+	rp.depth             = g_depth;
+	rp.depth_load_op     = GPU_LOAD_OP_CLEAR;
+	rp.depth_store_op    = GPU_STORE_OP_STORE;
+	rp.clear_depth       = 1.0f;
 
 	webgpu_api.cmd_begin_render_pass(cmd, &rp);
 	if (g_tri_pso && g_tri_vbuf && g_tri_ubo) {
@@ -1229,7 +1387,9 @@ static void renderer_webgpu_tick(void)
 		webgpu_api.cmd_bind_vertex_buffer(cmd, 0, g_tri_vbuf, 0);
 		webgpu_api.cmd_bind_uniform_buffer(cmd, 0, g_tri_ubo, 0,
 						   sizeof(TRI_VIEW_PROJ));
-		webgpu_api.cmd_draw(cmd, 3, 1, 0, 0);
+		/* Both triangles in one draw: the far one is behind and must be
+		 * rejected, which is the depth test's proof of life. */
+		webgpu_api.cmd_draw(cmd, 6, 1, 0, 0);
 	}
 	webgpu_api.cmd_end_render_pass(cmd);
 	webgpu_api.cmd_buf_submit(cmd);
@@ -1237,6 +1397,9 @@ static void renderer_webgpu_tick(void)
 
 static void renderer_webgpu_shutdown(void)
 {
+	if (g_depth)
+		webgpu_api.texture_destroy(g_depth);
+	g_depth = NULL;
 	if (g_tri_ubo)
 		webgpu_api.buffer_destroy(g_tri_ubo);
 	if (g_tri_vbuf)

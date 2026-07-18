@@ -71,7 +71,6 @@ static const struct memory_api *g_mem;
 
 static WGPUInstance      g_instance;
 static WGPUSurface       g_surface;
-static WGPUAdapter       g_adapter;
 static WGPUDevice        g_device;
 static WGPUQueue         g_queue;
 static WGPUTextureFormat g_format;   /* the surface's color format (RGBA8Unorm) */
@@ -602,7 +601,6 @@ static void on_adapter(WGPURequestAdapterStatus status, WGPUAdapter adapter,
 			     "renderer_webgpu: adapter request failed");
 		return;
 	}
-	g_adapter = adapter;
 	webgpu_status("webgpu: adapter ok — requesting device");
 
 	memset(&ci, 0, sizeof(ci));

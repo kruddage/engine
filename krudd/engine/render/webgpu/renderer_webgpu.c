@@ -48,6 +48,20 @@ EM_JS(void, webgpu_announce_renderer, (void), {
 		window.kruddSetRenderer('webgpu');
 })
 
+/*
+ * Surface the probe's progress on the footer status line (and the console), so
+ * a browser without a working adapter/device reports where it stopped instead
+ * of just showing a blank canvas. Diagnostic scaffolding for this first slice.
+ */
+EM_JS(void, webgpu_status, (const char *msg), {
+	var s = UTF8ToString(msg);
+	var el = document.getElementById('status');
+	if (el)
+		el.textContent = s;
+	if (typeof console !== 'undefined')
+		console.log('[webgpu] ' + s);
+})
+
 /* A WGPUStringView over a NUL-terminated C string (the emdawnwebgpu string ABI). */
 static WGPUStringView str_view(const char *s)
 {
@@ -65,16 +79,29 @@ static WGPUStringView str_view(const char *s)
  */
 static void configure_surface(void)
 {
-	int w = 0;
-	int h = 0;
+	double css_w = 0.0;
+	double css_h = 0.0;
+	int w;
+	int h;
 	WGPUSurfaceCapabilities caps;
 	WGPUSurfaceConfiguration cfg;
 
-	emscripten_get_canvas_element_size("#canvas", &w, &h);
+	/*
+	 * A WebGPU surface draws into the canvas's backing store, whose size is
+	 * the canvas.width/height attributes — not its CSS size. Nothing sets
+	 * those in WebGPU mode (the WebGL path used to, via the GL context), so
+	 * match the backing store to the element's CSS size here; otherwise the
+	 * drawing buffer stays 0x0 and nothing is visible however well the clear
+	 * runs. A resize hook comes with the real backend.
+	 */
+	emscripten_get_element_css_size("#canvas", &css_w, &css_h);
+	w = (int)css_w;
+	h = (int)css_h;
 	if (w <= 0)
 		w = 800;
 	if (h <= 0)
 		h = 600;
+	emscripten_set_canvas_element_size("#canvas", w, h);
 
 	memset(&caps, 0, sizeof(caps));
 	wgpuSurfaceGetCapabilities(g_surface, g_adapter, &caps);
@@ -101,6 +128,7 @@ static void on_device(WGPURequestDeviceStatus status, WGPUDevice device,
 	(void)ud1;
 	(void)ud2;
 	if (status != WGPURequestDeviceStatus_Success || !device) {
+		webgpu_status("webgpu: device request failed");
 		g_log->write(LOG_LEVEL_ERROR,
 			     "renderer_webgpu: device request failed");
 		return;
@@ -110,6 +138,7 @@ static void on_device(WGPURequestDeviceStatus status, WGPUDevice device,
 	configure_surface();
 	g_ready = 1;
 	webgpu_announce_renderer();
+	webgpu_status("webgpu: device ready — clearing fuchsia");
 	g_log->write(LOG_LEVEL_INFO, "renderer_webgpu: device ready");
 }
 
@@ -122,11 +151,13 @@ static void on_adapter(WGPURequestAdapterStatus status, WGPUAdapter adapter,
 	(void)ud1;
 	(void)ud2;
 	if (status != WGPURequestAdapterStatus_Success || !adapter) {
+		webgpu_status("webgpu: no adapter (WebGPU unavailable?)");
 		g_log->write(LOG_LEVEL_ERROR,
 			     "renderer_webgpu: adapter request failed");
 		return;
 	}
 	g_adapter = adapter;
+	webgpu_status("webgpu: adapter ok — requesting device");
 
 	memset(&ci, 0, sizeof(ci));
 	ci.mode     = WGPUCallbackMode_AllowSpontaneous;
@@ -142,9 +173,11 @@ static void renderer_webgpu_init(void)
 
 	g_instance = wgpuCreateInstance(NULL);
 	if (!g_instance) {
+		webgpu_status("webgpu: no instance");
 		g_log->write(LOG_LEVEL_ERROR, "renderer_webgpu: no instance");
 		return;
 	}
+	webgpu_status("webgpu: requesting adapter");
 
 	memset(&canvas_src, 0, sizeof(canvas_src));
 	canvas_src.chain.sType =
@@ -174,6 +207,15 @@ static void renderer_webgpu_tick(void)
 	WGPURenderPassDescriptor rp;
 	WGPURenderPassEncoder pass;
 	WGPUCommandBuffer cmd;
+
+	/*
+	 * Pump the instance so the adapter/device futures resolve. AllowSpontaneous
+	 * callbacks should fire on their own, but processing events each frame is
+	 * harmless and covers backends that need the nudge — and it must run before
+	 * the not-ready early-out, or the device would never arrive.
+	 */
+	if (g_instance)
+		wgpuInstanceProcessEvents(g_instance);
 
 	if (!g_ready)
 		return;

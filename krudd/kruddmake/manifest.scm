@@ -10,6 +10,7 @@
  "render/webgl"
  "render/webgpu"
  "render/frame_graph"
+ "render/particles"
  "render/scene_renderer"
  "asset"
  "audio"

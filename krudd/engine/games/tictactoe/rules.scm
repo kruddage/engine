@@ -134,6 +134,22 @@
 (define (ttt-strike-material kind)
   (if (= kind 1) "builtin://material/pbr-ruby" "builtin://material/pbr-sapphire"))
 
+;;! Spark colour for a mark: X sparks ruby-red, O sparks sapphire-blue — the same
+;;! gems the marks and strike wear, so a burst reads as that player's colour.
+(define (ttt-mark-rgb kind)
+  (if (= kind 1) '(0.85 0.12 0.18) '(0.16 0.34 0.9)))
+
+;;! (ttt-spark x z kind count) fires a cosmetic particle burst of COUNT particles
+;;! at world (x, z) in KIND's colour, a little above the board. Guarded on
+;;! particle-burst! being bound: the engine's render layer registers it (see
+;;! scene_renderer's register_particle_script), but the headless rules test runs
+;;! with no renderer, so there the primitive is absent and the effect is simply
+;;! skipped — the rules never depend on it.
+(define (ttt-spark x z kind count)
+  (when (defined? 'particle-burst!)
+    (let ((c (ttt-mark-rgb kind)))
+      (particle-burst! x 0.3 z (car c) (cadr c) (caddr c) count))))
+
 (define (ttt-place i kind)
   (scene-entity-build
     (if (= kind 1) (ttt-x-form (ttt-cell-x i) (ttt-cell-z i))
@@ -168,7 +184,9 @@
                  (mesh "builtin://mesh/box") (material ,(ttt-strike-material kind))
                  (at ,mx 0.32 ,mz) (rotate 0 ,ang 0)
                  (scale ,(+ len 0.5) 0.08 0.14))
-        -1))))
+        -1)
+      ;;! A bigger celebratory burst along the winning line's midpoint.
+      (ttt-spark mx mz kind 90))))
 
 ;;! (ttt-award kind) credits the win to KIND's running tally — the scoreboard the
 ;;! host reads through ttt-score. A draw awards nothing, so this runs only on a win.
@@ -183,6 +201,7 @@
 ;;! 1 (a move happened).
 (define (ttt-place-move cell kind)
   (ttt-place cell kind)
+  (ttt-spark (ttt-cell-x cell) (ttt-cell-z cell) kind 34)
   (vector-set! *ttt-board* cell kind)
   (let ((win (ttt-winner)))
     (cond ((not (= win 0))

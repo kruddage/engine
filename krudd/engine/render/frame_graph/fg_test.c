@@ -510,6 +510,72 @@ static void test_depth_only_pass(void)
 	teardown();
 }
 
+/* -------------------------------------------------------------------------
+ * Test: write-only transient is freed (regression)
+ *
+ * Mirrors scene_renderer's editor outline path: a forward pass writes a color
+ * AND a depth target, and the composite pass reads only the color. The depth
+ * transient is written but read by no pass — a pure attachment. The graph must
+ * still free it: gating the free on reads alone allocated it every frame and
+ * never destroyed it, leaking a viewport-sized depth texture per frame until
+ * the tab OOM-crashed. Every texture the graph creates must be destroyed.
+ * -------------------------------------------------------------------------
+ */
+static void test_write_only_transient(void)
+{
+	const struct gpu_call_record *log;
+	fg_resource_t color, depth, bb;
+	fg_resource_t fwrites[2];
+	fg_pass_t fwd, comp;
+	uint32_t count, i;
+	int creates = 0, destroys = 0;
+	int depth_created = 0;
+	fg_tex_desc cdesc = {
+		.format = GPU_FORMAT_RGBA8_UNORM,
+		.width = 16, .height = 16,
+		.mip_levels = 1, .sample_count = 1,
+	};
+	fg_tex_desc ddesc = cdesc;
+
+	ddesc.format = GPU_FORMAT_DEPTH32_FLOAT;
+
+	setup();
+
+	color = fg_declare_transient(g_fg, "scene_color", cdesc);
+	depth = fg_declare_transient(g_fg, "scene_depth", ddesc); /* written, never read */
+	bb    = fg_import_backbuffer(g_fg);
+
+	fwrites[0] = color;
+	fwrites[1] = depth;
+	fwd  = fg_pass_declare(g_fg, "forward", NULL, 0, fwrites, 2);
+	comp = fg_pass_declare(g_fg, "composite", &color, 1, &bb, 1);
+
+	fg_pass_set_execute(fwd, pass_a_cb, NULL);
+	fg_pass_set_execute(comp, pass_b_cb, NULL);
+
+	fg_compile(g_fg);
+	renderer_null_reset_log();
+	fg_execute(g_fg);
+
+	log = renderer_null_get_log(&count);
+	for (i = 0; i < count; i++) {
+		if (log[i].type == GPU_CALL_TEXTURE_CREATE) {
+			creates++;
+			if (log[i].args.texture_create.format ==
+			    GPU_FORMAT_DEPTH32_FLOAT)
+				depth_created = 1;
+		}
+		if (log[i].type == GPU_CALL_TEXTURE_DESTROY)
+			destroys++;
+	}
+
+	assert(depth_created);        /* the write-only depth transient was allocated */
+	assert(creates == 2);         /* color + depth, both transients */
+	assert(destroys == creates);  /* and every one was freed — no per-frame leak */
+
+	teardown();
+}
+
 int main(void)
 {
 	RUN(topological_ordering);
@@ -519,6 +585,7 @@ int main(void)
 	RUN(render_pass_setup);
 	RUN(backbuffer_import);
 	RUN(depth_only_pass);
+	RUN(write_only_transient);
 
 	printf("%d/%d tests passed\n", tests_passed, tests_run);
 	return tests_passed == tests_run ? 0 : 1;

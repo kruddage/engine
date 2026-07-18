@@ -29,7 +29,9 @@ extern "C" {
  *   - Each pointer (a touch by its identifier, or the mouse) is tracked
  *     independently. A pointer whose *down* lands on a region is captured by
  *     that region for its whole gesture: its moves accumulate as a drag on the
- *     region and a same-region up registers a tap, none of it forwarded. A
+ *     region and a same-region up that stayed within KGUI_TAP_SLOP of the down
+ *     point registers a tap — a gesture that wandered further is a drag (a
+ *     scroll) and registers no tap, none of it forwarded. A
  *     pointer whose down misses every region is forwarded to the host. Only one
  *     unclaimed pointer at a time drives the host (ImGui is single-pointer), so
  *     a second finger on a kruddgui panel never disturbs an ImGui drag, and a
@@ -42,6 +44,15 @@ extern "C" {
 #define KGUI_MAX_REGIONS 32
 #define KGUI_MAX_TOUCHES 10
 #define KGUI_MAX_REGION_IO 32
+
+/*
+ * Tap-vs-drag slop, in CSS px. A captured gesture whose pointer stays within
+ * this far of its down point is a tap on release; one that wanders past it is a
+ * drag (a scroll flick) and fires no tap — so lifting a finger at the end of a
+ * scroll never opens whatever row it happens to be over. Sits just above a
+ * still finger's natural wobble on a touchscreen.
+ */
+#define KGUI_TAP_SLOP 12.0f
 
 /*
  * The mouse is routed through the same per-pointer machine as touches, under a
@@ -79,10 +90,12 @@ struct kgui_region {
 
 struct kgui_touch {
 	int      active;
-	int32_t  id;        /* touch identifier, or KGUI_MOUSE_ID */
-	uint32_t region;    /* captured region name, 0 = unclaimed */
-	int      forwarded; /* unclaimed and currently driving the host */
-	float    x, y;      /* last position */
+	int32_t  id;             /* touch identifier, or KGUI_MOUSE_ID */
+	uint32_t region;         /* captured region name, 0 = unclaimed */
+	int      forwarded;      /* unclaimed and currently driving the host */
+	float    x, y;           /* last position */
+	float    down_x, down_y; /* where the gesture went down */
+	float    moved;          /* max squared displacement from the down point */
 };
 
 struct kgui_input {

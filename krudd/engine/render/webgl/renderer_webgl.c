@@ -10,6 +10,7 @@
 #include <string.h>
 
 #ifdef __EMSCRIPTEN__
+#include <emscripten.h>
 #include <emscripten/html5.h>
 #include <GLES3/gl3.h>
 #include "script.h"
@@ -884,6 +885,20 @@ static const struct gpu_api webgl_api = {
 	.cmd_bind_texture_native = webgl_cmd_bind_texture_native,
 };
 
+#ifdef __EMSCRIPTEN__
+/*
+ * Tell the shell which renderer went live, so the header badge can show it.
+ * kruddSetRenderer is defined in shell.html; the typeof guard keeps this safe
+ * if the shell changes. Each backend announces its own name from init — the
+ * one whose plugin_entry the engine calls is the one that reports (a future
+ * WebGPU backend announces "webgpu" the same way, from its own init).
+ */
+EM_JS(void, krudd_report_renderer, (void), {
+	if (typeof window.kruddSetRenderer === 'function')
+		window.kruddSetRenderer('webgl');
+})
+#endif
+
 static void renderer_webgl_init(void)
 {
 #ifdef __EMSCRIPTEN__
@@ -895,6 +910,7 @@ static void renderer_webgl_init(void)
 	attrs.depth        = EM_TRUE; /* backbuffer depth for 3D passes */
 	g_ctx = emscripten_webgl_create_context("#canvas", &attrs);
 	emscripten_webgl_make_context_current(g_ctx);
+	krudd_report_renderer();
 #endif
 	g_log->write(LOG_LEVEL_INFO, "renderer_webgl: init");
 }

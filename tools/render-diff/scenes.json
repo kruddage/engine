@@ -1,0 +1,18 @@
+{
+	"//": "Render-diff scene manifest. See README.md for the mode ladder.",
+	"//canvas": "CSS selector screenshots are clipped to. The page chrome differs",
+	"//canvas2": "by backend on purpose (the header badge reads WEBGL vs WEBGPU),",
+	"//canvas3": "so a full-page diff would always fail. Clip to the canvas.",
+	"canvas": "#canvas",
+
+	"scenes": [
+		{
+			"id": "triangle",
+			"query": "?renderer=webgpu",
+			"mode": "self",
+			"tolerance": 0.002,
+			"settle_ms": 6000,
+			"note": "The #570 WGSL triangle probe. Static, so tolerance is tight. Mode is 'self' because the WebGL path renders the whole engine here, not a triangle -- there is no comparable reference until PR4 registers scene_renderer on the WebGPU path."
+		}
+	]
+}

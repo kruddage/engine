@@ -18,10 +18,11 @@
  * an unimplemented entry says so in the console instead of hitting a NULL
  * function pointer. Later slices replace stubs in place.
  *
- * It is browser-only. Selection lives in engine.c: with ?renderer=webgpu the
- * engine registers this backend alone and skips the GL render cluster. The
- * device handshake is async (adapter -> device callbacks); the tick no-ops
- * until the device is ready.
+ * It is browser-only. Selection lives in engine.c: WebGPU is the default, so
+ * the engine registers this backend alone and skips the GL render cluster
+ * unless the page opts out with ?renderer=webgl. The device handshake is
+ * async (adapter -> device callbacks); the tick no-ops until the device is
+ * ready.
  */
 #include "subsystem.h"
 #include "subsystem_manager.h"

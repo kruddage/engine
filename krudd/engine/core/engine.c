@@ -187,18 +187,20 @@ EM_JS(void, krudd_signal_ready, (void), {
 })
 
 /*
- * Whether the page asked for the WebGPU backend (?renderer=webgpu). The probe
- * backend clears the canvas and owns the frame on its own; until its gpu_api
- * vtable exists, selecting it means registering it alone and leaving the GL
- * render cluster and the games unregistered (they would call a vtable that is
- * not there yet). Defaults to 0 (the normal WebGL path) on any parse trouble.
+ * Whether the page should boot the WebGPU backend. WebGPU is the default
+ * while the port chases WebGL parity — pass ?renderer=webgl to opt out back
+ * to the established path. The probe backend clears the canvas and owns the
+ * frame on its own; until its gpu_api vtable exists, selecting it means
+ * registering it alone and leaving the GL render cluster and the games
+ * unregistered (they would call a vtable that is not there yet). Defaults to
+ * 1 (WebGPU) on any parse trouble, matching the opt-out default.
  */
 EM_JS(int, krudd_wants_webgpu, (void), {
 	try {
 		return (new URLSearchParams(location.search).get('renderer')
-			=== 'webgpu') ? 1 : 0;
+			=== 'webgl') ? 0 : 1;
 	} catch (e) {
-		return 0;
+		return 1;
 	}
 })
 #endif

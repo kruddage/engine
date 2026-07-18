@@ -735,9 +735,29 @@ static gpu_buffer_t webgpu_buffer_create(const struct gpu_buffer_desc *desc)
 	bd.usage = buffer_usage(desc->usage);
 	bd.size  = size;
 	b->buf   = wgpuDeviceCreateBuffer(g_device, &bd);
-	if (b->buf && desc->initial_data)
-		wgpuQueueWriteBuffer(g_queue, b->buf, 0, desc->initial_data,
-				     desc->size);
+	if (b->buf && desc->initial_data) {
+		/*
+		 * wgpuQueueWriteBuffer demands a 4-byte-multiple write size, but a
+		 * uint16 index buffer can be an odd multiple of 2 (e.g. a 3-index
+		 * triangle is 6 bytes). When the data isn't 4-aligned, bounce it
+		 * through a zero-padded temp so the write is legal without reading
+		 * past the caller's buffer; the padding bytes are never indexed.
+		 */
+		if (size == desc->size) {
+			wgpuQueueWriteBuffer(g_queue, b->buf, 0,
+					     desc->initial_data, desc->size);
+		} else {
+			void *tmp = g_mem->alloc(size);
+
+			if (tmp) {
+				memcpy(tmp, desc->initial_data, desc->size);
+				memset((char *)tmp + desc->size, 0,
+				       size - desc->size);
+				wgpuQueueWriteBuffer(g_queue, b->buf, 0, tmp, size);
+				g_mem->free(tmp);
+			}
+		}
+	}
 	return b;
 }
 

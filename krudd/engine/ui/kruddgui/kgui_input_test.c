@@ -118,6 +118,66 @@ static void test_up_outside_region_no_tap(void)
 	assert(!io->pressed);
 }
 
+static void test_drag_within_region_no_tap(void)
+{
+	struct kgui_input in;
+	struct kgui_region_io *io;
+
+	kgui_input_init(&in);
+	commit_two(&in);
+
+	/*
+	 * A scroll flick: down, drag well past the slop, up — all inside BAR's
+	 * rect. The release must NOT register a tap, so lifting a finger at the
+	 * end of a scroll never opens the row underneath it.
+	 */
+	kgui_input_pointer_down(&in, 1, 20.0f, 10.0f);
+	kgui_input_pointer_move(&in, 1, 20.0f, 30.0f);
+	assert(kgui_input_pointer_up(&in, 1, 20.0f, 45.0f) ==
+	       KGUI_ROUTE_CONSUMED);
+
+	io = read_bar(&in);
+	assert(!io->tapped);
+	assert(!io->pressed);
+}
+
+static void test_moveless_drag_up_no_tap(void)
+{
+	struct kgui_input in;
+	struct kgui_region_io *io;
+
+	kgui_input_init(&in);
+	commit_two(&in);
+
+	/*
+	 * Even with no intervening move event, a release far from the down point
+	 * is a drag: the up coordinate alone clears the slop, so no tap fires.
+	 */
+	kgui_input_pointer_down(&in, 1, 10.0f, 10.0f);
+	kgui_input_pointer_up(&in, 1, 10.0f, 45.0f);
+
+	io = read_bar(&in);
+	assert(!io->tapped);
+}
+
+static void test_small_drift_still_taps(void)
+{
+	struct kgui_input in;
+	struct kgui_region_io *io;
+
+	kgui_input_init(&in);
+	commit_two(&in);
+
+	/* A tap with a finger's natural wobble stays under the slop and fires. */
+	kgui_input_pointer_down(&in, 1, 30.0f, 20.0f);
+	kgui_input_pointer_move(&in, 1, 33.0f, 22.0f);
+	kgui_input_pointer_up(&in, 1, 34.0f, 21.0f);
+
+	io = read_bar(&in);
+	assert(io->tapped);
+	assert(io->tap_x == 34.0f && io->tap_y == 21.0f);
+}
+
 static void test_drag_accumulates(void)
 {
 	struct kgui_input in;
@@ -380,6 +440,9 @@ int main(void)
 	RUN(miss_is_forwarded);
 	RUN(tap_same_region);
 	RUN(up_outside_region_no_tap);
+	RUN(drag_within_region_no_tap);
+	RUN(moveless_drag_up_no_tap);
+	RUN(small_drift_still_taps);
 	RUN(drag_accumulates);
 	RUN(commit_clears_per_frame_fields);
 	RUN(zorder_topmost_wins);

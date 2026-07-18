@@ -162,6 +162,17 @@ static int any_forwarded(const struct kgui_input *in)
 	return 0;
 }
 
+/* Fold (x, y) into the gesture's peak squared displacement from its down point. */
+static void touch_track_move(struct kgui_touch *t, float x, float y)
+{
+	float ex = x - t->down_x;
+	float ey = y - t->down_y;
+	float d2 = ex * ex + ey * ey;
+
+	if (d2 > t->moved)
+		t->moved = d2;
+}
+
 enum kgui_route kgui_input_pointer_down(struct kgui_input *in, int32_t id,
 					float x, float y)
 {
@@ -173,8 +184,11 @@ enum kgui_route kgui_input_pointer_down(struct kgui_input *in, int32_t id,
 	if (!t)
 		return KGUI_ROUTE_FORWARD; /* out of slots — don't swallow it */
 
-	t->x = x;
-	t->y = y;
+	t->x      = x;
+	t->y      = y;
+	t->down_x = x;
+	t->down_y = y;
+	t->moved  = 0.0f;
 
 	name = region_at(in, x, y);
 	if (name) {
@@ -212,6 +226,7 @@ enum kgui_route kgui_input_pointer_move(struct kgui_input *in, int32_t id,
 	dy   = y - t->y;
 	t->x = x;
 	t->y = y;
+	touch_track_move(t, x, y);
 
 	if (t->region) {
 		struct kgui_region_io *io = io_slot(in, t->region);
@@ -231,12 +246,15 @@ enum kgui_route kgui_input_pointer_up(struct kgui_input *in, int32_t id,
 	struct kgui_touch *t = touch_find(in, id);
 	int                forwarded;
 	uint32_t           region;
+	float              moved;
 
 	if (!t)
 		return KGUI_ROUTE_FORWARD;
 
+	touch_track_move(t, x, y);
 	region    = t->region;
 	forwarded = t->forwarded;
+	moved     = t->moved;
 	t->active = 0; /* release the slot */
 
 	if (region) {
@@ -244,9 +262,15 @@ enum kgui_route kgui_input_pointer_up(struct kgui_input *in, int32_t id,
 		const struct kgui_region *r = region_by_name(in, region);
 
 		io->pressed = 0;
-		/* A tap is a down and an up both inside the same region. */
+		/*
+		 * A tap is a down and an up both inside the same region whose
+		 * pointer never wandered past the slop — a gesture that moved
+		 * further is a drag (a scroll), and fires no tap so its release
+		 * does not open whatever row it lifts over.
+		 */
 		if (r && x >= r->x0 && x <= r->x1 &&
-		    y >= r->y0 && y <= r->y1) {
+		    y >= r->y0 && y <= r->y1 &&
+		    moved <= KGUI_TAP_SLOP * KGUI_TAP_SLOP) {
 			io->tapped = 1;
 			io->tap_x  = x;
 			io->tap_y  = y;

@@ -4057,14 +4057,6 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       var domElement = specialHTMLTargets[target] || document.querySelector(target);
       return domElement;
     };
-  var findCanvasEventTarget = findEventTarget;
-  var _emscripten_get_canvas_element_size = (target, width, height) => {
-      var canvas = findCanvasEventTarget(target);
-      if (!canvas) return -4;
-      HEAP32[((width)>>2)] = canvas.width;
-      HEAP32[((height)>>2)] = canvas.height;
-    };
-
   
   var getBoundingClientRect = (e) => specialHTMLTargets.indexOf(e) < 0 ? e.getBoundingClientRect() : {'left':0,'top':0};
   var _emscripten_get_element_css_size = (target, width, height) => {
@@ -4160,6 +4152,7 @@ var stringToUTF8Array = (str, heap, outIdx, maxBytesToWrite) => {
       return false;
     };
 
+  var findCanvasEventTarget = findEventTarget;
   var _emscripten_set_canvas_element_size = (target, width, height) => {
       var canvas = findCanvasEventTarget(target);
       if (!canvas) return -4;
@@ -7857,6 +7850,7 @@ function krudd_sp_attach(buf_size) { var ctx = Module.__kruddAudioCtx; if (!ctx)
 function krudd_sp_resume() { var ctx = Module.__kruddAudioCtx; if (ctx && ctx.state !== 'running' && ctx.resume) ctx.resume(); }
 function kgui_read_safe_insets(out) { var probe = Module.__kgSafeProbe; if (!probe) { probe = document.createElement("div"); probe.style.cssText = "position:fixed;top:0;left:0;width:0;height:0;" + "visibility:hidden;pointer-events:none;" + "padding-top:env(safe-area-inset-top);" + "padding-right:env(safe-area-inset-right);" + "padding-bottom:env(safe-area-inset-bottom);" + "padding-left:env(safe-area-inset-left);"; document.body.appendChild(probe); Module.__kgSafeProbe = probe; } var cs = getComputedStyle(probe); HEAPF32[(out >> 2) + 0] = parseFloat(cs.paddingTop) || 0; HEAPF32[(out >> 2) + 1] = parseFloat(cs.paddingRight) || 0; HEAPF32[(out >> 2) + 2] = parseFloat(cs.paddingBottom) || 0; HEAPF32[(out >> 2) + 3] = parseFloat(cs.paddingLeft) || 0; }
 function webgpu_announce_renderer() { if (typeof window.kruddSetRenderer === 'function') window.kruddSetRenderer('webgpu'); }
+function webgpu_status(msg) { var s = UTF8ToString(msg); var el = document.getElementById('status'); if (el) el.textContent = s; if (typeof console !== 'undefined') console.log('[webgpu] ' + s); }
 function krudd_report_renderer() { if (typeof window.kruddSetRenderer === 'function') window.kruddSetRenderer('webgl'); }
 
 // Imports from the Wasm binary.
@@ -8141,8 +8135,6 @@ var wasmImports = {
   /** @export */
   emscripten_err: _emscripten_err,
   /** @export */
-  emscripten_get_canvas_element_size: _emscripten_get_canvas_element_size,
-  /** @export */
   emscripten_get_element_css_size: _emscripten_get_element_css_size,
   /** @export */
   emscripten_get_now: _emscripten_get_now,
@@ -8372,6 +8364,8 @@ var wasmImports = {
   ttt_scoreboard_show,
   /** @export */
   webgpu_announce_renderer,
+  /** @export */
+  webgpu_status,
   /** @export */
   wgpuCommandEncoderBeginRenderPass: _wgpuCommandEncoderBeginRenderPass,
   /** @export */

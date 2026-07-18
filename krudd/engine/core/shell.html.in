@@ -703,6 +703,19 @@ footer {
 		refreshRendererTitle();
 	};
 
+	/* The WebGPU backend (?renderer=webgpu) clears the canvas itself and does
+	 * not register the launcher's games, so hide the launcher overlay up front
+	 * — otherwise its near-opaque panel would sit over the cleared canvas. */
+	(function hideLauncherForWebGPU() {
+		try {
+			if (new URLSearchParams(location.search).get('renderer') === 'webgpu') {
+				var l = document.getElementById('launcher');
+				if (l)
+					l.classList.add('hidden');
+			}
+		} catch (e) {}
+	})();
+
 	/* Probe WebGPU support once at load; requestAdapter is async, so the
 	 * tooltip updates whenever it resolves. Absent navigator.gpu is a plain
 	 * "unavailable", not an error. */

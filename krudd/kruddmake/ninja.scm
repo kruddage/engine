@@ -153,12 +153,15 @@
 	  "emar = emar"
 	  "cflags = -std=gnu11 -Wall -Werror -Wpedantic"
 	  "cxxflags = -std=gnu11 -Wall -Werror -Wpedantic"
-	  "emcflags = -std=gnu11 -Wall -Werror -Wpedantic"
+	  ;;! --use-port=emdawnwebgpu enables the WebGPU (Dawn) headers + JS glue;
+	  ;;! emscripten requires it at both compile and link, so it rides on the
+	  ;;! wasm C compile flags here and the main-module link flags below.
+	  "emcflags = -std=gnu11 -Wall -Werror -Wpedantic --use-port=emdawnwebgpu"
 	  "s7dir = $srcroot/../third_party"
 	  "s7flags = -O2 -w -DWITH_C_LOADER=0 -DWITH_MAIN=0 -I$s7dir"
 	  (string-append "mainflags = -sENVIRONMENT=web -sALLOW_MEMORY_GROWTH=1 "
 			 "-sGROWABLE_ARRAYBUFFERS=0 -sMALLOC=mimalloc "
-			 "-sFETCH=1 -sMAX_WEBGL_VERSION=2 "
+			 "-sFETCH=1 -sMAX_WEBGL_VERSION=2 --use-port=emdawnwebgpu "
 			 "-sEXPORTED_FUNCTIONS=_main,_krudd_load_game")
 	  ""
 	  "rule cc"

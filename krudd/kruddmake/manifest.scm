@@ -8,6 +8,7 @@
  "entity"
  "render/null"
  "render/webgl"
+ "render/webgpu"
  "render/frame_graph"
  "render/scene_renderer"
  "asset"

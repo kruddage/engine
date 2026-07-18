@@ -61,7 +61,6 @@ struct particle {
 static struct particle g_pool[PARTICLE_MAX];
 static uint32_t        g_live; /* live particles are packed in [0, g_live) */
 
-static const struct gpu_api *g_gpu;
 static gpu_pipeline_t         g_pso;
 static gpu_buffer_t           g_vbo;
 static gpu_buffer_t           g_ubo;
@@ -100,7 +99,6 @@ void particles_init(const struct gpu_api *device)
 
 	if (!device)
 		return;
-	g_gpu = device;
 
 	memset(&pd, 0, sizeof(pd));
 	pd.color_formats[0]   = GPU_FORMAT_RGBA8_UNORM;

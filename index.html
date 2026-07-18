@@ -93,7 +93,14 @@ header {
 	border-radius: 3px;
 	padding: 2px 7px;
 	user-select: none;
-	cursor: default;
+	cursor: pointer;
+}
+
+/* Clicking is a no-op when the other backend isn't reachable (see
+ * canSwitchTo); the hover tint is still a mild affordance since the title
+ * tooltip explains why in that case. */
+.renderer:hover {
+	border-color: #444;
 }
 
 .renderer svg {
@@ -535,7 +542,7 @@ footer {
 <header>
 	<span class="wordmark">KRUDD</span>
 	<span class="version" id="version" title="click for build info">17.16.0</span>
-	<span class="version-detail" id="version-detail">commit bf4397e &middot; built 2026-07-18</span>
+	<span class="version-detail" id="version-detail">commit d083383 &middot; built 2026-07-18</span>
 	<span class="renderer" id="renderer-badge" title="renderer: detecting&hellip;">&mdash;</span>
 	<button class="menu-btn" id="menu-btn" title="back to the menu">&#9776; menu</button>
 </header>
@@ -684,12 +691,35 @@ footer {
 	};
 
 	/*
+	 * Firefox's WebGPU implementation isn't solid enough yet to default to it,
+	 * so this forces WebGL there regardless of the ?renderer= query, until
+	 * that's revisited. Single source of truth for "should this page run
+	 * WebGPU": both the launcher-hiding check below and engine.c's
+	 * krudd_wants_webgpu (via window.kruddWantsWebGPU) read it, so the shell
+	 * chrome and the actual backend never disagree.
+	 */
+	function isFirefox() {
+		return /firefox/i.test(navigator.userAgent);
+	}
+
+	window.kruddWantsWebGPU = function () {
+		try {
+			if (isFirefox())
+				return false;
+			return new URLSearchParams(location.search).get('renderer') !== 'webgl';
+		} catch (e) {
+			return true;
+		}
+	};
+
+	/*
 	 * The renderer badge. A backend calls kruddSetRenderer from its init with
 	 * its own name; the badge shows which GPU path went live — WebGPU by
-	 * default, WebGL when ?renderer=webgl opts out. Separately we probe
-	 * navigator.gpu on load so the tooltip can say whether WebGPU was even
-	 * available; on the WebGL path, a "WebGPU available" note flags the
-	 * upgrade.
+	 * default, WebGL when ?renderer=webgl opts out (or always, on Firefox).
+	 * Separately we probe navigator.gpu on load so the tooltip can say whether
+	 * WebGPU was even available; on the WebGL path, a "WebGPU available" note
+	 * flags the upgrade. Clicking the badge switches renderers when the other
+	 * path is actually reachable (see switchRenderer below).
 	 */
 	var RENDERER_ICON =
 		'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor"' +
@@ -702,6 +732,17 @@ footer {
 	/* null = not probed yet, true/false once navigator.gpu has answered. */
 	window.kruddWebGPUAvailable = null;
 
+	/* Whether clicking the badge could switch TO this renderer right now.
+	 * WebGL always works; WebGPU only if this isn't Firefox (locked off above)
+	 * and the on-load adapter probe actually found one — offering a switch
+	 * that would just reload into the same broken state is worse than not
+	 * offering it. */
+	function canSwitchTo(name) {
+		if (name === 'webgl')
+			return true;
+		return !isFirefox() && window.kruddWebGPUAvailable === true;
+	}
+
 	function refreshRendererTitle() {
 		var el = document.getElementById('renderer-badge');
 		if (!el)
@@ -712,14 +753,33 @@ footer {
 
 		if (active === 'webgpu') {
 			t = 'renderer: WebGPU';
+			if (canSwitchTo('webgl')) t += ' · click to switch to WebGL';
 		} else if (active === 'webgl') {
 			t = 'renderer: WebGL';
-			if (avail === true)  t += ' · WebGPU available';
-			if (avail === false) t += ' · WebGPU unavailable';
+			if (isFirefox()) {
+				t += ' · WebGPU disabled on Firefox for now';
+			} else if (avail === true) {
+				t += ' · click to switch to WebGPU';
+			} else if (avail === false) {
+				t += ' · WebGPU unavailable';
+			}
 		} else {
 			t = 'renderer: detecting…';
 		}
 		el.title = t;
+	}
+
+	/* The renderer is picked at boot (krudd_wants_webgpu in engine.c), so
+	 * switching means reloading with an updated ?renderer= query rather than
+	 * hot-swapping the live backend. WebGPU is the default, so switching to it
+	 * just drops the query param instead of writing it out. */
+	function switchRenderer(name) {
+		var url = new URL(location.href);
+		if (name === 'webgpu')
+			url.searchParams.delete('renderer');
+		else
+			url.searchParams.set('renderer', name);
+		location.href = url.toString();
 	}
 
 	window.kruddSetRenderer = function (name) {
@@ -755,12 +815,10 @@ footer {
 
 	/* The WebGPU backend clears the canvas itself and does not register the
 	 * launcher's games, so hide the launcher overlay up front — otherwise its
-	 * near-opaque panel would sit over the cleared canvas. WebGPU is the
-	 * default (see krudd_wants_webgpu in engine.c); ?renderer=webgl opts out
-	 * back to the launcher-driven WebGL path. */
+	 * near-opaque panel would sit over the cleared canvas. */
 	(function hideLauncherForWebGPU() {
 		try {
-			if (new URLSearchParams(location.search).get('renderer') !== 'webgl') {
+			if (window.kruddWantsWebGPU()) {
 				var l = document.getElementById('launcher');
 				if (l)
 					l.classList.add('hidden');
@@ -770,9 +828,13 @@ footer {
 
 	/* Probe WebGPU support once at load; requestAdapter is async, so the
 	 * tooltip updates whenever it resolves. Absent navigator.gpu is a plain
-	 * "unavailable", not an error. */
+	 * "unavailable", not an error. Skipped on Firefox — it's locked to WebGL
+	 * regardless of what the adapter probe would say, so probing there would
+	 * only make the badge dangle a switch option that hideLauncherForWebGPU
+	 * would never honour. */
 	(function detectWebGPU() {
-		if (!navigator.gpu || typeof navigator.gpu.requestAdapter !== 'function') {
+		if (isFirefox() || !navigator.gpu ||
+		    typeof navigator.gpu.requestAdapter !== 'function') {
 			window.kruddWebGPUAvailable = false;
 			refreshRendererTitle();
 			return;
@@ -782,6 +844,21 @@ footer {
 		}).catch(function () {
 			window.kruddWebGPUAvailable = false;
 		}).then(refreshRendererTitle);
+	})();
+
+	/* Click the badge to switch renderers, when the other path is actually
+	 * reachable — see canSwitchTo. A no-op click (unsupported target) leaves
+	 * the page exactly as it was rather than reloading into the same state. */
+	(function () {
+		var el = document.getElementById('renderer-badge');
+		if (!el)
+			return;
+		el.addEventListener('click', function () {
+			var active = el.dataset.active;
+			var target = active === 'webgpu' ? 'webgl' : 'webgpu';
+			if (canSwitchTo(target))
+				switchRenderer(target);
+		});
 	})();
 
 	document.getElementById('version').addEventListener('click', function () {
@@ -823,13 +900,13 @@ footer {
 var Module = {
 	locateFile: function (path, prefix) {
 		if (path.endsWith('.wasm'))
-			return prefix + path.replace(/\.wasm$/, '.bf4397e.wasm');
+			return prefix + path.replace(/\.wasm$/, '.d083383.wasm');
 		return prefix + path;
 	}
 };
 </script>
 
-<script async type="text/javascript" src="index.bf4397e.js"></script>
+<script async type="text/javascript" src="index.d083383.js"></script>
 
 </body>
 </html>

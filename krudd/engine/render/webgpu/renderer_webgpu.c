@@ -20,9 +20,10 @@
  *
  * It is browser-only. Selection lives in engine.c: WebGPU is the default, so
  * the engine registers this backend alone and skips the GL render cluster
- * unless the page opts out with ?renderer=webgl. The device handshake is
- * async (adapter -> device callbacks); the tick no-ops until the device is
- * ready.
+ * unless the page opts out with ?renderer=webgl (or is running on Firefox,
+ * which opts out unconditionally for now — see kruddWantsWebGPU in
+ * shell.html.in). The device handshake is async (adapter -> device
+ * callbacks); the tick no-ops until the device is ready.
  */
 #include "subsystem.h"
 #include "subsystem_manager.h"

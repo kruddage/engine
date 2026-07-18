@@ -189,16 +189,18 @@ EM_JS(void, krudd_signal_ready, (void), {
 /*
  * Whether the page should boot the WebGPU backend. WebGPU is the default
  * while the port chases WebGL parity — pass ?renderer=webgl to opt out back
- * to the established path. The probe backend clears the canvas and owns the
- * frame on its own; until its gpu_api vtable exists, selecting it means
- * registering it alone and leaving the GL render cluster and the games
- * unregistered (they would call a vtable that is not there yet). Defaults to
- * 1 (WebGPU) on any parse trouble, matching the opt-out default.
+ * to the established path, and Firefox opts out unconditionally until its
+ * WebGPU implementation is further along. See finish_plugin_boot for what
+ * selecting WebGPU actually defers (the render cluster and games wait on the
+ * device handshake).
+ *
+ * The decision itself lives in the shell (window.kruddWantsWebGPU in
+ * shell.html.in), not here, so the launcher-hiding check and this backend
+ * selection can never disagree about which renderer is about to boot.
  */
 EM_JS(int, krudd_wants_webgpu, (void), {
 	try {
-		return (new URLSearchParams(location.search).get('renderer')
-			=== 'webgl') ? 0 : 1;
+		return window.kruddWantsWebGPU() ? 1 : 0;
 	} catch (e) {
 		return 1;
 	}

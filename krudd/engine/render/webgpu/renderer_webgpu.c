@@ -50,7 +50,19 @@ static WGPUDevice        g_device;
 static WGPUQueue         g_queue;
 static WGPUTextureFormat g_format;
 static int               g_ready;    /* 1 once the device + surface are live */
+static int               g_probe_owns_frame = 1; /* until the cluster boots */
 static WGPUSampler       g_sampler;  /* one linear/repeat sampler for every unit */
+static WGPUSampler       g_depth_sampler; /* non-filtering, for depth textures */
+static uint32_t          g_texture_generation; /* bumped on every destroy */
+
+/* Textures the caller has released but this frame's commands may still name.
+ * Sized well past the frame graph's transient count so a frame never overruns
+ * it in practice; see webgpu_texture_destroy for what happens if one does. */
+#define WGPU_MAX_PENDING_DESTROY 64
+static struct gpu_texture *g_pending_destroy[WGPU_MAX_PENDING_DESTROY];
+static uint32_t            g_pending_destroy_count;
+
+static void flush_pending_destroys(void);
 
 /* The triangle, now owned as ordinary gpu_api resources. */
 static gpu_pipeline_t g_tri_pso;
@@ -198,9 +210,18 @@ struct uniform_binding {
 
 #define WGPU_MAX_TEXTURE_UNITS 4
 
+/*
+ * A cached group holds views, and the frame graph destroys its transient
+ * textures every frame -- so an entry can outlive the texture it names, and a
+ * freshly allocated view can land on the same address as a dead one, which
+ * makes the memcmp below report a hit on a destroyed texture. GENERATION is the
+ * guard: any texture_destroy bumps the global counter, and an entry stamped
+ * with an older one is treated as a miss.
+ */
 struct tex_group_entry {
 	WGPUBindGroup   bg;
 	WGPUTextureView views[WGPU_MAX_TEXTURE_UNITS];
+	uint32_t        generation;
 	int             valid;
 };
 
@@ -266,6 +287,7 @@ struct gpu_cmd_buf_state {
 	uint32_t               uniform_mask;
 	int                    bindings_dirty;
 	WGPUTextureView        textures[WGPU_MAX_TEXTURE_UNITS];
+	int                    texture_depth[WGPU_MAX_TEXTURE_UNITS];
 	int                    textures_dirty;
 };
 
@@ -359,6 +381,9 @@ static void webgpu_cmd_buf_submit(gpu_cmd_buf_t cmd)
 		wgpuTextureViewRelease(c->surface_view);
 	if (c->surface_tex)
 		wgpuTextureRelease(c->surface_tex);
+
+	/* The commands naming them are now the queue's problem, not ours. */
+	flush_pending_destroys();
 
 	memset(c, 0, sizeof(*c));
 }
@@ -626,12 +651,14 @@ static WGPUBindGroup resolve_bind_group(struct gpu_pipeline *p,
 
 /*
  * The group-1 companion to resolve_bind_group: a sampled texture at binding 2i
- * and the shared sampler at 2i+1, which is the pairing shader.scm emits. One
- * sampler serves every unit — the engine has never varied filtering per bind,
- * and a per-texture sampler would just multiply cache entries.
+ * and its sampler at 2i+1, which is the pairing shader.scm emits. Colour
+ * textures all share the one linear sampler — the engine has never varied
+ * filtering per bind — but a depth texture must take the non-filtering one, so
+ * the choice is per unit even though there are only ever two samplers.
  */
 static WGPUBindGroup resolve_texture_group(struct gpu_pipeline *p,
-					   WGPUTextureView *want)
+					   WGPUTextureView *want,
+					   const int *want_depth)
 {
 	WGPUBindGroupEntry entries[WGPU_MAX_TEXTURE_UNITS * 2];
 	WGPUBindGroupDescriptor bd;
@@ -643,7 +670,8 @@ static WGPUBindGroup resolve_texture_group(struct gpu_pipeline *p,
 	for (i = 0; i < WGPU_BIND_GROUP_CACHE; i++) {
 		struct tex_group_entry *e = &p->tex_cache[i];
 
-		if (e->valid && memcmp(e->views, want, sizeof(e->views)) == 0)
+		if (e->valid && e->generation == g_texture_generation &&
+		    memcmp(e->views, want, sizeof(e->views)) == 0)
 			return e->bg;
 	}
 
@@ -661,7 +689,7 @@ static WGPUBindGroup resolve_texture_group(struct gpu_pipeline *p,
 		entries[n].textureView = want[i];
 		n++;
 		entries[n].binding = i * 2 + 1;
-		entries[n].sampler = g_sampler;
+		entries[n].sampler = want_depth[i] ? g_depth_sampler : g_sampler;
 		n++;
 	}
 
@@ -681,6 +709,7 @@ static WGPUBindGroup resolve_texture_group(struct gpu_pipeline *p,
 
 	slot->bg = wgpuDeviceCreateBindGroup(g_device, &bd);
 	memcpy(slot->views, want, sizeof(slot->views));
+	slot->generation = g_texture_generation;
 	slot->valid = slot->bg != NULL;
 
 	wgpuBindGroupLayoutRelease(layout);
@@ -719,7 +748,7 @@ static int apply_textures(struct gpu_cmd_buf_state *c)
 	if (!c->textures_dirty)
 		return 1;
 
-	bg = resolve_texture_group(c->pipeline, c->textures);
+	bg = resolve_texture_group(c->pipeline, c->textures, c->texture_depth);
 	if (!bg)
 		return 0;
 
@@ -888,6 +917,7 @@ static void webgpu_cmd_set_pipeline(gpu_cmd_buf_t cmd, gpu_pipeline_t pipeline)
 
 /* -------------------------------------------------------- render passes */
 
+
 static void webgpu_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 					 const struct gpu_render_pass_desc *desc)
 {
@@ -898,11 +928,24 @@ static void webgpu_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 	WGPUSurfaceTexture st;
 	uint32_t i;
 	uint32_t count;
+	int depth_only;
 
 	if (!c || !c->in_use || c->pass)
 		return;
 
-	count = desc->color_count ? desc->color_count : 1;
+	/*
+	 * Whether this pass wants the backbuffer has to be settled before any
+	 * attachment is built, because acquiring the surface is not free of
+	 * consequence: the surface texture is the frame's, and handing it back
+	 * to acquire again later in the same frame leaves the draws that follow
+	 * in a texture the canvas never shows. A depth-only pass (the sun shadow
+	 * map) must therefore never take it in the first place — the colour
+	 * fallback below is for a colour pass that named no attachment, which is
+	 * the backbuffer by convention, and depth-only is not that case.
+	 */
+	depth_only = desc->color_count == 0 && desc->depth;
+
+	count = depth_only ? 0 : (desc->color_count ? desc->color_count : 1);
 	if (count > GPU_MAX_COLOR_ATTACHMENTS)
 		count = GPU_MAX_COLOR_ATTACHMENTS;
 
@@ -949,7 +992,7 @@ static void webgpu_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 
 	memset(&rp, 0, sizeof(rp));
 	rp.colorAttachmentCount = count;
-	rp.colorAttachments     = color;
+	rp.colorAttachments     = count ? color : NULL;
 
 	/*
 	 * GL's default framebuffer comes with a depth buffer, so a pass drawing
@@ -993,23 +1036,6 @@ static void webgpu_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 		depth_att.stencilLoadOp    = WGPULoadOp_Undefined;
 		depth_att.stencilStoreOp   = WGPUStoreOp_Undefined;
 		rp.depthStencilAttachment  = &depth_att;
-	}
-
-	/*
-	 * A depth-only pass (the sun shadow map) supplies no colour at all. The
-	 * count fallback above assumes the backbuffer, which is right for a
-	 * colour pass with no explicit attachment but wrong here, so drop the
-	 * colour attachments when depth is the only target.
-	 */
-	if (desc->color_count == 0 && desc->depth) {
-		rp.colorAttachmentCount = 0;
-		rp.colorAttachments     = NULL;
-		if (c->surface_view) {
-			wgpuTextureViewRelease(c->surface_view);
-			wgpuTextureRelease(c->surface_tex);
-			c->surface_view = NULL;
-			c->surface_tex  = NULL;
-		}
 	}
 
 	c->pass = wgpuCommandEncoderBeginRenderPass(c->enc, &rp);
@@ -1105,6 +1131,7 @@ static void webgpu_cmd_draw(gpu_cmd_buf_t cmd, uint32_t vertex_count,
 				  instance_count ? instance_count : 1,
 				  first_vertex, first_instance);
 }
+
 
 static void webgpu_cmd_draw_indexed(gpu_cmd_buf_t cmd,
 				    const struct gpu_draw_indexed_args *args)
@@ -1213,12 +1240,8 @@ static gpu_texture_t webgpu_texture_create(const struct gpu_texture_desc *desc)
 	return (gpu_texture_t)t;
 }
 
-static void webgpu_texture_destroy(gpu_texture_t texture)
+static void release_texture(struct gpu_texture *t)
 {
-	struct gpu_texture *t = (struct gpu_texture *)texture;
-
-	if (!t)
-		return;
 	if (t->view)
 		wgpuTextureViewRelease(t->view);
 	if (t->tex) {
@@ -1226,6 +1249,50 @@ static void webgpu_texture_destroy(gpu_texture_t texture)
 		wgpuTextureRelease(t->tex);
 	}
 	g_mem->free(t);
+}
+
+/*
+ * The frame graph frees a transient the moment its last reader ends, which is
+ * still mid-frame -- the command buffer holding those draws is not submitted
+ * until every pass has run. GL tolerates that; WebGPU rejects the submit
+ * outright ("Destroyed texture used in a submit"), because a destroy there is
+ * immediate rather than refcounted against pending work.
+ *
+ * Rather than push that difference up into fg.c, where it would complicate a
+ * contract that is correct as written, destruction is deferred here until the
+ * submit those commands belong to has gone through.
+ */
+static void webgpu_texture_destroy(gpu_texture_t texture)
+{
+	struct gpu_texture *t = (struct gpu_texture *)texture;
+
+	if (!t)
+		return;
+	g_texture_generation++;
+
+	if (g_pending_destroy_count < WGPU_MAX_PENDING_DESTROY) {
+		g_pending_destroy[g_pending_destroy_count++] = t;
+		return;
+	}
+
+	/*
+	 * More transients died in one frame than the queue holds. Destroying
+	 * now is what the caller asked for and keeps the leak from growing; if
+	 * the texture is live in this frame's commands the submit will say so.
+	 */
+	g_log->write(LOG_LEVEL_ERROR,
+		     "renderer_webgpu: pending-destroy queue full (%u); destroying immediately",
+		     (unsigned)WGPU_MAX_PENDING_DESTROY);
+	release_texture(t);
+}
+
+static void flush_pending_destroys(void)
+{
+	uint32_t i;
+
+	for (i = 0; i < g_pending_destroy_count; i++)
+		release_texture(g_pending_destroy[i]);
+	g_pending_destroy_count = 0;
 }
 
 static void webgpu_cmd_bind_texture(gpu_cmd_buf_t cmd, uint32_t unit,
@@ -1240,6 +1307,12 @@ static void webgpu_cmd_bind_texture(gpu_cmd_buf_t cmd, uint32_t unit,
 	if (c->textures[unit] == view)
 		return;
 	c->textures[unit] = view;
+	/*
+	 * Which sampler the bind group needs is a property of the texture, not
+	 * of the view, so it has to be recorded here while the format is still
+	 * in hand -- the group builder sees only views.
+	 */
+	c->texture_depth[unit] = t && t->format == GPU_FORMAT_DEPTH32_FLOAT;
 	c->textures_dirty = 1;
 }
 
@@ -1501,6 +1574,19 @@ static void on_device(WGPURequestDeviceStatus status, WGPUDevice device,
 		sd.lodMaxClamp  = 32.0f;
 		sd.maxAnisotropy = 1;
 		g_sampler = wgpuDeviceCreateSampler(g_device, &sd);
+
+		/*
+		 * A depth texture lowers to texture_depth_2d, whose derived
+		 * layout asks for a non-filtering sampler -- binding the linear
+		 * one above is a validation error. GL has no such split (the
+		 * shadow shaders do their own 3x3 PCF with step, so nothing is
+		 * asking the hardware to filter anyway), which is why this
+		 * second sampler exists only here.
+		 */
+		sd.magFilter    = WGPUFilterMode_Nearest;
+		sd.minFilter    = WGPUFilterMode_Nearest;
+		sd.mipmapFilter = WGPUMipmapFilterMode_Nearest;
+		g_depth_sampler = wgpuDeviceCreateSampler(g_device, &sd);
 	}
 
 	g_ready = 1;
@@ -1586,7 +1672,7 @@ static void renderer_webgpu_tick(void)
 	if (g_instance)
 		wgpuInstanceProcessEvents(g_instance);
 
-	if (!g_ready)
+	if (!g_ready || !g_probe_owns_frame)
 		return;
 
 	cmd = webgpu_api.cmd_buf_begin();
@@ -1652,6 +1738,21 @@ void renderer_webgpu_plugin_entry(struct subsystem_manager *mgr)
 	g_log = subsystem_manager_get_api(mgr, "log");
 	g_mem = subsystem_manager_get_api(mgr, "memory");
 	subsystem_manager_register(mgr, &desc);
+}
+
+/*
+ * Hand the frame to the render cluster. Until the device lands the backend is
+ * the only registered subsystem, so its tick clears the backbuffer and draws
+ * the probe triangle — that is the whole picture at that point. Once the
+ * cluster boots, the frame graph owns the backbuffer, and a probe still
+ * clearing every frame would simply paint over the scene (a black canvas, which
+ * reads exactly like "nothing rendered"). So engine.c calls this as it finishes
+ * the deferred boot, and the probe goes quiet for good.
+ */
+void renderer_webgpu_release_frame(void)
+{
+	g_probe_owns_frame = 0;
+	webgpu_status("webgpu: render cluster live");
 }
 
 /*

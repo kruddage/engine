@@ -65,6 +65,7 @@ void entity_plugin_entry(struct subsystem_manager *mgr);
 void renderer_webgl_plugin_entry(struct subsystem_manager *mgr);
 void renderer_webgpu_plugin_entry(struct subsystem_manager *mgr);
 int  renderer_webgpu_device_ready(void);
+void renderer_webgpu_release_frame(void);
 void fg_plugin_entry(struct subsystem_manager *mgr);
 void scene_renderer_plugin_entry(struct subsystem_manager *mgr);
 void kruddboard_plugin_entry(struct subsystem_manager *mgr);
@@ -216,6 +217,11 @@ static void finish_plugin_boot(int webgpu)
 {
 	size_t i;
 	double phase;
+
+	/* The frame graph is about to own the backbuffer; the probe must stop
+	 * clearing it. Before the loop, so no tick can land in between. */
+	if (webgpu)
+		renderer_webgpu_release_frame();
 
 	for (i = 0; i < sizeof(plugin_table) / sizeof(plugin_table[0]); i++) {
 		if (webgpu && strcmp(plugin_table[i].name, "renderer_webgl") == 0)

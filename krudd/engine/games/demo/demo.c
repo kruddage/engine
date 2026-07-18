@@ -29,5 +29,5 @@ static void demo_load(void)
 void demo_plugin_entry(struct subsystem_manager *mgr)
 {
 	g_scene = subsystem_manager_get_api(mgr, "scene");
-	game_register("Procedural Demo", demo_load);
+	game_register("Editor", demo_load);
 }

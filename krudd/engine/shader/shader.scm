@@ -84,8 +84,12 @@
 	       ((dot length distance) 'float)
 	       ((sample) 'vec4)
 	       ((cross) 'vec3)
+	       ;;! fwidth reads a screen-space derivative, so it is fragment-only
+	       ;;! on both targets; like the rest of this group it returns its
+	       ;;! argument's type. GLSL and WGSL spell it identically, so the
+	       ;;! generic call emit at the bottom of each lowering covers it.
 	       ((normalize sin cos tan sqrt abs floor fract exp log
-		 radians degrees)
+		 radians degrees fwidth)
 		(shader-infer (car args) env))
 	       ((max min pow mod step reflect mix clamp smoothstep)
 		(shader-infer (car args) env))
@@ -445,6 +449,22 @@
 	(shader-material-params-form
 	  (with-input-from-string src (lambda () (read)))))
 
+;;! --- fragment precision ---
+;;!
+;;! GLSL ES makes the fragment stage's default float precision the shader's
+;;! problem, and mediump is the right default: it is what every scene shader
+;;! wants and what mobile GPUs run fastest. But a shader that samples a signed
+;;! distance field and takes fwidth of the result needs the extra mantissa —
+;;! kruddgui's text is the case in hand — so a shader may opt in with a
+;;! top-level (precision highp).
+;;!
+;;! This is GLSL-only by construction: WGSL has no precision qualifiers (f32 is
+;;! f32), so the WGSL lowering ignores the declaration rather than mapping it to
+;;! anything. Omitting it leaves a shader byte-identical to before this existed.
+(define (shader-precision form)
+	(let ((p (shader-section form 'precision)))
+	  (if (null? p) "mediump" (symbol->string (car p)))))
+
 ;;! --- stage assembly ---
 
 ;;! GLSL ES 300 for one stage, or #f when the shader declares no such stage.
@@ -455,7 +475,10 @@
 		     (refs (shader-refs (cdr body))))
 		 (string-append
 		   "#version 300 es\n"
-		   (if (eq? stage 'fragment) "precision mediump float;\n" "")
+		   (if (eq? stage 'fragment)
+		       (string-append "precision " (shader-precision form)
+				      " float;\n")
+		       "")
 		   (if (eq? stage 'vertex)
 		       (shader-emit-inputs (shader-section form 'inputs)) "")
 		   (shader-emit-uniforms (shader-uniform-blocks form) refs)

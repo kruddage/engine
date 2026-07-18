@@ -173,6 +173,65 @@
   (check "its lone target still writes through out.*"
 	 (has? gfs "out.c = vec4<f32>(1.0, 1.0, 1.0, 1.0);")))
 
+;;! kruddgui's SDF overlay shader — the same DSL shader_test.scm checks the GLSL
+;;! lowering of, here on the WGSL side. This is the shader that will put the
+;;! editor UI on WebGPU once kruddgui flips to it, so its bindings are the
+;;! contract renderer_webgpu.c scans for: the View block at group 0 binding 0,
+;;! and the atlas sampler pair at group 1 bindings 0 and 1. Pinning them now
+;;! means the flip cannot quietly land on different slots than the backend binds.
+(define kgui-sdf "(shader kruddgui-sdf
+  (precision highp)
+  (inputs (a_pos vec2 (location 0)) (a_uv vec2 (location 1))
+          (a_col vec4 (location 2)))
+  (uniforms (View (block 0) (layout std140) (u_viewport vec2))
+            (u_tex sampler2D))
+  (varyings (v_uv vec2) (v_col vec4))
+  (targets (frag vec4 (location 0)))
+  (vertex
+    (let* ((p (/ a_pos u_viewport))
+           (q (- (* p 2.0) 1.0)))
+      (set v_uv a_uv)
+      (set v_col a_col)
+      (set position (vec4 (swizzle q x) (- 0.0 (swizzle q y)) 0.0 1.0))))
+  (fragment
+    (let* ((d (swizzle (sample u_tex v_uv) a))
+           (w (max (fwidth d) 0.00390625))
+           (cov (smoothstep (- 0.5 w) (+ 0.5 w) d)))
+      (set frag (vec4 (swizzle v_col rgb) (* (swizzle v_col a) cov))))))")
+
+(define kvs (shader-transpile-wgsl kgui-sdf "vertex"))
+(define kfs (shader-transpile-wgsl kgui-sdf "fragment"))
+
+(display "wgsl: fwidth\n")
+(check "fwidth lowers to the WGSL builtin of the same name"
+       (has? kfs "let w = max(fwidth(d), 0.00390625);"))
+
+(display "wgsl: precision is GLSL-only\n")
+(check "(precision highp) emits nothing into WGSL, which has no qualifier for it"
+       (not (has? kfs "precision")))
+(check "and it does not leak into the vertex stage either"
+       (not (has? kvs "precision")))
+
+(display "wgsl: kruddgui overlay bindings\n")
+(check "the View block lands at group 0 binding 0, where kruddgui binds its UBO"
+       (has? kvs "@group(0) @binding(0) var<uniform> u_View : View;"))
+(check "the block member reads through the uniform var"
+       (has? kvs "let p = (in.a_pos / u_View.u_viewport);"))
+(check "the fragment omits View, which it never reads"
+       (not (has? kfs "u_View")))
+(check "the atlas sampler is a texture/sampler pair at group 1 bindings 0 and 1"
+       (and (has? kfs "@group(1) @binding(0) var u_tex : texture_2d<f32>;")
+	    (has? kfs "@group(1) @binding(1) var u_tex_sampler : sampler;")))
+(check "(sample u_tex v_uv) lowers to textureSample with the companion sampler"
+       (has? kfs "let d = textureSample(u_tex, u_tex_sampler, in.v_uv).a;"))
+(check "the varyings keep matching locations across the stage boundary"
+       (and (has? kvs "@location(0) v_uv : vec2<f32>,")
+	    (has? kvs "@location(1) v_col : vec4<f32>,")
+	    (has? kfs "@location(0) v_uv : vec2<f32>,")
+	    (has? kfs "@location(1) v_col : vec4<f32>,")))
+(check "the clip-space write goes through the position builtin"
+       (has? kvs "out.position = vec4<f32>(q.x, (0.0 - q.y), 0.0, 1.0);"))
+
 ;;! When KRUDD_WGSL_DUMP names a directory, also write the emitted WGSL there so
 ;;! run-tests.sh can hand it to naga(1) for a real validation pass — the checks
 ;;! above prove the shape, naga proves the WGSL actually compiles. Skipped (and
@@ -188,6 +247,10 @@
 	(write-wgsl "scene.frag.wgsl" fs)
 	(write-wgsl "tex.vert.wgsl"   tvs)
 	(write-wgsl "tex.frag.wgsl"   tfs)
+	;;! kruddgui's overlay: the fwidth path, and the only shader here whose
+	;;! WGSL a real backend rejects loudly if the derivative lowers wrong.
+	(write-wgsl "kgui-sdf.vert.wgsl" kvs)
+	(write-wgsl "kgui-sdf.frag.wgsl" kfs)
 	(write-wgsl "glow.frag.wgsl"
 		    (shader-transpile-wgsl
 		      "(shader glow (targets (c vec4 (location 0)))

@@ -159,6 +159,76 @@
 	 (and (= (car mp) 16) (= (length (cdr mp)) 1)
 	      (equal? (car (list-ref mp 1)) "base_color"))))
 
+;;! kruddgui's SDF overlay shader — the reason fwidth and (precision highp) exist,
+;;! and the shape they have to work on. kruddgui still compiles the hand-written
+;;! GLSL below as a literal string; flipping it to this DSL source is a separate
+;;! change, blocked on the WebGPU backend acquiring its surface texture per frame
+;;! rather than per command buffer.
+;;!
+;;! Checking it here anyway is the point: every assertion below is against the
+;;! GLSL kruddgui emits *today*, statement for statement, so the flip lands
+;;! against a lowering already proven to reproduce it. Text that renders subtly
+;;! fat or thin is the failure this is guarding against, and it is not a failure
+;;! that announces itself.
+(define kgui-sdf "(shader kruddgui-sdf
+  (precision highp)
+  (inputs (a_pos vec2 (location 0)) (a_uv vec2 (location 1))
+          (a_col vec4 (location 2)))
+  (uniforms (View (block 0) (layout std140) (u_viewport vec2))
+            (u_tex sampler2D))
+  (varyings (v_uv vec2) (v_col vec4))
+  (targets (frag vec4 (location 0)))
+  (vertex
+    (let* ((p (/ a_pos u_viewport))
+           (q (- (* p 2.0) 1.0)))
+      (set v_uv a_uv)
+      (set v_col a_col)
+      (set position (vec4 (swizzle q x) (- 0.0 (swizzle q y)) 0.0 1.0))))
+  (fragment
+    (let* ((d (swizzle (sample u_tex v_uv) a))
+           (w (max (fwidth d) 0.00390625))
+           (cov (smoothstep (- 0.5 w) (+ 0.5 w) d)))
+      (set frag (vec4 (swizzle v_col rgb) (* (swizzle v_col a) cov))))))")
+
+(define kvs (shader-transpile kgui-sdf "vertex"))
+(define kfs (shader-transpile kgui-sdf "fragment"))
+
+(display "shader: fragment precision\n")
+(check "a fragment stage defaults to mediump"
+       (has? fs "precision mediump float;"))
+(check "(precision highp) overrides that default"
+       (has? kfs "precision highp float;"))
+(check "and the default spelling is then absent"
+       (not (has? kfs "precision mediump float;")))
+(check "precision is a fragment-stage qualifier; the vertex declares none"
+       (not (has? kvs "precision")))
+
+(display "shader: fwidth\n")
+(check "fwidth lowers to the GLSL builtin of the same name"
+       (has? kfs "float w = max(fwidth(d), 0.00390625);"))
+(check "fwidth returns its argument's type (float here, so w is a float)"
+       (has? kfs "float w = "))
+
+(display "shader: kruddgui overlay parity with the GLSL it replaced\n")
+(check "the vertex reproduces the viewport divide"
+       (has? kvs "vec2 p = (a_pos / u_viewport);"))
+(check "and the 0..1 -> -1..1 remap"
+       (has? kvs "vec2 q = ((p * 2.0) - 1.0);"))
+(check "and the y-down flip into clip space"
+       (has? kvs "gl_Position = vec4(q.x, (0.0 - q.y), 0.0, 1.0);"))
+(check "the fragment reads the SDF distance from the atlas alpha"
+       (has? kfs "float d = texture(u_tex, v_uv).a;"))
+(check "the coverage ramp thresholds at 0.5 +/- the derivative width"
+       (has? kfs "float cov = smoothstep((0.5 - w), (0.5 + w), d);"))
+(check "colour comes from the vertex, alpha is scaled by coverage"
+       (has? kfs "frag = vec4(v_col.rgb, (v_col.a * cov));"))
+(check "the vertex declares the View block it reads"
+       (has? kvs "layout(std140) uniform View {\n\thighp vec2 u_viewport;\n};"))
+(check "the fragment omits View, which it never reads"
+       (not (has? kfs "uniform View")))
+(check "the fragment declares the atlas sampler"
+       (has? kfs "uniform sampler2D u_tex;"))
+
 (display "shader: missing-stage shader\n")
 (let ((frag-only "(shader glow (targets (c vec4 (location 0)))
                     (fragment (set c (vec4 1.0 1.0 1.0 1.0))))"))

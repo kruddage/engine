@@ -122,24 +122,36 @@
 
 (define (ninja-emit-executable table dir form)
 	(let* ((name (cadr form))
-	       (clauses (cddr form))
-	       (includes (ninja-include-flags (resolve-includes table name)))
-	       (objs (map (lambda (s)
-			    (ninja-emit-compile name dir includes s))
-			  (ninja-sources clauses)))
-	       (libs (map (lambda (l) (string-append "lib" l ".a"))
-			  (resolve-link-libs table name)))
-	       (syslibs (resolve-syslibs table name))
-	       (bin (string-append "bin/" name)))
-		(ninja-emit (string-append "build " bin ": link "
+	       (clauses (cddr form)))
+	  (if (ninja-dawn-skip? clauses)
+	      #t
+	      (let* ((dawn (ninja-dawn? clauses))
+		     (includes (ninja-dawn-includes clauses
+			         (ninja-include-flags
+				   (resolve-includes table name))))
+		     (objs (map (lambda (s)
+				  (ninja-emit-compile name dir includes s))
+				(ninja-sources clauses)))
+		     (libs (map (lambda (l) (string-append "lib" l ".a"))
+				(resolve-link-libs table name)))
+		     (syslibs (resolve-syslibs table name))
+		     (ldlibs (append (map (lambda (l) (string-append "-l" l))
+					  syslibs)
+				     (if dawn (list "$dawnlibs") '())))
+		     (bin (string-append "bin/" name)))
+		(ninja-emit (string-append "build " bin ": "
+					   (if dawn "link_cxx" "link") " "
 					   (ninja-join " " (append objs libs))))
-		(if (pair? syslibs)
+		(if (pair? ldlibs)
 		    (ninja-emit (string-append "  ldlibs = "
-					       (ninja-join " "
-						 (map (lambda (l)
-							(string-append "-l" l))
-						      syslibs)))))
-		(ninja-emit "")))
+					       (ninja-join " " ldlibs))))
+		(ninja-emit "")
+		;;! Ordinary executables are pulled into the `native` target by the
+		;;! (test ...) edge that runs them. A `(dawn)` binary has none — it
+		;;! needs a real GPU adapter, so it must not become a CI test — and
+		;;! it is itself the deliverable, so name it directly or nothing
+		;;! would ever build it.
+		(if dawn (ninja-native! bin))))))
 
 (define (ninja-emit-test form)
 	(let* ((name (cadr form))
@@ -195,6 +207,13 @@
 	  ;;! See ninja-dawn-skip?.
 	  (string-append "dawnprefix = " (or (dawn-prefix) ""))
 	  "dawnincludes = -I$dawnprefix/include"
+	  ;;! One monolithic archive (DAWN_BUILD_MONOLITHIC_LIBRARY=STATIC) so a
+	  ;;! non-CMake consumer links one artifact instead of reproducing Dawn's
+	  ;;! dependency graph here. It lands after the engine archives because
+	  ;;! ninja-emit-executable emits $ldlibs last, which is what static
+	  ;;! linking requires.
+	  (string-append "dawnlibs = $dawnprefix/lib/libwebgpu_dawn.a "
+			 "-lz -ldl -lpthread -lm")
 	  "cflags = -std=gnu11 -Wall -Werror -Wpedantic"
 	  "cxxflags = -std=gnu11 -Wall -Werror -Wpedantic"
 	  ;;! --use-port=emdawnwebgpu enables the WebGPU (Dawn) headers + JS glue;
@@ -235,6 +254,14 @@
 	  "rule link"
 	  "  command = $cc $extraldflags $in $ldlibs -o $out"
 	  "  description = LINK $out"
+	  ""
+	  ;;! libwebgpu_dawn.a is C++, so a `(dawn)` executable needs a C++ driver
+	  ;;! for the final link. Deliberately a separate rule rather than flipping
+	  ;;! `link` over: the native *_test binaries are pure C and should not grow
+	  ;;! a libstdc++ dependency for nothing.
+	  "rule link_cxx"
+	  "  command = $cxx $extraldflags $in $ldlibs -o $out"
+	  "  description = LINK(c++) $out"
 	  ""
 	  "rule run_test"
 	  "  command = $in && touch $out"

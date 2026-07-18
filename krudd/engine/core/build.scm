@@ -24,6 +24,17 @@
 		"demo_game" "tictactoe_game"))
 
  (native-only
+	;;! The offscreen WebGPU harness. Needs native Dawn, so it is skipped
+	;;! entirely unless KRUDD_DAWN_PREFIX is set — see tools/dawn-smoke/README.md.
+	;;! No (test ...) edge: it needs a real GPU adapter, which a CI runner has
+	;;! no business assuming.
+	(executable "krudd_native"
+		(sources "engine_native.c")
+		(private "include" (raw "${generated}"))
+		(dawn)
+		(link "subsystem" "subsystem_manager" "log" "memory" "script"
+		      "renderer_webgpu"))
+
 	(executable "subsystem_test"
 		(sources "subsystem_test.c")
 		(link "subsystem"))

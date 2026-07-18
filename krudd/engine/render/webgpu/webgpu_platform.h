@@ -38,6 +38,27 @@ WGPUSurface webgpu_platform_create_surface(WGPUInstance instance);
  */
 void webgpu_platform_backbuffer_size(uint32_t *w, uint32_t *h);
 
+/*
+ * A view of the frame's colour target on a platform that has no surface, or
+ * NULL where one exists (the backend acquires the surface texture instead).
+ *
+ * Returns a FRESH view each call and the caller owns it, matching the lifetime
+ * of a surface texture's view so the backend's existing per-frame release path
+ * works unchanged. The underlying texture is persistent and owned here, which
+ * is what makes it readable after the frame — see
+ * webgpu_platform_read_backbuffer.
+ */
+WGPUTextureView webgpu_platform_backbuffer_view(WGPUDevice device);
+
+/*
+ * Copy the offscreen backbuffer into `rgba` (w*h*4 bytes, top row first, tightly
+ * packed). Returns 1 on success, 0 on a platform that presents through a
+ * surface — there the backbuffer belongs to the compositor and is not ours to
+ * read.
+ */
+int webgpu_platform_read_backbuffer(WGPUInstance instance, WGPUDevice device,
+				    WGPUQueue queue, uint8_t *rgba);
+
 /* Progress reporting, for a target that may have no console attached. */
 void webgpu_platform_status(const char *msg);
 

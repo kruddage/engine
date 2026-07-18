@@ -144,77 +144,130 @@ static float            s_white_u, s_white_v;
 static float            s_text_size;
 
 /*
- * The shared vertex shader. u_viewport (the CSS-pixel canvas size the batch is
- * laid out in) rides a std140 uniform block, since the gpu_api has no loose
- * uniforms — it is bound once per frame from s_view_ubo. The block is the only
- * one in the program, so the backend assigns it binding 0 (see cmd-bind-uniform-
- * buffer); kruddgui binds s_view_ubo to that slot.
+ * The two panel shaders, in the krudd DSL rather than hand-written GLSL.
+ *
+ * They were GLSL ES 300 strings until the WebGPU backend arrived, which cannot
+ * consume GLSL at all — a GLSL-dialect pipeline is refused outright, which is
+ * why the editor UI was absent from every WebGPU frame. The DSL is the one
+ * source both backends lower from (GLSL via script_shader_transpile, WGSL via
+ * script_shader_transpile_wgsl), so writing them here is what puts kruddgui on
+ * both.
+ *
+ * They are two whole shaders rather than one with two fragment stages because a
+ * DSL form carries exactly one vertex and one fragment stage; the vertex half is
+ * therefore duplicated verbatim between them. Keep the two (vertex ...) bodies
+ * identical — they feed the same vertex buffer through the same layout, and a
+ * divergence would show up only as one pipeline's geometry drifting.
+ *
+ * Shared vertex half: u_viewport (the CSS-pixel canvas size the batch is laid
+ * out in) rides a std140 uniform block, since the gpu_api has no loose uniforms
+ * — it is bound once per frame from s_view_ubo. The block is the only one in
+ * either program, so it takes binding 0 (see cmd-bind-uniform-buffer); kruddgui
+ * binds s_view_ubo to that slot.
+ *
+ * (precision highp) is not decoration. The DSL defaults a fragment stage to
+ * mediump, which is right for scene shading, but the SDF path thresholds a
+ * signed distance and takes fwidth of it — mediump costs mantissa exactly where
+ * the antialiasing ramp needs it, and desktop GL hides that by promoting to
+ * highp while a mobile GPU does not. Both shaders declare it so the two paths
+ * cannot drift.
  */
-static const char *k_vert_src =
-	"#version 300 es\n"
-	"layout(location=0) in vec2 a_pos;\n"
-	"layout(location=1) in vec2 a_uv;\n"
-	"layout(location=2) in vec4 a_col;\n"
-	"layout(std140) uniform View { vec2 u_viewport; };\n"
-	"out vec2 v_uv;\n"
-	"out vec4 v_col;\n"
-	"void main() {\n"
-	"    vec2 p = a_pos / u_viewport;\n"      /* 0..1 in CSS space */
-	"    p = p * 2.0 - 1.0;\n"                /* -1..1             */
-	"    gl_Position = vec4(p.x, -p.y, 0.0, 1.0);\n" /* y down     */
-	"    v_uv = a_uv;\n"
-	"    v_col = a_col;\n"
-	"}\n";
 
 /*
- * The SDF fragment path (s_pipe_sdf): glyphs and filled rects sample kruddgui's
- * SDF atlas, whose alpha channel is a signed distance. Threshold it at 0.5 with
- * a screen-space smoothstep (fwidth gives the per-pixel ramp) so text stays
+ * The SDF path (s_pipe_sdf): glyphs and filled rects sample kruddgui's SDF
+ * atlas, whose alpha channel is a signed distance. Threshold it at 0.5 with a
+ * screen-space smoothstep (fwidth gives the per-pixel ramp) so text stays
  * antialiased at any size; colour comes from the vertex. A filled rect
  * point-samples the atlas's solid "inside" texel, so its distance is a constant
- * 1.0 and it resolves to full coverage with no special case. highp keeps the
- * distance and UVs exact across the atlas.
+ * 1.0 and it resolves to full coverage with no special case.
  */
-static const char *k_frag_sdf_src =
-	"#version 300 es\n"
-	"precision highp float;\n"
-	"in vec2 v_uv;\n"
-	"in vec4 v_col;\n"
-	"uniform sampler2D u_tex;\n"
-	"out vec4 frag;\n"
-	"void main() {\n"
-	"    float d = texture(u_tex, v_uv).a;\n"
-	"    float w = max(fwidth(d), 1.0 / 256.0);\n"
-	"    float cov = smoothstep(0.5 - w, 0.5 + w, d);\n"
-	"    frag = vec4(v_col.rgb, v_col.a * cov);\n"
-	"}\n";
+static const char *k_sdf_src =
+	"(shader kruddgui-sdf\n"
+	"  (precision highp)\n"
+	"  (inputs\n"
+	"    (a_pos vec2 (location 0))\n"
+	"    (a_uv  vec2 (location 1))\n"
+	"    (a_col vec4 (location 2)))\n"
+	"  (uniforms\n"
+	"    (View (block 0) (layout std140)\n"
+	"      (u_viewport vec2))\n"
+	"    (u_tex sampler2D))\n"
+	"  (varyings\n"
+	"    (v_uv  vec2)\n"
+	"    (v_col vec4))\n"
+	"  (targets\n"
+	"    (frag vec4 (location 0)))\n"
+	"  (vertex\n"
+	"    (let* ((p (/ a_pos u_viewport))\n"           /* 0..1 in CSS space */
+	"           (q (- (* p 2.0) 1.0)))\n"             /* -1..1             */
+	"      (set v_uv a_uv)\n"
+	"      (set v_col a_col)\n"
+	"      (set position (vec4 (swizzle q x) (- 0.0 (swizzle q y))\n"
+	"                          0.0 1.0))))\n"         /* y down            */
+	"  (fragment\n"
+	"    (let* ((d   (swizzle (sample u_tex v_uv) a))\n"
+	"           (w   (max (fwidth d) 0.00390625))\n"  /* 1.0 / 256.0       */
+	"           (cov (smoothstep (- 0.5 w) (+ 0.5 w) d)))\n"
+	"      (set frag (vec4 (swizzle v_col rgb)\n"
+	"                      (* (swizzle v_col a) cov))))))\n";
 
 /*
- * The image fragment path (s_pipe_image): an image quad's sampled texture is a
- * plain RGBA image (a kruddboard bake or scene preview), drawn as a straight
+ * The image path (s_pipe_image): an image quad's sampled texture is a plain
+ * RGBA image (a kruddboard bake or scene preview), drawn as a straight
  * tint * texel passthrough. Splitting this off from the SDF path lets u_sdf
  * become a pipeline choice rather than a per-draw uniform the gpu_api can't set.
  */
-static const char *k_frag_image_src =
-	"#version 300 es\n"
-	"precision highp float;\n"
-	"in vec2 v_uv;\n"
-	"in vec4 v_col;\n"
-	"uniform sampler2D u_tex;\n"
-	"out vec4 frag;\n"
-	"void main() {\n"
-	"    frag = v_col * texture(u_tex, v_uv);\n"
-	"}\n";
+static const char *k_image_src =
+	"(shader kruddgui-image\n"
+	"  (precision highp)\n"
+	"  (inputs\n"
+	"    (a_pos vec2 (location 0))\n"
+	"    (a_uv  vec2 (location 1))\n"
+	"    (a_col vec4 (location 2)))\n"
+	"  (uniforms\n"
+	"    (View (block 0) (layout std140)\n"
+	"      (u_viewport vec2))\n"
+	"    (u_tex sampler2D))\n"
+	"  (varyings\n"
+	"    (v_uv  vec2)\n"
+	"    (v_col vec4))\n"
+	"  (targets\n"
+	"    (frag vec4 (location 0)))\n"
+	"  (vertex\n"
+	"    (let* ((p (/ a_pos u_viewport))\n"
+	"           (q (- (* p 2.0) 1.0)))\n"
+	"      (set v_uv a_uv)\n"
+	"      (set v_col a_col)\n"
+	"      (set position (vec4 (swizzle q x) (- 0.0 (swizzle q y))\n"
+	"                          0.0 1.0))))\n"
+	"  (fragment\n"
+	"    (set frag (* v_col (sample u_tex v_uv)))))\n";
 
-/* Build one panel pipeline: the shared vertex shader + the given fragment. */
-static gpu_pipeline_t make_pipeline(const char *frag_src)
+/*
+ * Build one panel pipeline from a krudd DSL shader. One source carries both
+ * stages; the backend lowers each at pipeline-create (GLSL on WebGL, WGSL on
+ * WebGPU), which is the whole reason these are DSL and not GLSL.
+ */
+static gpu_pipeline_t make_pipeline(const char *shader_src)
 {
 	struct gpu_pipeline_desc pd;
 
 	memset(&pd, 0, sizeof(pd));
 	pd.color_formats[0]   = GPU_FORMAT_RGBA8_UNORM;
 	pd.color_format_count = 1;
-	pd.depth_format       = GPU_FORMAT_UNKNOWN;
+	/*
+	 * The overlay does not test or write depth (disable_depth_test below),
+	 * but it still has to *declare* the pass's depth format. WebGPU matches a
+	 * pipeline's whole attachment state against the pass's and rejects a
+	 * SetPipeline whose depth format disagrees — and a backbuffer pass always
+	 * carries depth, because the WebGPU backend attaches its own to emulate
+	 * the depth buffer GL's default framebuffer comes with. Declaring
+	 * UNKNOWN here made every overlay draw a validation error.
+	 *
+	 * This costs nothing on GL: the WebGL backend reads disable_depth_test
+	 * and ignores depth_format entirely.
+	 */
+	pd.depth_format       = GPU_FORMAT_DEPTH32_FLOAT;
 	pd.topology           = GPU_TOPOLOGY_TRIANGLE_LIST;
 
 	/* kgui_vertex: pos(vec2)@0, uv(vec2)@8, col(vec4)@16, stride 32. */
@@ -227,12 +280,12 @@ static gpu_pipeline_t make_pipeline(const char *frag_src)
 	pd.vertex_layout.attrs[2]   = (struct gpu_vertex_attr){
 		2, (uint32_t)offsetof(struct kgui_vertex, r), GPU_FORMAT_RGBA32_FLOAT };
 
-	pd.vert.src     = k_vert_src;
+	pd.vert.src     = shader_src;
 	pd.vert.stage   = GPU_SHADER_STAGE_VERTEX;
-	pd.vert.dialect = GPU_SHADER_DIALECT_GLSL_ES_300;
-	pd.frag.src     = frag_src;
+	pd.vert.dialect = GPU_SHADER_DIALECT_KRUDD;
+	pd.frag.src     = shader_src;
 	pd.frag.stage   = GPU_SHADER_STAGE_FRAGMENT;
-	pd.frag.dialect = GPU_SHADER_DIALECT_GLSL_ES_300;
+	pd.frag.dialect = GPU_SHADER_DIALECT_KRUDD;
 
 	/* A 2D overlay: straight-alpha blend, and no depth test so later quads
 	 * draw over earlier ones. Both are pipeline state the backend applies. */
@@ -263,8 +316,8 @@ static void gpu_init(void)
 		return;
 	}
 
-	s_pipe_sdf   = make_pipeline(k_frag_sdf_src);
-	s_pipe_image = make_pipeline(k_frag_image_src);
+	s_pipe_sdf   = make_pipeline(k_sdf_src);
+	s_pipe_image = make_pipeline(k_image_src);
 	if (!s_pipe_sdf || !s_pipe_image)
 		return;
 

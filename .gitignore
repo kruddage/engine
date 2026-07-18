@@ -4,3 +4,4 @@
 *.o
 krudd/krudd
 public/
+/tools/render-diff/out/

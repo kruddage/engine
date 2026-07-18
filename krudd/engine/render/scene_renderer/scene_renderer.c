@@ -757,14 +757,25 @@ static int material_texture(uint32_t material_ref, uint32_t shader_ref,
  * material shader must speak that same IO contract (a_pos/a_normal/a_uv0 in,
  * Camera at block 0, Material at block 1); only its shading changes.
  */
-static gpu_pipeline_t create_pso(const struct gpu_api *gpu, const char *src)
+/*
+ * COLOR_COUNT and WANT_DEPTH describe the attachments of the pass this pipeline
+ * runs in. GL never coupled the two -- it discards a fragment colour written
+ * with no colour attachment bound, and ignores a depth state with no depth
+ * buffer -- but WebGPU validates a pipeline's attachment state against the pass
+ * it is used in, in both directions. So the sun shadow pass (depth, no colour)
+ * and the selection mask pass (colour, no depth) each have to say what they
+ * actually target.
+ */
+static gpu_pipeline_t create_pso(const struct gpu_api *gpu, const char *src,
+				 uint32_t color_count, int want_depth)
 {
 	struct gpu_pipeline_desc pd;
 
 	memset(&pd, 0, sizeof(pd));
 	pd.color_formats[0]   = GPU_FORMAT_RGBA8_UNORM;
-	pd.color_format_count = 1;
-	pd.depth_format       = GPU_FORMAT_DEPTH32_FLOAT;
+	pd.color_format_count = color_count;
+	pd.depth_format       = want_depth ? GPU_FORMAT_DEPTH32_FLOAT
+					   : GPU_FORMAT_UNKNOWN;
 	pd.topology           = GPU_TOPOLOGY_TRIANGLE_LIST;
 
 	/* mesh_vertex: position(vec3) @0, normal(vec3) @12, uv0(vec2) @24. */
@@ -805,7 +816,7 @@ static void build_pipeline(const struct gpu_api *gpu)
 			     "scene_renderer: scene shader asset unavailable");
 		return;
 	}
-	g_default_pso = create_pso(gpu, src);
+	g_default_pso = create_pso(gpu, src, 1, 1);
 	/*
 	 * Cache the built-in pipeline under the scene-textured shader's id so a
 	 * material that names it (the default) reuses this pipeline instead of
@@ -867,7 +878,7 @@ static void build_outline_resources(const struct gpu_api *gpu)
 	static const uint16_t FS_IDX[3] = { 0, 1, 2 };
 	struct gpu_buffer_desc bd;
 
-	g_mask_pso    = create_pso(gpu, MASK_SHADER_SRC);
+	g_mask_pso    = create_pso(gpu, MASK_SHADER_SRC, 1, 0);
 	g_outline_pso = create_fullscreen_pso(gpu, OUTLINE_SHADER_SRC);
 	if (!g_mask_pso || !g_outline_pso)
 		g_log->write(LOG_LEVEL_WARN,
@@ -904,7 +915,7 @@ static void build_shadow_resources(const struct gpu_api *gpu)
 	static const unsigned char WHITE_TEXEL[4] = { 255, 255, 255, 255 };
 	struct gpu_texture_desc     td;
 
-	g_shadow_pso = create_pso(gpu, SHADOW_SHADER_SRC);
+	g_shadow_pso = create_pso(gpu, SHADOW_SHADER_SRC, 0, 1);
 	if (!g_shadow_pso)
 		g_log->write(LOG_LEVEL_WARN,
 			     "scene_renderer: shadow pipeline unavailable; "
@@ -940,7 +951,7 @@ static void add_shader_pso(const struct gpu_api *gpu, uint32_t shader_ref)
 		return;
 	}
 	src = (const char *)g_asset->get_data(shader_ref, NULL);
-	pso = src ? create_pso(gpu, src) : 0;
+	pso = src ? create_pso(gpu, src, 1, 1) : 0;
 	if (!pso)
 		g_log->write(LOG_LEVEL_WARN,
 			     "scene_renderer: shader %u failed to compile; "

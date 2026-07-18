@@ -50,6 +50,7 @@ static WGPUDevice        g_device;
 static WGPUQueue         g_queue;
 static WGPUTextureFormat g_format;
 static int               g_ready;    /* 1 once the device + surface are live */
+static WGPUSampler       g_sampler;  /* one linear/repeat sampler for every unit */
 
 /* The triangle, now owned as ordinary gpu_api resources. */
 static gpu_pipeline_t g_tri_pso;
@@ -195,6 +196,14 @@ struct uniform_binding {
 	uint32_t   size;
 };
 
+#define WGPU_MAX_TEXTURE_UNITS 4
+
+struct tex_group_entry {
+	WGPUBindGroup   bg;
+	WGPUTextureView views[WGPU_MAX_TEXTURE_UNITS];
+	int             valid;
+};
+
 struct bind_group_entry {
 	WGPUBindGroup          bg;
 	struct uniform_binding slots[WGPU_MAX_UNIFORM_SLOTS];
@@ -221,8 +230,15 @@ struct gpu_pipeline {
 	 * be a validation error.
 	 */
 	uint32_t uniform_mask;
+	/*
+	 * Bindings the shader declares in group 1: a sampled texture at 2i and
+	 * its companion sampler at 2i+1, the pairing shader.scm documents.
+	 */
+	uint32_t texture_mask;
 	struct bind_group_entry cache[WGPU_BIND_GROUP_CACHE];
 	uint32_t next_evict;
+	struct tex_group_entry tex_cache[WGPU_BIND_GROUP_CACHE];
+	uint32_t tex_next_evict;
 };
 
 /*
@@ -249,6 +265,8 @@ struct gpu_cmd_buf_state {
 	struct uniform_binding uniforms[WGPU_MAX_UNIFORM_SLOTS];
 	uint32_t               uniform_mask;
 	int                    bindings_dirty;
+	WGPUTextureView        textures[WGPU_MAX_TEXTURE_UNITS];
+	int                    textures_dirty;
 };
 
 static struct gpu_cmd_buf_state g_cmd;
@@ -362,6 +380,43 @@ static WGPUBufferUsage to_buffer_usage(uint32_t usage)
 	return u;
 }
 
+/*
+ * wgpuQueueWriteBuffer requires the length be a multiple of 4; GL's
+ * glBufferData did not, so callers sized for the looser API land here with odd
+ * lengths (a 6-index triangle list at 2 bytes an index, for one). Pad through a
+ * staging copy rather than rounding the length up over the caller's buffer,
+ * which would read past the end of whatever they handed us.
+ */
+static void queue_write(WGPUBuffer buf, uint32_t offset, const void *data,
+			uint32_t size)
+{
+	uint32_t aligned = (size + 3u) & ~3u;
+	void *tmp;
+
+	if (!buf || !data || !size)
+		return;
+
+	if (offset & 3u) {
+		g_log->write(LOG_LEVEL_ERROR,
+			     "renderer_webgpu: buffer write offset %u is not 4-byte aligned",
+			     offset);
+		return;
+	}
+
+	if (aligned == size) {
+		wgpuQueueWriteBuffer(g_queue, buf, offset, data, size);
+		return;
+	}
+
+	tmp = g_mem->alloc(aligned);
+	if (!tmp)
+		return;
+	memcpy(tmp, data, size);
+	memset((unsigned char *)tmp + size, 0, aligned - size);
+	wgpuQueueWriteBuffer(g_queue, buf, offset, tmp, aligned);
+	g_mem->free(tmp);
+}
+
 static gpu_buffer_t webgpu_buffer_create(const struct gpu_buffer_desc *desc)
 {
 	struct gpu_buffer *b;
@@ -394,8 +449,7 @@ static gpu_buffer_t webgpu_buffer_create(const struct gpu_buffer_desc *desc)
 		return NULL;
 	}
 	if (desc->initial_data)
-		wgpuQueueWriteBuffer(g_queue, b->buf, 0, desc->initial_data,
-				     desc->size);
+		queue_write(b->buf, 0, desc->initial_data, (uint32_t)desc->size);
 	return (gpu_buffer_t)b;
 }
 
@@ -417,9 +471,9 @@ static void webgpu_buffer_update(gpu_buffer_t buf, uint32_t offset,
 {
 	struct gpu_buffer *b = (struct gpu_buffer *)buf;
 
-	if (!b || !b->buf || !data || !size)
+	if (!b || !b->buf)
 		return;
-	wgpuQueueWriteBuffer(g_queue, b->buf, offset, data, size);
+	queue_write(b->buf, offset, data, size);
 }
 
 /* ----------------------------------------------------------- pipelines */
@@ -468,17 +522,19 @@ static const char *lower_stage(const struct gpu_shader_source *src,
  * pipeline genuinely requires. Bind group 1 (textures) is skipped here — that
  * arrives with texture support.
  */
-static uint32_t scan_uniform_slots(const char *wgsl)
+static uint32_t scan_group_slots(const char *wgsl, int group)
 {
-	static const char NEEDLE[] = "@group(0) @binding(";
-	const size_t nlen = sizeof(NEEDLE) - 1;
+	char needle[24];
+	size_t nlen;
 	uint32_t mask = 0;
 	const char *p = wgsl;
 
 	if (!wgsl)
 		return 0;
+	snprintf(needle, sizeof(needle), "@group(%d) @binding(", group);
+	nlen = strlen(needle);
 
-	while ((p = strstr(p, NEEDLE)) != NULL) {
+	while ((p = strstr(p, needle)) != NULL) {
 		unsigned slot = 0;
 		const char *d = p + nlen;
 
@@ -488,12 +544,12 @@ static uint32_t scan_uniform_slots(const char *wgsl)
 		}
 		while (*d >= '0' && *d <= '9')
 			slot = slot * 10u + (unsigned)(*d++ - '0');
-		if (slot < WGPU_MAX_UNIFORM_SLOTS)
+		if (slot < 32u)
 			mask |= 1u << slot;
 		else
 			g_log->write(LOG_LEVEL_ERROR,
-				     "renderer_webgpu: uniform slot %u exceeds %d",
-				     slot, WGPU_MAX_UNIFORM_SLOTS);
+				     "renderer_webgpu: binding %u in group %d is out of range",
+				     slot, group);
 		p = d;
 	}
 	return mask;
@@ -569,6 +625,69 @@ static WGPUBindGroup resolve_bind_group(struct gpu_pipeline *p,
 }
 
 /*
+ * The group-1 companion to resolve_bind_group: a sampled texture at binding 2i
+ * and the shared sampler at 2i+1, which is the pairing shader.scm emits. One
+ * sampler serves every unit — the engine has never varied filtering per bind,
+ * and a per-texture sampler would just multiply cache entries.
+ */
+static WGPUBindGroup resolve_texture_group(struct gpu_pipeline *p,
+					   WGPUTextureView *want)
+{
+	WGPUBindGroupEntry entries[WGPU_MAX_TEXTURE_UNITS * 2];
+	WGPUBindGroupDescriptor bd;
+	WGPUBindGroupLayout layout;
+	struct tex_group_entry *slot;
+	uint32_t i;
+	uint32_t n = 0;
+
+	for (i = 0; i < WGPU_BIND_GROUP_CACHE; i++) {
+		struct tex_group_entry *e = &p->tex_cache[i];
+
+		if (e->valid && memcmp(e->views, want, sizeof(e->views)) == 0)
+			return e->bg;
+	}
+
+	memset(entries, 0, sizeof(entries));
+	for (i = 0; i < WGPU_MAX_TEXTURE_UNITS; i++) {
+		if (!(p->texture_mask & (1u << (i * 2))))
+			continue;
+		if (!want[i]) {
+			g_log->write(LOG_LEVEL_ERROR,
+				     "renderer_webgpu: pipeline samples unit %u but no texture is bound",
+				     i);
+			return NULL;
+		}
+		entries[n].binding     = i * 2;
+		entries[n].textureView = want[i];
+		n++;
+		entries[n].binding = i * 2 + 1;
+		entries[n].sampler = g_sampler;
+		n++;
+	}
+
+	layout = wgpuRenderPipelineGetBindGroupLayout(p->pso, 1);
+	if (!layout)
+		return NULL;
+
+	memset(&bd, 0, sizeof(bd));
+	bd.layout     = layout;
+	bd.entryCount = n;
+	bd.entries    = entries;
+
+	slot = &p->tex_cache[p->tex_next_evict];
+	if (slot->valid && slot->bg)
+		wgpuBindGroupRelease(slot->bg);
+	p->tex_next_evict = (p->tex_next_evict + 1u) % WGPU_BIND_GROUP_CACHE;
+
+	slot->bg = wgpuDeviceCreateBindGroup(g_device, &bd);
+	memcpy(slot->views, want, sizeof(slot->views));
+	slot->valid = slot->bg != NULL;
+
+	wgpuBindGroupLayoutRelease(layout);
+	return slot->bg;
+}
+
+/*
  * Called before every draw. A pipeline that requires no uniforms skips the
  * whole path, which is what keeps a bind-group-less pipeline (the probe before
  * this slice) working unchanged.
@@ -588,6 +707,24 @@ static int apply_bindings(struct gpu_cmd_buf_state *c)
 
 	wgpuRenderPassEncoderSetBindGroup(c->pass, 0, bg, 0, NULL);
 	c->bindings_dirty = 0;
+	return 1;
+}
+
+static int apply_textures(struct gpu_cmd_buf_state *c)
+{
+	WGPUBindGroup bg;
+
+	if (!c->pipeline || !c->pipeline->texture_mask)
+		return 1;
+	if (!c->textures_dirty)
+		return 1;
+
+	bg = resolve_texture_group(c->pipeline, c->textures);
+	if (!bg)
+		return 0;
+
+	wgpuRenderPassEncoderSetBindGroup(c->pass, 1, bg, 0, NULL);
+	c->textures_dirty = 0;
 	return 1;
 }
 
@@ -622,7 +759,8 @@ static gpu_pipeline_t webgpu_pipeline_create(const struct gpu_pipeline_desc *des
 	if (!p)
 		return NULL;
 	memset(p, 0, sizeof(*p));
-	p->uniform_mask = scan_uniform_slots(vs_wgsl) | scan_uniform_slots(fs_wgsl);
+	p->uniform_mask = scan_group_slots(vs_wgsl, 0) | scan_group_slots(fs_wgsl, 0);
+	p->texture_mask = scan_group_slots(vs_wgsl, 1) | scan_group_slots(fs_wgsl, 1);
 
 	vmod = make_module(vs_wgsl);
 	fmod = make_module(fs_wgsl);
@@ -659,22 +797,10 @@ static gpu_pipeline_t webgpu_pipeline_create(const struct gpu_pipeline_desc *des
 		if (desc->blend_enable)
 			targets[i].blend = &blend;
 	}
-	/*
-	 * A pipeline that names no color format still draws to the backbuffer —
-	 * that is how the probe and any pass targeting the surface behave. Fall
-	 * back to the surface format rather than creating a target-less pipeline.
-	 */
-	if (desc->color_format_count == 0) {
-		targets[0].format    = g_format;
-		targets[0].writeMask = WGPUColorWriteMask_All;
-		if (desc->blend_enable)
-			targets[0].blend = &blend;
-	}
-
 	memset(&frag, 0, sizeof(frag));
 	frag.module      = fmod;
 	frag.entryPoint  = str_view("fs_main");
-	frag.targetCount = desc->color_format_count ? desc->color_format_count : 1;
+	frag.targetCount = desc->color_format_count;
 	frag.targets     = targets;
 
 	memset(&depth, 0, sizeof(depth));
@@ -691,7 +817,13 @@ static gpu_pipeline_t webgpu_pipeline_create(const struct gpu_pipeline_desc *des
 			: WGPUIndexFormat_Undefined;
 	pd.multisample.count = desc->sample_count ? desc->sample_count : 1;
 	pd.multisample.mask  = 0xFFFFFFFFu;
-	pd.fragment          = &frag;
+	/*
+	 * A depth-only pipeline (the shadow pass) has no fragment state at all.
+	 * Keeping the stage with zero targets would leave its @location(0) output
+	 * unmatched, which WebGPU rejects; the shader's colour write is simply
+	 * unused, exactly as it was when GL discarded it.
+	 */
+	pd.fragment          = desc->color_format_count ? &frag : NULL;
 
 	if (desc->depth_format != GPU_FORMAT_UNKNOWN) {
 		depth.format            = to_texture_format(desc->depth_format);
@@ -728,6 +860,8 @@ static void webgpu_pipeline_destroy(gpu_pipeline_t pipeline)
 	for (i = 0; i < WGPU_BIND_GROUP_CACHE; i++) {
 		if (p->cache[i].valid && p->cache[i].bg)
 			wgpuBindGroupRelease(p->cache[i].bg);
+		if (p->tex_cache[i].valid && p->tex_cache[i].bg)
+			wgpuBindGroupRelease(p->tex_cache[i].bg);
 	}
 	if (p->pso)
 		wgpuRenderPipelineRelease(p->pso);
@@ -745,8 +879,10 @@ static void webgpu_cmd_set_pipeline(gpu_cmd_buf_t cmd, gpu_pipeline_t pipeline)
 
 	/* A different pipeline may want a different bind group for the same
 	 * bindings, so the resolved group no longer necessarily applies. */
-	if (c->pipeline != p)
+	if (c->pipeline != p) {
 		c->bindings_dirty = 1;
+		c->textures_dirty = 1;
+	}
 	c->pipeline = p;
 }
 
@@ -815,7 +951,33 @@ static void webgpu_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 	rp.colorAttachmentCount = count;
 	rp.colorAttachments     = color;
 
-	if (desc->depth) {
+	/*
+	 * GL's default framebuffer comes with a depth buffer, so a pass drawing
+	 * straight to the backbuffer never had to declare one — the scene
+	 * renderer's forward-to-backbuffer path (every shipped game, and any
+	 * frame with nothing selected) relies on exactly that. A WebGPU surface
+	 * texture has no such companion, so the backend keeps one sized to the
+	 * surface and attaches it here. That is emulating a real property of the
+	 * GL backbuffer rather than papering over a caller's mistake, which is
+	 * why it belongs at this layer: the backbuffer is the backend's to
+	 * describe.
+	 *
+	 * It clears every pass because the frame graph only fills in depth load
+	 * ops for a declared depth write, and a pass that never declared one
+	 * would otherwise inherit last frame's depth.
+	 */
+	if (!desc->depth && c->surface_view && g_depth) {
+		struct gpu_texture *d = (struct gpu_texture *)g_depth;
+
+		memset(&depth_att, 0, sizeof(depth_att));
+		depth_att.view            = d->view;
+		depth_att.depthLoadOp     = WGPULoadOp_Clear;
+		depth_att.depthStoreOp    = WGPUStoreOp_Store;
+		depth_att.depthClearValue = 1.0f;
+		depth_att.stencilLoadOp   = WGPULoadOp_Undefined;
+		depth_att.stencilStoreOp  = WGPUStoreOp_Undefined;
+		rp.depthStencilAttachment = &depth_att;
+	} else if (desc->depth) {
 		struct gpu_texture *d = (struct gpu_texture *)desc->depth;
 
 		memset(&depth_att, 0, sizeof(depth_att));
@@ -937,7 +1099,7 @@ static void webgpu_cmd_draw(gpu_cmd_buf_t cmd, uint32_t vertex_count,
 
 	if (!c || !c->pass)
 		return;
-	if (!apply_bindings(c))
+	if (!apply_bindings(c) || !apply_textures(c))
 		return;
 	wgpuRenderPassEncoderDraw(c->pass, vertex_count,
 				  instance_count ? instance_count : 1,
@@ -951,7 +1113,7 @@ static void webgpu_cmd_draw_indexed(gpu_cmd_buf_t cmd,
 
 	if (!c || !c->pass)
 		return;
-	if (!apply_bindings(c))
+	if (!apply_bindings(c) || !apply_textures(c))
 		return;
 	wgpuRenderPassEncoderDrawIndexed(c->pass, args->index_count,
 					 args->instance_count ? args->instance_count : 1,
@@ -1022,8 +1184,29 @@ static gpu_texture_t webgpu_texture_create(const struct gpu_texture_desc *desc)
 	}
 	t->view = wgpuTextureCreateView(t->tex, NULL);
 
-	if (desc->initial_data)
-		STUB_ONCE("texture initial_data upload");
+	if (desc->initial_data) {
+		WGPUTexelCopyTextureInfo dst;
+		WGPUTexelCopyBufferLayout layout;
+		WGPUExtent3D extent;
+		uint32_t bpp = (desc->format == GPU_FORMAT_RGBA32_FLOAT) ? 16u : 4u;
+
+		memset(&dst, 0, sizeof(dst));
+		dst.texture  = t->tex;
+		dst.mipLevel = 0;
+		dst.aspect   = WGPUTextureAspect_All;
+
+		memset(&layout, 0, sizeof(layout));
+		layout.bytesPerRow  = desc->width * bpp;
+		layout.rowsPerImage = desc->height;
+
+		extent.width              = desc->width;
+		extent.height             = desc->height;
+		extent.depthOrArrayLayers = 1;
+
+		wgpuQueueWriteTexture(g_queue, &dst, desc->initial_data,
+				      (size_t)desc->width * desc->height * bpp,
+				      &layout, &extent);
+	}
 	if (desc->generate_mips)
 		STUB_ONCE("generate_mips (needs a blit chain on WebGPU)");
 
@@ -1048,8 +1231,16 @@ static void webgpu_texture_destroy(gpu_texture_t texture)
 static void webgpu_cmd_bind_texture(gpu_cmd_buf_t cmd, uint32_t unit,
 				    gpu_texture_t texture)
 {
-	(void)cmd; (void)unit; (void)texture;
-	STUB_ONCE("cmd_bind_texture (needs the bind group cache)");
+	struct gpu_cmd_buf_state *c = (struct gpu_cmd_buf_state *)cmd;
+	struct gpu_texture *t = (struct gpu_texture *)texture;
+	WGPUTextureView view = t ? t->view : NULL;
+
+	if (!c || unit >= WGPU_MAX_TEXTURE_UNITS)
+		return;
+	if (c->textures[unit] == view)
+		return;
+	c->textures[unit] = view;
+	c->textures_dirty = 1;
 }
 
 /*
@@ -1149,8 +1340,26 @@ static void configure_surface(void)
 
 	memset(&caps, 0, sizeof(caps));
 	wgpuSurfaceGetCapabilities(g_surface, g_adapter, &caps);
+	/*
+	 * Prefer RGBA8Unorm when the surface supports it. WebGPU validates a
+	 * pipeline's colour formats against the pass it draws into, and the scene
+	 * renderer builds its pipelines for RGBA8Unorm; taking the surface's
+	 * preferred BGRA8Unorm instead would make every pipeline that targets the
+	 * backbuffer fail validation. GL had no such coupling, which is why the
+	 * scene renderer could hardcode a format at all.
+	 */
 	g_format = (caps.formatCount > 0) ? caps.formats[0]
 					  : WGPUTextureFormat_BGRA8Unorm;
+	{
+		size_t fi;
+
+		for (fi = 0; fi < caps.formatCount; fi++) {
+			if (caps.formats[fi] == WGPUTextureFormat_RGBA8Unorm) {
+				g_format = WGPUTextureFormat_RGBA8Unorm;
+				break;
+			}
+		}
+	}
 
 	memset(&cfg, 0, sizeof(cfg));
 	cfg.device      = g_device;
@@ -1216,8 +1425,10 @@ static void create_triangle(void)
 	struct gpu_buffer_desc bd;
 
 	memset(&pd, 0, sizeof(pd));
-	pd.color_formats[0]     = GPU_FORMAT_BGRA8_UNORM;
-	pd.color_format_count   = 0; /* backbuffer: take the surface format */
+	pd.color_formats[0]     = (g_format == WGPUTextureFormat_BGRA8Unorm)
+					  ? GPU_FORMAT_BGRA8_UNORM
+					  : GPU_FORMAT_RGBA8_UNORM;
+	pd.color_format_count   = 1;
 	pd.topology             = GPU_TOPOLOGY_TRIANGLE_LIST;
 	pd.sample_count         = 1;
 	pd.depth_format         = GPU_FORMAT_DEPTH32_FLOAT;
@@ -1277,6 +1488,21 @@ static void on_device(WGPURequestDeviceStatus status, WGPUDevice device,
 
 	/* The vtable is only usable from here on, so mark ready before building
 	 * the triangle — create_triangle goes through the api like any caller. */
+	{
+		WGPUSamplerDescriptor sd;
+
+		memset(&sd, 0, sizeof(sd));
+		sd.addressModeU = WGPUAddressMode_Repeat;
+		sd.addressModeV = WGPUAddressMode_Repeat;
+		sd.addressModeW = WGPUAddressMode_Repeat;
+		sd.magFilter    = WGPUFilterMode_Linear;
+		sd.minFilter    = WGPUFilterMode_Linear;
+		sd.mipmapFilter = WGPUMipmapFilterMode_Linear;
+		sd.lodMaxClamp  = 32.0f;
+		sd.maxAnisotropy = 1;
+		g_sampler = wgpuDeviceCreateSampler(g_device, &sd);
+	}
+
 	g_ready = 1;
 	create_triangle();
 
@@ -1426,6 +1652,16 @@ void renderer_webgpu_plugin_entry(struct subsystem_manager *mgr)
 	g_log = subsystem_manager_get_api(mgr, "log");
 	g_mem = subsystem_manager_get_api(mgr, "memory");
 	subsystem_manager_register(mgr, &desc);
+}
+
+/*
+ * Whether the device has arrived and the vtable is usable. engine.c gates the
+ * rest of the boot on this: plugins create GPU resources in their init, and
+ * none of that can run before there is a device to create them on.
+ */
+int renderer_webgpu_device_ready(void)
+{
+	return g_ready;
 }
 #else
 /*

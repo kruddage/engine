@@ -68,7 +68,6 @@ static const struct memory_api *g_mem;
 
 static WGPUInstance       g_instance;
 static WGPUSurface        g_surface;
-static WGPUAdapter        g_adapter;
 static WGPUDevice         g_device;
 static WGPUQueue          g_queue;
 static WGPUTextureFormat  g_format;   /* the surface's color format (RGBA8Unorm) */
@@ -527,7 +526,6 @@ static void on_adapter(WGPURequestAdapterStatus status, WGPUAdapter adapter,
 			     "renderer_webgpu: adapter request failed");
 		return;
 	}
-	g_adapter = adapter;
 	webgpu_status("webgpu: adapter ok — requesting device");
 
 	memset(&ci, 0, sizeof(ci));
@@ -569,28 +567,6 @@ static void webgpu_cmd_buf_submit(gpu_cmd_buf_t cmd)
 }
 
 /* --- gpu_api: pipelines --------------------------------------------------- */
-
-/* Lower one stage's DSL source to WGSL through the runtime, else pass a raw
- * WGSL/GLSL string as-is. Only the krudd DSL is lowered here (as the WebGL
- * backend lowers to GLSL); the scene speaks the DSL, so that is the live path. */
-static WGPUShaderModule stage_module(const struct gpu_shader_source *s,
-				     const char *label)
-{
-	const char *code = s->src;
-
-	if (!code)
-		return NULL;
-	if (s->dialect == GPU_SHADER_DIALECT_KRUDD) {
-		code = script_shader_transpile_wgsl(s->src, label);
-		if (!code) {
-			g_log->write(LOG_LEVEL_ERROR,
-				     "renderer_webgpu: %s WGSL transpile failed",
-				     label);
-			return NULL;
-		}
-	}
-	return make_module(code);
-}
 
 static gpu_pipeline_t
 webgpu_pipeline_create(const struct gpu_pipeline_desc *desc)

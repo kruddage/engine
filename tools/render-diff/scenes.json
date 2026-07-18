@@ -9,10 +9,11 @@
 		{
 			"id": "triangle",
 			"query": "?renderer=webgpu",
+			"webgl_query": "?renderer=webgl",
 			"mode": "self",
 			"tolerance": 0.002,
 			"settle_ms": 6000,
-			"note": "The #570 WGSL triangle probe. Static, so tolerance is tight. Mode is 'self' because the WebGL path renders the whole engine here, not a triangle -- there is no comparable reference until PR4 registers scene_renderer on the WebGPU path."
+			"note": "The #570 WGSL triangle probe. Static, so tolerance is tight. Mode is 'self' because the WebGL path renders the whole engine here, not a triangle -- there is no comparable reference until PR4 registers scene_renderer on the WebGPU path. WebGPU is the page default now, so webgl_query pins the baseline shot to ?renderer=webgl explicitly rather than relying on an unparented default."
 		}
 	]
 }

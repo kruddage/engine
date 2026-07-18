@@ -74,6 +74,44 @@ header {
 	display: inline;
 }
 
+/*
+ * Active-renderer badge. Starts in the muted "unknown" state (a dash) and is
+ * filled in once the engine backend reports through kruddSetRenderer — WebGL
+ * today, WebGPU when that backend lands. The accent colour makes the active
+ * path glanceable: amber for the WebGL shim, green for the native WebGPU path.
+ * The tooltip also notes whether WebGPU was detected on load (see below).
+ */
+.renderer {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	font-size: 10px;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: #555;
+	border: 1px solid #2a2a2a;
+	border-radius: 3px;
+	padding: 2px 7px;
+	user-select: none;
+	cursor: default;
+}
+
+.renderer svg {
+	width: 11px;
+	height: 11px;
+	display: block;
+}
+
+.renderer.webgl {
+	color: #b98a4a;
+	border-color: #4a3a22;
+}
+
+.renderer.webgpu {
+	color: #4a9a4a;
+	border-color: #244a24;
+}
+
 .canvas-wrap {
 	flex: 1;
 	display: flex;
@@ -466,7 +504,8 @@ footer {
 <header>
 	<span class="wordmark">KRUDD</span>
 	<span class="version" id="version" title="click for build info">17.16.0</span>
-	<span class="version-detail" id="version-detail">commit 7b2a99c &middot; built 2026-07-18</span>
+	<span class="version-detail" id="version-detail">commit a4e7d89 &middot; built 2026-07-18</span>
+	<span class="renderer" id="renderer-badge" title="renderer: detecting&hellip;">&mdash;</span>
 	<button class="menu-btn" id="menu-btn" title="back to the menu">&#9776; menu</button>
 </header>
 
@@ -611,6 +650,75 @@ footer {
 			el.classList.remove('loading');
 	};
 
+	/*
+	 * The renderer badge. A backend calls kruddSetRenderer from its init
+	 * (renderer_webgl.c today) with its own name; the badge shows which GPU
+	 * path went live. Separately we probe navigator.gpu on load so the tooltip
+	 * can say whether WebGPU was even available — the groundwork the WebGPU
+	 * backend selection will read once it exists. Until then WebGL is always
+	 * the active path, and a "WebGPU available" note just flags the upgrade.
+	 */
+	var RENDERER_ICON =
+		'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor"' +
+		' stroke-width="1.3" stroke-linecap="round">' +
+		'<rect x="4" y="4" width="8" height="8" rx="1"/>' +
+		'<rect x="6.5" y="6.5" width="3" height="3" rx="0.5"/>' +
+		'<path d="M6 4V2M10 4V2M6 14v-2M10 14v-2M4 6H2M4 10H2' +
+		'M14 6h-2M14 10h-2"/></svg>';
+
+	/* null = not probed yet, true/false once navigator.gpu has answered. */
+	window.kruddWebGPUAvailable = null;
+
+	function refreshRendererTitle() {
+		var el = document.getElementById('renderer-badge');
+		if (!el)
+			return;
+		var active = el.dataset.active || '';
+		var avail  = window.kruddWebGPUAvailable;
+		var t;
+
+		if (active === 'webgpu') {
+			t = 'renderer: WebGPU';
+		} else if (active === 'webgl') {
+			t = 'renderer: WebGL';
+			if (avail === true)  t += ' · WebGPU available';
+			if (avail === false) t += ' · WebGPU unavailable';
+		} else {
+			t = 'renderer: detecting…';
+		}
+		el.title = t;
+	}
+
+	window.kruddSetRenderer = function (name) {
+		var el = document.getElementById('renderer-badge');
+		if (!el)
+			return;
+		var known = name === 'webgl' || name === 'webgpu';
+		var label = name === 'webgpu' ? 'WebGPU'
+			  : name === 'webgl'  ? 'WebGL'
+			  : String(name);
+		el.className = known ? 'renderer ' + name : 'renderer';
+		el.dataset.active = name;
+		el.innerHTML = RENDERER_ICON + '<span>' + label + '</span>';
+		refreshRendererTitle();
+	};
+
+	/* Probe WebGPU support once at load; requestAdapter is async, so the
+	 * tooltip updates whenever it resolves. Absent navigator.gpu is a plain
+	 * "unavailable", not an error. */
+	(function detectWebGPU() {
+		if (!navigator.gpu || typeof navigator.gpu.requestAdapter !== 'function') {
+			window.kruddWebGPUAvailable = false;
+			refreshRendererTitle();
+			return;
+		}
+		navigator.gpu.requestAdapter().then(function (adapter) {
+			window.kruddWebGPUAvailable = !!adapter;
+		}).catch(function () {
+			window.kruddWebGPUAvailable = false;
+		}).then(refreshRendererTitle);
+	})();
+
 	document.getElementById('version').addEventListener('click', function () {
 		document.getElementById('version-detail').classList.toggle('visible');
 	});
@@ -650,13 +758,13 @@ footer {
 var Module = {
 	locateFile: function (path, prefix) {
 		if (path.endsWith('.wasm'))
-			return prefix + path.replace(/\.wasm$/, '.7b2a99c.wasm');
+			return prefix + path.replace(/\.wasm$/, '.a4e7d89.wasm');
 		return prefix + path;
 	}
 };
 </script>
 
-<script async type="text/javascript" src="index.7b2a99c.js"></script>
+<script async type="text/javascript" src="index.a4e7d89.js"></script>
 
 </body>
 </html>

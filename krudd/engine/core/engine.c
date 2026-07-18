@@ -62,6 +62,7 @@ void asset_plugin_entry(struct subsystem_manager *mgr);
 void edit_plugin_entry(struct subsystem_manager *mgr);
 void entity_plugin_entry(struct subsystem_manager *mgr);
 void renderer_webgl_plugin_entry(struct subsystem_manager *mgr);
+void renderer_webgpu_plugin_entry(struct subsystem_manager *mgr);
 void fg_plugin_entry(struct subsystem_manager *mgr);
 void scene_renderer_plugin_entry(struct subsystem_manager *mgr);
 void kruddboard_plugin_entry(struct subsystem_manager *mgr);
@@ -175,6 +176,22 @@ EM_JS(void, krudd_signal_ready, (void), {
 	if (typeof window.kruddSetReady === 'function')
 		window.kruddSetReady();
 })
+
+/*
+ * Whether the page asked for the WebGPU backend (?renderer=webgpu). The probe
+ * backend clears the canvas and owns the frame on its own; until its gpu_api
+ * vtable exists, selecting it means registering it alone and leaving the GL
+ * render cluster and the games unregistered (they would call a vtable that is
+ * not there yet). Defaults to 0 (the normal WebGL path) on any parse trouble.
+ */
+EM_JS(int, krudd_wants_webgpu, (void), {
+	try {
+		return (new URLSearchParams(location.search).get('renderer')
+			=== 'webgpu') ? 1 : 0;
+	} catch (e) {
+		return 0;
+	}
+})
 #endif
 
 void engine_init(void)
@@ -204,10 +221,21 @@ void engine_init(void)
 	 * plugin lowers its shaders and bakes its textures at register time, so
 	 * this is where "adding a texture" shows up as startup cost.
 	 */
-	for (i = 0; i < sizeof(plugin_table) / sizeof(plugin_table[0]); i++) {
+	if (krudd_wants_webgpu()) {
+		/*
+		 * WebGPU probe path: the backend clears the canvas and drives the
+		 * frame itself. The GL render cluster, UI, and games stay
+		 * unregistered until the WebGPU gpu_api vtable exists to run them.
+		 */
 		phase = emscripten_get_now();
-		plugin_table[i].entry(&manager);
-		stats_record_phase(plugin_table[i].name, phase);
+		renderer_webgpu_plugin_entry(&manager);
+		stats_record_phase("renderer_webgpu", phase);
+	} else {
+		for (i = 0; i < sizeof(plugin_table) / sizeof(plugin_table[0]); i++) {
+			phase = emscripten_get_now();
+			plugin_table[i].entry(&manager);
+			stats_record_phase(plugin_table[i].name, phase);
+		}
 	}
 
 	/* Load the runtime image: it owns the body of the frame from here. */

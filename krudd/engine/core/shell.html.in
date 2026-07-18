@@ -153,6 +153,37 @@ footer {
 	animation: none;
 }
 
+/*
+ * Scrolling diagnostic log for the WebGPU probe. The kruddgui editor console
+ * can't run in ?renderer=webgpu mode (it draws through the renderer's gpu_api
+ * vtable, which the probe doesn't have yet), so this lightweight shell-side
+ * panel carries the backend's step-by-step messages with full history — unlike
+ * the single-line footer. Hidden until the first line arrives.
+ */
+.webgpu-log {
+	position: fixed;
+	left: 0;
+	right: 0;
+	bottom: 30px;
+	max-height: 42vh;
+	overflow-y: auto;
+	background: rgba(0, 0, 0, 0.74);
+	border-top: 1px solid #333;
+	font-family: 'Courier New', Courier, monospace;
+	font-size: 11px;
+	line-height: 1.55;
+	color: #d0d0d0;
+	padding: 8px 14px;
+	z-index: 6000;
+	display: none;
+}
+
+.webgpu-log.visible { display: block; }
+
+.webgpu-log .line { white-space: pre-wrap; }
+
+.webgpu-log .line.err { color: #e07a7a; }
+
 @keyframes pulse {
 	0%, 100% { opacity: 1; }
 	50%       { opacity: 0.3; }
@@ -518,6 +549,8 @@ footer {
 	<span id="status">loading</span>
 </footer>
 
+<div class="webgpu-log" id="webgpu-log"></div>
+
 <div class="scoreboard hidden" id="ttt-scoreboard">
 	<div class="score-side score-x">
 		<span class="score-label">1P &times;</span>
@@ -702,6 +735,36 @@ footer {
 		el.innerHTML = RENDERER_ICON + '<span>' + label + '</span>';
 		refreshRendererTitle();
 	};
+
+	/* Append a line to the WebGPU probe's diagnostic log panel (see the
+	 * .webgpu-log note in the stylesheet). Called from the WebGPU backend via
+	 * EM_JS at each step; reveals the panel on the first line and keeps it
+	 * scrolled to the newest entry. */
+	window.kruddWebGPULog = function (msg) {
+		var box = document.getElementById('webgpu-log');
+		if (!box)
+			return;
+		box.classList.add('visible');
+		var line = document.createElement('div');
+		line.className = 'line' +
+			(/fail|no adapter|no instance|no device|error/i.test(msg) ? ' err' : '');
+		line.textContent = msg;
+		box.appendChild(line);
+		box.scrollTop = box.scrollHeight;
+	};
+
+	/* The WebGPU backend (?renderer=webgpu) clears the canvas itself and does
+	 * not register the launcher's games, so hide the launcher overlay up front
+	 * — otherwise its near-opaque panel would sit over the cleared canvas. */
+	(function hideLauncherForWebGPU() {
+		try {
+			if (new URLSearchParams(location.search).get('renderer') === 'webgpu') {
+				var l = document.getElementById('launcher');
+				if (l)
+					l.classList.add('hidden');
+			}
+		} catch (e) {}
+	})();
 
 	/* Probe WebGPU support once at load; requestAdapter is async, so the
 	 * tooltip updates whenever it resolves. Absent navigator.gpu is a plain

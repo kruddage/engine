@@ -152,3 +152,110 @@ jobs:
           source-dir: public
           preview-branch: gh-pages
           umbrella-dir: pr-preview
+
+  # Build and run the native test suite under AddressSanitizer + UBSan +
+  # LeakSanitizer. This is the memory-safety / undefined-behaviour gate: a
+  # detected leak, out-of-bounds access, or UB fails the job. It runs on a
+  # plain ubuntu-latest (no emsdk container) because sanitizers need a native
+  # host build — the CI `build` job only produces the WASM artifact. gcc is
+  # used because its libasan/libubsan runtimes ship with the runner image;
+  # the sanitizer flags ride in through kruddmake's KRUDD_EXTRA_* env hooks so
+  # this is the ordinary native build with instrumentation, not a fork of it.
+  sanitizers:
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y gcc g++ ninja-build curl
+
+      - name: Build + run native suite under ASan + UBSan + LeakSanitizer
+        env:
+          CC: gcc
+          KRUDD_CC: gcc
+          KRUDD_CXX: g++
+          KRUDD_BUILD_DIR: ${{ github.workspace }}/build-san
+          KRUDD_EXTRA_CFLAGS: >-
+            -fsanitize=address,undefined -fno-omit-frame-pointer
+            -fno-sanitize-recover=undefined -g -O1
+          KRUDD_EXTRA_LDFLAGS: -fsanitize=address,undefined
+          # Fail the run on the first leak / error rather than only printing it.
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+        run: sh krudd/kruddmake/run-tests.sh
+
+  # Measure native line/function/branch coverage with gcov and post it as a
+  # sticky comment on the PR. This is REPORT-ONLY — it never fails the build;
+  # the floor gate is intentionally deferred until the baseline has been
+  # watched (see README). Coverage needs its own -O0 --coverage build, so it
+  # runs separately from the sanitizer job in its own build directory.
+  coverage:
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update && sudo apt-get install -y gcc g++ ninja-build curl
+          pipx install gcovr
+
+      - name: Build + run native suite with gcov instrumentation
+        env:
+          CC: gcc
+          KRUDD_CC: gcc
+          KRUDD_CXX: g++
+          KRUDD_BUILD_DIR: ${{ github.workspace }}/build-cov
+          KRUDD_EXTRA_CFLAGS: --coverage -O0 -g -fprofile-abs-path
+          KRUDD_EXTRA_LDFLAGS: --coverage
+        run: sh krudd/kruddmake/run-tests.sh
+
+      # Scope to engine production code: test files and vendored third_party/
+      # are excluded so the number reflects code the suite is meant to cover.
+      - name: Generate coverage report
+        run: |
+          gcovr --root . --filter 'krudd/engine/' \
+            --exclude '.*_test\.c$' --exclude 'krudd/third_party/' \
+            --gcov-object-directory build-cov --gcov-ignore-parse-errors=all \
+            --json-summary coverage-summary.json --txt coverage.txt
+          cat coverage.txt
+          python3 .github/scripts/coverage-report.py \
+            coverage-summary.json coverage-comment.md
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: |
+            coverage.txt
+            coverage-comment.md
+
+      # Only same-repo PRs: a fork PR's GITHUB_TOKEN is read-only, so the
+      # measurement still runs above but the comment post is skipped for forks.
+      - name: Post coverage comment
+        if: >-
+          github.event_name == 'pull_request'
+          && github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('coverage-comment.md', 'utf8');
+            const marker = '<!-- krudd-coverage-report -->';
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            const comments = await github.paginate(
+              github.rest.issues.listComments, { owner, repo, issue_number });
+            const existing = comments.find(
+              c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment(
+                { owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment(
+                { owner, repo, issue_number, body });
+            }

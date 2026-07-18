@@ -149,6 +149,27 @@ footer {
 
 .launcher.hidden { display: none; }
 
+.launcher-close {
+	position: absolute;
+	top: 16px;
+	right: 20px;
+	width: 28px;
+	height: 28px;
+	background: none;
+	border: 1px solid #333;
+	color: #888;
+	font-family: inherit;
+	font-size: 18px;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.launcher-close:hover { border-color: #555; color: #ccc; }
+
+/* Matches .launcher-sub/.launcher-games: no dismissing a launcher that hasn't
+ * armed its buttons yet (see kruddSetReady below). */
+.launcher.loading .launcher-close { display: none; }
+
 .launcher-panel {
 	display: flex;
 	flex-direction: column;
@@ -445,7 +466,7 @@ footer {
 <header>
 	<span class="wordmark">KRUDD</span>
 	<span class="version" id="version" title="click for build info">17.15.0</span>
-	<span class="version-detail" id="version-detail">commit d78fe4f &middot; built 2026-07-18</span>
+	<span class="version-detail" id="version-detail">commit 8fdf0f8 &middot; built 2026-07-18</span>
 	<button class="menu-btn" id="menu-btn" title="back to the menu">&#9776; menu</button>
 </header>
 
@@ -470,6 +491,7 @@ footer {
 </div>
 
 <div class="launcher loading" id="launcher">
+	<button class="launcher-close" id="launcher-close" title="close menu">&times;</button>
 	<div class="launcher-panel">
 		<div class="launcher-title">KRUDD</div>
 		<div class="launcher-sub">choose a scene</div>
@@ -600,8 +622,21 @@ footer {
 	document.getElementById('menu-btn').addEventListener('click', function () {
 		document.getElementById('launcher').classList.remove('hidden');
 		var sb = document.getElementById('ttt-scoreboard');
-		if (sb)
+		if (sb) {
+			/* Remember whether the scoreboard was up so launcher-close can put it
+			 * back if the user backs out without picking a new scene. */
+			sb.dataset.wasVisible = sb.classList.contains('hidden') ? '' : '1';
 			sb.classList.add('hidden');
+		}
+	});
+
+	/* Back out of the launcher without picking a scene; the engine (and
+	 * whatever scene was already running behind the overlay) keeps going. */
+	document.getElementById('launcher-close').addEventListener('click', function () {
+		document.getElementById('launcher').classList.add('hidden');
+		var sb = document.getElementById('ttt-scoreboard');
+		if (sb && sb.dataset.wasVisible)
+			sb.classList.remove('hidden');
 	});
 
 	if ('serviceWorker' in navigator) {
@@ -615,13 +650,13 @@ footer {
 var Module = {
 	locateFile: function (path, prefix) {
 		if (path.endsWith('.wasm'))
-			return prefix + path.replace(/\.wasm$/, '.d78fe4f.wasm');
+			return prefix + path.replace(/\.wasm$/, '.8fdf0f8.wasm');
 		return prefix + path;
 	}
 };
 </script>
 
-<script async type="text/javascript" src="index.d78fe4f.js"></script>
+<script async type="text/javascript" src="index.8fdf0f8.js"></script>
 
 </body>
 </html>

@@ -11,6 +11,7 @@
 #include "subsystem_manager.h"
 #include "game.h"
 #include "script.h"
+#include "audio_api.h"
 
 #include "tictactoe_scene_scm.h"
 #include "tictactoe_rules_scm.h"
@@ -49,6 +50,14 @@ EM_JS(void, ttt_scoreboard_set, (int x, int o), {
 
 /* Resolved before register() so init/tick/load can reach the world and rules. */
 static const struct entity_api *g_scene;
+
+/*
+ * Resolved the same way as g_scene: the "audio" subsystem registers before
+ * "tictactoe" in engine.c's static table, so it is already live by the time
+ * tictactoe_plugin_entry looks it up. NULL (and every call below a no-op) on
+ * a build with no audio backend, exactly like g_scene's callbacks are guarded.
+ */
+static const struct audio_api *g_audio;
 
 /* Last selection dispatched, so a held selection fires the rules only once. */
 static int32_t g_last_sel = -1;
@@ -122,15 +131,43 @@ static void tictactoe_refresh_score(void)
 }
 
 /*
+ * Sound cue off the *ttt-over* transition a click just caused: BEFORE is the
+ * status polled right before dispatching the click, AFTER right after, MOVED
+ * is ttt-on-selected's own return (0 = no-op click, ignore). A restart click
+ * (BEFORE non-zero: the game was already over) is deliberately silent — it is
+ * a UI reset, not a move, so it gets no cue of its own. Otherwise: a plain
+ * placement blips, a completed line beeps, and a filled board with no line
+ * bursts static — the three built-in sounds (asset_plugin.c) needed no new
+ * authoring, just an assignment. A dead interpreter reports -1 for both polls,
+ * which is non-zero, so it reads as "was already over" and stays silent rather
+ * than misfiring on garbage.
+ */
+static void tictactoe_play_sound(int32_t before, int32_t after, int32_t moved)
+{
+	if (!g_audio || !g_audio->play_path || !moved || before != 0)
+		return;
+	if (after == 0)
+		g_audio->play_path("builtin://sound/blip", 0.6f, 0.0f, 1.0f);
+	else if (after == 3)
+		g_audio->play_path("builtin://sound/noise-burst", 0.5f, 0.0f, 1.0f);
+	else
+		g_audio->play_path("builtin://sound/beep", 0.7f, 0.0f, 1.0f);
+}
+
+/*
  * Forward the click edge to the rules. The engine's existing ray pick already
  * turns a viewport click into the selected entity; when that selection changes
  * to a new entity, hand its id to ttt-on-selected with the world bound. Whether
  * it names an empty cell, an occupied one, or something else is the rules'
  * decision — this side only detects the edge, so a held selection fires once.
+ * *ttt-over* is polled once before and once after the dispatch (both cheap,
+ * gated the same way the score refresh below already is) so the sound cue can
+ * tell a placement from a win from a draw without the rules needing to know
+ * anything about audio.
  */
 static void tictactoe_tick(void)
 {
-	int32_t sel;
+	int32_t sel, before, after, moved;
 
 	if (!g_scene || !g_scene->get_selected || !g_scene->dispatch_scm)
 		return;
@@ -139,7 +176,10 @@ static void tictactoe_tick(void)
 		return;
 	g_last_sel = sel;
 	if (sel >= 0) {
-		g_scene->dispatch_scm("ttt-on-selected", sel);
+		before = g_scene->dispatch_scm("ttt-status", 0);
+		moved  = g_scene->dispatch_scm("ttt-on-selected", sel);
+		after  = g_scene->dispatch_scm("ttt-status", 0);
+		tictactoe_play_sound(before, after, moved);
 		tictactoe_refresh_score();
 	}
 }
@@ -154,6 +194,7 @@ void tictactoe_plugin_entry(struct subsystem_manager *mgr)
 {
 	/* The "scene" api is the entity plugin, registered before this one. */
 	g_scene = subsystem_manager_get_api(mgr, "scene");
+	g_audio = subsystem_manager_get_api(mgr, "audio");
 	subsystem_manager_register(mgr, &tictactoe_desc);
 	/* Offer the game on the launcher rather than building it at boot. */
 	game_register("Tic-Tac-Toe", tictactoe_load);

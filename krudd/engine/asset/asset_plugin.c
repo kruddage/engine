@@ -378,6 +378,137 @@ static const char *PBR_SHADER_SRC =
 	"           (gamma  (pow mapped (vec3 0.4545 0.4545 0.4545))))\n"
 	"      (set frag_color (vec4 gamma 1.0)))))\n";
 
+/*
+ * pbr-textured — the pbr shader plus one albedo sampler, for a material that
+ * wants both a procedural texture and the metallic-roughness BRDF (checker
+ * and scene-textured predate the pbr shader and never grew that combination;
+ * this is the one built-in that has both). Same IO contract, same Cook-
+ * Torrance fragment as PBR_SHADER_SRC, with two additions:
+ *
+ *   - v_uv rides along (a_uv0 was already a pbr input, just unused) and
+ *     albedo tints base_color the way scene-textured's albedo tints its tint.
+ *
+ *   - the albedo texture's alpha channel doubles as a height field (see
+ *     GRASS_TEXTURE_SCRIPT_SRC), and four extra taps around v_uv recover its
+ *     screen-space slope (dh/du, dh/dv) — a cheap normal-mapping trick that
+ *     needs no tangent-space basis because it perturbs the *world-space*
+ *     normal directly in X/Z, which is exactly right for a mesh whose surface
+ *     is close to the XZ plane (a flat or gently-waved ground/heightfield).
+ *     It would misbehave on a steeply tilted or rotated mesh, but nothing
+ *     built-in binds this shader to one. bump-strength (a Material param) is
+ *     how far that gradient pushes the normal; 0 recovers the un-bumped pbr
+ *     look exactly.
+ */
+/*
+ * Split across two literals — ISO C99 caps a *concatenated* string literal at
+ * 4095 chars (-Wpedantic -Werror enforces it here) and this source alone runs
+ * past that, unlike the other builtin sources this file concatenates in one
+ * piece. Rejoined into a heap buffer at seed time (see the builtins-seed
+ * block below); the split point is just where the two literals happen to
+ * meet and carries no meaning of its own.
+ */
+static const char *PBR_TEXTURED_SHADER_SRC_A =
+	"(shader pbr-textured\n"
+	"  (inputs\n"
+	"    (a_pos    vec3 (location 0))\n"
+	"    (a_normal vec3 (location 1))\n"
+	"    (a_uv0    vec2 (location 2)))\n"
+	"  (uniforms\n"
+	"    (Camera (block 0) (layout std140)\n"
+	"      (view_proj mat4)\n"
+	"      (model     mat4)\n"
+	"      (cam_pos   vec3))\n"
+	"    (Material (block 1) (layout std140)\n"
+	"      (base_color    vec4  (edit color) (default 1.0 1.0 1.0 1.0))\n"
+	"      (metallic      float (edit range 0.0 1.0) (default 0.0))\n"
+	"      (roughness     float (edit range 0.0 1.0) (default 0.8))\n"
+	"      (bump_strength float (edit range 0.0 2.0) (default 0.5)))\n"
+	"    (Sun (block 2) (layout std140)\n"
+	"      (light_dir       vec3)\n"
+	"      (light_radiance  vec3)\n"
+	"      (light_view_proj mat4))\n"
+	"    (albedo     sampler2D)\n"
+	"    (shadow_map sampler2D))\n"
+	"  (varyings\n"
+	"    (v_normal   vec3)\n"
+	"    (v_worldpos vec3)\n"
+	"    (v_uv       vec2)\n"
+	"    (v_lightpos vec4))\n"
+	"  (targets\n"
+	"    (frag_color vec4 (location 0)))\n"
+	"  (vertex\n"
+	"    (set v_normal (* (mat3 model) a_normal))\n"
+	"    (set v_worldpos (swizzle (* model (vec4 a_pos 1.0)) xyz))\n"
+	"    (set v_uv a_uv0)\n"
+	"    (set v_lightpos (* light_view_proj model (vec4 a_pos 1.0)))\n"
+	"    (set position (* view_proj model (vec4 a_pos 1.0))))\n"
+	"  (fragment\n"
+	"    (let* ((eps  0.012)\n"
+	"           (hpx (swizzle (sample albedo (+ v_uv (vec2 eps 0.0))) a))\n"
+	"           (hmx (swizzle (sample albedo (- v_uv (vec2 eps 0.0))) a))\n"
+	"           (hpz (swizzle (sample albedo (+ v_uv (vec2 0.0 eps))) a))\n"
+	"           (hmz (swizzle (sample albedo (- v_uv (vec2 0.0 eps))) a))\n"
+	"           (dhdu (/ (- hpx hmx) (* 2.0 eps)))\n"
+	"           (dhdv (/ (- hpz hmz) (* 2.0 eps)))\n"
+	"           (bumped (vec3 (* (- 0.0 dhdu) bump_strength) 0.0\n"
+	"                         (* (- 0.0 dhdv) bump_strength)))\n"
+	"           (n      (normalize (+ (normalize v_normal) bumped)))\n"
+	"           (l      (normalize light_dir))\n"
+	"           (v      (normalize (- cam_pos v_worldpos)))\n"
+	"           (h      (normalize (+ l v)))\n"
+	"           (ndl    (max (dot n l) 0.0))\n"
+	"           (ndv    (max (dot n v) 0.0001))\n"
+	"           (ndh    (max (dot n h) 0.0))\n"
+	"           (vdh    (max (dot v h) 0.0))\n"
+	"           (tex_c  (swizzle (sample albedo v_uv) rgb))\n"
+	"           (albedo (* (swizzle base_color rgb) tex_c))\n"
+	"           (f0     (mix (vec3 0.04 0.04 0.04) albedo metallic))\n"
+	"           (a      (* roughness roughness))\n"
+	"           (a2     (* a a))\n"
+	"           (dnm    (+ (* ndh ndh (- a2 1.0)) 1.0))\n"
+	"           (ndf    (/ a2 (* 3.14159265 dnm dnm)))\n"
+	"           (k      (/ (* (+ roughness 1.0) (+ roughness 1.0)) 8.0))\n"
+	"           (gv     (/ ndv (+ (* ndv (- 1.0 k)) k)))\n"
+	"           (gl     (/ ndl (+ (* ndl (- 1.0 k)) k)))\n"
+	"           (g      (* gv gl))\n"
+	"           (fres   (+ f0 (* (- (vec3 1.0 1.0 1.0) f0) (pow (- 1.0 vdh) 5.0))))\n"
+	"           (spec   (/ (* ndf g fres) (+ (* 4.0 ndv ndl) 0.0001)))\n"
+	"           (kd     (* (- (vec3 1.0 1.0 1.0) fres) (- 1.0 metallic)))\n"
+	"           (diff   (* kd albedo 0.31831))\n";
+
+static const char *PBR_TEXTURED_SHADER_SRC_B =
+	"           (proj   (/ (swizzle v_lightpos xyz) (swizzle v_lightpos w)))\n"
+	"           (uvw    (+ (* proj 0.5) 0.5))\n"
+	"           (su     (swizzle uvw x))\n"
+	"           (sv     (swizzle uvw y))\n"
+	"           (fragd  (swizzle uvw z))\n"
+	"           (bias   (max (* 0.0025 (- 1.0 ndl)) 0.0006))\n"
+	"           (edge   (- fragd bias))\n"
+	"           (tx     0.00048828125)\n"
+	"           (b      (vec2 su sv))\n"
+	"           (s0 (step edge (swizzle (sample shadow_map (+ b (vec2 (- 0.0 tx) (- 0.0 tx)))) r)))\n"
+	"           (s1 (step edge (swizzle (sample shadow_map (+ b (vec2 0.0 (- 0.0 tx)))) r)))\n"
+	"           (s2 (step edge (swizzle (sample shadow_map (+ b (vec2 tx (- 0.0 tx)))) r)))\n"
+	"           (s3 (step edge (swizzle (sample shadow_map (+ b (vec2 (- 0.0 tx) 0.0))) r)))\n"
+	"           (s4 (step edge (swizzle (sample shadow_map b) r)))\n"
+	"           (s5 (step edge (swizzle (sample shadow_map (+ b (vec2 tx 0.0))) r)))\n"
+	"           (s6 (step edge (swizzle (sample shadow_map (+ b (vec2 (- 0.0 tx) tx))) r)))\n"
+	"           (s7 (step edge (swizzle (sample shadow_map (+ b (vec2 0.0 tx))) r)))\n"
+	"           (s8 (step edge (swizzle (sample shadow_map (+ b (vec2 tx tx))) r)))\n"
+	"           (pcf    (* (+ s0 s1 s2 s3 s4 s5 s6 s7 s8) 0.1111111))\n"
+	"           (inrng  (* (step 0.0 su) (step su 1.0) (step 0.0 sv)\n"
+	"                      (step sv 1.0) (step fragd 1.0)))\n"
+	"           (shadow (mix 1.0 pcf inrng))\n"
+	"           (lo     (* (+ diff spec) light_radiance ndl shadow))\n"
+	"           (sky    (vec3 0.55 0.62 0.75))\n"
+	"           (ground (vec3 0.20 0.19 0.17))\n"
+	"           (hemi   (mix ground sky (+ 0.5 (* 0.5 (swizzle n y)))))\n"
+	"           (amb    (* 0.45 (+ (* hemi albedo (- 1.0 metallic)) (* hemi f0))))\n"
+	"           (color  (+ amb lo))\n"
+	"           (mapped (/ color (+ color (vec3 1.0 1.0 1.0))))\n"
+	"           (gamma  (pow mapped (vec3 0.4545 0.4545 0.4545))))\n"
+	"      (set frag_color (vec4 gamma 1.0)))))\n";
+
 static int builtins_seeded;
 
 /*
@@ -491,6 +622,60 @@ static void seed_pbr_material(const char *path, uint32_t shader_ref,
 	memcpy(p + 4,  rgba, 4 * sizeof(float));         /* @4  base_color  */
 	memcpy(p + 20, &metallic,  sizeof(metallic));    /* @20 metallic    */
 	memcpy(p + 24, &roughness, sizeof(roughness));   /* @24 roughness   */
+	e->size      = n;
+	e->state     = ASSET_LOADED;
+	e->kind      = ASSET_KIND_PRIMITIVE;
+	e->read_only = 1;
+	e->type      = ASSET_TYPE_MATERIAL;
+}
+
+/*
+ * Seed a built-in pbr-textured material: the v3 wire form, [shader-ref u32]
+ * followed by pbr-textured's { base_color vec4; metallic float; roughness
+ * float; bump_strength float } Material block (std140-packs to 32 bytes:
+ * base_color @0, metallic @16, roughness @20, bump_strength @24, the block
+ * rounded up to 32 like seed_pbr_material's smaller block), then the same
+ * [tex-ref u32][width u32][height u32] trailer seed_textured_material
+ * appends after scene-textured's 16-byte block. The trailer lands at a
+ * different absolute offset here (36, not 20) only because this block is
+ * bigger; the renderer never hardcodes either offset — material_texture
+ * (scene_renderer.c) locates the trailer generically from the shader's own
+ * declared Material block size. A zero shader_ref or tex_ref makes this a
+ * no-op.
+ */
+static void seed_pbr_textured_material(const char *path, uint32_t shader_ref,
+					const float rgba[4], float metallic,
+					float roughness, float bump_strength,
+					uint32_t tex_ref, uint32_t width,
+					uint32_t height)
+{
+	struct asset_entry *e;
+	uint32_t            n;
+	unsigned char      *p;
+
+	if (!shader_ref || !tex_ref)
+		return;
+	e = alloc_entry(path);
+	if (!e)
+		return;
+	n = (uint32_t)(sizeof(uint32_t)         /* shader-ref                */
+		       + 8 * sizeof(float)      /* std140 Material block (32B) */
+		       + 3 * sizeof(uint32_t)); /* tex-ref, width, height    */
+	e->data = g_mem->alloc(n);
+	if (!e->data) {
+		e->state = ASSET_ERROR;
+		return;
+	}
+	memset(e->data, 0, n);            /* leaves the block's tail pad zero */
+	p = (unsigned char *)e->data;
+	memcpy(p,      &shader_ref, sizeof(shader_ref));       /* @0  shader-ref    */
+	memcpy(p + 4,  rgba, 4 * sizeof(float));               /* @4  base_color    */
+	memcpy(p + 20, &metallic,      sizeof(metallic));      /* @20 metallic      */
+	memcpy(p + 24, &roughness,     sizeof(roughness));     /* @24 roughness     */
+	memcpy(p + 28, &bump_strength, sizeof(bump_strength)); /* @28 bump_strength */
+	memcpy(p + 36, &tex_ref, sizeof(tex_ref));             /* @36 tex-ref       */
+	memcpy(p + 40, &width,   sizeof(width));               /* @40 width         */
+	memcpy(p + 44, &height,  sizeof(height));              /* @44 height        */
 	e->size      = n;
 	e->state     = ASSET_LOADED;
 	e->kind      = ASSET_KIND_PRIMITIVE;
@@ -702,6 +887,68 @@ static void seed_builtins(void)
 				  GOLD, 1.0f, 0.30f);
 		seed_pbr_material("builtin://material/pbr-plastic", pshader,
 				  PLASTIC, 0.0f, 0.45f);
+
+		/*
+		 * Gem-toned dielectrics off the same pbr shader: low metallic
+		 * (a gem is not a metal — its colour comes from the dielectric
+		 * base, not F0-tinted reflectance) and low roughness for a
+		 * glassy, polished highlight. The pbr shader has no
+		 * transmission/refraction term, so this reads as a deep,
+		 * glossy stone rather than a faceted, light-bending gem — the
+		 * honest ceiling of a metallic-roughness BRDF — but the
+		 * saturated colour plus tight specular sells "ruby"/"sapphire"
+		 * well enough for a game piece. tictactoe's marks and its win
+		 * strike (games/tictactoe/rules.scm) bind these by winner.
+		 */
+		{
+			static const float RUBY[4]     = { 0.55f, 0.02f, 0.06f, 1.0f };
+			static const float SAPPHIRE[4] = { 0.03f, 0.10f, 0.55f, 1.0f };
+			static const float STONE[4]    = { 0.78f, 0.74f, 0.64f, 1.0f };
+
+			seed_pbr_material("builtin://material/pbr-ruby", pshader,
+					  RUBY, 0.05f, 0.12f);
+			seed_pbr_material("builtin://material/pbr-sapphire", pshader,
+					  SAPPHIRE, 0.05f, 0.12f);
+			/*
+			 * A calm, neutral dielectric for a game board's playing
+			 * squares — the "just one heightfield of texture, not
+			 * nine checkered pads" replacement (games/tictactoe/
+			 * scene.scm): matte sandstone rather than a busy pattern.
+			 */
+			seed_pbr_material("builtin://material/pbr-stone", pshader,
+					  STONE, 0.0f, 0.75f);
+		}
+	}
+
+	/*
+	 * Grass — the pbr-textured shader (metallic-roughness plus one albedo
+	 * sampler and a height-from-alpha normal bump; see
+	 * PBR_TEXTURED_SHADER_SRC_A/_B) paired with the grass texture
+	 * (GRASS_TEXTURE_SCRIPT_SRC), whose alpha channel IS the bump's height
+	 * field — the "substance-designer-style" ground material games/tictactoe/
+	 * scene.scm grounds its heightfield in. Baked at 512x512 (double the
+	 * checker's 256) since grass tiles at a much higher spatial frequency and
+	 * reads muddy if undersampled. The shader's two literal halves are
+	 * rejoined here into a heap-sized stack buffer before seeding — seed_shader
+	 * copies it immediately, so it need not outlive this block.
+	 */
+	{
+		char     shader_src[8192];
+		size_t   la = strlen(PBR_TEXTURED_SHADER_SRC_A);
+		size_t   lb = strlen(PBR_TEXTURED_SHADER_SRC_B);
+		uint32_t grass_tex =
+			seed_texture("builtin://texture/grass",
+				     GRASS_TEXTURE_SCRIPT_SRC);
+		uint32_t tshader2;
+
+		memcpy(shader_src, PBR_TEXTURED_SHADER_SRC_A, la);
+		memcpy(shader_src + la, PBR_TEXTURED_SHADER_SRC_B, lb + 1);
+		tshader2 = seed_shader("builtin://shader/pbr-textured", shader_src);
+
+		seed_pbr_textured_material("builtin://material/pbr-grass",
+					   tshader2, DEFAULT_MATERIAL_COLOR,
+					   0.0f, 0.9f, 0.6f,
+					   grass_tex, 512, 512);
 	}
 
 	/*

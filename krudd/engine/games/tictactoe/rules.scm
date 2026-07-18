@@ -113,20 +113,26 @@
 
 ;;! Mark geometry, as (entity ...) forms for scene-entity-build — the same shapes
 ;;! the static scene authored, now emitted per placement at the chosen cell. An X
-;;! is the two-bar composite (a mesh-less parent holding the crossed bars); an O
-;;! is the flat torus ring.
+;;! is the two-bar composite (a mesh-less parent holding the crossed bars), in
+;;! pbr-ruby; an O is the flat torus ring, in pbr-sapphire.
 (define (ttt-x-form x z)
   `(entity (name "mark") (at ,x 0.15 ,z)
      (children
-       (entity (mesh "builtin://mesh/box") (material "builtin://material/pbr-plastic")
+       (entity (mesh "builtin://mesh/box") (material "builtin://material/pbr-ruby")
                (rotate 0 45 0) (scale 0.6 0.09 0.14))
-       (entity (mesh "builtin://mesh/box") (material "builtin://material/pbr-plastic")
+       (entity (mesh "builtin://mesh/box") (material "builtin://material/pbr-ruby")
                (rotate 0 -45 0) (scale 0.6 0.09 0.14)))))
 
 (define (ttt-o-form x z)
   `(entity (name "mark")
-           (mesh "builtin://mesh/torus") (material "builtin://material/pbr-metal")
+           (mesh "builtin://mesh/torus") (material "builtin://material/pbr-sapphire")
            (at ,x 0.15 ,z) (scale 0.38 0.38 0.38)))
+
+;;! (ttt-strike-material kind) -> the winning line's bar material: KIND's own
+;;! gem tint, so an X win strikes through in ruby and an O win in sapphire
+;;! rather than always the same colour regardless of who won.
+(define (ttt-strike-material kind)
+  (if (= kind 1) "builtin://material/pbr-ruby" "builtin://material/pbr-sapphire"))
 
 (define (ttt-place i kind)
   (scene-entity-build
@@ -134,15 +140,18 @@
                    (ttt-o-form (ttt-cell-x i) (ttt-cell-z i)))
     -1))
 
-;;! (ttt-strike ln) draws the win: a thin bar laid over the three cells of the
-;;! winning line LN, spanning from its first cell's centre to its last. The bar is
-;;! the unit box scaled long on X; a single Y rotation turns that +X bar to lie
-;;! along the line. The four line orientations pin the angle exactly — a row is
-;;! flat (0), a column is a quarter turn (90), and the two diagonals are ±45 — so no
-;;! trig is needed; a box is symmetric under a half turn, so either diagonal sign
+;;! (ttt-strike kind ln) draws the win: a thin bar laid over the three cells of
+;;! the winning line LN, spanning from its first cell's centre to its last, in
+;;! KIND's own gem material (see ttt-strike-material) so the strike reads as
+;;! that player's colour, not a fixed third colour. The bar is the unit box
+;;! scaled long on X; a single Y rotation turns that +X bar to lie along the
+;;! line. The four line orientations pin the angle exactly — a row is flat (0),
+;;! a column is a quarter turn (90), and the two diagonals are ±45 — so no trig
+;;! is needed; a box is symmetric under a half turn, so either diagonal sign
 ;;! reads the same. It rides above the marks (y = 0.32) and, being named "mark",
-;;! ttt-restart sweeps it away with them. LN may be #f (a non-win), which is a no-op.
-(define (ttt-strike ln)
+;;! ttt-restart sweeps it away with them. LN may be #f (a non-win), which is a
+;;! no-op.
+(define (ttt-strike kind ln)
   (when (pair? ln)
     (let* ((a  (car ln))         (c  (caddr ln))
            (ax (ttt-cell-x a))   (az (ttt-cell-z a))
@@ -156,7 +165,7 @@
                       (else 45))))
       (scene-entity-build
         `(entity (name "mark")
-                 (mesh "builtin://mesh/box") (material "builtin://material/pbr-plastic")
+                 (mesh "builtin://mesh/box") (material ,(ttt-strike-material kind))
                  (at ,mx 0.32 ,mz) (rotate 0 ,ang 0)
                  (scale ,(+ len 0.5) 0.08 0.14))
         -1))))
@@ -178,7 +187,7 @@
   (let ((win (ttt-winner)))
     (cond ((not (= win 0))
            (set! *ttt-over* win)
-           (ttt-strike (ttt-winning-line))
+           (ttt-strike win (ttt-winning-line))
            (ttt-award win)
            (krudd-log 0 (string-append "tictactoe: "
                          (if (= win 1) "X" "O") " wins")))

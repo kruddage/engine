@@ -81,4 +81,53 @@
 	"           (n   (+ top (* (- bot top) uy))))\n" \
 	"      (list n n n 1.0))))\n"
 
+/*
+ * grass — a substance-designer-style ground cover: two-octave value noise
+ * mottles a dark-to-light green field into patchy tufts, and a sharper, higher-
+ * frequency third octave rides along in the alpha channel as a per-texel
+ * "blade height". Colour and height share the same lattice (offset by `seed`
+ * per octave) so a bright tuft in the albedo is also a raised tuft in the
+ * height field — the two read as one surface, not two independent layers.
+ * Nothing here is grass-specific machinery: it is the same hashed-lattice
+ * smoothstep technique as the noise texture above, just layered and tinted.
+ * The pbr-textured shader (asset_plugin.c) reads the alpha channel back out
+ * to bump the surface normal, so this texture doubles as color AND a height map
+ * with no separate bake.
+ */
+#define GRASS_TEXTURE_SCRIPT_SRC \
+	"(texture grass\n" \
+	"  (params\n" \
+	"    (scale     float (edit range 1 64) (default 18))\n" \
+	"    (dark      vec4  (edit color) (default 0.07 0.20 0.06 1.0))\n" \
+	"    (light     vec4  (edit color) (default 0.28 0.52 0.16 1.0))\n" \
+	"    (bump-freq float (edit range 1 128) (default 46)))\n" \
+	"  (shade (u v)\n" \
+	"    (let* ((lat (lambda (x y sd)\n" \
+	"                  (let* ((ix (tex-ifloor x)) (iy (tex-ifloor y))\n" \
+	"                         (fx (- x ix)) (fy (- y iy))\n" \
+	"                         (h  (lambda (a b)\n" \
+	"                               (let ((r (* (sin (+ (* a 127.1) (* b 311.7)\n" \
+	"                                                    (* sd 74.7)))\n" \
+	"                                           43758.5453)))\n" \
+	"                                 (- r (floor r)))))\n" \
+	"                         (ux (* fx fx (- 3.0 (* 2.0 fx))))\n" \
+	"                         (uy (* fy fy (- 3.0 (* 2.0 fy))))\n" \
+	"                         (na (h ix iy)) (nb (h (+ ix 1) iy))\n" \
+	"                         (nc (h ix (+ iy 1))) (nd (h (+ ix 1) (+ iy 1)))\n" \
+	"                         (top (+ na (* (- nb na) ux)))\n" \
+	"                         (bot (+ nc (* (- nd nc) ux))))\n" \
+	"                    (+ top (* (- bot top) uy)))))\n" \
+	"           (s   (or (param 'scale) 18.0))\n" \
+	"           (bf  (or (param 'bump-freq) 46.0))\n" \
+	"           (lo  (lat (* u s) (* v s) 1.0))\n" \
+	"           (hi  (lat (* u s 2.0) (* v s 2.0) 7.0))\n" \
+	"           (mottle (tex-clamp01 (+ (* 0.7 lo) (* 0.3 hi))))\n" \
+	"           (col (tex-mix (or (param 'dark)  (list 0.07 0.20 0.06 1.0))\n" \
+	"                         (or (param 'light) (list 0.28 0.52 0.16 1.0))\n" \
+	"                         mottle))\n" \
+	"           (blade (lat (* u bf) (* v bf) 3.0))\n" \
+	"           (height (tex-clamp01 (+ (* 0.55 mottle) (* 0.45 blade)))))\n" \
+	"      (list (tex-channel col 0 0.0) (tex-channel col 1 0.0)\n" \
+	"            (tex-channel col 2 0.0) height))))\n"
+
 #endif /* BUILTIN_TEXTURE_SCRIPTS_H */

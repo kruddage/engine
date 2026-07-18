@@ -18,24 +18,28 @@
  * an unimplemented entry says so in the console instead of hitting a NULL
  * function pointer. Later slices replace stubs in place.
  *
- * It is browser-only. Selection lives in engine.c: WebGPU is the default, so
- * the engine registers this backend alone and skips the GL render cluster
- * unless the page opts out with ?renderer=webgl (or is running on Firefox,
- * which opts out unconditionally for now — see kruddWantsWebGPU in
- * shell.html.in). The device handshake is async (adapter -> device
- * callbacks); the tick no-ops until the device is ready.
+ * Selection lives in engine.c: on the web WebGPU is the default, so the engine
+ * registers this backend alone and skips the GL render cluster unless the page
+ * opts out with ?renderer=webgl (or is running on Firefox, which opts out
+ * unconditionally for now — see kruddWantsWebGPU in shell.html.in). The device
+ * handshake is async (adapter -> device callbacks); the tick no-ops until the
+ * device is ready.
+ *
+ * This file builds on both the web and native targets, against the same Dawn
+ * revision either way. Everything that genuinely differs between them lives
+ * behind webgpu_platform.h — surface creation, backbuffer size, and status
+ * reporting — so that the native build is a debugger on this code rather than a
+ * parallel copy of it. See spec-dawn-native-build.
  */
 #include "subsystem.h"
 #include "subsystem_manager.h"
 
-#ifdef __EMSCRIPTEN__
 #include "renderer.h"
 #include "log_api.h"
 #include "memory_api.h"
 #include "script.h"
+#include "webgpu_platform.h"
 
-#include <emscripten.h>
-#include <emscripten/html5.h>
 #include <webgpu/webgpu.h>
 
 #include <stdint.h>
@@ -130,29 +134,12 @@ static const float TRI_VERTS[] = {
 };
 
 /*
- * Tell the shell WebGPU went live so the header badge flips (kruddSetRenderer
- * from shell.html). Named distinctly from the WebGL backend's reporter — both
- * are compiled into the one WASM module, so a shared symbol would collide.
+ * Progress reporting and the renderer badge are host-specific — the shell's DOM
+ * log panel on the web, stderr natively. Both live behind webgpu_platform.h;
+ * these shorthands keep the call sites below reading the way they did.
  */
-EM_JS(void, webgpu_announce_renderer, (void), {
-	if (typeof window.kruddSetRenderer === 'function')
-		window.kruddSetRenderer('webgpu');
-})
-
-/*
- * Surface progress into the shell's scrolling WebGPU log panel (and the
- * console), so a browser without a working adapter/device reports where it
- * stopped, with full history, instead of just a blank canvas. Diagnostic
- * scaffolding for the port; the kruddgui editor console takes over once WebGPU
- * can drive the UI.
- */
-EM_JS(void, webgpu_status, (const char *msg), {
-	var s = UTF8ToString(msg);
-	if (typeof window.kruddWebGPULog === 'function')
-		window.kruddWebGPULog(s);
-	if (typeof console !== 'undefined')
-		console.log('[webgpu] ' + s);
-})
+#define webgpu_status            webgpu_platform_status
+#define webgpu_announce_renderer webgpu_platform_announce_renderer
 
 /* A WGPUStringView over a NUL-terminated C string (the emdawnwebgpu string ABI). */
 static WGPUStringView str_view(const char *s)
@@ -963,6 +950,11 @@ static void webgpu_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 		 */
 		if (desc->color_count == 0 || !a->texture) {
 			if (!c->surface_view) {
+				/* Offscreen platforms have no surface to
+				 * acquire from; the frame's colour target
+				 * arrives as a named texture instead. */
+				if (!g_surface)
+					return;
 				memset(&st, 0, sizeof(st));
 				wgpuSurfaceGetCurrentTexture(g_surface, &st);
 				if (!st.texture)
@@ -1389,29 +1381,33 @@ static const struct gpu_api webgpu_api = {
  */
 static void configure_surface(void)
 {
-	double css_w = 0.0;
-	double css_h = 0.0;
+	uint32_t bw = 0;
+	uint32_t bh = 0;
 	int w;
 	int h;
 	WGPUSurfaceCapabilities caps;
 	WGPUSurfaceConfiguration cfg;
 
+	webgpu_platform_backbuffer_size(&bw, &bh);
+	w = (int)bw;
+	h = (int)bh;
+
 	/*
-	 * A WebGPU surface draws into the canvas's backing store, whose size is
-	 * the canvas.width/height attributes — not its CSS size. Nothing sets
-	 * those in WebGPU mode (the WebGL path used to, via the GL context), so
-	 * match the backing store to the element's CSS size here; otherwise the
-	 * drawing buffer stays 0x0 and nothing is visible however well the clear
-	 * runs.
+	 * No surface means this platform renders offscreen (native), so there is
+	 * nothing to configure and no capabilities to negotiate. Pick the format
+	 * the scene renderer builds its pipelines for and stop — the frame's
+	 * colour target is created as an ordinary texture instead.
 	 */
-	emscripten_get_element_css_size("#canvas", &css_w, &css_h);
-	w = (int)css_w;
-	h = (int)css_h;
-	if (w <= 0)
-		w = 800;
-	if (h <= 0)
-		h = 600;
-	emscripten_set_canvas_element_size("#canvas", w, h);
+	if (!g_surface) {
+		char buf[96];
+
+		g_format = WGPUTextureFormat_RGBA8Unorm;
+		snprintf(buf, sizeof(buf),
+			 "webgpu: offscreen %dx%d format=%d",
+			 w, h, (int)g_format);
+		webgpu_status(buf);
+		return;
+	}
 
 	memset(&caps, 0, sizeof(caps));
 	wgpuSurfaceGetCapabilities(g_surface, g_adapter, &caps);
@@ -1471,12 +1467,12 @@ static void configure_surface(void)
 static void create_depth_target(void)
 {
 	struct gpu_texture_desc td;
-	double w = 0.0, h = 0.0;
+	uint32_t w = 0, h = 0;
 
-	emscripten_get_element_css_size("#canvas", &w, &h);
-	if (w < 1.0 || h < 1.0)
+	webgpu_platform_backbuffer_size(&w, &h);
+	if (w < 1 || h < 1)
 		return;
-	if (g_depth && g_depth_w == (uint32_t)w && g_depth_h == (uint32_t)h)
+	if (g_depth && g_depth_w == w && g_depth_h == h)
 		return;
 
 	if (g_depth)
@@ -1624,8 +1620,6 @@ static void on_adapter(WGPURequestAdapterStatus status, WGPUAdapter adapter,
 
 static void renderer_webgpu_init(void)
 {
-	WGPUEmscriptenSurfaceSourceCanvasHTMLSelector canvas_src;
-	WGPUSurfaceDescriptor sd;
 	WGPURequestAdapterCallbackInfo ci;
 
 	g_instance = wgpuCreateInstance(NULL);
@@ -1636,14 +1630,9 @@ static void renderer_webgpu_init(void)
 	}
 	webgpu_status("webgpu: requesting adapter");
 
-	memset(&canvas_src, 0, sizeof(canvas_src));
-	canvas_src.chain.sType =
-		WGPUSType_EmscriptenSurfaceSourceCanvasHTMLSelector;
-	canvas_src.selector = str_view("#canvas");
-
-	memset(&sd, 0, sizeof(sd));
-	sd.nextInChain = &canvas_src.chain;
-	g_surface = wgpuInstanceCreateSurface(g_instance, &sd);
+	/* NULL here is the offscreen platform's answer, not a failure — see
+	 * webgpu_platform.h and the configure_surface offscreen path. */
+	g_surface = webgpu_platform_create_surface(g_instance);
 
 	memset(&ci, 0, sizeof(ci));
 	ci.mode     = WGPUCallbackMode_AllowSpontaneous;
@@ -1766,13 +1755,3 @@ int renderer_webgpu_device_ready(void)
 {
 	return g_ready;
 }
-#else
-/*
- * Native builds never drive WebGPU (it is browser-only), so the entry is a
- * no-op that keeps the module compiling and linking into the native image.
- */
-void renderer_webgpu_plugin_entry(struct subsystem_manager *mgr)
-{
-	(void)mgr;
-}
-#endif

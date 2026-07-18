@@ -97,6 +97,26 @@ The clear colour is `(217, 119, 87, 255)`, chosen so every channel is exactly
 `k/255` and an exact byte comparison on readback is a fair test rather than a
 rounding argument.
 
+## Building the engine's WebGPU backend natively
+
+Chunk 2 landed the include half of the seam. With Dawn installed as above:
+
+```sh
+KRUDD_DAWN_PREFIX=/data/gage/dawn-native/install ./krudd.sh build
+```
+
+`renderer_webgpu.c` then compiles for the native target too, against the same
+Dawn revision the web build uses.
+
+**`KRUDD_DAWN_PREFIX` is opt-in on purpose.** Unset — which is how CI runs — any
+`(dawn)` target is left out of the native graph entirely and `./krudd.sh build`
+is byte-for-byte what it was before. Dawn is a ~38 MB out-of-tree artifact, so
+making it a hard build dependency would break every checkout that has not built
+it.
+
+The WASM target ignores `(dawn)` entirely: there the headers arrive through
+`--use-port=emdawnwebgpu`.
+
 ## How this maps onto a kruddmake native target (chunk 2)
 
 kruddmake stays the build system; Dawn is only an external artifact that gets

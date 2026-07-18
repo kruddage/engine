@@ -32,7 +32,11 @@ fi
 
 . "$root/krudd/third_party/sync.sh"
 
-work="$root/build-ninja"
+# KRUDD_BUILD_DIR lets a caller (e.g. the sanitizer / coverage CI jobs) point
+# the generated build.ninja and its objects at a variant-specific directory so
+# an instrumented build never reuses the plain build's object files. Defaults
+# to build-ninja for a normal local run.
+work="${KRUDD_BUILD_DIR:-$root/build-ninja}"
 mkdir -p "$work"
 
 s7bin="$work/s7"

@@ -33,9 +33,10 @@ Planned rollout:
 1. **krudd drives the build.** The engine builds through krudd's own build (Ninja +
    Emscripten) documented above, inside CI. The gates around it (`.scm` comment lint,
    Conventional-Commit versioning via release-please, per-PR previews) still live as plain
-   YAML workflows (see below); sanitizer/coverage gates aren't wired back up yet. The
-   direction is to move that scaffolding into Scheme as the tooling exists, rather than
-   growing it as a bolt-on to the old pipeline.
+   YAML workflows (see below). The sanitizer gate (ASan + UBSan + LeakSanitizer over the
+   native suite) and a report-only coverage comment are wired up; a coverage *floor* gate
+   is still deferred. The direction is to move that scaffolding into Scheme as the tooling
+   exists, rather than growing it as a bolt-on to the old pipeline.
 2. **krudd eats the build graph, piece by piece.** Asset codecs, plugin registration,
    and scene compilation move from C into Scheme one at a time — the C build tree shrinks
    as the Scheme grows, rather than a rewrite landing in one PR.
@@ -122,11 +123,16 @@ engine loop; the test stamps run the suite, so a green build is a green test run
 | **ci · build** | Builds the WASM module via Emscripten (`emsdk` container) through krudd's own Ninja build |
 | **ci · deploy** | On push to `main`, publishes the staged site to GitHub Pages |
 | **ci · preview** | Deploys each PR's build to a `pr-preview/pr-<N>/` URL and tears it down on close |
+| **ci · sanitizers** | Builds + runs the native suite under ASan + UBSan + LeakSanitizer; fails on any leak, out-of-bounds, or UB |
+| **ci · coverage** | Measures native gcov coverage and posts it as a sticky PR comment (report-only, no floor gate) |
 | **pr-title** | Checks the PR title is a valid Conventional Commit (it becomes the squashed commit) |
 | **release-please** | On push to `main`, maintains the release PR that versions, tags, and releases |
 
-Sanitizer and coverage gates aren't wired up yet; the plan is to bring them back through
-`kruddmake` (see Roadmap above) rather than as separate bolt-on workflows.
+The `sanitizers` and `coverage` jobs both build natively through `kruddmake`, feeding the
+sanitizer / `--coverage` flags in via the generator's `KRUDD_CC` / `KRUDD_EXTRA_CFLAGS` /
+`KRUDD_EXTRA_LDFLAGS` environment hooks rather than as separate bolt-on build scripts. A
+coverage *floor* gate isn't wired up yet — the plan is to add one once the baseline has
+been watched for a while.
 
 ## Versioning and releases
 

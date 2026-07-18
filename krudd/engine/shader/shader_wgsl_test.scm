@@ -125,6 +125,42 @@
 (check "the vertex omits the Material block it never reads"
        (not (has? tvs "Material")))
 
+(display "wgsl: depth2D lowers to a depth texture\n")
+;;! A depth sampler alongside an ordinary one, so the slot numbering is checked
+;;! with both kinds present — the shadow shaders' real shape.
+(define depth-shader "(shader shadowed
+  (inputs (a_pos vec3 (location 0)) (a_uv0 vec2 (location 1)))
+  (uniforms (Camera (block 0) (layout std140) (view_proj mat4))
+            (albedo sampler2D)
+            (shadow_map depth2D))
+  (varyings (v_uv vec2))
+  (targets (frag_color vec4 (location 0)))
+  (vertex
+    (set v_uv a_uv0)
+    (set position (* view_proj (vec4 a_pos 1.0))))
+  (fragment
+    (set frag_color (* (sample albedo v_uv)
+                       (swizzle (sample shadow_map v_uv) r)))))")
+(define dfs (shader-transpile-wgsl depth-shader "fragment"))
+(check "depth2D binds as a texture_depth_2d, not a texture_2d<f32>"
+       (has? dfs "@group(1) @binding(2) var shadow_map : texture_depth_2d;"))
+(check "it still takes a companion sampler at 2i+1"
+       (has? dfs "@group(1) @binding(3) var shadow_map_sampler : sampler;"))
+(check "an ordinary sampler2D in the same shader is unaffected"
+       (has? dfs "@group(1) @binding(0) var albedo : texture_2d<f32>;"))
+;;! textureSample returns f32 for a depth texture, so the .r the DSL (and GL)
+;;! spell has to survive — the widen is what keeps `sample` meaning vec4 on both
+;;! backends rather than a rule that holds only here.
+(check "a depth sample widens to vec4 so .r stays valid"
+       (has? dfs "vec4<f32>(textureSample(shadow_map, shadow_map_sampler, in.v_uv)).r"))
+(check "a colour sample is not widened"
+       (has? dfs "(textureSample(albedo, albedo_sampler, in.v_uv)"))
+;;! GL reads depth through a plain sampler2D, so the GLSL target must not learn
+;;! a new type name it has no meaning for.
+(check "GLSL spells depth2D as sampler2D"
+       (has? (shader-transpile depth-shader "fragment")
+	     "uniform sampler2D shadow_map;"))
+
 (display "wgsl: missing-stage / no-varying shader\n")
 (let* ((frag-only "(shader glow (targets (c vec4 (location 0)))
                      (fragment (set c (vec4 1.0 1.0 1.0 1.0))))")

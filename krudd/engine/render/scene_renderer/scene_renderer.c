@@ -13,11 +13,14 @@
 #include "texture.h"
 #include "texture_script.h"
 #include "script.h"
+#include "particles.h"
 #include "asset_api.h"
 #include "memory_api.h"
 #include "subsystem.h"
 #include "subsystem_manager.h"
 #include "log_api.h"
+
+#include "s7.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -754,14 +757,25 @@ static int material_texture(uint32_t material_ref, uint32_t shader_ref,
  * material shader must speak that same IO contract (a_pos/a_normal/a_uv0 in,
  * Camera at block 0, Material at block 1); only its shading changes.
  */
-static gpu_pipeline_t create_pso(const struct gpu_api *gpu, const char *src)
+/*
+ * COLOR_COUNT and WANT_DEPTH describe the attachments of the pass this pipeline
+ * runs in. GL never coupled the two -- it discards a fragment colour written
+ * with no colour attachment bound, and ignores a depth state with no depth
+ * buffer -- but WebGPU validates a pipeline's attachment state against the pass
+ * it is used in, in both directions. So the sun shadow pass (depth, no colour)
+ * and the selection mask pass (colour, no depth) each have to say what they
+ * actually target.
+ */
+static gpu_pipeline_t create_pso(const struct gpu_api *gpu, const char *src,
+				 uint32_t color_count, int want_depth)
 {
 	struct gpu_pipeline_desc pd;
 
 	memset(&pd, 0, sizeof(pd));
 	pd.color_formats[0]   = GPU_FORMAT_RGBA8_UNORM;
-	pd.color_format_count = 1;
-	pd.depth_format       = GPU_FORMAT_DEPTH32_FLOAT;
+	pd.color_format_count = color_count;
+	pd.depth_format       = want_depth ? GPU_FORMAT_DEPTH32_FLOAT
+					   : GPU_FORMAT_UNKNOWN;
 	pd.topology           = GPU_TOPOLOGY_TRIANGLE_LIST;
 
 	/* mesh_vertex: position(vec3) @0, normal(vec3) @12, uv0(vec2) @24. */
@@ -802,7 +816,7 @@ static void build_pipeline(const struct gpu_api *gpu)
 			     "scene_renderer: scene shader asset unavailable");
 		return;
 	}
-	g_default_pso = create_pso(gpu, src);
+	g_default_pso = create_pso(gpu, src, 1, 1);
 	/*
 	 * Cache the built-in pipeline under the scene-textured shader's id so a
 	 * material that names it (the default) reuses this pipeline instead of
@@ -864,7 +878,7 @@ static void build_outline_resources(const struct gpu_api *gpu)
 	static const uint16_t FS_IDX[3] = { 0, 1, 2 };
 	struct gpu_buffer_desc bd;
 
-	g_mask_pso    = create_pso(gpu, MASK_SHADER_SRC);
+	g_mask_pso    = create_pso(gpu, MASK_SHADER_SRC, 1, 0);
 	g_outline_pso = create_fullscreen_pso(gpu, OUTLINE_SHADER_SRC);
 	if (!g_mask_pso || !g_outline_pso)
 		g_log->write(LOG_LEVEL_WARN,
@@ -901,7 +915,7 @@ static void build_shadow_resources(const struct gpu_api *gpu)
 	static const unsigned char WHITE_TEXEL[4] = { 255, 255, 255, 255 };
 	struct gpu_texture_desc     td;
 
-	g_shadow_pso = create_pso(gpu, SHADOW_SHADER_SRC);
+	g_shadow_pso = create_pso(gpu, SHADOW_SHADER_SRC, 0, 1);
 	if (!g_shadow_pso)
 		g_log->write(LOG_LEVEL_WARN,
 			     "scene_renderer: shadow pipeline unavailable; "
@@ -937,7 +951,7 @@ static void add_shader_pso(const struct gpu_api *gpu, uint32_t shader_ref)
 		return;
 	}
 	src = (const char *)g_asset->get_data(shader_ref, NULL);
-	pso = src ? create_pso(gpu, src) : 0;
+	pso = src ? create_pso(gpu, src, 1, 1) : 0;
 	if (!pso)
 		g_log->write(LOG_LEVEL_WARN,
 			     "scene_renderer: shader %u failed to compile; "
@@ -1744,6 +1758,45 @@ static void seed_demo_scene(void)
 	}
 }
 
+/*
+ * (particle-burst! x y z r g b count): spawn COUNT cosmetic particles at world
+ * (x,y,z) tinted (r,g,b). The render layer owns this primitive — not the entity
+ * layer's scene-* set — because particles are an effect on top of the scene, not
+ * scene-graph state; a game's rules (tic-tac-toe fires it on each placement) call
+ * it through the shared image with no C glue of their own. COUNT is clamped to
+ * the pool inside particles_burst; a negative or absurd count is coerced to a
+ * bounded unsigned there.
+ */
+static s7_pointer sp_particle_burst(s7_scheme *sc, s7_pointer args)
+{
+	float    pos[3], rgb[3];
+	double   n;
+	uint32_t count;
+
+	pos[0] = (float)s7_number_to_real(sc, s7_list_ref(sc, args, 0));
+	pos[1] = (float)s7_number_to_real(sc, s7_list_ref(sc, args, 1));
+	pos[2] = (float)s7_number_to_real(sc, s7_list_ref(sc, args, 2));
+	rgb[0] = (float)s7_number_to_real(sc, s7_list_ref(sc, args, 3));
+	rgb[1] = (float)s7_number_to_real(sc, s7_list_ref(sc, args, 4));
+	rgb[2] = (float)s7_number_to_real(sc, s7_list_ref(sc, args, 5));
+	n      = s7_number_to_real(sc, s7_list_ref(sc, args, 6));
+	count  = (n > 0.0) ? (uint32_t)n : 0u;
+
+	particles_burst(pos, rgb, count);
+	return s7_nil(sc);
+}
+
+/* Register particle-burst! into the shared image, so scene rules can fire it. */
+static void register_particle_script(void)
+{
+	s7_scheme *sc = script_s7();
+
+	if (sc)
+		s7_define_function(sc, "particle-burst!", sp_particle_burst,
+				   7, 0, false,
+				   "(particle-burst! x y z r g b count)");
+}
+
 static void scene_renderer_init(void)
 {
 	const struct gpu_api *gpu;
@@ -1757,6 +1810,11 @@ static void scene_renderer_init(void)
 	}
 
 	build_pipeline(gpu);
+	/* Cosmetic particle system: its pipeline and buffers are created here,
+	 * off-frame like every other persistent resource, and the burst primitive
+	 * is wired into the script image. */
+	particles_init(gpu);
+	register_particle_script();
 	/* Mesh buffers are created lazily by ensure_meshes() on the first tick,
 	 * once the seeded/loaded world exists — not from a fixed list here. */
 
@@ -1864,6 +1922,44 @@ static void shadow_pass(struct fg_pass_ctx *ctx, void *userdata)
 		draw.instance_count = 1;
 		gpu->cmd_draw_indexed(cmd, &draw);
 	}
+}
+
+/*
+ * Draw the cosmetic particles over the scene the pass just rendered. Particles
+ * are pre-oriented on the CPU into camera-facing quads, so the pass hands the
+ * system the world-space camera right/up (derived from the eye→target view and
+ * the camera up) plus the view·projection; particles_render is a no-op when the
+ * pool is empty, so an ordinary frame pays nothing here.
+ */
+static void draw_particles(const struct gpu_api *gpu, gpu_cmd_buf_t cmd)
+{
+	float fwd[3], right[3], up[3], len;
+
+	fwd[0] = g_cam.target[0] - g_cam.eye[0];
+	fwd[1] = g_cam.target[1] - g_cam.eye[1];
+	fwd[2] = g_cam.target[2] - g_cam.eye[2];
+
+	/* right = normalize(fwd × up_world) */
+	right[0] = fwd[1] * g_cam.up[2] - fwd[2] * g_cam.up[1];
+	right[1] = fwd[2] * g_cam.up[0] - fwd[0] * g_cam.up[2];
+	right[2] = fwd[0] * g_cam.up[1] - fwd[1] * g_cam.up[0];
+	len = sqrtf(right[0] * right[0] + right[1] * right[1] +
+		    right[2] * right[2]);
+	if (len < 1e-6f)
+		return; /* degenerate camera (looking along up); skip this frame */
+	right[0] /= len; right[1] /= len; right[2] /= len;
+
+	/* up = normalize(right × fwd) — orthonormal screen-up regardless of the
+	 * camera's roll or the world-up's tilt. */
+	up[0] = right[1] * fwd[2] - right[2] * fwd[1];
+	up[1] = right[2] * fwd[0] - right[0] * fwd[2];
+	up[2] = right[0] * fwd[1] - right[1] * fwd[0];
+	len = sqrtf(up[0] * up[0] + up[1] * up[1] + up[2] * up[2]);
+	if (len < 1e-6f)
+		return;
+	up[0] /= len; up[1] /= len; up[2] /= len;
+
+	particles_render(gpu, cmd, g_cam.view_proj.m, right, up);
 }
 
 /*
@@ -2043,6 +2139,10 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 		draw.instance_count = 1;
 		gpu->cmd_draw_indexed(cmd, &draw);
 	}
+
+	/* Cosmetic particles composite over the opaque scene, in this same pass
+	 * (so the outline path picks them up through scene_color too). */
+	draw_particles(gpu, cmd);
 }
 
 /*
@@ -2258,6 +2358,14 @@ static void scene_renderer_tick(void)
 
 	camera_update(&g_cam);
 	update_light_view_proj(w);
+
+	/*
+	 * Advance the cosmetic particles once per frame, before the pass that
+	 * draws them. A fixed timestep (not the frame's real delta) — the pool is
+	 * purely visual, so a steady rate reads fine and keeps a dropped frame
+	 * from teleporting a burst; matching the ~60 Hz loop is close enough.
+	 */
+	particles_update(1.0f / 60.0f);
 
 	/*
 	 * The outline path adds two passes around the forward pass, so it only

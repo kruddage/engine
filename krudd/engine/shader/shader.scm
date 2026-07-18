@@ -38,7 +38,13 @@
 
 ;;! GLSL name of a DSL type. GLSL ES 300 spells them the same; a future WGSL or
 ;;! MSL backend is where these diverge.
-(define (shader-type->glsl t) (symbol->string t))
+;;! GLSL spelling of a DSL type. depth2D is the one that is not its own name: GL
+;;! reads a depth texture through an ordinary sampler2D (depth in .r), so the
+;;! distinction exists only to tell the WGSL path which textures are depth.
+(define (shader-type->glsl t)
+	(case t
+	  ((depth2D) "sampler2D")
+	  (else (symbol->string t))))
 
 ;;! Result type of a * b, covering matrix·matrix, matrix·vector, scalar
 ;;! broadcast, and component-wise vector products the way GLSL's * overloads.
@@ -242,7 +248,14 @@
 ;;! sampler's is a bare type symbol. Samplers carry no std140 layout and no
 ;;! cross-stage precision constraint, so they take a separate emit path and never
 ;;! reach the block/material machinery.
-(define shader-sampler-types '(sampler2D))
+;;! depth2D is a sampler2D that happens to name a depth texture. GL does not care
+;;! — it reads depth through a plain sampler2D — but WebGPU does: a Depth32Float
+;;! texture cannot bind to a texture_2d<f32>, whose sample type is Float. So the
+;;! declaration has to say which textures are depth, and the WGSL path lowers
+;;! those to texture_depth_2d instead.
+(define shader-sampler-types '(sampler2D depth2D))
+
+(define (shader-depth-sampler-type? t) (eq? t 'depth2D))
 
 (define (shader-uniform-sampler? u)
 	(and (pair? (cdr u)) (memq (cadr u) shader-sampler-types) #t))
@@ -492,6 +505,7 @@
 	  ((vec2) "vec2<f32>") ((vec3) "vec3<f32>") ((vec4) "vec4<f32>")
 	  ((mat2) "mat2x2<f32>") ((mat3) "mat3x3<f32>") ((mat4) "mat4x4<f32>")
 	  ((sampler2D) "texture_2d<f32>")
+	  ((depth2D) "texture_depth_2d")
 	  (else (symbol->string t))))
 
 (define (shader-mat-cols t)
@@ -592,11 +606,23 @@
 					args))
 		      ")")))
 	       ((sample)
-		(let ((tex (shader-wgsl-emit (car args) nm tenv))
-		      (rest (map (lambda (a) (shader-wgsl-emit a nm tenv))
-				 (cdr args))))
-		  (string-append "textureSample(" tex ", " tex "_sampler, "
-				 (shader-join ", " rest) ")")))
+		;;! textureSample returns vec4<f32> for a sampled texture but a
+		;;! bare f32 for texture_depth_2d, while the DSL says `sample` is
+		;;! always vec4 (shaders read depth as .r, as they do on GL). So a
+		;;! depth read widens back to vec4 here, keeping one meaning of
+		;;! `sample` across both backends rather than a typing rule that
+		;;! holds only on WebGPU.
+		(let* ((tex (shader-wgsl-emit (car args) nm tenv))
+		       (depth (shader-depth-sampler-type?
+				(shader-infer (car args) tenv)))
+		       (rest (map (lambda (a) (shader-wgsl-emit a nm tenv))
+				  (cdr args)))
+		       (call (string-append "textureSample(" tex ", "
+					    tex "_sampler, "
+					    (shader-join ", " rest) ")")))
+		  (if depth
+		      (string-append "vec4<f32>(" call ")")
+		      call)))
 	       ((mod)
 		;;! GLSL mod(a,b) = a - b*floor(a/b); WGSL % is fmod-like, so
 		;;! expand to keep the DSL's GLSL semantics on either target.

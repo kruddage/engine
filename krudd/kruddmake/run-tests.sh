@@ -64,6 +64,27 @@ export KRUDD_S7BIN="$s7bin"
 # the runtime image and exercised natively by engine/core/shader_transpile_test.c.
 "$s7bin" "$root/krudd/engine/shader/shader_test.scm"
 
+# Stage 1d: the shader DSL's WGSL oracle — the same transpiler lowered to WGSL
+# for the WebGPU backend. When naga(1) (the wgpu WGSL front end) is installed,
+# also dump the emitted WGSL and validate it for real; otherwise run the
+# structural oracle alone. naga is a dev convenience, not a CI dependency.
+if command -v naga >/dev/null 2>&1; then
+	wgsldir="$work/wgsl"
+	rm -rf "$wgsldir"
+	mkdir -p "$wgsldir"
+	KRUDD_WGSL_DUMP="$wgsldir" \
+		"$s7bin" "$root/krudd/engine/shader/shader_wgsl_test.scm"
+	echo "kruddmake: validating emitted WGSL with naga"
+	for f in "$wgsldir"/*.wgsl; do
+		naga "$f" >/dev/null
+		echo "  valid $(basename "$f")"
+	done
+	echo "kruddmake: WGSL naga validation OK"
+else
+	"$s7bin" "$root/krudd/engine/shader/shader_wgsl_test.scm"
+	echo "kruddmake: naga(1) not found — WGSL structural oracle only"
+fi
+
 # Stage 2: build + run the native suite through the generated build.ninja.
 if command -v ninja >/dev/null 2>&1; then
 	echo "kruddmake: building native suite via ninja"

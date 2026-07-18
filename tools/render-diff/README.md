@@ -61,11 +61,12 @@ lands:
 - **`diff`** — compare WebGPU against WebGL, the reference implementation.
   The real oracle: *does my port match yet?*
 
-Today there is one scene — the WGSL triangle probe, mode `self`. Under
-`?renderer=webgpu` the engine registers the WebGPU backend alone and skips the
-whole GL cluster (`engine.c`), so WebGPU draws a triangle where WebGL draws the
-entire engine. **There is no comparable scene until `scene_renderer` runs on the
-WebGPU path.** `diff` mode is built and waiting for it, not dead code.
+Today there is one scene — the WGSL triangle probe, mode `self`. WebGPU is the
+page default (`engine.c`), registered alone with the whole GL cluster skipped;
+`?renderer=webgl` opts back into the full engine. So the `webgpu` shot draws a
+triangle where the `webgl` shot (pinned via each scene's `webgl_query`) draws
+the entire engine. **There is no comparable scene until `scene_renderer` runs
+on the WebGPU path.** `diff` mode is built and waiting for it, not dead code.
 
 ## Usage
 

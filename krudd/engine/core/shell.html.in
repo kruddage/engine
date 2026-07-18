@@ -155,7 +155,7 @@ footer {
 
 /*
  * Scrolling diagnostic log for the WebGPU probe. The kruddgui editor console
- * can't run in ?renderer=webgpu mode (it draws through the renderer's gpu_api
+ * can't run on the WebGPU path (it draws through the renderer's gpu_api
  * vtable, which the probe doesn't have yet), so this lightweight shell-side
  * panel carries the backend's step-by-step messages with full history — unlike
  * the single-line footer. Hidden until the first line arrives.
@@ -684,12 +684,12 @@ footer {
 	};
 
 	/*
-	 * The renderer badge. A backend calls kruddSetRenderer from its init
-	 * (renderer_webgl.c today) with its own name; the badge shows which GPU
-	 * path went live. Separately we probe navigator.gpu on load so the tooltip
-	 * can say whether WebGPU was even available — the groundwork the WebGPU
-	 * backend selection will read once it exists. Until then WebGL is always
-	 * the active path, and a "WebGPU available" note just flags the upgrade.
+	 * The renderer badge. A backend calls kruddSetRenderer from its init with
+	 * its own name; the badge shows which GPU path went live — WebGPU by
+	 * default, WebGL when ?renderer=webgl opts out. Separately we probe
+	 * navigator.gpu on load so the tooltip can say whether WebGPU was even
+	 * available; on the WebGL path, a "WebGPU available" note flags the
+	 * upgrade.
 	 */
 	var RENDERER_ICON =
 		'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor"' +
@@ -753,12 +753,14 @@ footer {
 		box.scrollTop = box.scrollHeight;
 	};
 
-	/* The WebGPU backend (?renderer=webgpu) clears the canvas itself and does
-	 * not register the launcher's games, so hide the launcher overlay up front
-	 * — otherwise its near-opaque panel would sit over the cleared canvas. */
+	/* The WebGPU backend clears the canvas itself and does not register the
+	 * launcher's games, so hide the launcher overlay up front — otherwise its
+	 * near-opaque panel would sit over the cleared canvas. WebGPU is the
+	 * default (see krudd_wants_webgpu in engine.c); ?renderer=webgl opts out
+	 * back to the launcher-driven WebGL path. */
 	(function hideLauncherForWebGPU() {
 		try {
-			if (new URLSearchParams(location.search).get('renderer') === 'webgpu') {
+			if (new URLSearchParams(location.search).get('renderer') !== 'webgl') {
 				var l = document.getElementById('launcher');
 				if (l)
 					l.classList.add('hidden');

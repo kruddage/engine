@@ -11,6 +11,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -63,6 +64,8 @@ void edit_plugin_entry(struct subsystem_manager *mgr);
 void entity_plugin_entry(struct subsystem_manager *mgr);
 void renderer_webgl_plugin_entry(struct subsystem_manager *mgr);
 void renderer_webgpu_plugin_entry(struct subsystem_manager *mgr);
+int  renderer_webgpu_device_ready(void);
+void renderer_webgpu_release_frame(void);
 void fg_plugin_entry(struct subsystem_manager *mgr);
 void scene_renderer_plugin_entry(struct subsystem_manager *mgr);
 void kruddboard_plugin_entry(struct subsystem_manager *mgr);
@@ -102,6 +105,12 @@ static const struct {
 
 static struct subsystem_manager manager;
 static int32_t frame_count;
+
+#ifdef __EMSCRIPTEN__
+/* Set while the WebGPU path waits on its device before finishing the boot. */
+static int g_webgpu_boot_pending;
+
+#endif
 
 #ifdef __EMSCRIPTEN__
 static double s_last_ms;
@@ -194,11 +203,47 @@ EM_JS(int, krudd_wants_webgpu, (void), {
 })
 #endif
 
+#ifdef __EMSCRIPTEN__
+/*
+ * Register the remaining plugins and load the runtime image. Runs inline on the
+ * GL path and from the tick on the WebGPU path, once the device exists — the
+ * plugins are the same either way, so both paths go through here rather than
+ * growing two boot orders that could drift apart.
+ *
+ * renderer_webgl is skipped when WebGPU is driving: both register under the
+ * name "renderer", and the backend already registered itself.
+ */
+static void finish_plugin_boot(int webgpu)
+{
+	size_t i;
+	double phase;
+
+	/* The frame graph is about to own the backbuffer; the probe must stop
+	 * clearing it. Before the loop, so no tick can land in between. */
+	if (webgpu)
+		renderer_webgpu_release_frame();
+
+	for (i = 0; i < sizeof(plugin_table) / sizeof(plugin_table[0]); i++) {
+		if (webgpu && strcmp(plugin_table[i].name, "renderer_webgl") == 0)
+			continue;
+		phase = emscripten_get_now();
+		plugin_table[i].entry(&manager);
+		stats_record_phase(plugin_table[i].name, phase);
+	}
+
+	/* Load the runtime image: it owns the body of the frame from here. */
+	phase = emscripten_get_now();
+	script_eval(RUNTIME_SCM);
+	stats_record_phase("runtime_scm", phase);
+
+	g_stats_api.init_ms = (float)(emscripten_get_now() - s_boot_ms);
+}
+#endif
+
 void engine_init(void)
 {
 #ifdef __EMSCRIPTEN__
 	double phase;
-	size_t i;
 
 	s_boot_ms = emscripten_get_now();
 #endif
@@ -223,27 +268,23 @@ void engine_init(void)
 	 */
 	if (krudd_wants_webgpu()) {
 		/*
-		 * WebGPU probe path: the backend clears the canvas and drives the
-		 * frame itself. The GL render cluster, UI, and games stay
-		 * unregistered until the WebGPU gpu_api vtable exists to run them.
+		 * WebGPU boots in two phases. Every plugin below the backend
+		 * creates GPU resources in its init — the scene renderer builds
+		 * pipelines and textures there — but the WebGPU device only
+		 * arrives through the adapter/device callback chain, long after
+		 * this function returns. So register the backend alone here and
+		 * let engine_tick finish the boot once the device exists.
+		 *
+		 * The GL path is untouched: it has a device the moment its
+		 * context is created, so it still boots straight through.
 		 */
 		phase = emscripten_get_now();
 		renderer_webgpu_plugin_entry(&manager);
 		stats_record_phase("renderer_webgpu", phase);
+		g_webgpu_boot_pending = 1;
 	} else {
-		for (i = 0; i < sizeof(plugin_table) / sizeof(plugin_table[0]); i++) {
-			phase = emscripten_get_now();
-			plugin_table[i].entry(&manager);
-			stats_record_phase(plugin_table[i].name, phase);
-		}
+		finish_plugin_boot(0);
 	}
-
-	/* Load the runtime image: it owns the body of the frame from here. */
-	phase = emscripten_get_now();
-	script_eval(RUNTIME_SCM);
-	stats_record_phase("runtime_scm", phase);
-
-	g_stats_api.init_ms = (float)(emscripten_get_now() - s_boot_ms);
 #endif
 }
 
@@ -251,6 +292,17 @@ void engine_tick(void)
 {
 	frame_count++;
 #ifdef __EMSCRIPTEN__
+	/*
+	 * Finish the WebGPU boot the moment the device lands. Until then the only
+	 * registered subsystem is the backend itself, whose tick pumps the
+	 * instance so those callbacks can resolve — so this is the one thing that
+	 * has to run before the runtime image exists.
+	 */
+	if (g_webgpu_boot_pending && renderer_webgpu_device_ready()) {
+		g_webgpu_boot_pending = 0;
+		finish_plugin_boot(1);
+	}
+
 	/*
 	 * Time to first frame, captured once on the opening tick, two ways:
 	 *
@@ -272,7 +324,10 @@ void engine_tick(void)
 		g_stats_api.page_to_first_frame_ms = (float)now;
 	}
 	stats_update();
-	script_tick();
+	/* The runtime image loads with the rest of the boot, so there is nothing
+	 * to tick while the WebGPU path is still waiting on its device. */
+	if (!g_webgpu_boot_pending)
+		script_tick();
 #endif
 	if (frame_count % 60 == 0)
 		LOG_DEBUG("engine: frame %d", frame_count);

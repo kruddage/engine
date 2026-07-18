@@ -43,6 +43,12 @@ int script_eval(const char *src);
 const char *script_shader_transpile(const char *src, const char *stage);
 
 /*
+ * The WGSL twin of script_shader_transpile, for the WebGPU backend. Same
+ * rotating-buffer / NULL-on-miss contract; returns WGSL text for the stage.
+ */
+const char *script_shader_transpile_wgsl(const char *src, const char *stage);
+
+/*
  * One editable parameter of a source-declared parameter block — a shader's
  * Material uniform block (script_shader_material_params) or a script's params
  * clause (script_entity_params); both report this same shape. `components` is

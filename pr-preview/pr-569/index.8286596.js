@@ -7850,7 +7850,7 @@ function krudd_sp_attach(buf_size) { var ctx = Module.__kruddAudioCtx; if (!ctx)
 function krudd_sp_resume() { var ctx = Module.__kruddAudioCtx; if (ctx && ctx.state !== 'running' && ctx.resume) ctx.resume(); }
 function kgui_read_safe_insets(out) { var probe = Module.__kgSafeProbe; if (!probe) { probe = document.createElement("div"); probe.style.cssText = "position:fixed;top:0;left:0;width:0;height:0;" + "visibility:hidden;pointer-events:none;" + "padding-top:env(safe-area-inset-top);" + "padding-right:env(safe-area-inset-right);" + "padding-bottom:env(safe-area-inset-bottom);" + "padding-left:env(safe-area-inset-left);"; document.body.appendChild(probe); Module.__kgSafeProbe = probe; } var cs = getComputedStyle(probe); HEAPF32[(out >> 2) + 0] = parseFloat(cs.paddingTop) || 0; HEAPF32[(out >> 2) + 1] = parseFloat(cs.paddingRight) || 0; HEAPF32[(out >> 2) + 2] = parseFloat(cs.paddingBottom) || 0; HEAPF32[(out >> 2) + 3] = parseFloat(cs.paddingLeft) || 0; }
 function webgpu_announce_renderer() { if (typeof window.kruddSetRenderer === 'function') window.kruddSetRenderer('webgpu'); }
-function webgpu_status(msg) { var s = UTF8ToString(msg); var el = document.getElementById('status'); if (el) el.textContent = s; if (typeof console !== 'undefined') console.log('[webgpu] ' + s); }
+function webgpu_status(msg) { var s = UTF8ToString(msg); if (typeof window.kruddWebGPULog === 'function') window.kruddWebGPULog(s); if (typeof console !== 'undefined') console.log('[webgpu] ' + s); }
 function krudd_report_renderer() { if (typeof window.kruddSetRenderer === 'function') window.kruddSetRenderer('webgl'); }
 
 // Imports from the Wasm binary.

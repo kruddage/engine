@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>krudd 17.16.0-pr569+ea0a6ed</title>
+<title>krudd 17.16.0-pr569+13a922f</title>
 <!-- Inline SVG favicon (data URI, no network fetch) so browsers stop
      requesting /favicon.ico and logging a 404 on every load. -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20fill='%230d0d0d'/%3E%3Ctext%20x='16'%20y='23'%20font-family='Courier%20New,monospace'%20font-size='22'%20font-weight='700'%20fill='%23ffffff'%20text-anchor='middle'%3EK%3C/text%3E%3C/svg%3E">
@@ -152,6 +152,37 @@ footer {
 	background: #6a2d2d;
 	animation: none;
 }
+
+/*
+ * Scrolling diagnostic log for the WebGPU probe. The kruddgui editor console
+ * can't run in ?renderer=webgpu mode (it draws through the renderer's gpu_api
+ * vtable, which the probe doesn't have yet), so this lightweight shell-side
+ * panel carries the backend's step-by-step messages with full history — unlike
+ * the single-line footer. Hidden until the first line arrives.
+ */
+.webgpu-log {
+	position: fixed;
+	left: 0;
+	right: 0;
+	bottom: 30px;
+	max-height: 42vh;
+	overflow-y: auto;
+	background: rgba(0, 0, 0, 0.74);
+	border-top: 1px solid #333;
+	font-family: 'Courier New', Courier, monospace;
+	font-size: 11px;
+	line-height: 1.55;
+	color: #d0d0d0;
+	padding: 8px 14px;
+	z-index: 6000;
+	display: none;
+}
+
+.webgpu-log.visible { display: block; }
+
+.webgpu-log .line { white-space: pre-wrap; }
+
+.webgpu-log .line.err { color: #e07a7a; }
 
 @keyframes pulse {
 	0%, 100% { opacity: 1; }
@@ -503,8 +534,8 @@ footer {
 
 <header>
 	<span class="wordmark">KRUDD</span>
-	<span class="version" id="version" title="click for build info">17.16.0-pr569+ea0a6ed</span>
-	<span class="version-detail" id="version-detail">commit 544fcd6 &middot; built 2026-07-18</span>
+	<span class="version" id="version" title="click for build info">17.16.0-pr569+13a922f</span>
+	<span class="version-detail" id="version-detail">commit 8286596 &middot; built 2026-07-18</span>
 	<span class="renderer" id="renderer-badge" title="renderer: detecting&hellip;">&mdash;</span>
 	<button class="menu-btn" id="menu-btn" title="back to the menu">&#9776; menu</button>
 </header>
@@ -517,6 +548,8 @@ footer {
 	<div class="status-dot" id="status-dot"></div>
 	<span id="status">loading</span>
 </footer>
+
+<div class="webgpu-log" id="webgpu-log"></div>
 
 <div class="scoreboard hidden" id="ttt-scoreboard">
 	<div class="score-side score-x">
@@ -703,6 +736,23 @@ footer {
 		refreshRendererTitle();
 	};
 
+	/* Append a line to the WebGPU probe's diagnostic log panel (see the
+	 * .webgpu-log note in the stylesheet). Called from the WebGPU backend via
+	 * EM_JS at each step; reveals the panel on the first line and keeps it
+	 * scrolled to the newest entry. */
+	window.kruddWebGPULog = function (msg) {
+		var box = document.getElementById('webgpu-log');
+		if (!box)
+			return;
+		box.classList.add('visible');
+		var line = document.createElement('div');
+		line.className = 'line' +
+			(/fail|no adapter|no instance|no device|error/i.test(msg) ? ' err' : '');
+		line.textContent = msg;
+		box.appendChild(line);
+		box.scrollTop = box.scrollHeight;
+	};
+
 	/* The WebGPU backend (?renderer=webgpu) clears the canvas itself and does
 	 * not register the launcher's games, so hide the launcher overlay up front
 	 * — otherwise its near-opaque panel would sit over the cleared canvas. */
@@ -771,13 +821,13 @@ footer {
 var Module = {
 	locateFile: function (path, prefix) {
 		if (path.endsWith('.wasm'))
-			return prefix + path.replace(/\.wasm$/, '.544fcd6.wasm');
+			return prefix + path.replace(/\.wasm$/, '.8286596.wasm');
 		return prefix + path;
 	}
 };
 </script>
 
-<script async type="text/javascript" src="index.544fcd6.js"></script>
+<script async type="text/javascript" src="index.8286596.js"></script>
 
 </body>
 </html>

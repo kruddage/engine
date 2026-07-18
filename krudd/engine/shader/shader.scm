@@ -4,14 +4,16 @@
 ;;!
 ;;! A shader asset is a single (shader NAME ...) S-expression carrying BOTH
 ;;! stages and a shared IO model (inputs, uniforms, varyings, targets) declared
-;;! once. This is the source of truth; GLSL is a backend target the renderer
-;;! lowers to at bind time. The same file is embedded into the runtime image so
-;;! the web editor transpiles on the fly, and loaded at build time by the
-;;! Scheme oracle test — write once, run in both hosts.
+;;! once. This is the source of truth; GLSL and WGSL are backend targets the
+;;! renderer lowers to at bind time. The same file is embedded into the runtime
+;;! image so the web editor transpiles on the fly, and loaded at build time by
+;;! the Scheme oracle tests — write once, run in both hosts.
 ;;!
 ;;! (shader-transpile SRC STAGE) parses the DSL text SRC and returns the
 ;;! GLSL ES 3.00 for STAGE ("vertex" or "fragment"), or #f when the shader has
 ;;! no such stage — the "matching stage else error" contract the renderer wants.
+;;! (shader-transpile-wgsl SRC STAGE) is its twin for the WebGPU backend, lowering
+;;! the same DSL to WGSL (see the "WGSL backend target" section at the bottom).
 
 ;;! --- small list helpers (the runtime image has only base s7) ---
 
@@ -456,4 +458,328 @@
 ;;! Entry point called from the runtime (via s7_call) and the oracle test.
 (define (shader-transpile src stage-str)
 	(shader->glsl (with-input-from-string src (lambda () (read)))
+		      (string->symbol stage-str)))
+
+;;! --- WGSL backend target ---
+;;!
+;;! A second lowering of the same DSL, for the WebGPU renderer. The GLSL path
+;;! above is untouched; this reuses the shared type system, type inference, and
+;;! reference analysis but assembles WGSL, which is structurally different: IO
+;;! travels in @location/@builtin structs rather than free in/out globals, a
+;;! uniform block is a struct plus a @group/@binding var whose members are read
+;;! qualified (view_proj -> u_Camera.view_proj), and a sampler splits into a
+;;! texture_2d and a companion sampler bound together. shader-transpile-wgsl is
+;;! the entry the WebGPU backend calls, mirroring shader-transpile for GLSL.
+;;!
+;;! Binding scheme (the backend mirrors it when it builds the bind group layout):
+;;!   uniform block (block N)  -> @group(0) @binding(N) var<uniform> u_<Name>
+;;!   sampler #i (declaration order) -> @group(1) @binding(2i)   texture_2d
+;;!                                     @group(1) @binding(2i+1) sampler
+;;! A varying's @location is its position in the full (varyings ...) list, so the
+;;! vertex output and fragment input agree even when a stage uses only a subset.
+
+;;! (0 1 ... n-1) without leaning on a non-base-s7 iota.
+(define (shader-iota n)
+	(let loop ((i (- n 1)) (acc '()))
+	  (if (< i 0) acc (loop (- i 1) (cons i acc)))))
+
+;;! WGSL spelling of a DSL type. Vectors/matrices carry their f32 element type
+;;! and matrices spell columns×rows; a sampler2D becomes the sampled texture
+;;! (its companion `sampler` is emitted separately, at bind time).
+(define (shader-type->wgsl t)
+	(case t
+	  ((float) "f32") ((int) "i32")
+	  ((vec2) "vec2<f32>") ((vec3) "vec3<f32>") ((vec4) "vec4<f32>")
+	  ((mat2) "mat2x2<f32>") ((mat3) "mat3x3<f32>") ((mat4) "mat4x4<f32>")
+	  ((sampler2D) "texture_2d<f32>")
+	  (else (symbol->string t))))
+
+(define (shader-mat-cols t)
+	(case t ((mat2) 2) ((mat3) 3) ((mat4) 4) (else 0)))
+
+;;! The first N components as a swizzle string ("xyz" for 3), for truncating a
+;;! wider matrix's columns down to a smaller matrix.
+(define (shader-col-swizzle n) (substring "xyzw" 0 n))
+
+(define (shader-wgsl-uniform-var block-name)
+	(string-append "u_" (symbol->string block-name)))
+
+;;! name -> spelling alist for a stage body's leaf identifiers. Block members
+;;! resolve through their uniform var, inputs/varyings/targets through the IO
+;;! struct (`in.`/`out.`) for that stage, samplers stay bare (they name a
+;;! module-scope texture var). let* locals are consed on the front during emit.
+(define (shader-wgsl-names form stage)
+	(append
+	  (apply append
+		 (map (lambda (b)
+			(let ((var (shader-wgsl-uniform-var (car b))))
+			  (map (lambda (f)
+				 (cons (car f)
+				       (string-append var "."
+						      (symbol->string (car f)))))
+			       (shader-block-fields b))))
+		      (shader-uniform-blocks form)))
+	  (map (lambda (s) (cons (car s) (symbol->string (car s))))
+	       (shader-uniform-samplers form))
+	  (if (eq? stage 'vertex)
+	      (append
+		(map (lambda (i)
+		       (cons (car i)
+			     (string-append "in." (symbol->string (car i)))))
+		     (shader-section form 'inputs))
+		(map (lambda (v)
+		       (cons (car v)
+			     (string-append "out." (symbol->string (car v)))))
+		     (shader-section form 'varyings)))
+	      (append
+		(map (lambda (v)
+		       (cons (car v)
+			     (string-append "in." (symbol->string (car v)))))
+		     (shader-section form 'varyings))
+		(map (lambda (tg)
+		       (cons (car tg)
+			     (string-append "out." (symbol->string (car tg)))))
+		     (shader-section form 'targets))))))
+
+;;! Emit a WGSL expression under NM (name spelling alist) and TENV (name->type,
+;;! for the mat-truncation special case). Mirrors shader-emit's shape; the
+;;! divergences are typed constructors, the mat(matN) truncation, textureSample,
+;;! and the GLSL-accurate mod expansion.
+(define (shader-wgsl-emit e nm tenv)
+	(cond
+	  ((number? e) (shader-num e))
+	  ((symbol? e)
+	   (let ((p (assq e nm))) (if p (cdr p) (symbol->string e))))
+	  ((pair? e)
+	   (let ((op (car e)) (args (cdr e)))
+	     (case op
+	       ((vec2 vec3 vec4)
+		(string-append (shader-type->wgsl op) "("
+			       (shader-join ", "
+				 (map (lambda (a) (shader-wgsl-emit a nm tenv))
+				      args))
+			       ")"))
+	       ((mat2 mat3 mat4)
+		(if (and (= (length args) 1)
+			 (shader-mat? (shader-infer (car args) tenv)))
+		    (let* ((k   (shader-mat-cols op))
+			   (swz (shader-col-swizzle k))
+			   (m   (shader-wgsl-emit (car args) nm tenv)))
+		      (string-append (shader-type->wgsl op) "("
+			(shader-join ", "
+			  (map (lambda (i)
+				 (string-append "(" m ")["
+						(number->string i) "]." swz))
+			       (shader-iota k)))
+			")"))
+		    (string-append (shader-type->wgsl op) "("
+				   (shader-join ", "
+				     (map (lambda (a)
+					    (shader-wgsl-emit a nm tenv))
+					  args))
+				   ")")))
+	       ((float) (string-append "f32(" (shader-wgsl-emit (car args) nm tenv) ")"))
+	       ((int)   (string-append "i32(" (shader-wgsl-emit (car args) nm tenv) ")"))
+	       ((swizzle)
+		(string-append (shader-wgsl-emit (car args) nm tenv) "."
+			       (symbol->string (cadr args))))
+	       ((+ - * /)
+		(if (and (eq? op '-) (= (length args) 1))
+		    (string-append "(-" (shader-wgsl-emit (car args) nm tenv) ")")
+		    (string-append "("
+		      (shader-join (string-append " " (symbol->string op) " ")
+				   (map (lambda (a) (shader-wgsl-emit a nm tenv))
+					args))
+		      ")")))
+	       ((sample)
+		(let ((tex (shader-wgsl-emit (car args) nm tenv))
+		      (rest (map (lambda (a) (shader-wgsl-emit a nm tenv))
+				 (cdr args))))
+		  (string-append "textureSample(" tex ", " tex "_sampler, "
+				 (shader-join ", " rest) ")")))
+	       ((mod)
+		;;! GLSL mod(a,b) = a - b*floor(a/b); WGSL % is fmod-like, so
+		;;! expand to keep the DSL's GLSL semantics on either target.
+		(let ((a (shader-wgsl-emit (car args) nm tenv))
+		      (b (shader-wgsl-emit (cadr args) nm tenv)))
+		  (string-append "(" a " - " b " * floor(" a " / " b "))")))
+	       (else
+		(string-append (symbol->string op) "("
+			       (shader-join ", "
+				 (map (lambda (a) (shader-wgsl-emit a nm tenv))
+				      args))
+			       ")")))))
+	  (else (error 'shader-bad-expr e))))
+
+;;! Emit a statement, returning (cons TEXT (cons NEW-NM NEW-TENV)). A set writes
+;;! through the target's IO spelling (position is the vertex builtin); a let*
+;;! lowers to immutable `let` bindings that later siblings see (name added bare
+;;! to NM, typed to TENV) — the same single-assignment locals GLSL emits.
+(define (shader-wgsl-emit-stmt s nm tenv)
+	(case (car s)
+	  ((set)
+	   (let* ((target   (cadr s))
+		  (spelling (if (eq? target 'position) "out.position"
+				(let ((p (assq target nm)))
+				  (if p (cdr p) (symbol->string target))))))
+	     (cons (string-append "\t" spelling " = "
+				  (shader-wgsl-emit (caddr s) nm tenv) ";\n")
+		   (cons nm tenv))))
+	  ((let*)
+	   (let loop ((bs (cadr s)) (nm nm) (tenv tenv) (acc ""))
+	     (if (null? bs)
+		 (let ((r (shader-wgsl-emit-stmts (cddr s) nm tenv)))
+		   (cons (string-append acc (car r)) (cdr r)))
+		 (let* ((b   (car bs))
+			(ty  (shader-infer (cadr b) tenv))
+			(rhs (shader-wgsl-emit (cadr b) nm tenv)))
+		   (loop (cdr bs)
+			 (cons (cons (car b) (symbol->string (car b))) nm)
+			 (cons (cons (car b) ty) tenv)
+			 (string-append acc "\tlet " (symbol->string (car b))
+					" = " rhs ";\n"))))))
+	  (else (error 'shader-bad-statement s))))
+
+(define (shader-wgsl-emit-stmts stmts nm tenv)
+	(if (null? stmts)
+	    (cons "" (cons nm tenv))
+	    (let* ((r1 (shader-wgsl-emit-stmt (car stmts) nm tenv))
+		   (r2 (shader-wgsl-emit-stmts (cdr stmts)
+					       (car (cdr r1)) (cdr (cdr r1)))))
+	      (cons (string-append (car r1) (car r2)) (cdr r2)))))
+
+;;! A used uniform block as a WGSL struct plus its @group(0) @binding(N) var.
+;;! All of a used block's fields are emitted (the host uploads the whole std140
+;;! block); an unreferenced block is omitted entirely, like the GLSL path.
+(define (shader-wgsl-uniform-structs form refs)
+	(apply string-append
+	  (map (lambda (b)
+		 (let ((fields (shader-block-fields b)))
+		   (if (not (shader-block-used? fields refs))
+		       ""
+		       (let ((name    (symbol->string (car b)))
+			     (binding (or (shader-opt-value (cdr b) 'block) 0)))
+			 (string-append
+			   "struct " name " {\n"
+			   (apply string-append
+			     (map (lambda (f)
+				    (string-append "\t" (symbol->string (car f))
+						   " : "
+						   (shader-type->wgsl (cadr f))
+						   ",\n"))
+				  fields))
+			   "};\n"
+			   "@group(0) @binding(" (number->string binding)
+			   ") var<uniform> " (shader-wgsl-uniform-var (car b))
+			   " : " name ";\n\n")))))
+	       (shader-uniform-blocks form))))
+
+;;! Each used sampler as a texture var and its companion sampler var. The slot
+;;! index (declaration order) fixes the bindings whether or not a sampler is
+;;! used, so a stage that skips one keeps the others' numbers stable.
+(define (shader-wgsl-sampler-bindings form refs)
+	(let loop ((ss (shader-uniform-samplers form)) (i 0) (acc ""))
+	  (if (null? ss)
+	      acc
+	      (let ((s (car ss)))
+		(if (shader-uses? refs (car s))
+		    (let ((name (symbol->string (car s))))
+		      (loop (cdr ss) (+ i 1)
+			    (string-append acc
+			      "@group(1) @binding(" (number->string (* 2 i))
+			      ") var " name " : "
+			      (shader-type->wgsl (cadr s)) ";\n"
+			      "@group(1) @binding(" (number->string (+ (* 2 i) 1))
+			      ") var " name "_sampler : sampler;\n\n")))
+		    (loop (cdr ss) (+ i 1) acc))))))
+
+;;! The vertex input struct (every declared input; the pipeline's vertex layout
+;;! provides them), each field carrying its @location from the IO model.
+(define (shader-wgsl-vertex-input form)
+	(let ((inputs (shader-section form 'inputs)))
+	  (if (null? inputs)
+	      ""
+	      (string-append
+		"struct VertexInput {\n"
+		(apply string-append
+		  (map (lambda (i)
+			 (string-append "\t@location("
+					(number->string
+					  (shader-opt-value (cddr i) 'location))
+					") " (symbol->string (car i)) " : "
+					(shader-type->wgsl (cadr i)) ",\n"))
+		       inputs))
+		"};\n\n"))))
+
+;;! "@location(POS) name : type,\n" for each USED varying, where POS is the
+;;! varying's index in the full list so vertex-out and fragment-in line up.
+(define (shader-wgsl-varying-fields form refs)
+	(let loop ((vs (shader-section form 'varyings)) (i 0) (acc ""))
+	  (if (null? vs)
+	      acc
+	      (let ((v (car vs)))
+		(loop (cdr vs) (+ i 1)
+		      (if (shader-uses? refs (car v))
+			  (string-append acc "\t@location(" (number->string i)
+					 ") " (symbol->string (car v)) " : "
+					 (shader-type->wgsl (cadr v)) ",\n")
+			  acc))))))
+
+(define (shader-wgsl-targets-struct form)
+	(string-append
+	  "struct FragmentOutput {\n"
+	  (apply string-append
+	    (map (lambda (tg)
+		   (string-append "\t@location("
+				  (number->string
+				    (shader-opt-value (cddr tg) 'location))
+				  ") " (symbol->string (car tg)) " : "
+				  (shader-type->wgsl (cadr tg)) ",\n"))
+		 (shader-section form 'targets)))
+	  "};\n\n"))
+
+;;! WGSL for one stage, or #f when the shader declares no such stage — the same
+;;! "matching stage else error" contract shader->glsl honours.
+(define (shader->wgsl form stage)
+	(let ((body (assq stage (cddr form))))
+	  (and body
+	       (let* ((nm       (shader-wgsl-names form stage))
+		      (tenv     (shader-env form))
+		      (refs     (shader-refs (cdr body)))
+		      (bodytext (car (shader-wgsl-emit-stmts (cdr body) nm tenv))))
+		 (if (eq? stage 'vertex)
+		     (string-append
+		       (shader-wgsl-uniform-structs form refs)
+		       (shader-wgsl-vertex-input form)
+		       "struct VertexOutput {\n"
+		       "\t@builtin(position) position : vec4<f32>,\n"
+		       (shader-wgsl-varying-fields form refs)
+		       "};\n\n"
+		       "@vertex\n"
+		       (if (null? (shader-section form 'inputs))
+			   "fn vs_main() -> VertexOutput {\n"
+			   "fn vs_main(in : VertexInput) -> VertexOutput {\n")
+		       "\tvar out : VertexOutput;\n"
+		       bodytext
+		       "\treturn out;\n}\n")
+		     (let ((varyings (shader-wgsl-varying-fields form refs)))
+		       (string-append
+			 (shader-wgsl-uniform-structs form refs)
+			 (shader-wgsl-sampler-bindings form refs)
+			 (if (string=? varyings "")
+			     ""
+			     (string-append "struct FragmentInput {\n"
+					    varyings "};\n\n"))
+			 (shader-wgsl-targets-struct form)
+			 "@fragment\n"
+			 (if (string=? varyings "")
+			     "fn fs_main() -> FragmentOutput {\n"
+			     "fn fs_main(in : FragmentInput) -> FragmentOutput {\n")
+			 "\tvar out : FragmentOutput;\n"
+			 bodytext
+			 "\treturn out;\n}\n")))))))
+
+;;! Entry point the WebGPU backend calls, the WGSL twin of shader-transpile.
+(define (shader-transpile-wgsl src stage-str)
+	(shader->wgsl (with-input-from-string src (lambda () (read)))
 		      (string->symbol stage-str)))

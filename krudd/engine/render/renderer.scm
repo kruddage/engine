@@ -266,21 +266,31 @@
 	(cmd-bind-texture
 	  (fn void ((cmd gpu-cmd-buf) (unit u32) (texture gpu-texture))))
 
-	;;! Return the backend-native handle for a texture — the GL texture name on
-	;;! the WebGL backend, 0 when absent. An escape hatch for a UI layer that has
-	;;! to composite a render-target texture through its own graphics stack:
-	;;! kruddgui's kgui-image draws a preview/bake by native handle, and an opaque
-	;;! gpu-texture hides it. Backends with no native handle (the null renderer)
-	;;! return 0.
-	(texture-native-handle (fn u32 ((texture gpu-texture))))
+	;;! Return an opaque id naming a texture, or 0 when there is none. The id is
+	;;! meaningful only to the backend that issued it: cmd-bind-texture-handle
+	;;! resolves it back, and nothing else may interpret it. The WebGL backend
+	;;! hands back what is effectively its own texture name; the WebGPU backend
+	;;! hands back an index into a table it keeps. Neither caller can tell, and
+	;;! that is the point.
+	;;!
+	;;! It exists because a UI layer has to composite a render-target texture
+	;;! through its own quad batch — kruddgui's kgui-image draws a scene preview
+	;;! or a kruddboard bake — and the handle crosses into Scheme on the way
+	;;! (kgui-image takes it as an s7 number). It therefore has to stay an
+	;;! integer, which is why this is an id and not a gpu-texture.
+	;;!
+	;;! Calling it twice for the same live texture returns the same id. An id
+	;;! whose texture has since been destroyed resolves to nothing rather than to
+	;;! whatever took its place — backends must not let a recycled id name an
+	;;! unrelated texture. The null renderer owns no textures and returns 0.
+	(texture-handle (fn u32 ((texture gpu-texture))))
 
-	;;! Bind a texture to a unit by its backend-native handle (the value
-	;;! texture-native-handle returned), for a UI layer that only holds the raw
-	;;! handle — kruddgui's kgui-image, whose image quads carry an external
-	;;! texture name (a scene bake or offscreen preview) rather than a gpu-texture.
-	;;! The symmetric partner to texture-native-handle: it keeps the glBindTexture
-	;;! off the UI side so the draw goes through the device. GL-specific like the
-	;;! handle it consumes; a WebGPU backend revisits both together. A 0 handle
+	;;! Bind a texture to a unit by the id texture-handle returned. The symmetric
+	;;! partner to it, and the only thing that may interpret an id.
+	;;!
+	;;! For a UI layer that holds an id rather than a gpu-texture: kruddgui's
+	;;! image quads carry one across Scheme. Otherwise identical to
+	;;! cmd-bind-texture. An id of 0, or one whose texture has been destroyed,
 	;;! unbinds the unit. The null renderer no-ops.
-	(cmd-bind-texture-native
-	  (fn void ((cmd gpu-cmd-buf) (unit u32) (native-handle u32)))))
+	(cmd-bind-texture-handle
+	  (fn void ((cmd gpu-cmd-buf) (unit u32) (handle u32)))))

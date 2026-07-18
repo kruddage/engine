@@ -1869,7 +1869,7 @@ static s7_pointer sp_krudd_texture_values(s7_scheme *sc, s7_pointer args)
  * changes, so a still frame costs nothing and dragging a slider re-bakes. The
  * bake rides the renderer's gpu_api (texture_create/destroy) rather than raw
  * GL, so this file stays backend-agnostic ahead of the WebGPU move; kruddgui
- * blits the texture's native handle with kgui-image. texture_create uploads
+ * blits the texture by its opaque id with kgui-image. texture_create uploads
  * level 0 once, so a re-bake drops the old texture and creates a fresh one.
  */
 static gpu_texture_t g_tex_prev_tex; /* NULL = not yet allocated            */
@@ -1980,11 +1980,11 @@ static uint32_t bake_texture_preview(s7_scheme *sc, uint32_t tex_ref,
 	}
 
 	return (g_tex_prev_valid && g_tex_prev_tex) ?
-		gpu->texture_native_handle(g_tex_prev_tex) : 0;
+		gpu->texture_handle(g_tex_prev_tex) : 0;
 }
 
 /*
- * (krudd-texture-bake texture-ref field-values res) -> the native texture handle
+ * (krudd-texture-bake texture-ref field-values res) -> the opaque texture id
  * of the live bake, or 0 when it can't be baked. kruddgui draws the returned
  * handle itself with kgui-image, so the baked pixels present through its own
  * quad batch.

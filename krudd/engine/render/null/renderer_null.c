@@ -319,21 +319,21 @@ static void null_texture_destroy(gpu_texture_t texture)
 	});
 }
 
-/* The null backend owns no GL objects, so there is no native handle to hand out. */
-static uint32_t null_texture_native_handle(gpu_texture_t texture)
+/* The null backend owns no device objects, so it issues no ids. */
+static uint32_t null_texture_handle(gpu_texture_t texture)
 {
 	(void)texture;
 	return 0u;
 }
 
-/* No GL objects to bind; the native-handle escape hatch is a no-op here. */
-static void null_cmd_bind_texture_native(gpu_cmd_buf_t cmd, uint32_t unit,
-					 uint32_t native_handle)
+/* Nothing to bind; an id can only have come from another backend. */
+static void null_cmd_bind_texture_handle(gpu_cmd_buf_t cmd, uint32_t unit,
+					 uint32_t handle)
 {
 	(void)cmd;
 	g_log->write(LOG_LEVEL_INFO,
-		     "renderer_null: cmd_bind_texture_native unit=%u handle=%u",
-		     unit, native_handle);
+		     "renderer_null: cmd_bind_texture_handle unit=%u handle=%u",
+		     unit, handle);
 }
 
 static const struct gpu_api null_api = {
@@ -363,8 +363,8 @@ static const struct gpu_api null_api = {
 	.texture_create         = null_texture_create,
 	.texture_destroy        = null_texture_destroy,
 	.cmd_bind_texture       = null_cmd_bind_texture,
-	.texture_native_handle  = null_texture_native_handle,
-	.cmd_bind_texture_native = null_cmd_bind_texture_native,
+	.texture_handle         = null_texture_handle,
+	.cmd_bind_texture_handle = null_cmd_bind_texture_handle,
 };
 
 static void renderer_null_init(void)

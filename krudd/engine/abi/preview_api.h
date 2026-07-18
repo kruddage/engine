@@ -18,10 +18,12 @@
 struct preview_api {
 	/*
 	 * Render mesh_ref, shaded with material_ref, into a res x res offscreen
-	 * RGBA target and return the backend-native texture handle (the GL
-	 * texture name on the WebGL backend) for the caller to composite, or 0 on
-	 * failure (no device, unknown mesh, target allocation failed, or a build
-	 * with no live GL context). material_ref 0 selects the built-in default
+	 * RGBA target and return an opaque texture id (see texture-handle in
+	 * renderer.scm) for the caller to composite, or 0 on failure (no device,
+	 * unknown mesh, target allocation failed, or a build with no live GL
+	 * context). The id means nothing outside the backend that issued it — it
+	 * is passed back to cmd-bind-texture-handle and never inspected.
+	 * material_ref 0 selects the built-in default
 	 * material, so a pure-geometry preview needs no material chosen. yaw is a
 	 * model-space rotation about +Y in radians, so a caller can spin the mesh
 	 * by advancing it each frame. res is clamped to a preview-sized edge.

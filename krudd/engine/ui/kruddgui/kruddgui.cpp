@@ -366,7 +366,7 @@ static void gpu_flush(void)
 			gpu->cmd_bind_vertex_buffer(cmd, 0, s_vbo, 0);
 		}
 		if (c->tex)
-			gpu->cmd_bind_texture_native(cmd, 0, (uint32_t)c->tex);
+			gpu->cmd_bind_texture_handle(cmd, 0, (uint32_t)c->tex);
 		else
 			gpu->cmd_bind_texture(cmd, 0, s_font_tex);
 

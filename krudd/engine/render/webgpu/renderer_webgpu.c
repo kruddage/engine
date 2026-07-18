@@ -76,6 +76,17 @@ static gpu_buffer_t   g_tri_vbuf;
 static gpu_buffer_t   g_tri_ubo;
 static gpu_texture_t  g_depth;
 static uint32_t       g_depth_w, g_depth_h;
+/*
+ * Last known backbuffer size, cached at the points that already establish it.
+ *
+ * This exists because webgpu_platform_backbuffer_size is NOT a getter: on the
+ * web it calls emscripten_set_canvas_element_size, which writes canvas.width /
+ * canvas.height and so resets the canvas backing store. Calling it mid-frame
+ * destroys the surface texture the frame is already drawing into — the same
+ * failure #595 fixed in kruddgui_tick, arriving by a different door. So the
+ * scissor path reads this cache and never queries the platform itself.
+ */
+static uint32_t       g_surface_w, g_surface_h;
 
 /*
  * The triangle authored in the krudd shader DSL — the same source of truth the
@@ -265,6 +276,15 @@ struct gpu_cmd_buf_state {
 	WGPUTexture     surface_tex;
 	WGPUTextureView surface_view;
 	int             in_use;
+
+	/*
+	 * The current pass's attachment size. cmd_set_scissor needs it twice
+	 * over: to mirror the caller's GL-convention y into WebGPU's, and to
+	 * clamp the box, which WebGPU validates against the attachment where GL
+	 * merely clipped. Set at begin_render_pass, since only the pass knows
+	 * what it is drawing into.
+	 */
+	uint32_t pass_w, pass_h;
 
 	/*
 	 * Pending uniform bindings. GL bound these straight into slot state the
@@ -973,12 +993,20 @@ static void webgpu_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 				}
 			}
 			color[i].view = c->surface_view;
+			if (i == 0) {
+				c->pass_w = g_surface_w;
+				c->pass_h = g_surface_h;
+			}
 		} else {
 			struct gpu_texture *t = (struct gpu_texture *)a->texture;
 
 			if (!t->view)
 				return;
 			color[i].view = t->view;
+			if (i == 0) {
+				c->pass_w = t->width;
+				c->pass_h = t->height;
+			}
 		}
 
 		color[i].depthSlice   = WGPU_DEPTH_SLICE_UNDEFINED;
@@ -1040,6 +1068,15 @@ static void webgpu_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 		depth_att.stencilLoadOp    = WGPULoadOp_Undefined;
 		depth_att.stencilStoreOp   = WGPUStoreOp_Undefined;
 		rp.depthStencilAttachment  = &depth_att;
+	}
+
+	/* A depth-only pass (the sun shadow map) has no colour attachment to
+	 * take the scissor bounds from, so they come from its depth target. */
+	if (count == 0 && desc->depth) {
+		struct gpu_texture *d = (struct gpu_texture *)desc->depth;
+
+		c->pass_w = d->width;
+		c->pass_h = d->height;
 	}
 
 	c->pass = wgpuCommandEncoderBeginRenderPass(c->enc, &rp);
@@ -1162,11 +1199,51 @@ static void webgpu_cmd_barrier(gpu_cmd_buf_t cmd,
 	(void)cmd; (void)barriers; (void)count;
 }
 
+/*
+ * Two things separate this from the WebGL backend's one-line glScissor.
+ *
+ * The gpu_api's scissor box is GL's — origin bottom-left, y increasing upward
+ * — and callers flip into it themselves (kruddgui computes
+ * `s_phys_h - (y + h) * scale`). WebGPU's box is top-left with y increasing
+ * downward, so it is mirrored about the attachment height here. Doing it in the
+ * backend rather than retargeting the contract keeps the WebGL backend and every
+ * existing caller untouched, which is what makes this a non-breaking change.
+ *
+ * And WebGPU *validates* the box against the attachment, failing the whole
+ * command buffer if it escapes; GL simply clipped. A caller rounding a CSS rect
+ * up to physical pixels can overhang the target by one, so the box is clamped
+ * into range. A rect clipped away to nothing becomes an empty scissor, which
+ * draws nothing — the same outcome GL gave it.
+ */
 static void webgpu_cmd_set_scissor(gpu_cmd_buf_t cmd, int32_t x, int32_t y,
 				   uint32_t width, uint32_t height)
 {
-	(void)cmd; (void)x; (void)y; (void)width; (void)height;
-	STUB_ONCE("cmd_set_scissor");
+	struct gpu_cmd_buf_state *c = (struct gpu_cmd_buf_state *)cmd;
+	int64_t tw, th, x0, y0, x1, y1;
+
+	if (!c || !c->pass || !c->pass_w || !c->pass_h)
+		return;
+
+	tw = (int64_t)c->pass_w;
+	th = (int64_t)c->pass_h;
+
+	x0 = (int64_t)x;
+	x1 = x0 + (int64_t)width;
+	/* GL y-up -> WebGPU y-down: the box's top edge is the target height
+	 * less its GL top (y + height). */
+	y0 = th - ((int64_t)y + (int64_t)height);
+	y1 = y0 + (int64_t)height;
+
+	if (x0 < 0)  x0 = 0;
+	if (y0 < 0)  y0 = 0;
+	if (x1 > tw) x1 = tw;
+	if (y1 > th) y1 = th;
+	if (x1 < x0) x1 = x0;
+	if (y1 < y0) y1 = y0;
+
+	wgpuRenderPassEncoderSetScissorRect(c->pass, (uint32_t)x0, (uint32_t)y0,
+					    (uint32_t)(x1 - x0),
+					    (uint32_t)(y1 - y0));
 }
 
 static gpu_texture_t webgpu_texture_create(const struct gpu_texture_desc *desc)
@@ -1401,6 +1478,8 @@ static void configure_surface(void)
 	webgpu_platform_backbuffer_size(&bw, &bh);
 	w = (int)bw;
 	h = (int)bh;
+	g_surface_w = bw;
+	g_surface_h = bh;
 
 	/*
 	 * No surface means this platform renders offscreen (native), so there is
@@ -1482,6 +1561,8 @@ static void create_depth_target(void)
 	webgpu_platform_backbuffer_size(&w, &h);
 	if (w < 1 || h < 1)
 		return;
+	g_surface_w = w;
+	g_surface_h = h;
 	if (g_depth && g_depth_w == w && g_depth_h == h)
 		return;
 

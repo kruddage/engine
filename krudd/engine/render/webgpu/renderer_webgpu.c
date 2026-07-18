@@ -728,13 +728,24 @@ static gpu_buffer_t webgpu_buffer_create(const struct gpu_buffer_desc *desc)
 		return NULL;
 	memset(b, 0, sizeof(*b));
 	b->size = size;
-	if (!g_ready)
-		return b;
+	if (!g_ready || size == 0)
+		return b; /* a 0-size buffer can't be bound; leave buf NULL (safe) */
 
 	memset(&bd, 0, sizeof(bd));
 	bd.usage = buffer_usage(desc->usage);
 	bd.size  = size;
 	b->buf   = wgpuDeviceCreateBuffer(g_device, &bd);
+	{
+		/* Diagnostic: name every buffer as it is made so the last line
+		 * before an abort points at the culprit. Temporary scaffolding. */
+		char dbg[128];
+
+		snprintf(dbg, sizeof(dbg),
+			 "bcreate size=%u(req %u) usage=0x%x init=%d -> buf=%p",
+			 size, (unsigned)desc->size, (unsigned)desc->usage,
+			 desc->initial_data ? 1 : 0, (void *)b->buf);
+		webgpu_status(dbg);
+	}
 	if (b->buf && desc->initial_data) {
 		/*
 		 * wgpuQueueWriteBuffer demands a 4-byte-multiple write size, but a
@@ -785,6 +796,21 @@ static void webgpu_buffer_update(gpu_buffer_t buf, uint32_t offset,
 	padded = (size + 3u) & ~3u;
 	if (offset + padded > b->size)
 		padded = b->size > offset ? b->size - offset : 0u;
+	{
+		/* Diagnostic (rate-limited): the first handful of updates, so an
+		 * abort here is attributable without flooding the panel. Temporary. */
+		static int n;
+
+		if (n < 24) {
+			char dbg[96];
+
+			snprintf(dbg, sizeof(dbg),
+				 "bupdate off=%u size=%u pad=%u -> buf=%p",
+				 offset, size, padded, (void *)b->buf);
+			webgpu_status(dbg);
+			n++;
+		}
+	}
 	if (padded)
 		wgpuQueueWriteBuffer(g_queue, b->buf, offset, data, padded);
 }

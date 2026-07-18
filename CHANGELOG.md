@@ -1,5 +1,27 @@
 # Changelog
 
+## [17.16.0](https://github.com/kruddage/engine/compare/v17.15.0...v17.16.0) (2026-07-18)
+
+
+### Features
+
+* **entity:** build a world from a (scene ...) Scheme form + tic-tac-toe game ([#551](https://github.com/kruddage/engine/issues/551)) ([6e0833b](https://github.com/kruddage/engine/commit/6e0833baf38c0ff3896a4eedcf35e06efffe6eae))
+* **entity:** dispatch clicks to Scheme game rules; playable tic-tac-toe placement ([#554](https://github.com/kruddage/engine/issues/554)) ([be917f3](https://github.com/kruddage/engine/commit/be917f36dc9df6e682c9d90023019d0b64a06496))
+* **entity:** nest scene entities via a (children ...) clause; real tic-tac-toe board ([#553](https://github.com/kruddage/engine/issues/553)) ([202dff9](https://github.com/kruddage/engine/commit/202dff9f042f870ee15b369fec9bed31d040d7f1))
+* **game:** hide the editor chrome in tic-tac-toe's play view ([#558](https://github.com/kruddage/engine/issues/558)) ([176dfa2](https://github.com/kruddage/engine/commit/176dfa2c9e96f6780ba6f4535d662a6dca9f46aa))
+* **game:** launcher registry + HTML menu to pick a scene at boot ([#556](https://github.com/kruddage/engine/issues/556)) ([bc8e318](https://github.com/kruddage/engine/commit/bc8e318a63fc88e13f0b0e242fd40b83a5132b69))
+* **shell:** add a close button to the scene launcher ([#561](https://github.com/kruddage/engine/issues/561)) ([8fdf0f8](https://github.com/kruddage/engine/commit/8fdf0f82f672e93d037b568f5cfcf285d917ca63))
+* **tictactoe:** gem materials, grassy heightfield ground, and sound ([#564](https://github.com/kruddage/engine/issues/564)) ([07ebb98](https://github.com/kruddage/engine/commit/07ebb98ae9a789d5254bf814c730d2a9f7c5ff18))
+* **tictactoe:** strike-through win line and 1P/2P scoreboard ([#559](https://github.com/kruddage/engine/issues/559)) ([d507257](https://github.com/kruddage/engine/commit/d5072578f9c824abb7d87283643908a4b81aa7b2))
+* **tictactoe:** win/draw detection and click-to-restart ([#555](https://github.com/kruddage/engine/issues/555)) ([4be850f](https://github.com/kruddage/engine/commit/4be850f6a8028f49c1068b6695c2af2968db0815))
+
+
+### Bug Fixes
+
+* **game:** give each scene its own camera and gate the launcher until ready ([#557](https://github.com/kruddage/engine/issues/557)) ([5e58d93](https://github.com/kruddage/engine/commit/5e58d936de6b1dea6a9929d63cf11d310b8ec383))
+* **kruddgui:** don't fire a tap at the end of a scroll drag ([#562](https://github.com/kruddage/engine/issues/562)) ([2402b20](https://github.com/kruddage/engine/commit/2402b202f56604a9cfa4e7889d5200da26e54c79))
+* **ui:** keep the live viewport visible under an open kruddgui console ([#563](https://github.com/kruddage/engine/issues/563)) ([98972ba](https://github.com/kruddage/engine/commit/98972ba0e8381f1abe5d3f7060b211a24a2fa769))
+
 ## [17.15.0](https://github.com/kruddage/engine/compare/v17.14.0...v17.15.0) (2026-07-17)
 
 

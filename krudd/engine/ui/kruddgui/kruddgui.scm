@@ -130,6 +130,14 @@
 (define kruddgui-tray-h      40)
 (define kruddgui-tray-pill-w 104)
 
+;;! Main-area height cap: an open console (log/board/scene/assets) is a
+;;! dismissable overlay, not the whole screen — it should leave a strip of the
+;;! live viewport peeking through beneath it so a transform edit stays visible
+;;! against the entity it's moving. Floor keeps a very short viewport (e.g. a
+;;! landscape phone with a tall keyboard) from squeezing the console to nothing.
+(define kruddgui-console-max-vh-frac 0.72)
+(define kruddgui-console-min-h       160.0)
+
 ;;! (kruddgui-layout-mode vw vh) -> 'phone-portrait | 'phone-landscape | 'desktop.
 ;;! Keyed off width alone for now; orientation (vw vs vh) can refine it later.
 (define (kruddgui-layout-mode vw vh)
@@ -703,6 +711,9 @@
 (define kruddgui-scene-row-h 40)
 (define kruddgui-scene-line 26)
 (define kruddgui-scene-gap 6)
+;;! Inline label column for a vec-row (Position/Rotation/Scale): wide enough
+;;! for "Rotation", the longest of the three, so the fields still line up.
+(define kruddgui-scene-veclabel-w 78)
 
 (define kruddgui-scene-panel-bg  '(0.08 0.09 0.11 0.97))
 (define kruddgui-scene-body-bg   '(0.05 0.06 0.08 0.98))
@@ -919,25 +930,34 @@
     (cons (if (real? val) val cur) (caddr res))))
 
 ;;! (kruddgui-scene-vec-row L label id-base vec) a labelled row of one numeric
-;;! field per component, packed across the row width. Returns (new-vec .
-;;! changed?): the per-component values and whether any component committed.
+;;! field per component, packed across the row width. The label sits inline in
+;;! a fixed-width column to the row's left (matching the Info block's "label:
+;;! value" kv rows) rather than on its own line above — Position/Rotation/Scale
+;;! otherwise burn a whole extra line each just for a short word, pushing
+;;! Bindings (and everything past it) further down the scroll on a phone.
+;;! Returns (new-vec . changed?): the per-component values and whether any
+;;! component committed.
 (define (kruddgui-scene-vec-row L label id-base vec)
-  (kruddgui-scene-label L label)
-  (let* ((x (kruddgui-lay-x L))
-	 (w (kruddgui-lay-w L))
-	 (y (kruddgui-lay-cy L))
-	 (n (length vec))
-	 (g kruddgui-scene-gap)
-	 (fw (/ (- w (* (- n 1) g)) n)))
+  (let* ((x  (kruddgui-lay-x L))
+	 (w  (kruddgui-lay-w L))
+	 (y  (kruddgui-lay-cy L))
+	 (lw kruddgui-scene-veclabel-w)
+	 (g  kruddgui-scene-gap)
+	 (fx (+ x lw g))
+	 (n  (length vec))
+	 (fw (/ (- w lw g (* (- n 1) g)) n)))
+    (when (kruddgui-lay-vis? L kruddgui-scene-row-h)
+      (kruddgui-board-cell (+ x 2) y kruddgui-scene-row-h label
+			   kruddgui-scene-label-fg))
     (let ((res
 	   (if (kruddgui-lay-vis? L kruddgui-scene-row-h)
 	       (let loop ((i 0) (vs vec) (acc '()))
 		 (if (null? vs)
 		     (reverse acc)
-		     (let ((fx (+ x (* i (+ fw g)))))
+		     (let ((cx (+ fx (* i (+ fw g)))))
 		       (loop (+ i 1) (cdr vs)
 			     (cons (kruddgui-scene-numeric
-				    fx y fw (format #f "~A~D" id-base i) (car vs))
+				    cx y fw (format #f "~A~D" id-base i) (car vs))
 				   acc)))))
 	       (map (lambda (v) (cons v #f)) vec))))
       (kruddgui-lay-adv! L (+ kruddgui-scene-row-h kruddgui-scene-gap))
@@ -1261,7 +1281,8 @@
   (let* ((m     kruddgui-log-margin)
 	 (avail (- vh m (kruddgui-modebar-reserve vw vh) kruddgui-gap))
 	 (w     (min kruddgui-scene-max-w (- vw (* 2 m))))
-	 (h     (max 160.0 (min (* vh 0.72) avail))))
+	 (h     (max kruddgui-console-min-h
+		     (min (* vh kruddgui-console-max-vh-frac) avail))))
     (kruddgui-scene-draw-into m m w h)))
 
 ;;! ------------------------------------------------------------------
@@ -2783,7 +2804,8 @@
   (let* ((m     kruddgui-log-margin)
 	 (avail (- vh m (kruddgui-modebar-reserve vw vh) kruddgui-gap))
 	 (w     (min kruddgui-assets-max-w (- vw (* 2 m))))
-	 (h     (max 160.0 (min (* vh 0.72) avail))))
+	 (h     (max kruddgui-console-min-h
+		     (min (* vh kruddgui-console-max-vh-frac) avail))))
     (kruddgui-assets-draw-into m m w h)))
 
 ;;! (kruddgui-draw) the whole layer — the host's per-tick entry point, laid out
@@ -2806,6 +2828,12 @@
 	;;! Bottom mode-bar: reserves its own band (only with a selection).
 	(when (>= (krudd-selected) 0)
 	  (kruddgui-modebar-draw D))
-	;;! Tray of console pills, then the active console into the main rect.
+	;;! Tray of console pills, then the active console into the main rect —
+	;;! capped so the console never swallows the whole free rect and hides the
+	;;! live viewport entirely; a floor keeps it usable when vh is small.
 	(kruddgui-tray-draw D)
+	(let ((cap (max kruddgui-console-min-h
+			(* vh kruddgui-console-max-vh-frac))))
+	  (when (> (kruddgui-dock-h D) cap)
+	    (vector-set! D 6 cap)))
 	(kruddgui-console-draw-active D)))))

@@ -63,6 +63,9 @@ void edit_plugin_entry(struct subsystem_manager *mgr);
 void entity_plugin_entry(struct subsystem_manager *mgr);
 void renderer_webgl_plugin_entry(struct subsystem_manager *mgr);
 void renderer_webgpu_plugin_entry(struct subsystem_manager *mgr);
+/* 1 once the WebGPU device has finished its async adapter/device handshake and
+ * the vtable can serve pipeline/buffer creation (see renderer_webgpu.c). */
+int  renderer_webgpu_ready(void);
 void fg_plugin_entry(struct subsystem_manager *mgr);
 void scene_renderer_plugin_entry(struct subsystem_manager *mgr);
 void kruddboard_plugin_entry(struct subsystem_manager *mgr);
@@ -108,6 +111,8 @@ static double s_last_ms;
 static float  s_frame_times[60];
 static int    s_ft_head;
 static double s_boot_ms;	/* emscripten_get_now() at engine_init entry */
+static int    s_webgpu_pending; /* 1 = WebGPU mode, render cluster not yet up */
+static int    s_launcher_armed; /* one-shot guard on krudd_signal_ready */
 
 /*
  * Record how long the slice since START took as the next startup phase.
@@ -178,11 +183,12 @@ EM_JS(void, krudd_signal_ready, (void), {
 })
 
 /*
- * Whether the page asked for the WebGPU backend (?renderer=webgpu). The probe
- * backend clears the canvas and owns the frame on its own; until its gpu_api
- * vtable exists, selecting it means registering it alone and leaving the GL
- * render cluster and the games unregistered (they would call a vtable that is
- * not there yet). Defaults to 0 (the normal WebGL path) on any parse trouble.
+ * Whether the page asked for the WebGPU backend (?renderer=webgpu). The backend
+ * now carries the full gpu_api vtable, but its device comes up asynchronously,
+ * so selecting it registers the WebGPU renderer alone here and defers the rest
+ * of the render cluster (frame graph, scene renderer, UI, games) to engine_tick,
+ * which brings it up once the device is ready. Defaults to 0 (the normal WebGL
+ * path) on any parse trouble.
  */
 EM_JS(int, krudd_wants_webgpu, (void), {
 	try {
@@ -192,6 +198,28 @@ EM_JS(int, krudd_wants_webgpu, (void), {
 		return 0;
 	}
 })
+
+/*
+ * Bring up the rest of the render cluster once the WebGPU device is live. Runs
+ * every plugin in the boot table except the WebGL renderer (the WebGPU backend
+ * already owns the "renderer" subsystem), in the same dependency order and with
+ * the same per-entry timing as the synchronous path — each entry's init runs at
+ * register time, so this is where the deferred scene_renderer builds its
+ * pipelines on the now-ready vtable.
+ */
+static void register_webgpu_cluster(void)
+{
+	double phase;
+	size_t i;
+
+	for (i = 0; i < sizeof(plugin_table) / sizeof(plugin_table[0]); i++) {
+		if (plugin_table[i].entry == renderer_webgl_plugin_entry)
+			continue;
+		phase = emscripten_get_now();
+		plugin_table[i].entry(&manager);
+		stats_record_phase(plugin_table[i].name, phase);
+	}
+}
 #endif
 
 void engine_init(void)
@@ -223,13 +251,17 @@ void engine_init(void)
 	 */
 	if (krudd_wants_webgpu()) {
 		/*
-		 * WebGPU probe path: the backend clears the canvas and drives the
-		 * frame itself. The GL render cluster, UI, and games stay
-		 * unregistered until the WebGPU gpu_api vtable exists to run them.
+		 * WebGPU path: the backend now carries the full gpu_api vtable, but
+		 * the device comes up asynchronously (adapter -> device callbacks),
+		 * while the render cluster's init builds pipelines the instant it
+		 * registers. So register the WebGPU backend alone here and defer the
+		 * rest of the cluster to engine_tick, which brings it up once
+		 * renderer_webgpu_ready() reports the device live (s_webgpu_pending).
 		 */
 		phase = emscripten_get_now();
 		renderer_webgpu_plugin_entry(&manager);
 		stats_record_phase("renderer_webgpu", phase);
+		s_webgpu_pending = 1;
 	} else {
 		for (i = 0; i < sizeof(plugin_table) / sizeof(plugin_table[0]); i++) {
 			phase = emscripten_get_now();
@@ -251,6 +283,18 @@ void engine_tick(void)
 {
 	frame_count++;
 #ifdef __EMSCRIPTEN__
+	/*
+	 * WebGPU brings the render cluster up the first tick the device reports
+	 * ready — before script_tick / the subsystem tick, so the freshly
+	 * registered scene renderer both builds its pipelines and draws its first
+	 * frame here. renderer_webgpu's own tick pumps the instance events that
+	 * resolve the device, so readiness flips within the first few ticks.
+	 */
+	if (s_webgpu_pending && renderer_webgpu_ready()) {
+		register_webgpu_cluster();
+		s_webgpu_pending = 0;
+	}
+
 	/*
 	 * Time to first frame, captured once on the opening tick, two ways:
 	 *
@@ -278,11 +322,16 @@ void engine_tick(void)
 		LOG_DEBUG("engine: frame %d", frame_count);
 	subsystem_manager_tick(&manager);
 #ifdef __EMSCRIPTEN__
-	/* The first tick has now rendered a frame: arm the launcher (see
-	 * krudd_signal_ready). Runs after the render so a click that follows
-	 * lands on a live, framed engine. */
-	if (frame_count == 1)
+	/*
+	 * Arm the launcher once a frame has rendered with the full cluster up, so
+	 * a click lands on a live, framed engine. On the WebGL path that is the
+	 * first tick; on the WebGPU path s_webgpu_pending holds it off until the
+	 * device is ready and the cluster has registered and drawn. One-shot.
+	 */
+	if (!s_launcher_armed && !s_webgpu_pending) {
+		s_launcher_armed = 1;
 		krudd_signal_ready();
+	}
 #endif
 }
 

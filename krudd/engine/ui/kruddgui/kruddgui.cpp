@@ -98,6 +98,8 @@ static struct kgui_batch  s_batch;
 /* Viewport for this tick, refreshed at the top of kruddgui_tick. */
 static float s_css_w, s_css_h;
 static int   s_phys_w, s_phys_h;
+/* Last size actually written to the canvas element — see kruddgui_tick. */
+static int   s_canvas_w, s_canvas_h;
 
 /*
  * Safe-area insets (top right bottom left, CSS px) — the padding a notch, a
@@ -1502,8 +1504,20 @@ static void kruddgui_tick(void)
 	 * Own the canvas's device-pixel size, which imgui_plugin sized before it
 	 * was removed (#492): the renderer and gpu_flush draw into a framebuffer at
 	 * this resolution while the panels lay out in the CSS pixels above.
+	 *
+	 * Only when it actually changed. Assigning canvas.width/height resets the
+	 * canvas's backing store even when the value written is identical to the
+	 * current one, which throws away whatever the renderer just presented.
+	 * Under GL that was survivable and this ran unconditionally for years;
+	 * under WebGPU it wiped the frame the backend had just drawn, every frame —
+	 * the pass cleared and submitted correctly and the canvas still came back
+	 * pure black, because this ran after it.
 	 */
-	emscripten_set_canvas_element_size("#canvas", s_phys_w, s_phys_h);
+	if (s_phys_w != s_canvas_w || s_phys_h != s_canvas_h) {
+		s_canvas_w = s_phys_w;
+		s_canvas_h = s_phys_h;
+		emscripten_set_canvas_element_size("#canvas", s_phys_w, s_phys_h);
+	}
 
 	/*
 	 * Apply this tick's typed input to the focused field before the image

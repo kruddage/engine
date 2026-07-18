@@ -48,7 +48,7 @@ struct fg_resource {
 	uint8_t       imported;    /* 1 = external (backbuffer); graph binds but never owns */
 	uint32_t      reader_count;
 	uint32_t      first_write; /* sorted-order index; UINT32_MAX if unset */
-	uint32_t      last_read;   /* sorted-order index; UINT32_MAX if unset */
+	uint32_t      last_use;    /* last pass to read OR write it; UINT32_MAX if unset */
 };
 
 struct fg_pass {
@@ -93,6 +93,29 @@ struct fg *fg_create(const struct gpu_api *gpu)
 
 void fg_destroy(struct fg *fg)
 {
+	uint32_t i;
+
+	if (!fg)
+		return;
+
+	/*
+	 * Belt-and-suspenders: execute frees every transient at its last use, so
+	 * nothing should still be allocated here. But a graph that was declared
+	 * and never executed (an early-out before compile/execute) would still
+	 * hold no allocations, and one that half-executed must not leak the GL
+	 * textures it created. Release anything the graph still owns before the
+	 * struct goes — imported resources are never owned, so skip them.
+	 */
+	for (i = 0; i < fg->resource_count; i++) {
+		struct fg_resource *r = &fg->resources[i];
+
+		if (r->allocated && !r->imported) {
+			fg->gpu->texture_destroy(r->handle);
+			r->handle    = NULL;
+			r->allocated = 0;
+		}
+	}
+
 	g_mem->free(fg);
 }
 
@@ -113,7 +136,7 @@ fg_resource_t fg_declare_transient(struct fg *fg, const char *name,
 	r->imported    = 0;
 	r->reader_count = 0;
 	r->first_write = UINT32_MAX;
-	r->last_read   = UINT32_MAX;
+	r->last_use    = UINT32_MAX;
 	return r;
 }
 
@@ -138,7 +161,7 @@ fg_resource_t fg_import_backbuffer(struct fg *fg)
 	r->imported    = 1;
 	r->reader_count = 0;
 	r->first_write = UINT32_MAX;
-	r->last_read   = UINT32_MAX;
+	r->last_use    = UINT32_MAX;
 	return r;
 }
 
@@ -337,19 +360,28 @@ void fg_compile(struct fg *fg)
 	/* Compute transient resource lifetimes in sorted execution order */
 	for (i = 0; i < fg->resource_count; i++) {
 		fg->resources[i].first_write = UINT32_MAX;
-		fg->resources[i].last_read   = UINT32_MAX;
+		fg->resources[i].last_use    = UINT32_MAX;
 	}
 	for (i = 0; i < fg->sorted_count; i++) {
 		struct fg_pass *p = &fg->passes[fg->sorted[i]];
 
+		/*
+		 * A write is a use: a resource must stay alive through the pass
+		 * that renders into it, even when nothing later reads it. A pure
+		 * attachment (a depth buffer sampled by no one) is written and
+		 * never read, so gating its free on reads alone would allocate it
+		 * every frame and never free it — a per-frame leak. Fold writes
+		 * into last_use so execute frees it after its last touch either way.
+		 */
 		for (j = 0; j < p->write_count; j++) {
 			struct fg_resource *r = p->writes[j];
 
 			if (r->first_write == UINT32_MAX)
 				r->first_write = i;
+			r->last_use = i;
 		}
 		for (j = 0; j < p->read_count; j++)
-			p->reads[j]->last_read = i;
+			p->reads[j]->last_use = i;
 	}
 }
 
@@ -437,12 +469,12 @@ void fg_execute(struct fg *fg)
 
 		gpu->cmd_end_render_pass(cmd);
 
-		/* Free transients whose last read falls on this pass.
+		/* Free transients whose last use falls on this pass.
 		 * Imported resources are never owned, so never freed. */
 		for (j = 0; j < fg->resource_count; j++) {
 			struct fg_resource *r = &fg->resources[j];
 
-			if (r->last_read == i && r->allocated) {
+			if (r->last_use == i && r->allocated) {
 				gpu->texture_destroy(r->handle);
 				r->handle    = NULL;
 				r->allocated = 0;

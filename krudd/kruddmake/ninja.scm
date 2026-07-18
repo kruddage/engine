@@ -82,19 +82,43 @@
 	    (append objs (list (ninja-emit-s7-obj rule obj)))
 	    objs))
 
+;;! Native Dawn is an external artifact (a ~38 MB libwebgpu_dawn.a built out of
+;;! tree — see tools/dawn-smoke/README.md), so a `(dawn)` target is OPT-IN:
+;;! without KRUDD_DAWN_PREFIX in the environment it is left out of the native
+;;! graph entirely and `krudd build` is byte-for-byte what it was. That is what
+;;! keeps CI — which has no Dawn checkout — building green. The WASM target is
+;;! unaffected either way: there Dawn arrives through --use-port=emdawnwebgpu,
+;;! so `(dawn)` is a native-only concern and the wasm emitters ignore it.
+(define (dawn-prefix) (getenv "KRUDD_DAWN_PREFIX"))
+
+(define (ninja-dawn? clauses) (if (rz-clause 'dawn clauses) #t #f))
+
+;;! A `(dawn)` target is skipped natively when no prefix is configured.
+(define (ninja-dawn-skip? clauses)
+	(and (ninja-dawn? clauses) (not (dawn-prefix))))
+
+(define (ninja-dawn-includes clauses base)
+	(if (ninja-dawn? clauses)
+	    (string-append base " $dawnincludes")
+	    base))
+
 (define (ninja-emit-library table dir form)
 	(let* ((name (cadr form))
-	       (clauses (cddr form))
-	       (includes (ninja-include-flags (resolve-includes table name)))
-	       (objs (ninja-with-s7 name "cc_s7" "obj/s7/s7.c.o"
-			(map (lambda (s)
-			       (ninja-emit-compile name dir includes s))
-			     (ninja-sources clauses))))
-	       (lib (string-append "lib" name ".a")))
+	       (clauses (cddr form)))
+	  (if (ninja-dawn-skip? clauses)
+	      #t
+	      (let* ((includes (ninja-dawn-includes clauses
+			         (ninja-include-flags
+				   (resolve-includes table name))))
+		     (objs (ninja-with-s7 name "cc_s7" "obj/s7/s7.c.o"
+			      (map (lambda (s)
+				     (ninja-emit-compile name dir includes s))
+				   (ninja-sources clauses))))
+		     (lib (string-append "lib" name ".a")))
 		(ninja-emit (string-append "build " lib ": ar "
 					   (ninja-join " " objs)))
 		(ninja-emit "")
-		(ninja-native! lib)))
+		(ninja-native! lib)))))
 
 (define (ninja-emit-executable table dir form)
 	(let* ((name (cadr form))
@@ -166,6 +190,11 @@
 	  "emar = emar"
 	  (string-append "extracflags = " extracflags)
 	  (string-append "extraldflags = " extraldflags)
+	  ;;! Empty unless KRUDD_DAWN_PREFIX is set — and when it is unset nothing
+	  ;;! references these, because the `(dawn)` targets that would are skipped.
+	  ;;! See ninja-dawn-skip?.
+	  (string-append "dawnprefix = " (or (dawn-prefix) ""))
+	  "dawnincludes = -I$dawnprefix/include"
 	  "cflags = -std=gnu11 -Wall -Werror -Wpedantic"
 	  "cxxflags = -std=gnu11 -Wall -Werror -Wpedantic"
 	  ;;! --use-port=emdawnwebgpu enables the WebGPU (Dawn) headers + JS glue;

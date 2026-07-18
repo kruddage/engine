@@ -950,17 +950,27 @@ static void webgpu_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 		 */
 		if (desc->color_count == 0 || !a->texture) {
 			if (!c->surface_view) {
-				/* Offscreen platforms have no surface to
-				 * acquire from; the frame's colour target
-				 * arrives as a named texture instead. */
-				if (!g_surface)
-					return;
-				memset(&st, 0, sizeof(st));
-				wgpuSurfaceGetCurrentTexture(g_surface, &st);
-				if (!st.texture)
-					return;
-				c->surface_tex  = st.texture;
-				c->surface_view = wgpuTextureCreateView(st.texture, NULL);
+				if (g_surface) {
+					memset(&st, 0, sizeof(st));
+					wgpuSurfaceGetCurrentTexture(g_surface, &st);
+					if (!st.texture)
+						return;
+					c->surface_tex  = st.texture;
+					c->surface_view =
+						wgpuTextureCreateView(st.texture, NULL);
+				} else {
+					/*
+					 * Offscreen: the platform owns a
+					 * persistent colour target and hands
+					 * out a fresh view, so surface_tex
+					 * stays NULL and only the view is
+					 * released at end of frame.
+					 */
+					c->surface_view =
+						webgpu_platform_backbuffer_view(g_device);
+					if (!c->surface_view)
+						return;
+				}
 			}
 			color[i].view = c->surface_view;
 		} else {
@@ -1754,4 +1764,19 @@ void renderer_webgpu_release_frame(void)
 int renderer_webgpu_device_ready(void)
 {
 	return g_ready;
+}
+
+/*
+ * Copy the frame's colour target out into `rgba` (w*h*4, tightly packed). Only
+ * an offscreen platform can answer this — on the web the backbuffer is the
+ * canvas's and belongs to the compositor — so this returns 0 there, and 0 before
+ * the device has arrived. It is the whole point of the native target: the
+ * picture the engine actually produced, in bytes, with no compositor in between.
+ */
+int renderer_webgpu_read_backbuffer(uint8_t *rgba)
+{
+	if (!g_ready)
+		return 0;
+	return webgpu_platform_read_backbuffer(g_instance, g_device, g_queue,
+					       rgba);
 }

@@ -117,6 +117,36 @@ it.
 The WASM target ignores `(dawn)` entirely: there the headers arrive through
 `--use-port=emdawnwebgpu`.
 
+## The offscreen harness: `krudd_native`
+
+The same build produces `build/bin/krudd_native` — the WebGPU backend booted
+against native Dawn, run for N frames with no browser and no compositor, colour
+target read back and written to a PNG.
+
+```
+KRUDD_DAWN_PREFIX=/data/gage/dawn-native/install ./krudd.sh build
+```
+
+```
+./build/bin/krudd_native out.png
+```
+
+Knobs, all optional: `KRUDD_WEBGPU_WIDTH` / `KRUDD_WEBGPU_HEIGHT` (default
+800x600, set them to match a browser capture for pixel comparison) and
+`KRUDD_NATIVE_FRAMES` (default 8).
+
+It prints a summary of what is actually in the image — dimensions, pure-black
+percentage, centre pixel — because the failure mode this whole effort keeps
+hitting is a confident report about a picture nobody decoded.
+
+There is deliberately **no `(test ...)` edge**: it needs a real GPU adapter, which
+a CI runner has no business assuming.
+
+It registers the WebGPU backend alone and lets the backend's own tick draw the
+probe, rather than running engine.c's full boot — that boot is emscripten-only
+and pulls in the whole plugin table. The probe still exercises pipeline creation,
+the render pass, binding and both draw paths.
+
 ## How this maps onto a kruddmake native target (chunk 2)
 
 kruddmake stays the build system; Dawn is only an external artifact that gets

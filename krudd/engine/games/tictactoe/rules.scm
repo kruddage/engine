@@ -114,30 +114,33 @@
 ;;! Mark geometry, as (entity ...) forms for scene-entity-build — the same shapes
 ;;! the static scene authored, now emitted per placement at the chosen cell. An X
 ;;! is the two-bar composite (a mesh-less parent holding the crossed bars), in
-;;! pbr-ruby; an O is the flat torus ring, in pbr-sapphire.
+;;! toon-x; an O is the flat torus ring, in toon-o. Both bind the cel shader the
+;;! rest of the scene wears (see scene.scm), so a placed mark reads as part of the
+;;! same cartoon world — a bold red X, a bold blue O, banded and ink-edged.
 (define (ttt-x-form x z)
   `(entity (name "mark") (at ,x 0.15 ,z)
      (children
-       (entity (mesh "builtin://mesh/box") (material "builtin://material/pbr-ruby")
+       (entity (mesh "builtin://mesh/box") (material "builtin://material/toon-x")
                (rotate 0 45 0) (scale 0.6 0.09 0.14))
-       (entity (mesh "builtin://mesh/box") (material "builtin://material/pbr-ruby")
+       (entity (mesh "builtin://mesh/box") (material "builtin://material/toon-x")
                (rotate 0 -45 0) (scale 0.6 0.09 0.14)))))
 
 (define (ttt-o-form x z)
   `(entity (name "mark")
-           (mesh "builtin://mesh/torus") (material "builtin://material/pbr-sapphire")
+           (mesh "builtin://mesh/torus") (material "builtin://material/toon-o")
            (at ,x 0.15 ,z) (scale 0.38 0.38 0.38)))
 
 ;;! (ttt-strike-material kind) -> the winning line's bar material: KIND's own
-;;! gem tint, so an X win strikes through in ruby and an O win in sapphire
-;;! rather than always the same colour regardless of who won.
+;;! toon tint, so an X win strikes through in red and an O win in blue rather
+;;! than always the same colour regardless of who won.
 (define (ttt-strike-material kind)
-  (if (= kind 1) "builtin://material/pbr-ruby" "builtin://material/pbr-sapphire"))
+  (if (= kind 1) "builtin://material/toon-x" "builtin://material/toon-o"))
 
-;;! Spark colour for a mark: X sparks ruby-red, O sparks sapphire-blue — the same
-;;! gems the marks and strike wear, so a burst reads as that player's colour.
+;;! Spark colour for a mark: X sparks red, O sparks blue — the same toon tints
+;;! the marks and strike wear (toon-x / toon-o), so a burst reads as that
+;;! player's colour.
 (define (ttt-mark-rgb kind)
-  (if (= kind 1) '(0.85 0.12 0.18) '(0.16 0.34 0.9)))
+  (if (= kind 1) '(0.92 0.2 0.24) '(0.18 0.46 0.95)))
 
 ;;! (ttt-spark x z kind count) fires a cosmetic particle burst of COUNT particles
 ;;! at world (x, z) in KIND's colour, a little above the board. Guarded on

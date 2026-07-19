@@ -610,6 +610,109 @@ static const char *PBR_TEXTURED_TAIL =
 	"           (gamma  (tonemap color)))\n"
 	"      (set frag_color (vec4 gamma 1.0)))))\n";
 
+/*
+ * toon — a cel-shaded scene shader, the deliberate opposite of the pbr look.
+ * Where pbr chases a filmic, physically grounded surface (a smooth Cook-Torrance
+ * response tonemapped through ACES), toon throws that away for a flat, drawn,
+ * cartoon read: it is what makes games/tictactoe look nothing like games/chess
+ * even though both walk the same scene pipeline. One engine, two rendering
+ * languages — that contrast is the point (issue #644).
+ *
+ * It speaks the identical vertex/Camera/Sun IO contract as pbr (a_pos/a_normal/
+ * a_uv0 in, Camera at block 0, Material at block 1, Sun at block 2, one
+ * shadow_map sampler), so it drops into scene_renderer with no special handling
+ * — only the fragment differs. Its Material block is { base_color vec4; bands
+ * float; rim float; spec float }, which std140-packs to 32 bytes exactly like
+ * pbr-textured's, so seed_toon_material writes the same 4 + 32 wire form.
+ *
+ * The fragment is four cartoon moves, all pure ALU, and — unlike pbr — it writes
+ * an already-[0,1] colour, so it runs NO tonemap: flat, poster-bright colour is
+ * the goal, not filmic rolloff.
+ *
+ *   1. Banded diffuse. The Lambert term N.L (shadowed by the same 3x3 PCF
+ *      sun_shadow the rest of the scene uses, so a toon mesh still sits in the
+ *      shared shadows) is quantised into `bands` hard steps — the defining cel
+ *      look, lighting as a few flat zones instead of a smooth ramp. An ambient
+ *      floor keeps the dark band coloured rather than black.
+ *   2. A hard specular hot-spot. One Blinn N.H highlight, but stepped on/off
+ *      rather than a glossy falloff, so it reads as a solid white cartoon glint;
+ *      `spec` sizes it. Suppressed on the unlit side.
+ *   3. A fresnel rim. A bright band on the silhouette-facing edge (`rim`
+ *      strength), the "backlight" a cartoon uses to pop a shape off its
+ *      background.
+ *   4. An ink outline. The extreme grazing edge is darkened toward near-black,
+ *      faking a drawn contour without the second geometry pass a real
+ *      inverted-hull outline needs. On a flat pad seen from the scene's 3/4
+ *      camera N.V stays well above the outline threshold, so the board and cells
+ *      read as clean flat colour; only the curved marks (the O torus, the X
+ *      bars' side faces) catch the contour, which is exactly where a cartoon
+ *      wants its ink.
+ */
+static const char *TOON_HEAD =
+	"(shader toon\n"
+	"  (inputs\n"
+	"    (a_pos    vec3 (location 0))\n"
+	"    (a_normal vec3 (location 1))\n"
+	"    (a_uv0    vec2 (location 2)))\n"
+	"  (uniforms\n"
+	"    (Camera (block 0) (layout std140)\n"
+	"      (view_proj mat4)\n"
+	"      (model     mat4)\n"
+	"      (cam_pos   vec3))\n"
+	"    (Material (block 1) (layout std140)\n"
+	"      (base_color vec4  (edit color) (default 0.85 0.2 0.22 1.0))\n"
+	"      (bands      float (edit range 1.0 5.0) (default 3.0))\n"
+	"      (rim        float (edit range 0.0 1.0) (default 0.4))\n"
+	"      (spec       float (edit range 0.0 1.0) (default 0.5)))\n"
+	"    (Sun (block 2) (layout std140)\n"
+	"      (light_dir       vec3)\n"
+	"      (light_radiance  vec3)\n"
+	"      (light_view_proj mat4))\n"
+	"    (shadow_map depth2D))\n"
+	"  (varyings\n"
+	"    (v_normal   vec3)\n"
+	"    (v_worldpos vec3)\n"
+	"    (v_lightpos vec4))\n"
+	"  (targets\n"
+	"    (frag_color vec4 (location 0)))\n"
+	"  (functions\n";
+
+static const char *TOON_TAIL =
+	"  )\n"
+	"  (vertex\n"
+	"    (set v_normal (* (mat3 model) a_normal))\n"
+	"    (set v_worldpos (swizzle (* model (vec4 a_pos 1.0)) xyz))\n"
+	"    (set v_lightpos (* light_view_proj model (vec4 a_pos 1.0)))\n"
+	"    (set position (* view_proj model (vec4 a_pos 1.0))))\n"
+	"  (fragment\n"
+	"    (let* ((n      (normalize v_normal))\n"
+	"           (l      (normalize light_dir))\n"
+	"           (v      (normalize (- cam_pos v_worldpos)))\n"
+	"           (h      (normalize (+ l v)))\n"
+	"           (ndl    (max (dot n l) 0.0))\n"
+	"           (ndv    (max (dot n v) 0.0))\n"
+	"           (ndh    (max (dot n h) 0.0))\n"
+	"           (shadow (sun_shadow v_lightpos ndl))\n"
+	"           (lit    (* ndl shadow))\n"
+	/* Quantise the diffuse into `bands` hard steps; an ambient floor keeps
+	 * the dark band coloured rather than crushed to black. */
+	"           (q      (/ (floor (+ (* lit bands) 0.5)) bands))\n"
+	"           (tone   (mix 0.4 1.0 q))\n"
+	"           (base   (swizzle base_color rgb))\n"
+	"           (shade  (* base tone))\n"
+	/* Hard white hot-spot, stepped not smooth; `spec` sizes it, and it is
+	 * gated off the unlit side so a back face gets no glint. */
+	"           (hs     (* (step (- 1.0 (* 0.45 spec)) ndh) (step 0.02 lit)))\n"
+	"           (hot    (mix shade (vec3 1.0 1.0 1.0) (* 0.9 hs)))\n"
+	/* Fresnel rim band on the silhouette-facing edge — a cartoon backlight. */
+	"           (rimf   (smoothstep 0.55 0.95 (pow (- 1.0 ndv) 2.0)))\n"
+	"           (lithi  (min (+ base (vec3 0.35 0.35 0.35)) (vec3 1.0 1.0 1.0)))\n"
+	"           (rimc   (mix hot lithi (* rim rimf)))\n"
+	/* Ink outline: darken the extreme grazing edge toward near-black. */
+	"           (edge   (- 1.0 (smoothstep 0.18 0.35 ndv)))\n"
+	"           (col    (mix rimc (vec3 0.02 0.02 0.03) edge)))\n"
+	"      (set frag_color (vec4 col 1.0)))))\n";
+
 static int builtins_seeded;
 
 /*
@@ -813,6 +916,50 @@ static void seed_pbr_textured_material(const char *path, uint32_t shader_ref,
 	memcpy(p + 36, &tex_ref, sizeof(tex_ref));             /* @36 tex-ref       */
 	memcpy(p + 40, &width,   sizeof(width));               /* @40 width         */
 	memcpy(p + 44, &height,  sizeof(height));              /* @44 height        */
+	e->size      = n;
+	e->state     = ASSET_LOADED;
+	e->kind      = ASSET_KIND_PRIMITIVE;
+	e->read_only = 1;
+	e->type      = ASSET_TYPE_MATERIAL;
+}
+
+/*
+ * Seed a built-in toon material: the v3 wire form with no texture trailer,
+ * [shader-ref u32] followed by the toon shader's { base_color vec4; bands
+ * float; rim float; spec float } Material block. That block std140-packs to 32
+ * bytes (base_color @0, bands @16, rim @20, spec @24, rounded up to 32 — the
+ * same shape as pbr-textured's block, minus the trailer), so a toon material is
+ * 4 + 32 = 36 bytes. `bands` is how many hard cel steps the diffuse quantises
+ * into, `rim` the silhouette backlight strength, `spec` the hot-spot size (see
+ * the toon shader). A zero shader_ref makes this a no-op.
+ */
+static void seed_toon_material(const char *path, uint32_t shader_ref,
+			       const float rgba[4], float bands, float rim,
+			       float spec)
+{
+	struct asset_entry *e;
+	uint32_t            n;
+	unsigned char      *p;
+
+	if (!shader_ref)
+		return;
+	e = alloc_entry(path);
+	if (!e)
+		return;
+	n = (uint32_t)(sizeof(uint32_t)      /* shader-ref                  */
+		       + 8 * sizeof(float)); /* std140 Material block (32B) */
+	e->data = g_mem->alloc(n);
+	if (!e->data) {
+		e->state = ASSET_ERROR;
+		return;
+	}
+	memset(e->data, 0, n);            /* leaves the block's tail pad zero */
+	p = (unsigned char *)e->data;
+	memcpy(p,      &shader_ref, sizeof(shader_ref)); /* @0  shader-ref */
+	memcpy(p + 4,  rgba, 4 * sizeof(float));         /* @4  base_color */
+	memcpy(p + 20, &bands, sizeof(bands));           /* @20 bands      */
+	memcpy(p + 24, &rim,   sizeof(rim));             /* @24 rim        */
+	memcpy(p + 28, &spec,  sizeof(spec));            /* @28 spec       */
 	e->size      = n;
 	e->state     = ASSET_LOADED;
 	e->kind      = ASSET_KIND_PRIMITIVE;
@@ -1141,6 +1288,42 @@ static void seed_builtins(void)
 					   tshader2, DEFAULT_MATERIAL_COLOR,
 					   0.0f, 0.9f, 0.6f,
 					   grass_tex, 512, 512);
+	}
+
+	/*
+	 * The toon shader and the cel-shaded material set games/tictactoe wears
+	 * to read nothing like games/chess's pbr look (issue #644). Same scene
+	 * pipeline, a flat cartoon shading model — see the TOON_HEAD/_TAIL
+	 * comment. The colours are poster-bright and saturated on purpose: the
+	 * banded shading has no filmic rolloff to lift them, so the material must
+	 * carry its own punch. Fewer bands read chunkier; the marks (toon-x /
+	 * toon-o) run a tighter, glossier hot-spot than the matte board so they
+	 * pop as the playable pieces.
+	 */
+	{
+		static const float GRASS[4] = { 0.36f, 0.70f, 0.30f, 1.0f };
+		static const float BOARD[4] = { 0.20f, 0.24f, 0.42f, 1.0f };
+		static const float CELL[4]  = { 0.96f, 0.93f, 0.80f, 1.0f };
+		static const float XRED[4]  = { 0.92f, 0.20f, 0.24f, 1.0f };
+		static const float OBLUE[4] = { 0.18f, 0.46f, 0.95f, 1.0f };
+		char        tbuf[8192];
+		const char *tparts[] = { TOON_HEAD, SUN_SHADOW_FN, TOON_TAIL };
+		uint32_t    toon = seed_shader_parts(
+			"builtin://shader/toon", tbuf, sizeof(tbuf), tparts,
+			sizeof(tparts) / sizeof(tparts[0]));
+
+		/* Matte, chunky ground and board: three bands, no hot-spot. */
+		seed_toon_material("builtin://material/toon-grass", toon,
+				   GRASS, 3.0f, 0.25f, 0.0f);
+		seed_toon_material("builtin://material/toon-board", toon,
+				   BOARD, 3.0f, 0.5f, 0.0f);
+		seed_toon_material("builtin://material/toon-cell", toon,
+				   CELL, 2.0f, 0.4f, 0.0f);
+		/* The marks: brighter rim + a real glint so they read glossy. */
+		seed_toon_material("builtin://material/toon-x", toon,
+				   XRED, 4.0f, 0.6f, 0.7f);
+		seed_toon_material("builtin://material/toon-o", toon,
+				   OBLUE, 4.0f, 0.6f, 0.7f);
 	}
 
 	/*

@@ -66,9 +66,9 @@
 ;;! appears.
 (define (texture-script-params src)
   (catch #t
-    (lambda ()
-      (script-params-form (with-input-from-string src (lambda () (read)))))
-    (lambda args (cons 0 '()))))
+         (lambda ()
+           (script-params-form (with-input-from-string src (lambda () (read)))))
+         (lambda args (cons 0 '()))))
 
 ;;! Read pixel channel K (a real in [0,1]) from a shade result, or FALLBACK when
 ;;! the list is short or the channel is non-numeric — so a malformed pixel
@@ -95,27 +95,27 @@
 (define (texture-script-run src params width height)
   (set! *params* params)
   (let ((result
-          (catch #t
-            (lambda ()
-              (let ((shade (eval (with-input-from-string src
-                                                         (lambda () (read)))
-                                 (rootlet)))
-                    (buf (make-byte-vector (* width height 4) 0)))
-                (do ((y 0 (+ y 1)))
-                    ((= y height) buf)
-                  (do ((x 0 (+ x 1)))
-                      ((= x width))
-                    (let* ((u  (/ (+ x 0.5) width))
-                           (v  (/ (+ y 0.5) height))
-                           (px (shade u v))
-                           (i  (* (+ (* y width) x) 4)))
-                      (byte-vector-set! buf i       (tex-quantize (tex-channel px 0 0.0)))
-                      (byte-vector-set! buf (+ i 1) (tex-quantize (tex-channel px 1 0.0)))
-                      (byte-vector-set! buf (+ i 2) (tex-quantize (tex-channel px 2 0.0)))
-                      (byte-vector-set! buf (+ i 3) (tex-quantize (tex-channel px 3 1.0))))))))
-            (lambda args
-              (krudd-log 2 (string-append "texture-script: fault: " src))
-              #f))))
+         (catch #t
+                (lambda ()
+                  (let ((shade (eval (with-input-from-string src
+                                       (lambda () (read)))
+                                     (rootlet)))
+                        (buf (make-byte-vector (* width height 4) 0)))
+                    (do ((y 0 (+ y 1)))
+                        ((= y height) buf)
+                      (do ((x 0 (+ x 1)))
+                          ((= x width))
+                        (let* ((u  (/ (+ x 0.5) width))
+                               (v  (/ (+ y 0.5) height))
+                               (px (shade u v))
+                               (i  (* (+ (* y width) x) 4)))
+                          (byte-vector-set! buf i       (tex-quantize (tex-channel px 0 0.0)))
+                          (byte-vector-set! buf (+ i 1) (tex-quantize (tex-channel px 1 0.0)))
+                          (byte-vector-set! buf (+ i 2) (tex-quantize (tex-channel px 2 0.0)))
+                          (byte-vector-set! buf (+ i 3) (tex-quantize (tex-channel px 3 1.0))))))))
+                (lambda args
+                  (krudd-log 2 (string-append "texture-script: fault: " src))
+                  #f))))
     (set! *params* '())
     result))
 

@@ -7,7 +7,7 @@
 (define (sh cmd)
   (let ((status (run cmd)))
     (if (not (= status 0))
-	(error 'krudd-build-failed cmd))))
+        (error 'krudd-build-failed cmd))))
 
 (define (write-file path text)
   (call-with-output-file path
@@ -15,12 +15,12 @@
 
 (define owned-directories
   (call-with-input-file
-    (string-append krudd-root "/krudd/kruddmake/manifest.scm")
+      (string-append krudd-root "/krudd/kruddmake/manifest.scm")
     read))
 
 (define (load-spec dir)
   (call-with-input-file
-    (string-append krudd-root "/krudd/engine/" dir "/build.scm")
+      (string-append krudd-root "/krudd/engine/" dir "/build.scm")
     read))
 
 (define manifest
@@ -40,12 +40,12 @@
 ;;! ninja again — KRUDD_GENERATE_ONLY breaks that recursion.
 (define regen-cmd
   (string-append "env KRUDD_ROOT=" krudd-root " KRUDD_GENERATE_ONLY=1 "
-		 krudd-root "/krudd/krudd build"))
+                 krudd-root "/krudd/krudd build"))
 
 (display (string-append "krudd: generate " build-dir "/build.ninja\n"))
 (write-file (string-append build-dir "/build.ninja")
-	    (ninja-synthesize manifest src-root build-dir regen-cmd))
+            (ninja-synthesize manifest src-root build-dir regen-cmd))
 
 (if (not (getenv "KRUDD_GENERATE_ONLY"))
     (sh (string-append "ninja -C " build-dir " -f build.ninja "
-		       (if wasm-build? "wasm" "native"))))
+                       (if wasm-build? "wasm" "native"))))

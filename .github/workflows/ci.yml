@@ -20,6 +20,16 @@ jobs:
       - name: Lint .scm comments
         run: python3 .github/scripts/lint-scm-comments.py $(git ls-files '*.scm')
 
+      # .scm files are indented per CODING_STANDARD.md's Scheme section: spaces,
+      # call arguments aligned under the first argument — Emacs scheme-mode's
+      # stock indenter output, so there's a single mechanical arbiter instead of
+      # a per-line human judgment call.
+      - name: Install emacs for the .scm indent check
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends emacs-nox
+
+      - name: Check .scm indentation
+        run: python3 .github/scripts/indent-scm.py --check $(git ls-files '*.scm')
+
   build:
     # Skip the build on PR-close events — there is nothing to publish, the
     # preview job only needs to remove the stale directory.

@@ -7,11 +7,11 @@
 (define fail-count 0)
 
 (define (check name ok)
-	(if ok
-	    (display (string-append "  ok    " name "\n"))
-	    (begin
-	      (set! fail-count (+ fail-count 1))
-	      (display (string-append "  FAIL  " name "\n")))))
+  (if ok
+      (display (string-append "  ok    " name "\n"))
+      (begin
+        (set! fail-count (+ fail-count 1))
+        (display (string-append "  FAIL  " name "\n")))))
 
 (define (feq a b) (< (abs (- a b)) 1e-4))
 
@@ -36,5 +36,5 @@
 (if (= fail-count 0)
     (begin (display "MATH-TESTS: OK\n") (exit 0))
     (begin (display (string-append "MATH-TESTS: FAIL ("
-				   (number->string fail-count) ")\n"))
-	   (exit 1)))
+                                   (number->string fail-count) ")\n"))
+           (exit 1)))

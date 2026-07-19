@@ -198,6 +198,30 @@ enough to put inline." The `;;!` marker also keeps documentation greppable as a
 single class, the way a `#!` shebang opts a line in. If a rewrite feels like it
 costs a line of vertical space, that is the standard working as intended.
 
+**Indentation.** Spaces, never tabs, indented per the canonical Scheme
+convention: special forms (`define`, `let`, `cond`, `lambda`, ...) indent their
+body two spaces past the opening paren, and ordinary call arguments align
+under the first argument:
+
+```scheme
+(define (chess-square? p)
+  (and (pair? p) (< -1 (car p) 8) (< -1 (cadr p) 8)))
+
+(kruddgui-rect* (list bx by bs bs)
+                (if active kruddgui-active-bg kruddgui-idle-bg))
+```
+
+This applies uniformly to `build.scm` manifests too — one indentation rule for
+the whole extension rather than a separate convention for declarative data.
+It is not an inconsistency with C's tabs (`CODING_STANDARD.md`'s C section);
+each language keeps its own convention, and Scheme's alignment can't be
+expressed on 8-column tab stops in the first place. The convention has a
+single mechanical arbiter — Emacs `scheme-mode`'s stock indenter — rather than
+a per-line human judgment call, which is what makes it enforceable: CI checks
+it (`.github/scripts/indent-scm.py --check`, the "Check .scm indentation"
+job), mirroring the comment-convention lint above. Run
+`python3 .github/scripts/indent-scm.py <file.scm>...` to reindent in place.
+
 **Naming.** Lowercase with hyphens — `chess-reset`, `all-digits?`. This is
 Scheme's `kebab-case`, not C's `snake_case`; each language keeps its own
 convention. Prefix procedures by their module or subject (`chess-`, `krudd-`,

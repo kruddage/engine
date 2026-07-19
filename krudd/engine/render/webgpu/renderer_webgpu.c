@@ -937,6 +937,7 @@ static void webgpu_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 	uint32_t i;
 	uint32_t count;
 	int depth_only;
+	int targets_backbuffer = 0;
 
 	if (!c || !c->in_use || c->pass)
 		return;
@@ -968,6 +969,7 @@ static void webgpu_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 		 * texture_create and takes the else branch below (its own view).
 		 */
 		if (desc->color_count == 0 || !a->texture) {
+			targets_backbuffer = 1;
 			if (!g_surface_view) {
 				if (g_surface) {
 					memset(&st, 0, sizeof(st));
@@ -1067,8 +1069,15 @@ static void webgpu_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 	 * It clears every pass because the frame graph only fills in depth load
 	 * ops for a declared depth write, and a pass that never declared one
 	 * would otherwise inherit last frame's depth.
+	 *
+	 * Scoped to passes that actually target the backbuffer. Keying off "a
+	 * surface view exists" instead attached it to every depthless OFFSCREEN
+	 * pass too, once anything acquired the surface earlier in the frame —
+	 * which handed the four half-res bloom passes a surface-sized depth
+	 * buffer their pipelines never declared, and every draw in them failed
+	 * with "Attachment state ... is not compatible with [RenderPass]".
 	 */
-	if (!desc->depth && g_surface_view && g_depth) {
+	if (!desc->depth && targets_backbuffer && g_depth) {
 		struct gpu_texture *d = (struct gpu_texture *)g_depth;
 
 		memset(&depth_att, 0, sizeof(depth_att));
@@ -1107,6 +1116,22 @@ static void webgpu_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 	}
 
 	c->pass = wgpuCommandEncoderBeginRenderPass(c->enc, &rp);
+
+	/*
+	 * A render pass encoder starts with NO pipeline and NO bind groups: that
+	 * state is pass-scoped in WebGPU, not frame-scoped. The dirty flags exist
+	 * to skip redundant SetBindGroup calls *within* a pass, so they have to be
+	 * re-armed here — otherwise a second pass that reuses the previous pass's
+	 * pipeline and bindings sees a clean flag, never calls SetBindGroup, and
+	 * every draw in it fails with "No bind group set at group index 0".
+	 *
+	 * This was latent until bloom (#622) put four passes in a frame with
+	 * blur-H and blur-V sharing one pipeline back to back; before that the
+	 * frame was effectively a single pass and the flags happened to be safe.
+	 */
+	c->pipeline       = NULL;
+	c->bindings_dirty = 1;
+	c->textures_dirty = 1;
 }
 
 static void webgpu_cmd_end_render_pass(gpu_cmd_buf_t cmd)

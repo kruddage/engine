@@ -268,14 +268,14 @@ struct gpu_pipeline {
  * caller does cmd_buf_begin -> passes -> cmd_buf_submit before the next
  * begin. The WebGL backend makes the same assumption implicitly (it ignores
  * its cmd handle entirely and drives global GL state); this makes it explicit.
+ *
+ * Note what is NOT here: the backbuffer. A frame contains several of these —
+ * the frame graph, kruddgui's overlay, an open preview panel — so anything the
+ * frame owns has to outlive any one of them. See g_surface_tex.
  */
 struct gpu_cmd_buf_state {
 	WGPUCommandEncoder    enc;
 	WGPURenderPassEncoder pass;
-	/* Backbuffer texture acquired for this submission, if a pass asked for
-	 * it. Held until submit so the view outlives the pass that draws into it. */
-	WGPUTexture     surface_tex;
-	WGPUTextureView surface_view;
 	int             in_use;
 
 	/*
@@ -302,6 +302,25 @@ struct gpu_cmd_buf_state {
 };
 
 static struct gpu_cmd_buf_state g_cmd;
+
+/*
+ * The frame's backbuffer, acquired lazily by the first pass that names it and
+ * released in frame_end — not at submit.
+ *
+ * This is per-frame state, not per-command-buffer, and the difference is the
+ * whole bug it fixes. A frame submits several command buffers; releasing the
+ * surface at submit meant the next one acquired a second, blank backbuffer, so
+ * whatever drew first was left in a texture the canvas never presented. The
+ * scene rendered, then vanished behind kruddgui's overlay drawing onto a fresh
+ * one. Acquiring twice in a frame is the failure mode begin_render_pass already
+ * warns about; holding it here is what makes that warning enforceable.
+ *
+ * surface_tex stays NULL on the offscreen (native) path, where the platform
+ * owns a persistent target and hands out a fresh view — only the view is
+ * released there.
+ */
+static WGPUTexture     g_surface_tex;
+static WGPUTextureView g_surface_view;
 
 /* ------------------------------------------------- format translation */
 
@@ -387,15 +406,36 @@ static void webgpu_cmd_buf_submit(gpu_cmd_buf_t cmd)
 	wgpuCommandBufferRelease(buf);
 	wgpuCommandEncoderRelease(c->enc);
 
-	if (c->surface_view)
-		wgpuTextureViewRelease(c->surface_view);
-	if (c->surface_tex)
-		wgpuTextureRelease(c->surface_tex);
+	/*
+	 * The backbuffer is deliberately NOT released here — it belongs to the
+	 * frame, and more command buffers are likely still to come in this one.
+	 * frame_end owns it.
+	 */
 
 	/* The commands naming them are now the queue's problem, not ours. */
 	flush_pending_destroys();
 
 	memset(c, 0, sizeof(*c));
+}
+
+/*
+ * The frame boundary: every subsystem has drawn and submitted, so the canvas
+ * texture acquired for this frame can go back. The next frame's first pass
+ * acquires a fresh one.
+ *
+ * Idempotent and safe on a frame that never drew — a tick that acquired nothing
+ * releases nothing.
+ */
+static void webgpu_frame_end(void)
+{
+	if (g_surface_view) {
+		wgpuTextureViewRelease(g_surface_view);
+		g_surface_view = NULL;
+	}
+	if (g_surface_tex) {
+		wgpuTextureRelease(g_surface_tex);
+		g_surface_tex = NULL;
+	}
 }
 
 /* ------------------------------------------------------------ buffers */
@@ -970,14 +1010,14 @@ static void webgpu_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 		 * lands in a later slice, so today every pass is a surface pass.
 		 */
 		if (desc->color_count == 0 || !a->texture) {
-			if (!c->surface_view) {
+			if (!g_surface_view) {
 				if (g_surface) {
 					memset(&st, 0, sizeof(st));
 					wgpuSurfaceGetCurrentTexture(g_surface, &st);
 					if (!st.texture)
 						return;
-					c->surface_tex  = st.texture;
-					c->surface_view =
+					g_surface_tex  = st.texture;
+					g_surface_view =
 						wgpuTextureCreateView(st.texture, NULL);
 				} else {
 					/*
@@ -987,13 +1027,13 @@ static void webgpu_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 					 * stays NULL and only the view is
 					 * released at end of frame.
 					 */
-					c->surface_view =
+					g_surface_view =
 						webgpu_platform_backbuffer_view(g_device);
-					if (!c->surface_view)
+					if (!g_surface_view)
 						return;
 				}
 			}
-			color[i].view = c->surface_view;
+			color[i].view = g_surface_view;
 			if (i == 0) {
 				c->pass_w = g_surface_w;
 				c->pass_h = g_surface_h;
@@ -1042,7 +1082,7 @@ static void webgpu_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 	 * ops for a declared depth write, and a pass that never declared one
 	 * would otherwise inherit last frame's depth.
 	 */
-	if (!desc->depth && c->surface_view && g_depth) {
+	if (!desc->depth && g_surface_view && g_depth) {
 		struct gpu_texture *d = (struct gpu_texture *)g_depth;
 
 		memset(&depth_att, 0, sizeof(depth_att));
@@ -1454,6 +1494,7 @@ static const struct gpu_api webgpu_api = {
 	.caps                    = GPU_CAP_DRAW_DIRECT | GPU_CAP_DRAW_INDEXED,
 	.cmd_buf_begin           = webgpu_cmd_buf_begin,
 	.cmd_buf_submit          = webgpu_cmd_buf_submit,
+	.frame_end               = webgpu_frame_end,
 	.pipeline_create         = webgpu_pipeline_create,
 	.pipeline_destroy        = webgpu_pipeline_destroy,
 	.cmd_set_pipeline        = webgpu_cmd_set_pipeline,

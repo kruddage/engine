@@ -203,6 +203,26 @@
 	(cmd-buf-begin  (fn gpu-cmd-buf ()))
 	(cmd-buf-submit (fn void ((cmd gpu-cmd-buf))))
 
+	;;! Called once per frame, after every subsystem has drawn and submitted.
+	;;! The engine tick is the only caller.
+	;;!
+	;;! It exists because a frame is not one command buffer. The frame graph
+	;;! submits, kruddgui submits its overlay, and an open preview panel
+	;;! submits again — three in a frame, and nothing stops a fourth. A
+	;;! backend holding a per-frame resource therefore cannot release it at
+	;;! submit, because submit is not the end of anything.
+	;;!
+	;;! The WebGPU backend is the one that cares: it holds the canvas surface
+	;;! texture, which is the frame's. Releasing at submit meant the next
+	;;! subsystem to draw acquired a second, blank one — so the earlier
+	;;! subsystem's work sat in a texture that was never presented, and the
+	;;! canvas showed only whatever drew last. It releases here instead.
+	;;!
+	;;! There is deliberately no matching frame-begin: acquisition is already
+	;;! lazy, done by the first pass that names the backbuffer, and a backend
+	;;! with nothing to release at a frame boundary (WebGL, null) no-ops.
+	(frame-end (fn void ()))
+
 	(pipeline-create
 	  (fn gpu-pipeline ((desc (ptr (const gpu-pipeline-desc))))))
 	(pipeline-destroy (fn void ((pipeline gpu-pipeline))))

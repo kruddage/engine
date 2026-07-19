@@ -187,7 +187,60 @@ static void evict_entry(struct asset_entry *e)
  * shadow_map — which the backend's alphabetical rule lands on units 0 and 1;
  * the scene renderer binds them to match.
  */
-static const char *SCENE_TEXTURED_SHADER_SRC =
+/*
+ * Shared shader-DSL helpers, spliced into each built-in shader's (functions ...)
+ * section at seed time (see the builtins-seed block) so the 3x3 PCF sun-shadow
+ * lookup and the Reinhard+gamma tonemap curve are authored once here instead of
+ * copied verbatim into every shader that shades the sun or writes a display
+ * colour. The krudd shader DSL grew reusable helpers for exactly this; a helper
+ * reads the shared samplers/blocks (here shadow_map) as globals but takes its
+ * per-pixel inputs — the light-space position and the N·L term — as parameters,
+ * so it lowers identically to GLSL and WGSL. The transpiler emits a helper only
+ * in the stage that reaches it and still binds shadow_map there through its
+ * transitive reference analysis, so the vertex stage and the sampler slots are
+ * unchanged from the hand-inlined shaders these replace.
+ *
+ * sun_shadow(lp, ndl): projects lp into the shadow map, PCF-compares a 3x3
+ * neighbourhood biased by (1 - ndl), and returns the [0,1] visibility (1.0 for
+ * a fragment outside the light frustum). ndl is the surface's N·L — the pbr
+ * shaders pass their ndl, scene-textured its diff, both the same quantity.
+ */
+static const char *SUN_SHADOW_FN =
+	"    (sun_shadow ((lp vec4) (ndl float)) float\n"
+	"      (let* ((proj  (/ (swizzle lp xyz) (swizzle lp w)))\n"
+	"             (uvw   (+ (* proj 0.5) 0.5))\n"
+	"             (su    (swizzle uvw x))\n"
+	"             (sv    (swizzle uvw y))\n"
+	"             (fragd (swizzle uvw z))\n"
+	"             (bias  (max (* 0.0025 (- 1.0 ndl)) 0.0006))\n"
+	"             (edge  (- fragd bias))\n"
+	"             (tx    0.00048828125)\n"
+	"             (b     (vec2 su sv))\n"
+	"             (s0 (step edge (swizzle (sample shadow_map (+ b (vec2 (- 0.0 tx) (- 0.0 tx)))) r)))\n"
+	"             (s1 (step edge (swizzle (sample shadow_map (+ b (vec2 0.0 (- 0.0 tx)))) r)))\n"
+	"             (s2 (step edge (swizzle (sample shadow_map (+ b (vec2 tx (- 0.0 tx)))) r)))\n"
+	"             (s3 (step edge (swizzle (sample shadow_map (+ b (vec2 (- 0.0 tx) 0.0))) r)))\n"
+	"             (s4 (step edge (swizzle (sample shadow_map b) r)))\n"
+	"             (s5 (step edge (swizzle (sample shadow_map (+ b (vec2 tx 0.0))) r)))\n"
+	"             (s6 (step edge (swizzle (sample shadow_map (+ b (vec2 (- 0.0 tx) tx))) r)))\n"
+	"             (s7 (step edge (swizzle (sample shadow_map (+ b (vec2 0.0 tx))) r)))\n"
+	"             (s8 (step edge (swizzle (sample shadow_map (+ b (vec2 tx tx))) r)))\n"
+	"             (pcf   (* (+ s0 s1 s2 s3 s4 s5 s6 s7 s8) 0.1111111))\n"
+	"             (inrng (* (step 0.0 su) (step su 1.0) (step 0.0 sv)\n"
+	"                       (step sv 1.0) (step fragd 1.0))))\n"
+	"        (return (mix 1.0 pcf inrng))))\n";
+
+/*
+ * tonemap(color): Reinhard maps the HDR radiance to [0,1] and a gamma 1/2.2
+ * encodes it for display. Shared by the pbr shaders, which shade in linear HDR;
+ * scene-textured writes an already-[0,1] colour and needs none.
+ */
+static const char *TONEMAP_FN =
+	"    (tonemap ((color vec3)) vec3\n"
+	"      (let* ((mapped (/ color (+ color (vec3 1.0 1.0 1.0)))))\n"
+	"        (return (pow mapped (vec3 0.4545 0.4545 0.4545)))))\n";
+
+static const char *SCENE_TEXTURED_HEAD =
 	"(shader scene-textured\n"
 	"  (inputs\n"
 	"    (a_pos    vec3 (location 0))\n"
@@ -211,6 +264,10 @@ static const char *SCENE_TEXTURED_SHADER_SRC =
 	"    (v_lightpos vec4))\n"
 	"  (targets\n"
 	"    (frag_color vec4 (location 0)))\n"
+	"  (functions\n";
+
+static const char *SCENE_TEXTURED_TAIL =
+	"  )\n"
 	"  (vertex\n"
 	"    (set v_normal (* (mat3 model) a_normal))\n"
 	"    (set v_uv a_uv0)\n"
@@ -220,28 +277,7 @@ static const char *SCENE_TEXTURED_SHADER_SRC =
 	"    (let* ((n    (normalize v_normal))\n"
 	"           (base (+ 0.5 (* 0.5 n)))\n"
 	"           (diff (max (dot n (normalize light_dir)) 0.0))\n"
-	"           (proj  (/ (swizzle v_lightpos xyz) (swizzle v_lightpos w)))\n"
-	"           (uvw   (+ (* proj 0.5) 0.5))\n"
-	"           (su    (swizzle uvw x))\n"
-	"           (sv    (swizzle uvw y))\n"
-	"           (fragd (swizzle uvw z))\n"
-	"           (bias  (max (* 0.0025 (- 1.0 diff)) 0.0006))\n"
-	"           (edge  (- fragd bias))\n"
-	"           (tx    0.00048828125)\n"
-	"           (b     (vec2 su sv))\n"
-	"           (s0 (step edge (swizzle (sample shadow_map (+ b (vec2 (- 0.0 tx) (- 0.0 tx)))) r)))\n"
-	"           (s1 (step edge (swizzle (sample shadow_map (+ b (vec2 0.0 (- 0.0 tx)))) r)))\n"
-	"           (s2 (step edge (swizzle (sample shadow_map (+ b (vec2 tx (- 0.0 tx)))) r)))\n"
-	"           (s3 (step edge (swizzle (sample shadow_map (+ b (vec2 (- 0.0 tx) 0.0))) r)))\n"
-	"           (s4 (step edge (swizzle (sample shadow_map b) r)))\n"
-	"           (s5 (step edge (swizzle (sample shadow_map (+ b (vec2 tx 0.0))) r)))\n"
-	"           (s6 (step edge (swizzle (sample shadow_map (+ b (vec2 (- 0.0 tx) tx))) r)))\n"
-	"           (s7 (step edge (swizzle (sample shadow_map (+ b (vec2 0.0 tx))) r)))\n"
-	"           (s8 (step edge (swizzle (sample shadow_map (+ b (vec2 tx tx))) r)))\n"
-	"           (pcf   (* (+ s0 s1 s2 s3 s4 s5 s6 s7 s8) 0.1111111))\n"
-	"           (inrng (* (step 0.0 su) (step su 1.0) (step 0.0 sv)\n"
-	"                     (step sv 1.0) (step fragd 1.0)))\n"
-	"           (shadow (mix 1.0 pcf inrng))\n"
+	"           (shadow (sun_shadow v_lightpos diff))\n"
 	"           (lit  (* base (+ 0.35 (* 0.65 diff shadow))))\n"
 	"           (tex  (sample albedo v_uv)))\n"
 	"      (set frag_color\n"
@@ -292,7 +328,7 @@ static const float DEFAULT_MATERIAL_COLOR[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
  * for exactly that reason; renaming it below "Material" would silently swap the
  * Material and light bindings.
  */
-static const char *PBR_SHADER_SRC =
+static const char *PBR_HEAD =
 	"(shader pbr\n"
 	"  (inputs\n"
 	"    (a_pos    vec3 (location 0))\n"
@@ -318,6 +354,10 @@ static const char *PBR_SHADER_SRC =
 	"    (v_lightpos vec4))\n"
 	"  (targets\n"
 	"    (frag_color vec4 (location 0)))\n"
+	"  (functions\n";
+
+static const char *PBR_TAIL =
+	"  )\n"
 	"  (vertex\n"
 	"    (set v_normal (* (mat3 model) a_normal))\n"
 	"    (set v_worldpos (swizzle (* model (vec4 a_pos 1.0)) xyz))\n"
@@ -346,36 +386,14 @@ static const char *PBR_SHADER_SRC =
 	"           (spec   (/ (* ndf g fres) (+ (* 4.0 ndv ndl) 0.0001)))\n"
 	"           (kd     (* (- (vec3 1.0 1.0 1.0) fres) (- 1.0 metallic)))\n"
 	"           (diff   (* kd albedo 0.31831))\n"
-	"           (proj   (/ (swizzle v_lightpos xyz) (swizzle v_lightpos w)))\n"
-	"           (uvw    (+ (* proj 0.5) 0.5))\n"
-	"           (su     (swizzle uvw x))\n"
-	"           (sv     (swizzle uvw y))\n"
-	"           (fragd  (swizzle uvw z))\n"
-	"           (bias   (max (* 0.0025 (- 1.0 ndl)) 0.0006))\n"
-	"           (edge   (- fragd bias))\n"
-	"           (tx     0.00048828125)\n"
-	"           (b      (vec2 su sv))\n"
-	"           (s0 (step edge (swizzle (sample shadow_map (+ b (vec2 (- 0.0 tx) (- 0.0 tx)))) r)))\n"
-	"           (s1 (step edge (swizzle (sample shadow_map (+ b (vec2 0.0 (- 0.0 tx)))) r)))\n"
-	"           (s2 (step edge (swizzle (sample shadow_map (+ b (vec2 tx (- 0.0 tx)))) r)))\n"
-	"           (s3 (step edge (swizzle (sample shadow_map (+ b (vec2 (- 0.0 tx) 0.0))) r)))\n"
-	"           (s4 (step edge (swizzle (sample shadow_map b) r)))\n"
-	"           (s5 (step edge (swizzle (sample shadow_map (+ b (vec2 tx 0.0))) r)))\n"
-	"           (s6 (step edge (swizzle (sample shadow_map (+ b (vec2 (- 0.0 tx) tx))) r)))\n"
-	"           (s7 (step edge (swizzle (sample shadow_map (+ b (vec2 0.0 tx))) r)))\n"
-	"           (s8 (step edge (swizzle (sample shadow_map (+ b (vec2 tx tx))) r)))\n"
-	"           (pcf    (* (+ s0 s1 s2 s3 s4 s5 s6 s7 s8) 0.1111111))\n"
-	"           (inrng  (* (step 0.0 su) (step su 1.0) (step 0.0 sv)\n"
-	"                      (step sv 1.0) (step fragd 1.0)))\n"
-	"           (shadow (mix 1.0 pcf inrng))\n"
+	"           (shadow (sun_shadow v_lightpos ndl))\n"
 	"           (lo     (* (+ diff spec) light_radiance ndl shadow))\n"
 	"           (sky    (vec3 0.55 0.62 0.75))\n"
 	"           (ground (vec3 0.20 0.19 0.17))\n"
 	"           (hemi   (mix ground sky (+ 0.5 (* 0.5 (swizzle n y)))))\n"
 	"           (amb    (* 0.45 (+ (* hemi albedo (- 1.0 metallic)) (* hemi f0))))\n"
 	"           (color  (+ amb lo))\n"
-	"           (mapped (/ color (+ color (vec3 1.0 1.0 1.0))))\n"
-	"           (gamma  (pow mapped (vec3 0.4545 0.4545 0.4545))))\n"
+	"           (gamma  (tonemap color)))\n"
 	"      (set frag_color (vec4 gamma 1.0)))))\n";
 
 /*
@@ -383,7 +401,7 @@ static const char *PBR_SHADER_SRC =
  * wants both a procedural texture and the metallic-roughness BRDF (checker
  * and scene-textured predate the pbr shader and never grew that combination;
  * this is the one built-in that has both). Same IO contract, same Cook-
- * Torrance fragment as PBR_SHADER_SRC, with two additions:
+ * Torrance fragment as the pbr shader, with two additions:
  *
  *   - v_uv rides along (a_uv0 was already a pbr input, just unused) and
  *     albedo tints base_color the way scene-textured's albedo tints its tint.
@@ -400,14 +418,12 @@ static const char *PBR_SHADER_SRC =
  *     look exactly.
  */
 /*
- * Split across two literals — ISO C99 caps a *concatenated* string literal at
- * 4095 chars (-Wpedantic -Werror enforces it here) and this source alone runs
- * past that, unlike the other builtin sources this file concatenates in one
- * piece. Rejoined into a heap buffer at seed time (see the builtins-seed
- * block below); the split point is just where the two literals happen to
- * meet and carries no meaning of its own.
+ * pbr-textured is HEAD + shared helpers + TAIL like the others. Folding the PCF
+ * block into SUN_SHADOW_FN shrank the fragment enough that it no longer needs
+ * the two-literal split the inlined version did to stay under the ISO C99 4095-
+ * char concatenated-literal cap (-Wpedantic -Werror enforces it).
  */
-static const char *PBR_TEXTURED_SHADER_SRC_A =
+static const char *PBR_TEXTURED_HEAD =
 	"(shader pbr-textured\n"
 	"  (inputs\n"
 	"    (a_pos    vec3 (location 0))\n"
@@ -436,6 +452,10 @@ static const char *PBR_TEXTURED_SHADER_SRC_A =
 	"    (v_lightpos vec4))\n"
 	"  (targets\n"
 	"    (frag_color vec4 (location 0)))\n"
+	"  (functions\n";
+
+static const char *PBR_TEXTURED_TAIL =
+	"  )\n"
 	"  (vertex\n"
 	"    (set v_normal (* (mat3 model) a_normal))\n"
 	"    (set v_worldpos (swizzle (* model (vec4 a_pos 1.0)) xyz))\n"
@@ -474,39 +494,15 @@ static const char *PBR_TEXTURED_SHADER_SRC_A =
 	"           (fres   (+ f0 (* (- (vec3 1.0 1.0 1.0) f0) (pow (- 1.0 vdh) 5.0))))\n"
 	"           (spec   (/ (* ndf g fres) (+ (* 4.0 ndv ndl) 0.0001)))\n"
 	"           (kd     (* (- (vec3 1.0 1.0 1.0) fres) (- 1.0 metallic)))\n"
-	"           (diff   (* kd albedo 0.31831))\n";
-
-static const char *PBR_TEXTURED_SHADER_SRC_B =
-	"           (proj   (/ (swizzle v_lightpos xyz) (swizzle v_lightpos w)))\n"
-	"           (uvw    (+ (* proj 0.5) 0.5))\n"
-	"           (su     (swizzle uvw x))\n"
-	"           (sv     (swizzle uvw y))\n"
-	"           (fragd  (swizzle uvw z))\n"
-	"           (bias   (max (* 0.0025 (- 1.0 ndl)) 0.0006))\n"
-	"           (edge   (- fragd bias))\n"
-	"           (tx     0.00048828125)\n"
-	"           (b      (vec2 su sv))\n"
-	"           (s0 (step edge (swizzle (sample shadow_map (+ b (vec2 (- 0.0 tx) (- 0.0 tx)))) r)))\n"
-	"           (s1 (step edge (swizzle (sample shadow_map (+ b (vec2 0.0 (- 0.0 tx)))) r)))\n"
-	"           (s2 (step edge (swizzle (sample shadow_map (+ b (vec2 tx (- 0.0 tx)))) r)))\n"
-	"           (s3 (step edge (swizzle (sample shadow_map (+ b (vec2 (- 0.0 tx) 0.0))) r)))\n"
-	"           (s4 (step edge (swizzle (sample shadow_map b) r)))\n"
-	"           (s5 (step edge (swizzle (sample shadow_map (+ b (vec2 tx 0.0))) r)))\n"
-	"           (s6 (step edge (swizzle (sample shadow_map (+ b (vec2 (- 0.0 tx) tx))) r)))\n"
-	"           (s7 (step edge (swizzle (sample shadow_map (+ b (vec2 0.0 tx))) r)))\n"
-	"           (s8 (step edge (swizzle (sample shadow_map (+ b (vec2 tx tx))) r)))\n"
-	"           (pcf    (* (+ s0 s1 s2 s3 s4 s5 s6 s7 s8) 0.1111111))\n"
-	"           (inrng  (* (step 0.0 su) (step su 1.0) (step 0.0 sv)\n"
-	"                      (step sv 1.0) (step fragd 1.0)))\n"
-	"           (shadow (mix 1.0 pcf inrng))\n"
+	"           (diff   (* kd albedo 0.31831))\n"
+	"           (shadow (sun_shadow v_lightpos ndl))\n"
 	"           (lo     (* (+ diff spec) light_radiance ndl shadow))\n"
 	"           (sky    (vec3 0.55 0.62 0.75))\n"
 	"           (ground (vec3 0.20 0.19 0.17))\n"
 	"           (hemi   (mix ground sky (+ 0.5 (* 0.5 (swizzle n y)))))\n"
 	"           (amb    (* 0.45 (+ (* hemi albedo (- 1.0 metallic)) (* hemi f0))))\n"
 	"           (color  (+ amb lo))\n"
-	"           (mapped (/ color (+ color (vec3 1.0 1.0 1.0))))\n"
-	"           (gamma  (pow mapped (vec3 0.4545 0.4545 0.4545))))\n"
+	"           (gamma  (tonemap color)))\n"
 	"      (set frag_color (vec4 gamma 1.0)))))\n";
 
 static int builtins_seeded;
@@ -539,6 +535,32 @@ static uint32_t seed_shader(const char *path, const char *src)
 	e->read_only = 1;
 	e->type      = ASSET_TYPE_SHADER;
 	return e->id;
+}
+
+/*
+ * Concatenate PARTS (a shader's HEAD, its shared helper fragments, and its TAIL)
+ * into caller storage BUF, then seed the result. Splitting a built-in this way
+ * keeps the shared helpers (SUN_SHADOW_FN, TONEMAP_FN) authored once and lets
+ * each source stay a set of small literals well under the ISO C99 4095-char
+ * concatenated-literal cap. Returns 0 if BUF is too small (a build-time sizing
+ * error, not a runtime condition — the sources are fixed).
+ */
+static uint32_t seed_shader_parts(const char *path, char *buf, size_t cap,
+				  const char *const *parts, size_t nparts)
+{
+	size_t off = 0;
+	size_t i;
+
+	for (i = 0; i < nparts; i++) {
+		size_t l = strlen(parts[i]);
+
+		if (off + l + 1 > cap)
+			return 0;
+		memcpy(buf + off, parts[i], l);
+		off += l;
+	}
+	buf[off] = '\0';
+	return seed_shader(path, buf);
 }
 
 /*
@@ -859,9 +881,14 @@ static void seed_builtins(void)
 		 * default params.
 		 */
 		{
-			uint32_t tshader =
-				seed_shader("builtin://shader/scene-textured",
-					    SCENE_TEXTURED_SHADER_SRC);
+			char        buf[8192];
+			const char *parts[] = { SCENE_TEXTURED_HEAD,
+						SUN_SHADOW_FN,
+						SCENE_TEXTURED_TAIL };
+			uint32_t    tshader = seed_shader_parts(
+				"builtin://shader/scene-textured",
+				buf, sizeof(buf), parts,
+				sizeof(parts) / sizeof(parts[0]));
 
 			seed_textured_material("builtin://material/checker",
 					       tshader, DEFAULT_MATERIAL_COLOR,
@@ -880,8 +907,12 @@ static void seed_builtins(void)
 	{
 		static const float GOLD[4]   = { 1.00f, 0.78f, 0.34f, 1.0f };
 		static const float PLASTIC[4] = { 0.85f, 0.13f, 0.16f, 1.0f };
-		uint32_t pshader = seed_shader("builtin://shader/pbr",
-					       PBR_SHADER_SRC);
+		char        pbuf[8192];
+		const char *pparts[] = { PBR_HEAD, SUN_SHADOW_FN, TONEMAP_FN,
+					 PBR_TAIL };
+		uint32_t pshader = seed_shader_parts(
+			"builtin://shader/pbr", pbuf, sizeof(pbuf), pparts,
+			sizeof(pparts) / sizeof(pparts[0]));
 
 		seed_pbr_material("builtin://material/pbr-metal", pshader,
 				  GOLD, 1.0f, 0.30f);
@@ -922,28 +953,27 @@ static void seed_builtins(void)
 
 	/*
 	 * Grass — the pbr-textured shader (metallic-roughness plus one albedo
-	 * sampler and a height-from-alpha normal bump; see
-	 * PBR_TEXTURED_SHADER_SRC_A/_B) paired with the grass texture
-	 * (GRASS_TEXTURE_SCRIPT_SRC), whose alpha channel IS the bump's height
-	 * field — the "substance-designer-style" ground material games/tictactoe/
-	 * scene.scm grounds its heightfield in. Baked at 512x512 (double the
-	 * checker's 256) since grass tiles at a much higher spatial frequency and
-	 * reads muddy if undersampled. The shader's two literal halves are
-	 * rejoined here into a heap-sized stack buffer before seeding — seed_shader
-	 * copies it immediately, so it need not outlive this block.
+	 * sampler and a height-from-alpha normal bump; see PBR_TEXTURED_HEAD/_TAIL)
+	 * paired with the grass texture (GRASS_TEXTURE_SCRIPT_SRC), whose alpha
+	 * channel IS the bump's height field — the "substance-designer-style"
+	 * ground material games/tictactoe/scene.scm grounds its heightfield in.
+	 * Baked at 512x512 (double the checker's 256) since grass tiles at a much
+	 * higher spatial frequency and reads muddy if undersampled. The shader is
+	 * assembled from its HEAD/TAIL and the shared helpers into a stack buffer
+	 * before seeding — seed_shader copies it immediately, so it need not
+	 * outlive this block.
 	 */
 	{
-		char     shader_src[8192];
-		size_t   la = strlen(PBR_TEXTURED_SHADER_SRC_A);
-		size_t   lb = strlen(PBR_TEXTURED_SHADER_SRC_B);
-		uint32_t grass_tex =
+		char        shader_src[8192];
+		const char *parts[] = { PBR_TEXTURED_HEAD, SUN_SHADOW_FN,
+					TONEMAP_FN, PBR_TEXTURED_TAIL };
+		uint32_t    grass_tex =
 			seed_texture("builtin://texture/grass",
 				     GRASS_TEXTURE_SCRIPT_SRC);
-		uint32_t tshader2;
-
-		memcpy(shader_src, PBR_TEXTURED_SHADER_SRC_A, la);
-		memcpy(shader_src + la, PBR_TEXTURED_SHADER_SRC_B, lb + 1);
-		tshader2 = seed_shader("builtin://shader/pbr-textured", shader_src);
+		uint32_t    tshader2 = seed_shader_parts(
+			"builtin://shader/pbr-textured", shader_src,
+			sizeof(shader_src), parts,
+			sizeof(parts) / sizeof(parts[0]));
 
 		seed_pbr_textured_material("builtin://material/pbr-grass",
 					   tshader2, DEFAULT_MATERIAL_COLOR,

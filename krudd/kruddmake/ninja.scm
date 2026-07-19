@@ -436,6 +436,10 @@
 		  (string-append gen "/tictactoe_rules_scm.h")
 		  "TICTACTOE_RULES_SCM")
 		(krudd-embed-file
+		  (string-append srcroot "/games/chess/scene.scm")
+		  (string-append gen "/chess_scene_scm.h")
+		  "CHESS_SCENE_SCM")
+		(krudd-embed-file
 		  (string-append srcroot "/games/demo/demo.scm")
 		  (string-append gen "/demo_scene_scm.h")
 		  "DEMO_SCENE_SCM")

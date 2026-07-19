@@ -313,4 +313,171 @@
 	"           (piece   (sdf-subtract solid (sdf-union bore notch-x notch-z))))\n" \
 	"      (mesh-sdf piece 40 (list -0.42 -0.56 -0.42) (list 0.42 0.56 0.42)))))\n"
 
+/*
+ * The chess set — six turned/blocky pieces that showcase the lathe (mesh-lathe,
+ * core/mesh_script.scm) the way cylinder/cone/torus showcase mesh-revolve. Each
+ * piece is authored base-at-origin (its foot sits on y = 0, so a scene drops it
+ * straight onto a board square) and sized against a one-unit square: a body no
+ * wider than ~0.6 units, heights rising pawn < knight < rook < bishop < queen <
+ * king. Five are pure surfaces of revolution — a single (r y) silhouette swept
+ * around Y, mesh-lathe deriving the smooth normals — so the whole set reads as
+ * one turned-ivory family. games/chess binds these through builtin://mesh/chess-*.
+ */
+
+/*
+ * pawn — the simplest turning: a flared foot, a slim waist under a collar, and a
+ * round ball head. 15 silhouette points, 24 sectors: 375 verts / 2016 indices.
+ */
+#define CHESS_PAWN_MESH_SCRIPT_SRC \
+	"(mesh chess-pawn\n" \
+	"  (generate ()\n" \
+	"    (mesh-lathe\n" \
+	"      (list\n" \
+	"        (list 0 0) (list 0.26 0) (list 0.27 0.05)\n" \
+	"        (list 0.2 0.08) (list 0.13 0.16) (list 0.115 0.28)\n" \
+	"        (list 0.175 0.34) (list 0.2 0.375) (list 0.11 0.4)\n" \
+	"        (list 0.105 0.45) (list 0.165 0.52) (list 0.185 0.6)\n" \
+	"        (list 0.155 0.7) (list 0.085 0.775) (list 0 0.8)\n" \
+	"      )\n" \
+	"      24)))\n"
+
+/*
+ * rook — a castle turret: a heavy foot, a straight shaft, and a crown that flares
+ * to a raised rim over a recessed top. A lathe cannot cut the crenellation
+ * notches (the engine's implicit-surface builtin://mesh/sdf-rook can, via CSG —
+ * see SDF_ROOK_MESH_SCRIPT_SRC), so this revolved rook keeps the ring silhouette
+ * and leaves the battlements smooth. 15 points: 375 verts / 2016 indices.
+ */
+#define CHESS_ROOK_MESH_SCRIPT_SRC \
+	"(mesh chess-rook\n" \
+	"  (generate ()\n" \
+	"    (mesh-lathe\n" \
+	"      (list\n" \
+	"        (list 0 0) (list 0.29 0) (list 0.3 0.05)\n" \
+	"        (list 0.22 0.1) (list 0.175 0.18) (list 0.165 0.4)\n" \
+	"        (list 0.205 0.46) (list 0.15 0.52) (list 0.165 0.6)\n" \
+	"        (list 0.255 0.66) (list 0.27 0.74) (list 0.27 0.82)\n" \
+	"        (list 0.2 0.82) (list 0.19 0.76) (list 0 0.76)\n" \
+	"      )\n" \
+	"      24)))\n"
+
+/*
+ * bishop — a tall slim body under a bulbous mitre tapering to a finial ball. The
+ * mitre's diagonal slit is not a surface of revolution and is omitted. 17 points:
+ * 425 verts / 2304 indices.
+ */
+#define CHESS_BISHOP_MESH_SCRIPT_SRC \
+	"(mesh chess-bishop\n" \
+	"  (generate ()\n" \
+	"    (mesh-lathe\n" \
+	"      (list\n" \
+	"        (list 0 0) (list 0.25 0) (list 0.26 0.05)\n" \
+	"        (list 0.185 0.1) (list 0.12 0.2) (list 0.11 0.4)\n" \
+	"        (list 0.175 0.46) (list 0.115 0.52) (list 0.1 0.6)\n" \
+	"        (list 0.155 0.72) (list 0.185 0.82) (list 0.16 0.92)\n" \
+	"        (list 0.1 1) (list 0.075 1.04) (list 0.09 1.09)\n" \
+	"        (list 0.055 1.14) (list 0 1.17)\n" \
+	"      )\n" \
+	"      24)))\n"
+
+/*
+ * queen — the bishop's body grown taller with a coronet: the head flares wide to
+ * a rim (a real crown's points are not revolvable, so the rim stays a smooth
+ * ring) and a small neck and ball finish it. 19 points: 475 verts / 2592 indices.
+ */
+#define CHESS_QUEEN_MESH_SCRIPT_SRC \
+	"(mesh chess-queen\n" \
+	"  (generate ()\n" \
+	"    (mesh-lathe\n" \
+	"      (list\n" \
+	"        (list 0 0) (list 0.29 0) (list 0.3 0.05)\n" \
+	"        (list 0.21 0.11) (list 0.14 0.22) (list 0.125 0.48)\n" \
+	"        (list 0.195 0.55) (list 0.12 0.61) (list 0.11 0.7)\n" \
+	"        (list 0.16 0.8) (list 0.225 0.92) (list 0.265 1.02)\n" \
+	"        (list 0.27 1.08) (list 0.21 1.1) (list 0.17 1.06)\n" \
+	"        (list 0.115 1.14) (list 0.155 1.24) (list 0.085 1.3)\n" \
+	"        (list 0 1.34)\n" \
+	"      )\n" \
+	"      24)))\n"
+
+/*
+ * king — the tallest piece: the queen's proportions with a taller crown and a
+ * knobbed finial. The king's cross is added in the scene as two small crossed
+ * boxes on top (games/chess/scene.scm), the way tic-tac-toe builds its X — the
+ * lathe body cannot express it. 19 points: 475 verts / 2592 indices.
+ */
+#define CHESS_KING_MESH_SCRIPT_SRC \
+	"(mesh chess-king\n" \
+	"  (generate ()\n" \
+	"    (mesh-lathe\n" \
+	"      (list\n" \
+	"        (list 0 0) (list 0.3 0) (list 0.31 0.05)\n" \
+	"        (list 0.22 0.11) (list 0.15 0.24) (list 0.135 0.52)\n" \
+	"        (list 0.205 0.59) (list 0.13 0.65) (list 0.12 0.76)\n" \
+	"        (list 0.17 0.86) (list 0.235 0.98) (list 0.275 1.1)\n" \
+	"        (list 0.28 1.16) (list 0.22 1.18) (list 0.18 1.14)\n" \
+	"        (list 0.135 1.22) (list 0.155 1.32) (list 0.12 1.4)\n" \
+	"        (list 0 1.44)\n" \
+	"      )\n" \
+	"      24)))\n"
+
+/*
+ * knight — the one piece that is NOT a surface of revolution, so it is a
+ * deliberately pragmatic, blocky approximation rather than a sculpted horse: a
+ * revolved pedestal (mesh-lathe, capped flat on top) fused with two tilted boxes
+ * — a head block and a shorter snout — forward-leaning about the X axis. The
+ * three sub-meshes are welded index-offset by chess-fuse; chess-box builds an
+ * axis-aligned box from the six quad faces and chess-tilt rotates/translates a
+ * sub-mesh into place. Faces the +Z ("forward") side; the scene turns one army
+ * 180 degrees so the knights face each other. 273 verts / 1224 indices.
+ */
+#define CHESS_KNIGHT_MESH_SCRIPT_SRC \
+	"(mesh chess-knight\n" \
+	"  (generate ()\n" \
+	"    (define (chess-box hx hy hz)\n" \
+	"      (let ((faces (list\n" \
+	"              (list (list  1.0 0.0 0.0) (list 0.0 0.0 1.0) (list 0.0 1.0 0.0))\n" \
+	"              (list (list -1.0 0.0 0.0) (list 0.0 0.0 1.0) (list 0.0 1.0 0.0))\n" \
+	"              (list (list 0.0  1.0 0.0) (list 1.0 0.0 0.0) (list 0.0 0.0 1.0))\n" \
+	"              (list (list 0.0 -1.0 0.0) (list 1.0 0.0 0.0) (list 0.0 0.0 1.0))\n" \
+	"              (list (list 0.0 0.0  1.0) (list 1.0 0.0 0.0) (list 0.0 1.0 0.0))\n" \
+	"              (list (list 0.0 0.0 -1.0) (list 1.0 0.0 0.0) (list 0.0 1.0 0.0)))))\n" \
+	"        (let loop ((f 0) (verts '()) (indices '()))\n" \
+	"          (if (= f 6)\n" \
+	"              (cons (map (lambda (vx)\n" \
+	"                           (list (* (list-ref vx 0) (* 2.0 hx))\n" \
+	"                                 (* (list-ref vx 1) (* 2.0 hy))\n" \
+	"                                 (* (list-ref vx 2) (* 2.0 hz))\n" \
+	"                                 (list-ref vx 3) (list-ref vx 4) (list-ref vx 5)\n" \
+	"                                 (list-ref vx 6) (list-ref vx 7)))\n" \
+	"                         verts)\n" \
+	"                    indices)\n" \
+	"              (let ((fc (list-ref faces f)))\n" \
+	"                (loop (+ f 1)\n" \
+	"                      (append verts (mesh-quad-verts (car fc) (cadr fc) (caddr fc) 0.5))\n" \
+	"                      (append indices (mesh-quad-indices (* f 4)))))))))\n" \
+	"    (define (chess-tilt blob ang tx ty tz)\n" \
+	"      (let ((c (cos ang)) (s (sin ang)))\n" \
+	"        (cons (map (lambda (vx)\n" \
+	"                     (let ((px (list-ref vx 0)) (py (list-ref vx 1)) (pz (list-ref vx 2))\n" \
+	"                           (nx (list-ref vx 3)) (ny (list-ref vx 4)) (nz (list-ref vx 5)))\n" \
+	"                       (list (+ px tx) (+ (- (* py c) (* pz s)) ty)\n" \
+	"                             (+ (+ (* py s) (* pz c)) tz)\n" \
+	"                             nx (- (* ny c) (* nz s)) (+ (* ny s) (* nz c))\n" \
+	"                             (list-ref vx 6) (list-ref vx 7))))\n" \
+	"                   (car blob))\n" \
+	"              (cdr blob))))\n" \
+	"    (define (chess-fuse a b)\n" \
+	"      (let ((na (length (car a))))\n" \
+	"        (cons (append (car a) (car b))\n" \
+	"              (append (cdr a) (map (lambda (i) (+ i na)) (cdr b))))))\n" \
+	"    (let ((base (mesh-lathe\n" \
+	"                  (list (list 0.0 0.0) (list 0.28 0.0) (list 0.29 0.05)\n" \
+	"                        (list 0.21 0.1) (list 0.16 0.2) (list 0.155 0.34)\n" \
+	"                        (list 0.185 0.42) (list 0.15 0.47) (list 0.0 0.47))\n" \
+	"                  24))\n" \
+	"          (head (chess-tilt (chess-box 0.12 0.23 0.28) -0.42 0.0 0.6 0.02))\n" \
+	"          (snout (chess-tilt (chess-box 0.1 0.09 0.16) -0.15 0.0 0.55 0.24)))\n" \
+	"      (chess-fuse (chess-fuse base head) snout))))\n"
+
 #endif /* BUILTIN_MESH_SCRIPTS_H */

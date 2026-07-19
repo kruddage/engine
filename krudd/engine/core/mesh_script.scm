@@ -205,6 +205,40 @@
   (cons (mesh-revolve-verts profile sectors)
         (mesh-revolve-indices profile sectors)))
 
+;;! (mesh-lathe silhouette sectors) -> (VERTS . INDICES): sweep a bare 2-D
+;;! SILHOUETTE — a list of (r y) points ordered foot-to-crown — around the Y axis.
+;;! Where mesh-revolve needs each profile point's 2-D normal spelled out (and a
+;;! doubled point for every hard crease), this derives a *smooth* outward normal at
+;;! every point from its neighbours: the tangent is the central difference of the
+;;! points on either side, and the outward normal is that tangent turned a quarter
+;;! turn, (ty . -tr), which points away from the axis for a foot-to-crown ordering
+;;! (a vertical wall yields +r, a bottom cap yields -y). V rides 0..1 up the point
+;;! index. So a turned shape — a chess pawn, a goblet, a bottle — is authored as
+;;! just its outline, one point per silhouette vertex, and reads as a lathed solid.
+;;! A closed foot is a leading (0 y) point; a closed crown a trailing (0 y) point.
+(define (mesh-lathe silhouette sectors)
+  (let* ((n  (length silhouette))
+         (vp (list->vector silhouette))
+         (last (max 1 (- n 1))))
+    (mesh-revolve
+      (let loop ((i 0) (acc '()))
+        (if (= i n)
+            (reverse acc)
+            (let* ((p  (vector-ref vp i))
+                   (a  (vector-ref vp (max 0 (- i 1))))
+                   (b  (vector-ref vp (min (- n 1) (+ i 1))))
+                   (tr (- (car b) (car a)))
+                   (ty (- (cadr b) (cadr a)))
+                   (nr ty) (ny (- tr))
+                   (len (sqrt (+ (* nr nr) (* ny ny))))
+                   (unr (if (> len 1.0e-9) (/ nr len) 1.0))
+                   (uny (if (> len 1.0e-9) (/ ny len) 0.0)))
+              (loop (+ i 1)
+                    (cons (list (car p) (cadr p) unr uny
+                                (/ (exact->inexact i) last))
+                          acc)))))
+      sectors)))
+
 ;;! (mesh-grid-indices nu nv) -> triangles for an (nv+1)x(nu+1) vertex grid,
 ;;! row-major with columns fastest — the winding the built-in grid emits, shared
 ;;! by every parametric surface.

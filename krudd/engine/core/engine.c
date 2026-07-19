@@ -74,6 +74,7 @@ void kruddgui_plugin_entry(struct subsystem_manager *mgr);
 void audio_scriptnode_plugin_entry(struct subsystem_manager *mgr);
 void demo_plugin_entry(struct subsystem_manager *mgr);
 void tictactoe_plugin_entry(struct subsystem_manager *mgr);
+void chess_plugin_entry(struct subsystem_manager *mgr);
 
 /*
  * The boot order, as data so the profiler can time each entry point and label
@@ -101,6 +102,7 @@ static const struct {
 	 */
 	{ "demo",           demo_plugin_entry           },
 	{ "tictactoe",      tictactoe_plugin_entry      },
+	{ "chess",          chess_plugin_entry          },
 };
 #endif
 

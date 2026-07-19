@@ -543,6 +543,70 @@ static void test_builtin_sdf_rook(void)
 	g_mem->free(b);
 }
 
+/*
+ * A lathed chess piece: the shared mesh contract (via gen_checked) plus the
+ * piece's own envelope — a foot on y = 0, every vertex within MAXR of the axis
+ * and under MAXY in height. The vertex/index counts are the silhouette's
+ * fingerprint (they move only when a profile in builtin_mesh_scripts.h does), so
+ * a fat-fingered point that closes the wrong ring or drops a segment is caught
+ * here, GPU-free, exactly the way the swept prims above are.
+ */
+static void check_chess_piece(const char *src, uint32_t nv, uint32_t ni,
+			      float maxr, float maxy)
+{
+	struct mesh_blob         *b = gen_checked(src, nv, ni);
+	const struct mesh_vertex *v = mesh_blob_vertices(b);
+	uint32_t                   i;
+
+	for (i = 0; i < nv; i++) {
+		assert(radius_xz(&v[i]) <= maxr + EPS);
+		assert(v[i].position[1] >= -EPS);        /* foot sits on y = 0 */
+		assert(v[i].position[1] <= maxy + EPS);
+	}
+	g_mem->free(b);
+}
+
+/*
+ * The five turned pieces — pawn, rook, bishop, queen, king — each a single
+ * silhouette swept by mesh-lathe. Heights rise in the authored order so the set
+ * reads as one family scaled up the ranks.
+ */
+static void test_builtin_chess_lathed(void)
+{
+	check_chess_piece(CHESS_PAWN_MESH_SCRIPT_SRC,   375, 2016, 0.27f, 0.80f);
+	check_chess_piece(CHESS_ROOK_MESH_SCRIPT_SRC,   375, 2016, 0.30f, 0.82f);
+	check_chess_piece(CHESS_BISHOP_MESH_SCRIPT_SRC, 425, 2304, 0.26f, 1.17f);
+	check_chess_piece(CHESS_QUEEN_MESH_SCRIPT_SRC,  475, 2592, 0.30f, 1.34f);
+	check_chess_piece(CHESS_KING_MESH_SCRIPT_SRC,   475, 2592, 0.31f, 1.44f);
+}
+
+/*
+ * The knight — the one non-revolved piece: a lathed pedestal fused with two
+ * tilted boxes (chess-box/chess-tilt/chess-fuse in its generate body). It is an
+ * open composite, not a closed genus-0 solid, so it earns no Euler check; it
+ * still owes the shared contract (unit normals, in-range indices, whole tris)
+ * and its own envelope — a foot on y = 0 and a forward-leaning head that reaches
+ * into +Z. The fingerprint pins the fuse: a mis-offset weld would move the count.
+ */
+static void test_builtin_chess_knight(void)
+{
+	struct mesh_blob         *b = gen_checked(CHESS_KNIGHT_MESH_SCRIPT_SRC,
+						  273, 1224);
+	const struct mesh_vertex *v = mesh_blob_vertices(b);
+	uint32_t                   i;
+	float                      maxz = -1.0e9f;
+
+	for (i = 0; i < b->vertex_count; i++) {
+		assert(radius_xz(&v[i]) <= 0.45f + EPS); /* head reaches wide */
+		assert(v[i].position[1] >= -EPS);        /* foot on y = 0     */
+		assert(v[i].position[1] <= 0.93f + EPS);
+		if (v[i].position[2] > maxz)
+			maxz = v[i].position[2];
+	}
+	assert(maxz > 0.3f); /* the muzzle really does lean forward into +Z */
+	g_mem->free(b);
+}
+
 int main(void)
 {
 	mem_init();
@@ -562,6 +626,8 @@ int main(void)
 	test_heightfield_amp_flattens();
 	test_sdf_sphere_marches();
 	test_builtin_sdf_rook();
+	test_builtin_chess_lathed();
+	test_builtin_chess_knight();
 	test_repeat_call_is_stable();
 	test_malformed_source_yields_no_mesh();
 	test_box_params_declared();

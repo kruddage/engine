@@ -107,4 +107,19 @@
 	"        (param 'height)\n"                                          \
 	"        (* (param 'radius) (sin a))))))\n"
 
+/*
+ * chess-camera — bound to chess's "Camera" entity (games/chess/scene.scm) the
+ * same way orbit-camera binds to the demo's. Unlike the scripts above, its
+ * behaviour is not authored here: it is a one-line dispatch to
+ * chess-camera-tick! (games/chess/rules.scm), which reads that game's own
+ * turn/selection/last-move state and eases the eye toward a 3/4 view of the
+ * side to move, a lean toward a picked-up piece, or a park on a just-landed
+ * square. Kept out of the shared built-in itself because that state belongs
+ * to one game, not to every entity that might carry a camera script.
+ */
+#define CHESS_CAMERA_SCRIPT_SRC                                              \
+	"(script chess-camera\n"                                             \
+	"  (on-tick (self t)\n"                                              \
+	"    (chess-camera-tick! self t)))\n"
+
 #endif /* BUILTIN_SCRIPTS_H */

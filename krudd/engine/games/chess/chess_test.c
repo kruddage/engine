@@ -135,6 +135,12 @@ static int32_t turn(void)
 	return scene_script_call(&w, NULL, "chess-turn", 0);
 }
 
+/* Poll chess-cam-holding?: 1 while the post-move camera hold is armed. */
+static int32_t cam_holding(void)
+{
+	return scene_script_call(&w, NULL, "chess-cam-holding?", 0);
+}
+
 /*
  * The world's game-outline target — what the renderer's outline pass highlights
  * in-game. The rules set it through scene-outline! (world_set_outline) as the
@@ -248,6 +254,23 @@ static void test_outline_tracks_pick(void)
 	assert(outline() == -1);         /* nothing picked, nothing outlined */
 }
 
+/*
+ * A move never arms the camera's post-move hold in this harness: chess-cam-
+ * mark-move! only starts the hold once the render clock has ticked at least
+ * once (chess-camera-tick!, which this test never drives — no camera script
+ * runs headless), so a move here must leave chess-cam-holding? at 0 rather
+ * than arming a timer nothing will ever advance past.
+ */
+static void test_camera_hold_guarded_headless(void)
+{
+	reset_rules_board();
+
+	assert(cam_holding() == 0);      /* nothing armed at the start */
+	assert(click(0) == 0);           /* pick up wP-e2 */
+	assert(click(1) == 1);           /* slide it to e4 */
+	assert(cam_holding() == 0);      /* still not armed: no clock ticked */
+}
+
 int main(void)
 {
 	log_init();
@@ -263,6 +286,7 @@ int main(void)
 	test_repick();
 	test_wrong_side_ignored();
 	test_outline_tracks_pick();
+	test_camera_hold_guarded_headless();
 
 	printf("chess_test: ok\n");
 	return 0;

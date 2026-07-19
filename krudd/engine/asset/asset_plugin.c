@@ -984,6 +984,7 @@ static void seed_builtins(void)
 	seed_script("builtin://script/wobble",  WOBBLE_SCRIPT_SRC);
 	seed_script("builtin://script/pulse",   PULSE_SCRIPT_SRC);
 	seed_script("builtin://script/orbit-camera", ORBIT_CAMERA_SCRIPT_SRC);
+	seed_script("builtin://script/chess-camera", CHESS_CAMERA_SCRIPT_SRC);
 
 	/*
 	 * Built-in textures, authored the same way as the meshes: each is a
@@ -1582,6 +1583,16 @@ static const struct asset_decl_field orbit_camera_script_decl[] = {
 };
 
 /*
+ * chess-camera declares no (params ...): it reads its behaviour from
+ * games/chess/rules.scm's own globals (turn, selection, last move) rather
+ * than authored, editor-tunable fields.
+ */
+static const struct asset_decl_field chess_camera_script_decl[] = {
+	{ "format", "krudd-script" },
+	{ "hooks",  "on-tick"      },
+};
+
+/*
  * A mesh asset is one (mesh NAME (generate () ...)) Scheme form. It
  * advertises its source format, the way a shader/script advertises theirs;
  * unlike a script there is no hook set to enumerate — a mesh always carries
@@ -1808,6 +1819,8 @@ static const struct builtin_desc builtin_descs[] = {
 	  ARRAY_SIZE(pulse_script_decl) },
 	{ "builtin://script/orbit-camera", orbit_camera_script_decl,
 	  ARRAY_SIZE(orbit_camera_script_decl) },
+	{ "builtin://script/chess-camera", chess_camera_script_decl,
+	  ARRAY_SIZE(chess_camera_script_decl) },
 	{ "builtin://mesh/grid", grid_mesh_decl,
 	  ARRAY_SIZE(grid_mesh_decl) },
 	{ "builtin://mesh/cylinder", cylinder_mesh_decl,

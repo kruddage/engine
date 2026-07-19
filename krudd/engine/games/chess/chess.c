@@ -25,11 +25,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#ifdef __EMSCRIPTEN__
-/* Editor-chrome toggle (plugin_abi.c, main module). */
-void krudd_set_editor_chrome(int on);
-#endif
-
 /* Resolved before register() so init/tick/load can reach the world and rules. */
 static const struct entity_api *g_scene;
 
@@ -69,14 +64,6 @@ static void chess_load(void)
 {
 	if (!g_scene)
 		return;
-#ifdef __EMSCRIPTEN__
-	/*
-	 * A set to play, not a scene to edit: drop the editor chrome (panels and
-	 * the selection gizmo) so the board fills the frame. Click-to-pick still
-	 * runs, so pieces and squares still register their clicks.
-	 */
-	krudd_set_editor_chrome(0);
-#endif
 	if (g_scene->clear_world)
 		g_scene->clear_world();
 	if (g_scene->build_scene_scm)

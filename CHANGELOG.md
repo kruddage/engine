@@ -1,5 +1,13 @@
 # Changelog
 
+## [18.2.1](https://github.com/kruddage/engine/compare/v18.2.0...v18.2.1) (2026-07-19)
+
+
+### Bug Fixes
+
+* **shell:** brighten the header version text for legibility ([#659](https://github.com/kruddage/engine/issues/659)) ([0174403](https://github.com/kruddage/engine/commit/01744036d127888e5e56cd6297307430673e80f3))
+* **viewport:** restore camera-aspect sync and click-to-pick lost with the editor ([#662](https://github.com/kruddage/engine/issues/662)) ([44ae85a](https://github.com/kruddage/engine/commit/44ae85a8bc38cc8ad1fe129e3d6f9a87ba4b24a9))
+
 ## [18.2.0](https://github.com/kruddage/engine/compare/v18.1.0...v18.2.0) (2026-07-19)
 
 

@@ -1,4 +1,27 @@
-# Coding Standard — C Modules
+# Coding Standard
+
+## Philosophy
+
+This engine is built by many hands and many agents, most of which never meet.
+The code is the only thing they share, so the code has to carry the
+coordination: anyone should be able to open any file and find it shaped the way
+they already expect.
+
+We get that by writing in the canonical form. C follows Kernighan & Ritchie.
+Scheme follows the line that runs back to McCarthy. Not out of nostalgia — these
+are the styles with the longest, cleanest lineage, the ones a careful programmer
+has recognized on sight for decades. Code written this way is legible to anyone
+who knows the tradition, and it is the form least likely to be written wrong,
+because it is the form that has been written *well* the most.
+
+From that, one operating rule: prefer uniformity over individual taste. When two
+forms are both correct, the more canonical one wins — it is the one every
+contributor already knows, so it is the one that costs no one a judgment call.
+The standards here exist to remove decisions, not to record preferences.
+
+---
+
+## C Modules
 
 C code in this project follows the Linux kernel coding style.
 The authoritative reference is `Documentation/process/coding-style.rst`
@@ -140,3 +163,44 @@ No `#pragma once`.
 
 Functions exported through the WASM ABI are declared in the module's `.h`
 file. All other functions are `static`. Keep exported surface area small.
+
+---
+
+## Scheme — `.scm` files
+
+Scheme is not a second-class citizen here — the README frames it as "the build
+system and the game." `.scm` files carry the `build.scm` manifests, the engine's
+scripting runtime, and whole games' logic. Write it in the spirit of the
+tradition that runs back to McCarthy: small procedures, clear data flow, no
+cleverness a reader has to unwind.
+
+**Comments.** Every `.scm` file opens with the SPDX license header:
+
+```scheme
+; SPDX-License-Identifier: GPL-2.0-or-later
+```
+
+Every other comment is a full-line comment that begins with the `;;!` marker
+(leading whitespace before it is fine). Lift asides onto their own `;;!` line
+directly above the code they annotate:
+
+```scheme
+;;! Whose turn it is: 1 = white (ivory), 2 = black (ebony). White moves first.
+(define *chess-turn* 1)
+```
+
+Trailing same-line comments — `(define x 90)  ; note` — are **not** allowed, and
+CI enforces this (`.github/scripts/lint-scm-comments.py`, the "Lint .scm
+comments" job). The reason is uniformity, not distaste for short notes: with one
+comment form and one place it can go, every file comes out shaped the same way,
+and no contributor — human or agent — ever has to decide "is this note short
+enough to put inline." The `;;!` marker also keeps documentation greppable as a
+single class, the way a `#!` shebang opts a line in. If a rewrite feels like it
+costs a line of vertical space, that is the standard working as intended.
+
+**Naming.** Lowercase with hyphens — `chess-reset`, `all-digits?`. This is
+Scheme's `kebab-case`, not C's `snake_case`; each language keeps its own
+convention. Prefix procedures by their module or subject (`chess-`, `krudd-`,
+`kruddgui-`). Suffix boolean predicates with `?` (`chess-square?`, `contains?`)
+and mutating procedures with `!` (`chess-move!`, `scene-outline!`). Wrap mutable
+module-level state in earmuffs (`*chess-turn*`, `*chess-sel*`).

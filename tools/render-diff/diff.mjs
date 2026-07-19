@@ -315,6 +315,28 @@ async function capture(cdp, url, canvasSel, settleMs) {
 				     text: 'page load event never fired (timeout)' });
 		await sleep(settleMs);
 
+		/*
+		 * Hide the shell's overlays before capturing. They are HTML sitting
+		 * over the canvas, not engine output, so clipping to the canvas does
+		 * not exclude them — a screenshot catches whatever is composited
+		 * there.
+		 *
+		 * Both are asymmetric between backends, which is what made them
+		 * poisonous rather than merely noisy: the shell hides the launcher on
+		 * the WebGPU path only, and the WebGPU status log appears on that path
+		 * only. Together they were 42 of the 90 points the parity scene was
+		 * reporting — the diff was measuring chrome, not rendering.
+		 */
+		await evaluate(cdp, sessionId, `
+			(() => {
+				const l = document.getElementById('launcher');
+				if (l) l.classList.add('hidden');
+				const w = document.getElementById('webgpu-log');
+				if (w) w.classList.remove('visible');
+				return true;
+			})()`);
+		await sleep(750);
+
 		/* Clip to the canvas. The page chrome differs by backend on purpose
 		 * (the header badge reads WEBGL vs WEBGPU), so a full-page diff would
 		 * report a failure on every single run. */

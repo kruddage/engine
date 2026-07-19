@@ -3,9 +3,11 @@
 ;;! shader — the krudd shader DSL and its transpiler.
 ;;!
 ;;! A shader asset is a single (shader NAME ...) S-expression carrying BOTH
-;;! stages and a shared IO model (inputs, uniforms, varyings, targets) declared
-;;! once. This is the source of truth; GLSL and WGSL are backend targets the
-;;! renderer lowers to at bind time. The same file is embedded into the runtime
+;;! stages, a shared IO model (inputs, uniforms, varyings, targets) declared
+;;! once, and an optional (functions ...) section of reusable helpers both
+;;! stages can call (see "shader functions" below). This is the source of truth;
+;;! GLSL and WGSL are backend targets the renderer lowers to at bind time. The
+;;! same file is embedded into the runtime
 ;;! image so the web editor transpiles on the fly, and loaded at build time by
 ;;! the Scheme oracle tests — write once, run in both hosts.
 ;;!
@@ -100,7 +102,16 @@
 				      (shader-add-type acc (shader-infer x env)))
 				    (shader-infer (car args) env) (cdr args)))
 	       ((/) (shader-infer (car args) env))
-	       (else (error 'shader-unknown-op op)))))
+	       (else
+		;;! A call to a shader helper: its signature rides in ENV as a
+		;;! (NAME fn RET-TYPE) entry (see shader-fn-sigs), so the call
+		;;! types as the helper's return type. The pair? guard keeps an
+		;;! ordinary (NAME . TYPE) identifier entry from being mistaken
+		;;! for one.
+		(let ((sig (assq op env)))
+		  (if (and sig (pair? (cdr sig)) (eq? (cadr sig) 'fn))
+		      (caddr sig)
+		      (error 'shader-unknown-op op)))))))
 	  (else (error 'shader-bad-expr e))))
 
 ;;! --- expression emit ---
@@ -187,6 +198,9 @@
 			 (string-append acc "\t" (shader-type->glsl ty) " "
 					(symbol->string nm) " = "
 					(shader-emit (cadr b) env) ";\n"))))))
+	  ((return)
+	   (cons (string-append "\treturn " (shader-emit (cadr s) env) ";\n")
+		 env))
 	  (else (error 'shader-bad-statement s))))
 
 (define (shader-emit-stmts stmts env)
@@ -222,6 +236,7 @@
 	   (let ((acc (shader-foldl (lambda (a b) (shader-syms-expr (cadr b) a))
 				    acc (cadr s))))
 	     (shader-foldl (lambda (a st) (shader-syms-stmt st a)) acc (cddr s))))
+	  ((return) (shader-syms-expr (cadr s) acc))
 	  (else acc)))
 
 (define (shader-refs stmts)
@@ -339,9 +354,11 @@
 	       tgts)))
 
 ;;! Identifier→type alist visible inside a stage body: everything declared in
-;;! the shared IO model. Locals are layered on top during emission.
+;;! the shared IO model, plus the helper signatures so a call types as its
+;;! return. Locals are layered on top during emission.
 (define (shader-env form)
 	(append
+	  (shader-fn-sigs form)
 	  (map (lambda (i) (cons (car i) (cadr i))) (shader-section form 'inputs))
 	  (apply append
 		 (map (lambda (b)
@@ -354,6 +371,126 @@
 	       (shader-section form 'varyings))
 	  (map (lambda (tg) (cons (car tg) (cadr tg)))
 	       (shader-section form 'targets))))
+
+;;! --- shader functions (reusable helpers) ---
+;;!
+;;! A (functions ...) section declares helpers both stages can call, so shared
+;;! math (a tonemap curve, a shadow lookup) lives in one place instead of being
+;;! copied into every shader that wants it. Each helper is
+;;!   (NAME ((PARAM TYPE) ...) RET-TYPE BODY-STMT ...)
+;;! with a body of the same set/let*/return statements a stage uses, ending in a
+;;! (return EXPR). A helper sees the shared uniform blocks and samplers as
+;;! globals — exactly as a stage body does — but takes varyings and per-pixel
+;;! values as parameters: it never reads an input, varying, or target directly,
+;;! which is what lets both targets lower it the same way (WGSL has no global
+;;! varyings to reference). Helpers are emitted before the stage entry point and
+;;! only when a reachable call uses them; declare a helper before any other
+;;! helper that calls it, since GLSL and WGSL both need the callee in scope
+;;! first. A helper that samples a texture is fragment-only (the WGSL lowering
+;;! emits fragment-stage textureSample), which covers every shared helper today.
+(define (shader-functions form) (shader-section form 'functions))
+(define (shader-fn-name f)   (car f))
+(define (shader-fn-params f) (cadr f))
+(define (shader-fn-ret f)    (caddr f))
+(define (shader-fn-body f)   (cdddr f))
+
+;;! Helper names as inference entries — (NAME fn RET-TYPE). shader-infer's call
+;;! path reads RET off these (see its else branch), so a call types as the
+;;! helper's declared return.
+(define (shader-fn-sigs form)
+	(map (lambda (f) (list (shader-fn-name f) 'fn (shader-fn-ret f)))
+	     (shader-functions form)))
+
+;;! Helper names (from FNAMES) called anywhere in expression E. The operator of
+;;! a call is E's car, which the plain shader-syms-* walk skips, so calls need
+;;! their own collector.
+(define (shader-fn-calls-expr e fnames acc)
+	(cond ((pair? e)
+	       (let ((acc (if (memq (car e) fnames) (cons (car e) acc) acc)))
+		 (if (eq? (car e) 'swizzle)
+		     (shader-fn-calls-expr (cadr e) fnames acc)
+		     (shader-foldl (lambda (a x) (shader-fn-calls-expr x fnames a))
+				   acc (cdr e)))))
+	      (else acc)))
+
+(define (shader-fn-calls-stmt s fnames acc)
+	(case (car s)
+	  ((set)    (shader-fn-calls-expr (caddr s) fnames acc))
+	  ((return) (shader-fn-calls-expr (cadr s) fnames acc))
+	  ((let*)
+	   (let ((acc (shader-foldl
+			(lambda (a b) (shader-fn-calls-expr (cadr b) fnames a))
+			acc (cadr s))))
+	     (shader-foldl (lambda (a st) (shader-fn-calls-stmt st fnames a))
+			   acc (cddr s))))
+	  (else acc)))
+
+(define (shader-fn-calls-stmts stmts fnames)
+	(shader-foldl (lambda (a s) (shader-fn-calls-stmt s fnames a)) '() stmts))
+
+;;! The helpers STMTS can reach — directly called, plus helpers those call,
+;;! transitively — as a subset of FORM's functions kept in declaration order (so
+;;! a callee declared earlier is emitted before its caller). Shaders don't
+;;! recurse (GLSL/WGSL forbid it), so the fixpoint always terminates.
+(define (shader-reachable-fns form stmts)
+	(let ((fns    (shader-functions form))
+	      (fnames (map shader-fn-name (shader-functions form))))
+	  (let loop ((seen '()) (frontier (shader-fn-calls-stmts stmts fnames)))
+	    (if (null? frontier)
+		(shader-keep (lambda (f) (memq (shader-fn-name f) seen)) fns)
+		(let ((n (car frontier)))
+		  (if (memq n seen)
+		      (loop seen (cdr frontier))
+		      (let* ((f    (assq n fns))
+			     (more (if f (shader-fn-calls-stmts
+					   (shader-fn-body f) fnames) '())))
+			(loop (cons n seen) (append (cdr frontier) more)))))))))
+
+;;! The identifiers a stage effectively references: its own body's, plus every
+;;! reachable helper's, so a uniform block or sampler a helper reads is still
+;;! declared and bound in the stage that calls it. With no (functions ...) this
+;;! is exactly shader-refs, leaving a functionless shader byte-for-byte the same.
+(define (shader-stage-refs form stmts)
+	(shader-foldl (lambda (acc f) (append (shader-refs (shader-fn-body f)) acc))
+		      (shader-refs stmts)
+		      (shader-reachable-fns form stmts)))
+
+;;! Identifier→type alist inside a helper body: its parameters, the shared
+;;! uniform blocks and samplers it may read as globals, and the other helpers'
+;;! signatures. Inputs, varyings, and targets are deliberately absent — a helper
+;;! takes those as parameters, which is what keeps it lowerable identically on a
+;;! backend with no global varyings.
+(define (shader-fn-env form f)
+	(append
+	  (shader-fn-sigs form)
+	  (map (lambda (p) (cons (car p) (cadr p))) (shader-fn-params f))
+	  (apply append
+		 (map (lambda (b)
+			(map (lambda (fld) (cons (car fld) (cadr fld)))
+			     (shader-block-fields b)))
+		      (shader-uniform-blocks form)))
+	  (map (lambda (s) (cons (car s) (cadr s)))
+	       (shader-uniform-samplers form))))
+
+;;! One helper as a GLSL function definition.
+(define (shader-emit-fn form f)
+	(string-append
+	  (shader-type->glsl (shader-fn-ret f)) " "
+	  (symbol->string (shader-fn-name f)) "("
+	  (shader-join ", "
+	    (map (lambda (p) (string-append (shader-type->glsl (cadr p)) " "
+					    (symbol->string (car p))))
+		 (shader-fn-params f)))
+	  ") {\n"
+	  (car (shader-emit-stmts (shader-fn-body f) (shader-fn-env form f)))
+	  "}\n"))
+
+;;! Every helper a stage body reaches, GLSL, in declaration order, ready to sit
+;;! above main(). "" when the shader declares (or reaches) none.
+(define (shader-emit-fns form stmts)
+	(apply string-append
+	  (map (lambda (f) (string-append (shader-emit-fn form f) "\n"))
+	       (shader-reachable-fns form stmts))))
 
 ;;! --- material parameter introspection ---
 ;;!
@@ -472,7 +609,7 @@
 	(let ((body (assq stage (cddr form))))
 	  (and body
 	       (let ((env  (shader-env form))
-		     (refs (shader-refs (cdr body))))
+		     (refs (shader-stage-refs form (cdr body))))
 		 (string-append
 		   "#version 300 es\n"
 		   (if (eq? stage 'fragment)
@@ -487,6 +624,7 @@
 					 stage refs)
 		   (if (eq? stage 'fragment)
 		       (shader-emit-targets (shader-section form 'targets)) "")
+		   (shader-emit-fns form (cdr body))
 		   "void main() {\n"
 		   (car (shader-emit-stmts (cdr body) env))
 		   "}\n")))))
@@ -697,6 +835,10 @@
 			 (cons (cons (car b) ty) tenv)
 			 (string-append acc "\tlet " (symbol->string (car b))
 					" = " rhs ";\n"))))))
+	  ((return)
+	   (cons (string-append "\treturn "
+				(shader-wgsl-emit (cadr s) nm tenv) ";\n")
+		 (cons nm tenv)))
 	  (else (error 'shader-bad-statement s))))
 
 (define (shader-wgsl-emit-stmts stmts nm tenv)
@@ -797,6 +939,50 @@
 		 (shader-section form 'targets)))
 	  "};\n\n"))
 
+;;! name→spelling alist for a helper body: parameters spell as themselves, block
+;;! members and samplers resolve exactly as in a stage (u_Block.field / bare
+;;! sampler var), and the stage marker is fragment — a helper that samples is
+;;! reached from the fragment stage, where textureSample is legal. Inputs,
+;;! varyings, and targets are absent by design (a helper takes them as params).
+(define (shader-wgsl-fn-names form f)
+	(cons (cons '*wgsl-stage* 'fragment)
+	  (append
+	    (map (lambda (p) (cons (car p) (symbol->string (car p))))
+		 (shader-fn-params f))
+	    (apply append
+		   (map (lambda (b)
+			  (let ((var (shader-wgsl-uniform-var (car b))))
+			    (map (lambda (fld)
+				   (cons (car fld)
+					 (string-append var "."
+							(symbol->string (car fld)))))
+				 (shader-block-fields b))))
+			(shader-uniform-blocks form)))
+	    (map (lambda (s) (cons (car s) (symbol->string (car s))))
+		 (shader-uniform-samplers form)))))
+
+;;! One helper as a WGSL function definition.
+(define (shader-wgsl-emit-fn form f)
+	(string-append
+	  "fn " (symbol->string (shader-fn-name f)) "("
+	  (shader-join ", "
+	    (map (lambda (p) (string-append (symbol->string (car p)) " : "
+					    (shader-type->wgsl (cadr p))))
+		 (shader-fn-params f)))
+	  ") -> " (shader-type->wgsl (shader-fn-ret f)) " {\n"
+	  (car (shader-wgsl-emit-stmts (shader-fn-body f)
+				       (shader-wgsl-fn-names form f)
+				       (shader-fn-env form f)))
+	  "}\n"))
+
+;;! Every helper a stage body reaches, WGSL, in declaration order. Sits above
+;;! the entry point and below the uniform/sampler module-scope vars it reads.
+;;! "" when the shader declares (or reaches) none.
+(define (shader-wgsl-emit-fns form stmts)
+	(apply string-append
+	  (map (lambda (f) (string-append (shader-wgsl-emit-fn form f) "\n"))
+	       (shader-reachable-fns form stmts))))
+
 ;;! WGSL for one stage, or #f when the shader declares no such stage — the same
 ;;! "matching stage else error" contract shader->glsl honours.
 (define (shader->wgsl form stage)
@@ -804,11 +990,13 @@
 	  (and body
 	       (let* ((nm       (shader-wgsl-names form stage))
 		      (tenv     (shader-env form))
-		      (refs     (shader-refs (cdr body)))
+		      (refs     (shader-stage-refs form (cdr body)))
+		      (fns      (shader-wgsl-emit-fns form (cdr body)))
 		      (bodytext (car (shader-wgsl-emit-stmts (cdr body) nm tenv))))
 		 (if (eq? stage 'vertex)
 		     (string-append
 		       (shader-wgsl-uniform-structs form refs)
+		       fns
 		       (shader-wgsl-vertex-input form)
 		       "struct VertexOutput {\n"
 		       "\t@builtin(position) position : vec4<f32>,\n"
@@ -825,6 +1013,7 @@
 		       (string-append
 			 (shader-wgsl-uniform-structs form refs)
 			 (shader-wgsl-sampler-bindings form refs)
+			 fns
 			 (if (string=? varyings "")
 			     ""
 			     (string-append "struct FragmentInput {\n"

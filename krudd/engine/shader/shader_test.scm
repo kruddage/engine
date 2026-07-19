@@ -237,6 +237,70 @@
   (check "and its fragment stage still transpiles"
 	 (string? (shader-transpile frag-only "fragment"))))
 
+;;! Byte index of SUB in S, or -1 — for asserting one fragment precedes another
+;;! (a helper must be emitted above the main() that calls it).
+(define (idx s sub)
+	(let ((hl (string-length s)) (nl (string-length sub)))
+	  (let loop ((i 0))
+	    (cond ((> (+ i nl) hl) -1)
+		  ((string=? (substring s i (+ i nl)) sub) i)
+		  (else (loop (+ i 1)))))))
+
+(display "shader: functions (reusable helpers)\n")
+;;! Two helpers that pull their weight — a pure tonemap and a shadow_at that
+;;! samples a depth map only through the helper — plus an `unused` one nothing
+;;! calls. Exercises transitive binding (the sampler is declared because the
+;;! stage reaches the helper that reads it), reach-only emission, and per-stage
+;;! isolation (the vertex reaches nothing, so it is unchanged by the section).
+(define fn-shader "(shader helped
+  (inputs (a_pos vec3 (location 0)) (a_uv0 vec2 (location 1)))
+  (uniforms (Camera (block 0) (layout std140) (view_proj mat4))
+            (shadow_map depth2D))
+  (varyings (v_uv vec2) (v_lightpos vec4))
+  (targets (frag_color vec4 (location 0)))
+  (functions
+    (tonemap ((color vec3)) vec3
+      (let* ((mapped (/ color (+ color (vec3 1.0 1.0 1.0))))
+             (g (pow mapped (vec3 0.4545 0.4545 0.4545))))
+        (return g)))
+    (shadow_at ((lp vec4)) float
+      (let* ((uv (swizzle lp xy))
+             (s (swizzle (sample shadow_map uv) r)))
+        (return s)))
+    (unused ((x float)) float
+      (return (* x 2.0))))
+  (vertex
+    (set v_uv a_uv0)
+    (set position (* view_proj (vec4 a_pos 1.0))))
+  (fragment
+    (let* ((sh (shadow_at v_lightpos))
+           (col (tonemap (vec3 sh sh sh))))
+      (set frag_color (vec4 col 1.0)))))")
+(define hfs (shader-transpile fn-shader "fragment"))
+(define hvs (shader-transpile fn-shader "vertex"))
+(check "a helper lowers to a GLSL function with typed params and return"
+       (has? hfs "vec3 tonemap(vec3 color) {"))
+(check "its let* locals and (return EXPR) lower like a stage body's"
+       (and (has? hfs "vec3 mapped = (color / (color + vec3(1.0, 1.0, 1.0)));")
+	    (has? hfs "return g;")))
+(check "a sampling helper reads the sampler as a global and returns its tap"
+       (and (has? hfs "float shadow_at(vec4 lp) {")
+	    (has? hfs "float s = texture(shadow_map, uv).r;")))
+(check "a call is a plain GLSL call, typed by the helper's return"
+       (and (has? hfs "float sh = shadow_at(v_lightpos);")
+	    (has? hfs "vec3 col = tonemap(vec3(sh, sh, sh));")))
+(check "helpers are emitted above the main() that calls them"
+       (and (>= (idx hfs "vec3 tonemap(vec3 color)") 0)
+	    (< (idx hfs "vec3 tonemap(vec3 color)") (idx hfs "void main"))
+	    (< (idx hfs "float shadow_at(vec4 lp)") (idx hfs "void main"))))
+(check "the stage declares a sampler only its helper reads (transitive refs)"
+       (has? hfs "uniform sampler2D shadow_map;"))
+(check "an unreached helper is not emitted"
+       (not (has? hfs "unused")))
+(check "the vertex reaches no helper, so emits none and no helper-only binding"
+       (and (not (has? hvs "tonemap")) (not (has? hvs "shadow_at"))
+	    (not (has? hvs "shadow_map"))))
+
 (if (= fail-count 0)
     (begin (display "SHADER-TESTS: OK\n") (exit 0))
     (begin (display (string-append "SHADER-TESTS: FAIL ("

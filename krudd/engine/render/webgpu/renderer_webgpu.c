@@ -80,14 +80,21 @@ static uint32_t       g_depth_w, g_depth_h;
 /*
  * Last known backbuffer size, cached at the points that already establish it.
  *
- * This exists because webgpu_platform_backbuffer_size is NOT a getter: on the
- * web it calls emscripten_set_canvas_element_size, which writes canvas.width /
- * canvas.height and so resets the canvas backing store. Calling it mid-frame
- * destroys the surface texture the frame is already drawing into — the same
- * failure #595 fixed in kruddgui_tick, arriving by a different door. So the
- * scissor path reads this cache and never queries the platform itself.
+ * webgpu_platform_backbuffer_size is a plain getter now — it reads the canvas
+ * backing store and no longer writes it — so calling it is no longer destructive
+ * on its own. The cache stays because the scissor path wants the size the
+ * current pass was actually built for, not whatever the canvas has become
+ * mid-frame: kruddgui_tick can resize the backing store between passes, and a
+ * scissor computed against the new size would not match the pass in flight.
  */
 static uint32_t       g_surface_w, g_surface_h;
+
+/*
+ * Rebuild the fallback depth target when the backbuffer changes size. Declared
+ * here because the pass path calls it the moment it acquires a surface texture,
+ * well above the definition.
+ */
+static void ensure_depth_target(uint32_t w, uint32_t h);
 
 /*
  * The triangle authored in the krudd shader DSL — the same source of truth the
@@ -1017,6 +1024,20 @@ static void webgpu_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 					if (!st.texture)
 						return;
 					g_surface_tex  = st.texture;
+					/*
+					 * The acquired texture is the authority on
+					 * the backbuffer's size — it is what every
+					 * other attachment in this pass must match.
+					 * Ask it rather than recomputing from the
+					 * canvas: kruddgui_tick can resize the
+					 * backing store between frames, and at
+					 * devicePixelRatio != 1 a depth target built
+					 * from CSS pixels fails validation against
+					 * this texture's device pixels.
+					 */
+					g_surface_w = wgpuTextureGetWidth(st.texture);
+					g_surface_h = wgpuTextureGetHeight(st.texture);
+					ensure_depth_target(g_surface_w, g_surface_h);
 					g_surface_view =
 						wgpuTextureCreateView(st.texture, NULL);
 				} else {
@@ -1617,16 +1638,12 @@ static void configure_surface(void)
  * runs on this backend the frame graph owns depth as a transient resource and
  * this goes away with the rest of the probe's frame.
  */
-static void create_depth_target(void)
+static void ensure_depth_target(uint32_t w, uint32_t h)
 {
 	struct gpu_texture_desc td;
-	uint32_t w = 0, h = 0;
 
-	webgpu_platform_backbuffer_size(&w, &h);
 	if (w < 1 || h < 1)
 		return;
-	g_surface_w = w;
-	g_surface_h = h;
 	if (g_depth && g_depth_w == w && g_depth_h == h)
 		return;
 
@@ -1635,14 +1652,30 @@ static void create_depth_target(void)
 
 	memset(&td, 0, sizeof(td));
 	td.format       = GPU_FORMAT_DEPTH32_FLOAT;
-	td.width        = (uint32_t)w;
-	td.height       = (uint32_t)h;
+	td.width        = w;
+	td.height       = h;
 	td.mip_levels   = 1;
 	td.sample_count = 1;
 
 	g_depth   = webgpu_api.texture_create(&td);
 	g_depth_w = td.width;
 	g_depth_h = td.height;
+}
+
+/*
+ * Boot-time sizing, before any surface texture has been acquired. From the
+ * first acquire onward the pass path re-sizes against the real backbuffer.
+ */
+static void create_depth_target(void)
+{
+	uint32_t w = 0, h = 0;
+
+	webgpu_platform_backbuffer_size(&w, &h);
+	if (w < 1 || h < 1)
+		return;
+	g_surface_w = w;
+	g_surface_h = h;
+	ensure_depth_target(w, h);
 }
 
 static void create_triangle(void)

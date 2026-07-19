@@ -76,10 +76,11 @@ header {
 
 /*
  * Active-renderer badge. Starts in the muted "unknown" state (a dash) and is
- * filled in once the engine backend reports through kruddSetRenderer — WebGL
- * today, WebGPU when that backend lands. The accent colour makes the active
- * path glanceable: amber for the WebGL shim, green for the native WebGPU path.
- * The tooltip also notes whether WebGPU was detected on load (see below).
+ * filled in once the engine backend reports through kruddSetRenderer. WebGPU is
+ * the default path now; WebGL is the opt-out (?renderer=webgl, or Firefox). The
+ * accent colour makes the active path glanceable: amber for the WebGL shim,
+ * green for the WebGPU path. The tooltip also notes whether WebGPU was detected
+ * on load (see below).
  */
 .renderer {
 	display: inline-flex;
@@ -161,11 +162,10 @@ footer {
 }
 
 /*
- * Scrolling diagnostic log for the WebGPU probe. The kruddgui editor console
- * can't run on the WebGPU path (it draws through the renderer's gpu_api
- * vtable, which the probe doesn't have yet), so this lightweight shell-side
- * panel carries the backend's step-by-step messages with full history — unlike
- * the single-line footer. Hidden until the first line arrives.
+ * Scrolling diagnostic log for WebGPU bring-up, opt-in behind ?webgpulog=1
+ * (see the panel's rationale where it is wired up). A lightweight shell-side
+ * panel that carries the backend's step-by-step messages with full history —
+ * unlike the single-line footer. Hidden until the first line arrives.
  */
 .webgpu-log {
 	position: fixed;
@@ -542,7 +542,7 @@ footer {
 <header>
 	<span class="wordmark">KRUDD</span>
 	<span class="version" id="version" title="click for build info">18.0.0</span>
-	<span class="version-detail" id="version-detail">commit 4517980 &middot; built 2026-07-19</span>
+	<span class="version-detail" id="version-detail">commit 6717c4b &middot; built 2026-07-19</span>
 	<span class="renderer" id="renderer-badge" title="renderer: detecting&hellip;">&mdash;</span>
 	<button class="menu-btn" id="menu-btn" title="back to the menu">&#9776; menu</button>
 </header>
@@ -838,8 +838,8 @@ footer {
 	 * tooltip updates whenever it resolves. Absent navigator.gpu is a plain
 	 * "unavailable", not an error. Skipped on Firefox — it's locked to WebGL
 	 * regardless of what the adapter probe would say, so probing there would
-	 * only make the badge dangle a switch option that hideLauncherForWebGPU
-	 * would never honour. */
+	 * only make the badge dangle a switch option canSwitchTo would never
+	 * offer. */
 	(function detectWebGPU() {
 		if (isFirefox() || !navigator.gpu ||
 		    typeof navigator.gpu.requestAdapter !== 'function') {
@@ -908,13 +908,13 @@ footer {
 var Module = {
 	locateFile: function (path, prefix) {
 		if (path.endsWith('.wasm'))
-			return prefix + path.replace(/\.wasm$/, '.4517980.wasm');
+			return prefix + path.replace(/\.wasm$/, '.6717c4b.wasm');
 		return prefix + path;
 	}
 };
 </script>
 
-<script async type="text/javascript" src="index.4517980.js"></script>
+<script async type="text/javascript" src="index.6717c4b.js"></script>
 
 </body>
 </html>

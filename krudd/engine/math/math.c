@@ -52,6 +52,20 @@ void mat4_mul(struct mat4 *out, const struct mat4 *a, const struct mat4 *b)
 	*out = tmp;
 }
 
+void mat4_clip_z01(struct mat4 *m)
+{
+	int c;
+
+	/*
+	 * Left-multiply by the matrix that maps (x, y, z, w) -> (x, y,
+	 * 0.5z + 0.5w, w): the new z row is 0.5 * z row + 0.5 * w row, every
+	 * other row unchanged. Column-major, so row r of column c is m[c*4 + r];
+	 * row 2 is z, row 3 is w.
+	 */
+	for (c = 0; c < 4; c++)
+		m->m[c*4 + 2] = 0.5f * m->m[c*4 + 2] + 0.5f * m->m[c*4 + 3];
+}
+
 /*
  * mat4_perspective is generated from krudd/engine/math/math.scm by krudd's
  * monolang emitter (into ${generated}/math_gen.c) — it is intentionally not

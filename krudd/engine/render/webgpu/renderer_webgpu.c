@@ -1490,8 +1490,11 @@ static void webgpu_gpu_free(void *ptr)
 /* ---------------------------------------------------------- the vtable */
 
 static const struct gpu_api webgpu_api = {
-	/* Draws yes; compute is not wired up in this slice. */
-	.caps                    = GPU_CAP_DRAW_DIRECT | GPU_CAP_DRAW_INDEXED,
+	/* Draws yes; compute is not wired up in this slice. WebGPU clips depth to
+	 * NDC z in [0, 1], so it advertises the clip-z convention the scene layer
+	 * adapts GL-built projections to. */
+	.caps                    = GPU_CAP_DRAW_DIRECT | GPU_CAP_DRAW_INDEXED
+				 | GPU_CAP_CLIP_Z_ZERO_TO_ONE,
 	.cmd_buf_begin           = webgpu_cmd_buf_begin,
 	.cmd_buf_submit          = webgpu_cmd_buf_submit,
 	.frame_end               = webgpu_frame_end,

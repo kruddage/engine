@@ -17,6 +17,20 @@ static int feq(float a, float b)
 	return d < 1e-4f;
 }
 
+/* out = m * v, column-major (row r of column c is m[c*4 + r]). */
+static void mul4(float out[4], const struct mat4 *m, const float v[4])
+{
+	int r, c;
+
+	for (r = 0; r < 4; r++) {
+		float s = 0.0f;
+
+		for (c = 0; c < 4; c++)
+			s += m->m[c*4 + r] * v[c];
+		out[r] = s;
+	}
+}
+
 static void test_identity(void)
 {
 	struct mat4 m;
@@ -310,12 +324,43 @@ static void test_ray_from_screen(void)
 	assert(d[0] > 0.0f); /* right-of-center pixel leans toward +X */
 }
 
+/*
+ * mat4_clip_z01 turns a GL-convention projection (NDC z in [-1, 1]) into the
+ * [0, 1] convention: the near plane maps to 0 and the far plane to 1, while x,
+ * y, and w are left alone.
+ */
+static void test_clip_z01(void)
+{
+	const float near = 0.1f, far = 100.0f;
+	float pn[4] = { 0.0f, 0.0f, -near, 1.0f };   /* eye-space near-plane point */
+	float pf[4] = { 0.0f, 0.0f, -far,  1.0f };   /* eye-space far-plane point  */
+	float cn[4], cf[4], zn[4], zf[4];
+	struct mat4 p, pz;
+
+	mat4_perspective(&p, PI * 0.5f, 1.0f, near, far);
+	pz = p;
+	mat4_clip_z01(&pz);
+
+	mul4(cn, &p,  pn);   mul4(cf, &p,  pf);   /* GL convention */
+	mul4(zn, &pz, pn);   mul4(zf, &pz, pf);   /* adapted       */
+
+	assert(feq(cn[2] / cn[3], -1.0f));   /* GL: near -> -1 */
+	assert(feq(cf[2] / cf[3],  1.0f));   /* GL: far  -> +1 */
+	assert(feq(zn[2] / zn[3],  0.0f));   /* adapted: near -> 0 */
+	assert(feq(zf[2] / zf[3],  1.0f));   /* adapted: far  -> 1 */
+
+	assert(feq(zn[0], cn[0]));           /* x untouched */
+	assert(feq(zn[1], cn[1]));           /* y untouched */
+	assert(feq(zn[3], cn[3]));           /* w untouched */
+}
+
 int main(void)
 {
 	test_identity();
 	test_mul_identity();
 	test_mul_translate();
 	test_perspective();
+	test_clip_z01();
 	test_look_at();
 	test_from_transform_identity();
 	test_from_transform_rot_z90();

@@ -147,13 +147,20 @@ struct gpu_buffer {
 
 /*
  * Bind groups are immutable, so one is needed per distinct set of bound
- * resources. Eight per pipeline covers the engine's actual pattern — a scene
- * shader rebinds the same few buffers every frame, so the cache hits after the
- * first frame. A pipeline that cycles through more combinations than this
- * evicts and rebuilds, which is correct but wasteful; if that ever shows up,
- * the answer is dynamic offsets rather than a bigger cache.
+ * resources. Since #602 every draw takes its own uniform-ring slot, so each
+ * draw in a frame binds a DISTINCT {buffer, offset} and needs its own bind
+ * group — the old assumption that "a scene rebinds the same few buffers, so the
+ * cache hits after the first frame" no longer holds. A frame now needs as many
+ * cached bind groups as it has draws through a pipeline; an undersized cache
+ * evicts (and releases) one every draw past its size, every frame, for any
+ * scene with more draws-per-pipeline than it holds. Eight covered the tiny boot
+ * and tic-tac-toe scenes but not a real one: chess stages ~100 pieces + board
+ * tiles on the single pbr pipeline. Sized to comfortably cover a full scene so
+ * the common case never evicts (and never releases a bind group a recorded draw
+ * still references). The proper long-term answer is one bind group with a
+ * dynamic offset per draw; this is the interim. See #624.
  */
-#define WGPU_BIND_GROUP_CACHE 8
+#define WGPU_BIND_GROUP_CACHE 256
 
 struct uniform_binding {
 	WGPUBuffer buf;

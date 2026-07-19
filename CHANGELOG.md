@@ -1,5 +1,32 @@
 # Changelog
 
+## [18.1.0](https://github.com/kruddage/engine/compare/v18.0.0...v18.1.0) (2026-07-19)
+
+
+### Features
+
+* **chess:** playable moves, ivory subsurface, and in-game selection outline ([#625](https://github.com/kruddage/engine/issues/625)-[#630](https://github.com/kruddage/engine/issues/630)) ([#632](https://github.com/kruddage/engine/issues/632)) ([9c33f98](https://github.com/kruddage/engine/commit/9c33f98b8f50de8f8cc904a53657735a2c34565d))
+* **games:** add a chess set showcase game mode ([#621](https://github.com/kruddage/engine/issues/621)) ([921ee07](https://github.com/kruddage/engine/commit/921ee07a58310a2cbd299fa59a2af2a1bf31baaf))
+* **render:** add a cheap LDR bloom post chain to the forward path ([#622](https://github.com/kruddage/engine/issues/622)) ([bdcee42](https://github.com/kruddage/engine/commit/bdcee42a40e32ba1b3fd8c1c34ee58c4fb107032))
+* **shader:** add an authored emissive term to the pbr material ([#620](https://github.com/kruddage/engine/issues/620)) ([79f02f8](https://github.com/kruddage/engine/commit/79f02f809b0f53b405f92af909d4003a630ccbee))
+* **shader:** add reusable functions to the DSL ([#616](https://github.com/kruddage/engine/issues/616)) ([fc38cb8](https://github.com/kruddage/engine/commit/fc38cb8576e85edf59872222d6b5427c2ba9f999))
+* **shader:** analytic image-based lighting for the pbr shaders ([#619](https://github.com/kruddage/engine/issues/619)) ([ef4a24e](https://github.com/kruddage/engine/commit/ef4a24e8ac6be8b3431b14b35305efb1d9e40320))
+* **shader:** grade the pbr shaders with the ACES filmic tonemap ([#618](https://github.com/kruddage/engine/issues/618)) ([3d6c2e5](https://github.com/kruddage/engine/commit/3d6c2e557a46337dd4d50142dd460e93b2bb5b4a))
+
+
+### Bug Fixes
+
+* **games:** only run a game's tick while it is the loaded game ([#635](https://github.com/kruddage/engine/issues/635)) ([945a73f](https://github.com/kruddage/engine/commit/945a73f00a7722ca18f5d693cbcdbdabefe82c40))
+* **render:** remap WebGPU clip depth and build its mip chain ([#612](https://github.com/kruddage/engine/issues/612)) ([4517980](https://github.com/kruddage/engine/commit/4517980f8201aa8d05bd83b8384dd4cf1d2e4dc8))
+* **render:** size the WebGPU bind-group cache for full scenes ([#631](https://github.com/kruddage/engine/issues/631)) ([94c42c3](https://github.com/kruddage/engine/commit/94c42c3a22a94077d1ecfca806e3ad50c2560248))
+* **render:** tidy the WebGPU/WebGL port and fix the preview clip depth ([#615](https://github.com/kruddage/engine/issues/615)) ([6717c4b](https://github.com/kruddage/engine/commit/6717c4bf02ba054b9038763789d7b627854322e9))
+* **s7:** drop the string_ref_p_p0 swap that traps on wasm ([#633](https://github.com/kruddage/engine/issues/633)) ([4e7d85b](https://github.com/kruddage/engine/commit/4e7d85b1b80de991a2431bd1d94af6c160caad3b))
+
+
+### Refactoring
+
+* **shader:** share the sun-shadow and tonemap blocks across the built-ins ([#617](https://github.com/kruddage/engine/issues/617)) ([d1f7468](https://github.com/kruddage/engine/commit/d1f7468484ad27a002156f936a1205f9ee01f806))
+
 ## [18.0.0](https://github.com/kruddage/engine/compare/v17.16.0...v18.0.0) (2026-07-19)
 
 

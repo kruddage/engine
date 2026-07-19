@@ -1,5 +1,65 @@
 # Changelog
 
+## [18.0.0](https://github.com/kruddage/engine/compare/v17.16.0...v18.0.0) (2026-07-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* **render:** texture-native-handle and cmd-bind-texture-native become texture-handle and cmd-bind-texture-handle, and the u32 they trade is no longer a GL texture name.
+
+### Features
+
+* make WebGPU the default renderer, opt out with ?renderer=webgl ([#586](https://github.com/kruddage/engine/issues/586)) ([3c4b96c](https://github.com/kruddage/engine/commit/3c4b96c85b37bf86f0bf2a909756e12c92f5b1f1))
+* **render:** add CPU particle system with tic-tac-toe placement effects ([#585](https://github.com/kruddage/engine/issues/585)) ([a7c6e82](https://github.com/kruddage/engine/commit/a7c6e82354273600cbf93889ef67b3d3b7ae079f))
+* **render:** bind uniform buffers through a bind group cache ([#583](https://github.com/kruddage/engine/issues/583)) ([6ce3797](https://github.com/kruddage/engine/commit/6ce379703472008523b23d390d448c385f058c13))
+* **render:** boot the render cluster on WebGPU and clear its validation errors ([#587](https://github.com/kruddage/engine/issues/587)) ([6618070](https://github.com/kruddage/engine/commit/661807084d0bf9a872b73e88fcf82f64df54c8f7))
+* **render:** depth attachments and render-target textures in WebGPU ([#584](https://github.com/kruddage/engine/issues/584)) ([d4323a7](https://github.com/kruddage/engine/commit/d4323a71264344d0654949b6d0bd7de0e15dc908))
+* **render:** draw a WGSL triangle in the WebGPU backend ([#570](https://github.com/kruddage/engine/issues/570)) ([38310b6](https://github.com/kruddage/engine/commit/38310b65c110c24db62dc5778b09e6d343574ad2))
+* **render:** fuchsia-clear WebGPU probe behind ?renderer=webgpu ([#569](https://github.com/kruddage/engine/issues/569)) ([64f6adb](https://github.com/kruddage/engine/commit/64f6adbddd1a42da6e0dcb044ace256c8b897c0e))
+* **render:** give the gpu_api a frame boundary, and put kruddgui on WebGPU ([#599](https://github.com/kruddage/engine/issues/599)) ([4e85801](https://github.com/kruddage/engine/commit/4e85801f4e33c96a90b1cdc3f2f5a9ea1a345301))
+* **render:** implement the gpu_api vtable in the WebGPU backend ([#582](https://github.com/kruddage/engine/issues/582)) ([ffdb93e](https://github.com/kruddage/engine/commit/ffdb93ee024c221a1951226e98fbcf3cfbeff175))
+* **render:** offscreen native harness for the WebGPU backend ([#594](https://github.com/kruddage/engine/issues/594)) ([0708d1f](https://github.com/kruddage/engine/commit/0708d1ff5cf19a05544594d8ef12af4aff5e4b30))
+* **render:** replace the GL-native texture handle with an opaque id ([#597](https://github.com/kruddage/engine/issues/597)) ([f688991](https://github.com/kruddage/engine/commit/f6889917eac62588a291050429addca04e340954))
+* **shader:** add fwidth and an opt-in fragment precision to the krudd DSL ([#596](https://github.com/kruddage/engine/issues/596)) ([7846277](https://github.com/kruddage/engine/commit/78462770580ce73592b493463199087fac52775f))
+* **shader:** lower the shader DSL to WGSL for the WebGPU backend ([#568](https://github.com/kruddage/engine/issues/568)) ([a1a0c5a](https://github.com/kruddage/engine/commit/a1a0c5a376729c898d7c60e41c2bd87d92424222))
+* **shell:** detect WebGPU on load and badge the active renderer in the header ([#565](https://github.com/kruddage/engine/issues/565)) ([a4e7d89](https://github.com/kruddage/engine/commit/a4e7d8911c733a9ee3ff9cf42a33433839fc4f3b))
+* **shell:** show the launcher on WebGPU, and stop shipping the probe log ([#611](https://github.com/kruddage/engine/issues/611)) ([25b8587](https://github.com/kruddage/engine/commit/25b85877f07d2b4c930b6cf6e979f24e071610a6)), closes [#572](https://github.com/kruddage/engine/issues/572)
+
+
+### Bug Fixes
+
+* lock Firefox to WebGL, make the renderer badge clickable to switch ([#589](https://github.com/kruddage/engine/issues/589)) ([d083383](https://github.com/kruddage/engine/commit/d0833839b7a1192a16843b7539f1b11b3bd140a9))
+* **render:** free write-only frame-graph transients each frame ([#588](https://github.com/kruddage/engine/issues/588)) ([bf4397e](https://github.com/kruddage/engine/commit/bf4397eadd0d44545675b40b4567334550df08cd))
+* **render:** give each draw its own uniform slot, not one shared UBO ([#602](https://github.com/kruddage/engine/issues/602)) ([a354690](https://github.com/kruddage/engine/commit/a3546908371ffc519661a0b79e7dbf81c85f69d9))
+* **render:** make the fallback shadow map a depth texture on WebGPU ([#609](https://github.com/kruddage/engine/issues/609)) ([68ddf80](https://github.com/kruddage/engine/commit/68ddf80d8d9b3bd182216d1e125829ffac56e84c)), closes [#578](https://github.com/kruddage/engine/issues/578) [#572](https://github.com/kruddage/engine/issues/572)
+* **render:** map the WebGPU shadow projection into [0,1] clip depth ([#608](https://github.com/kruddage/engine/issues/608)) ([da4c38d](https://github.com/kruddage/engine/commit/da4c38dab7ddfc4299d31917df9b41afff82880a)), closes [#604](https://github.com/kruddage/engine/issues/604) [#606](https://github.com/kruddage/engine/issues/606)
+* **render:** size the WebGPU backbuffer in device pixels, not CSS pixels ([#610](https://github.com/kruddage/engine/issues/610)) ([91154be](https://github.com/kruddage/engine/commit/91154be909f90b1a491f1a33a8127943cc5b3edc)), closes [#572](https://github.com/kruddage/engine/issues/572)
+* **ui:** only resize the canvas when its size actually changed ([#595](https://github.com/kruddage/engine/issues/595)) ([9941584](https://github.com/kruddage/engine/commit/9941584bc491e2659948a0f992ae6aad1a8fa6c2))
+
+
+### Build System
+
+* **render:** compile the WebGPU backend natively behind a platform seam ([#593](https://github.com/kruddage/engine/issues/593)) ([4c34129](https://github.com/kruddage/engine/commit/4c341292212f4ec6471da5a405a571659d26d30d))
+* **tools:** native Dawn build seam + offscreen smoke binary ([#591](https://github.com/kruddage/engine/issues/591)) ([4ac5077](https://github.com/kruddage/engine/commit/4ac507739eb1c9e5b2fad3a04cda98b2ba77dd06))
+
+
+### CI
+
+* add native sanitizer gate and coverage report ([#592](https://github.com/kruddage/engine/issues/592)) ([00c5db7](https://github.com/kruddage/engine/commit/00c5db78da6aa66495e82b6a050ffd66c2854dff))
+* don't let the preview deploy job block auto-merge ([#601](https://github.com/kruddage/engine/issues/601)) ([c343ffc](https://github.com/kruddage/engine/commit/c343ffcc6d6c6b7358f96f06ec9a377211478433))
+
+
+### Tests
+
+* **render-diff:** add the WebGPU-vs-WebGL parity scene ([#598](https://github.com/kruddage/engine/issues/598)) ([6205d9f](https://github.com/kruddage/engine/commit/6205d9f71bd455327b8b01f582b8c428972e5006))
+* **render-diff:** hide the shell's overlays before capturing ([#600](https://github.com/kruddage/engine/issues/600)) ([12a5cb5](https://github.com/kruddage/engine/commit/12a5cb5ede747c088746e4caf2ba2992090d9b44))
+* **render-diff:** make capture deterministic to kill the parity noise floor ([#607](https://github.com/kruddage/engine/issues/607)) ([2f368a6](https://github.com/kruddage/engine/commit/2f368a65fe4610ce302e0d0fe857b8cade89b70f)), closes [#603](https://github.com/kruddage/engine/issues/603)
+
+
+### Chores
+
+* **tools:** add a render-diff harness for the WebGPU port ([#581](https://github.com/kruddage/engine/issues/581)) ([e9ceb80](https://github.com/kruddage/engine/commit/e9ceb806cb303b4dc6bf80e462ae58979451067b))
+
 ## [17.16.0](https://github.com/kruddage/engine/compare/v17.15.0...v17.16.0) (2026-07-18)
 
 

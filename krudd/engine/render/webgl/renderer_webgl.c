@@ -561,6 +561,23 @@ webgl_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 			: NULL;
 	struct gpu_texture *dtex = (struct gpu_texture *)desc->depth;
 
+	/*
+	 * This backend binds only GL_COLOR_ATTACHMENT0. WebGPU loops every color
+	 * attachment, so an MRT pass renders differently on the two — warn once
+	 * rather than dropping the extra targets in silence. No pass uses MRT
+	 * today; the first that does needs the attachment loop implemented here.
+	 */
+	if (desc->color_count > 1) {
+		static int reported;
+
+		if (!reported) {
+			reported = 1;
+			g_log->write(LOG_LEVEL_WARN,
+				     "renderer_webgl: only color attachment 0 "
+				     "is honoured; MRT is WebGPU-only");
+		}
+	}
+
 	if (color0 || dtex) {
 		/*
 		 * Offscreen pass: a color and/or depth attachment is a real
@@ -635,12 +652,20 @@ webgl_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 		clear_mask |= GL_COLOR_BUFFER_BIT;
 	}
 	/*
-	 * Clear the pass's depth. Honour an explicit clear value when the pass
-	 * supplies one, else reset to the far plane (1.0).
+	 * Depth clear, matched to the WebGPU backend so the two agree. A pass
+	 * with no depth texture of its own (dtex == NULL) is a backbuffer pass:
+	 * WebGPU attaches a fallback depth there and always clears it, so clear
+	 * here too. A pass that owns its depth honours depth_load_op — clearing
+	 * only on GPU_LOAD_OP_CLEAR, so a future GPU_LOAD_OP_LOAD pass preserves
+	 * the depth it accumulated instead of getting it wiped (which WebGPU
+	 * would preserve via to_load_op). Every pass today clears, so this only
+	 * changes behaviour once a load-depth pass exists.
 	 */
-	glClearDepthf(desc->depth_load_op == GPU_LOAD_OP_CLEAR
-		      ? desc->clear_depth : 1.0f);
-	clear_mask |= GL_DEPTH_BUFFER_BIT;
+	if (!dtex || desc->depth_load_op == GPU_LOAD_OP_CLEAR) {
+		glClearDepthf(desc->depth_load_op == GPU_LOAD_OP_CLEAR
+			      ? desc->clear_depth : 1.0f);
+		clear_mask |= GL_DEPTH_BUFFER_BIT;
+	}
 	if (clear_mask)
 		glClear(clear_mask);
 #else

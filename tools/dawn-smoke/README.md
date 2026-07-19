@@ -29,7 +29,7 @@ This is not an arbitrary pin. It is the **exact revision that the emsdk
 target with. Ground truth for that claim:
 
 ```
-/data/gage/emsdk/upstream/emscripten/cache/ports/emdawnwebgpu/emdawnwebgpu_pkg/VERSION.txt
+/path/to/emsdk/upstream/emscripten/cache/ports/emdawnwebgpu/emdawnwebgpu_pkg/VERSION.txt
   -> Dawn release v20260423.175430 at revision 31e25af254ab572c77054edec4946d2244e184dd
 ```
 
@@ -43,7 +43,7 @@ Outside the repo, so it persists across worktrees and is never churned by a
 build:
 
 ```sh
-mkdir -p /data/gage/dawn-native && cd /data/gage/dawn-native
+mkdir -p /path/to/dawn-native && cd /path/to/dawn-native
 git init .
 git remote add origin https://github.com/google/dawn.git
 git fetch --depth 1 origin 31e25af254ab572c77054edec4946d2244e184dd
@@ -51,7 +51,7 @@ git checkout FETCH_HEAD
 
 cmake -S . -B out/Release -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_INSTALL_PREFIX=/data/gage/dawn-native/install \
+  -DCMAKE_INSTALL_PREFIX=/path/to/dawn-native/install \
   -DDAWN_FETCH_DEPENDENCIES=ON \
   -DDAWN_ENABLE_VULKAN=ON \
   -DDAWN_ENABLE_DESKTOP_GL=OFF -DDAWN_ENABLE_OPENGLES=OFF -DDAWN_ENABLE_NULL=OFF \
@@ -83,7 +83,7 @@ Notes on the flags that are not obvious:
 ## Building and running the smoke binary
 
 ```sh
-DAWN_PREFIX=/data/gage/dawn-native/install ./tools/dawn-smoke/build.sh
+DAWN_PREFIX=/path/to/dawn-native/install ./tools/dawn-smoke/build.sh
 ./tools/dawn-smoke/out/dawn-smoke out.png
 ```
 
@@ -102,7 +102,7 @@ rounding argument.
 Chunk 2 landed the include half of the seam. With Dawn installed as above:
 
 ```sh
-KRUDD_DAWN_PREFIX=/data/gage/dawn-native/install ./krudd.sh build
+KRUDD_DAWN_PREFIX=/path/to/dawn-native/install ./krudd.sh build
 ```
 
 `renderer_webgpu.c` then compiles for the native target too, against the same
@@ -124,7 +124,7 @@ against native Dawn, run for N frames with no browser and no compositor, colour
 target read back and written to a PNG.
 
 ```
-KRUDD_DAWN_PREFIX=/data/gage/dawn-native/install ./krudd.sh build
+KRUDD_DAWN_PREFIX=/path/to/dawn-native/install ./krudd.sh build
 ```
 
 ```
@@ -156,7 +156,7 @@ linked. Concretely, the changes `ninja.scm` would need:
 environment at generate time the way `KRUDD_ROOT` already is:
 
 ```
-dawnprefix = /data/gage/dawn-native/install
+dawnprefix = /path/to/dawn-native/install
 dawnincludes = -I$dawnprefix/include
 dawnlibs = $dawnprefix/lib/libwebgpu_dawn.a -ldl -lpthread -lm
 ```

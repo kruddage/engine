@@ -116,6 +116,11 @@ void webgpu_platform_announce_renderer(void)
 	webgpu_js_announce_renderer();
 }
 
+void webgpu_platform_teardown(void)
+{
+	/* The web surface's textures belong to the compositor — nothing ours. */
+}
+
 #else /* native */
 
 #include <stdlib.h>
@@ -319,6 +324,16 @@ void webgpu_platform_status(const char *msg)
 
 void webgpu_platform_announce_renderer(void)
 {
+}
+
+void webgpu_platform_teardown(void)
+{
+	if (g_backbuffer) {
+		wgpuTextureRelease(g_backbuffer);
+		g_backbuffer   = NULL;
+		g_backbuffer_w = 0;
+		g_backbuffer_h = 0;
+	}
 }
 
 #endif

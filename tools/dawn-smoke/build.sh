@@ -8,12 +8,17 @@
 # must be buildable without the engine build graph having grown a Dawn edge yet.
 # See tools/dawn-smoke/README.md for how the same flags map onto kruddmake.
 #
-#   DAWN_PREFIX=/data/gage/dawn-native/install ./tools/dawn-smoke/build.sh
+#   DAWN_PREFIX=/path/to/dawn-native/install ./tools/dawn-smoke/build.sh
 set -e
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-DAWN_PREFIX=${DAWN_PREFIX:-/data/gage/dawn-native/install}
+DAWN_PREFIX=${DAWN_PREFIX:-}
 
+if [ -z "$DAWN_PREFIX" ]; then
+	echo "build.sh: set DAWN_PREFIX to your native Dawn install dir" >&2
+	echo "build.sh: see tools/dawn-smoke/README.md for the Dawn build recipe" >&2
+	exit 1
+fi
 if [ ! -f "$DAWN_PREFIX/lib/libwebgpu_dawn.a" ]; then
 	echo "build.sh: no libwebgpu_dawn.a under $DAWN_PREFIX" >&2
 	echo "build.sh: see tools/dawn-smoke/README.md for the Dawn build recipe" >&2

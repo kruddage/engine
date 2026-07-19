@@ -2,28 +2,23 @@
 /*
  * WebGPU renderer backend — the gpu_api vtable.
  *
- * This is the second slice. The first stood up the emdawnwebgpu toolchain and
- * drew a triangle with hand-rolled wgpu calls; this one turns that into a real
- * gpu_api provider registered as the "renderer" subsystem, the same seam the
- * WebGL backend fills. The triangle survives as the test load: it is now built
- * and drawn entirely through the vtable, so it exercises pipeline_create,
- * buffer_create, the render pass, and the draw path end to end. Nothing on
- * screen should change — this slice is a refactor with a visible invariant.
+ * A full gpu_api provider registered as the "renderer" subsystem, the same seam
+ * the WebGL backend fills. It lowers the krudd shader DSL to WGSL through the
+ * runtime and drives Dawn on both targets (see webgpu_platform.h).
  *
- * What is real here: command buffers, buffers, pipelines (through the krudd
- * shader DSL lowered to WGSL), vertex/index binding, backbuffer render passes,
- * and both draw entry points. What is stubbed: textures, uniform buffers,
- * scissor, barriers, and compute. Stubs are loud rather than absent — every
- * vtable entry is non-NULL and logs once on first use, so a caller reaching for
- * an unimplemented entry says so in the console instead of hitting a NULL
- * function pointer. Later slices replace stubs in place.
+ * What is implemented: command buffers, buffers, pipelines, vertex/index
+ * binding, uniform buffers (through a bind-group cache), textures and samplers,
+ * render-target and depth textures, the full mip chain, scissor, and both draw
+ * entry points. What remains a no-op: resource barriers and compute dispatch —
+ * cmd_dispatch and gpu_host_to_device_ptr are deliberately NULL in the vtable,
+ * gated by the absence of GPU_CAP_BINDLESS, so no caller reaches them.
  *
  * Selection lives in engine.c: on the web WebGPU is the default, so the engine
  * registers this backend alone and skips the GL render cluster unless the page
  * opts out with ?renderer=webgl (or is running on Firefox, which opts out
  * unconditionally for now — see kruddWantsWebGPU in shell.html.in). The device
- * handshake is async (adapter -> device callbacks); the tick no-ops until the
- * device is ready.
+ * handshake is async (adapter -> device callbacks); the tick pumps the instance
+ * and the rest of the boot waits on renderer_webgpu_device_ready().
  *
  * This file builds on both the web and native targets, against the same Dawn
  * revision either way. Everything that genuinely differs between them lives
@@ -57,7 +52,6 @@ static WGPUDevice        g_device;
 static WGPUQueue         g_queue;
 static WGPUTextureFormat g_format;
 static int               g_ready;    /* 1 once the device + surface are live */
-static int               g_probe_owns_frame = 1; /* until the cluster boots */
 static WGPUSampler       g_sampler;  /* one linear/repeat sampler for every unit */
 static WGPUSampler       g_depth_sampler; /* non-filtering, for depth textures */
 static uint32_t          g_texture_generation; /* bumped on every destroy */
@@ -77,10 +71,12 @@ static uint32_t            g_pending_destroy_count;
 
 static void flush_pending_destroys(void);
 
-/* The triangle, now owned as ordinary gpu_api resources. */
-static gpu_pipeline_t g_tri_pso;
-static gpu_buffer_t   g_tri_vbuf;
-static gpu_buffer_t   g_tri_ubo;
+/*
+ * The backbuffer's companion depth target. begin_render_pass attaches it to any
+ * color pass that declared no depth of its own (the default-framebuffer-has-
+ * depth emulation the WebGL path gets for free), and it is resized to match the
+ * surface. Not tied to any one pass — it lives for the whole device.
+ */
 static gpu_texture_t  g_depth;
 static uint32_t       g_depth_w, g_depth_h;
 /*
@@ -103,62 +99,6 @@ static uint32_t       g_surface_w, g_surface_h;
 static void ensure_depth_target(uint32_t w, uint32_t h);
 
 /*
- * The triangle authored in the krudd shader DSL — the same source of truth the
- * WebGL path uses, lowered to WGSL through the runtime (shader-transpile-wgsl)
- * so this exercises the real shader pipeline, not a hand-written WGSL string.
- */
-static const char *TRI_SHADER =
-	"(shader tri"
-	"  (inputs (a_pos vec3 (location 0)) (a_col vec3 (location 1)))"
-	"  (uniforms"
-	"    (Camera (block 0) (layout std140)"
-	"      (view_proj mat4)))"
-	"  (varyings (v_col vec3))"
-	"  (targets (frag_color vec4 (location 0)))"
-	"  (vertex (set v_col a_col)"
-	"          (set position (* view_proj (vec4 a_pos 1.0))))"
-	"  (fragment (set frag_color (vec4 v_col 1.0))))";
-
-/*
- * The triangle's Camera block, holding an identity view_proj. Identity is the
- * point: it makes the uniform path testable without changing the picture. If
- * the buffer never reaches the shader the matrix reads as zeros, every vertex
- * collapses to the origin, and the triangle vanishes — so an unchanged image
- * is positive evidence the binding worked, not merely the absence of a change.
- */
-static const float TRI_VIEW_PROJ[16] = {
-	1.0f, 0.0f, 0.0f, 0.0f,
-	0.0f, 1.0f, 0.0f, 0.0f,
-	0.0f, 0.0f, 1.0f, 0.0f,
-	0.0f, 0.0f, 0.0f, 1.0f,
-};
-
-/*
- * Two coincident triangles, interleaved pos.xyz + col.rgb (stride 24 bytes).
- *
- * They occupy exactly the same screen area at different depths, and the far one
- * is drawn second in flat magenta. That makes depth testing observable while
- * keeping the picture unchanged: with depth working the near triangle wins
- * every pixel and the image is identical to before this slice, and if depth
- * silently fails the later draw covers the whole shape in magenta. Total
- * occlusion rather than a partial overlap, so the test has no ambiguous middle
- * ground to squint at.
- */
-#define TRI_NEAR_Z 0.2f
-#define TRI_FAR_Z  0.8f
-
-static const float TRI_VERTS[] = {
-	/* near — the original colours */
-	 0.0f,  0.6f, TRI_NEAR_Z,   1.0f, 0.25f, 0.35f,
-	-0.6f, -0.5f, TRI_NEAR_Z,   0.25f, 1.0f, 0.4f,
-	 0.6f, -0.5f, TRI_NEAR_Z,   0.3f, 0.45f, 1.0f,
-	/* far — flat magenta, drawn second, must lose every pixel */
-	 0.0f,  0.6f, TRI_FAR_Z,    1.0f, 0.0f, 1.0f,
-	-0.6f, -0.5f, TRI_FAR_Z,    1.0f, 0.0f, 1.0f,
-	 0.6f, -0.5f, TRI_FAR_Z,    1.0f, 0.0f, 1.0f,
-};
-
-/*
  * Progress reporting and the renderer badge are host-specific — the shell's DOM
  * log panel on the web, stderr natively. Both live behind webgpu_platform.h;
  * these shorthands keep the call sites below reading the way they did.
@@ -177,18 +117,17 @@ static WGPUStringView str_view(const char *s)
 }
 
 /*
- * Report an unimplemented vtable entry once per entry. A later slice fills
- * these in; until then a caller that reaches one gets a line in the console
- * naming what is missing, rather than silence or a crash.
+ * Warn once, keyed by call site — a one-shot diagnostic for an unsupported
+ * request (a texture format the mip blit can't handle, say) so the console
+ * names it once instead of a line every frame.
  */
-#define STUB_ONCE(name)                                                        \
+#define WARN_ONCE(msg)                                                          \
 	do {                                                                   \
 		static int reported;                                           \
 		if (!reported) {                                               \
 			reported = 1;                                          \
 			g_log->write(LOG_LEVEL_WARN,                           \
-				     "renderer_webgpu: " name                  \
-				     " not implemented yet");                  \
+				     "renderer_webgpu: " msg);                 \
 		}                                                              \
 	} while (0)
 
@@ -781,8 +720,7 @@ static WGPUBindGroup resolve_texture_group(struct gpu_pipeline *p,
 
 /*
  * Called before every draw. A pipeline that requires no uniforms skips the
- * whole path, which is what keeps a bind-group-less pipeline (the probe before
- * this slice) working unchanged.
+ * whole path, so a bind-group-less pipeline works unchanged.
  */
 static int apply_bindings(struct gpu_cmd_buf_state *c)
 {
@@ -1019,8 +957,8 @@ static void webgpu_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 		/*
 		 * A NULL texture handle means the backbuffer — the convention
 		 * fg_import_backbuffer establishes and the WebGL backend already
-		 * follows. Offscreen targets arrive with texture_create, which
-		 * lands in a later slice, so today every pass is a surface pass.
+		 * follows. A non-NULL handle is an offscreen target from
+		 * texture_create and takes the else branch below (its own view).
 		 */
 		if (desc->color_count == 0 || !a->texture) {
 			if (!g_surface_view) {
@@ -1646,7 +1584,7 @@ static gpu_texture_t webgpu_texture_create(const struct gpu_texture_desc *desc)
 			 * only sampled/color-target format today; a caller
 			 * asking for mips on anything else needs that pipeline
 			 * generalized first. */
-			STUB_ONCE("generate_mips only supports RGBA8_UNORM textures");
+			WARN_ONCE("generate_mips only supports RGBA8_UNORM textures");
 		}
 	}
 
@@ -1781,9 +1719,9 @@ static void webgpu_gpu_free(void *ptr)
 /* ---------------------------------------------------------- the vtable */
 
 static const struct gpu_api webgpu_api = {
-	/* Draws yes; compute is not wired up in this slice. WebGPU clips depth to
-	 * NDC z in [0, 1], so it advertises the clip-z convention the scene layer
-	 * adapts GL-built projections to. */
+	/* Draws yes; compute is not wired up in this backend. WebGPU clips depth
+	 * to NDC z in [0, 1], so it advertises the clip-z convention the scene
+	 * layer adapts GL-built projections to. */
 	.caps                    = GPU_CAP_DRAW_DIRECT | GPU_CAP_DRAW_INDEXED
 				 | GPU_CAP_CLIP_Z_ZERO_TO_ONE,
 	.cmd_buf_begin           = webgpu_cmd_buf_begin,
@@ -1804,7 +1742,7 @@ static const struct gpu_api webgpu_api = {
 	.cmd_draw_indexed        = webgpu_cmd_draw_indexed,
 	.cmd_draw                = webgpu_cmd_draw,
 	.cmd_set_scissor         = webgpu_cmd_set_scissor,
-	.cmd_dispatch            = NULL, /* no compute in this slice */
+	.cmd_dispatch            = NULL, /* no compute in this backend */
 	.gpu_malloc              = webgpu_gpu_malloc,
 	.gpu_free                = webgpu_gpu_free,
 	.gpu_host_to_device_ptr  = NULL, /* bindless only */
@@ -1898,15 +1836,9 @@ static void configure_surface(void)
 }
 
 /*
- * Build the triangle through the vtable rather than with bespoke wgpu calls.
- * That is the point of this slice: the same picture as before, but every step
- * — shader lowering, pipeline creation, buffer upload — now goes through the
- * gpu_api entry points the rest of the engine will use.
- */
-/*
- * The probe's own depth target, sized to the surface. Once the scene renderer
- * runs on this backend the frame graph owns depth as a transient resource and
- * this goes away with the rest of the probe's frame.
+ * (Re)build the backbuffer's companion depth target at the given size. The pass
+ * path calls this the moment it acquires a surface texture, so g_depth always
+ * matches the current backbuffer for the fallback attachment in begin_render_pass.
  */
 static void ensure_depth_target(uint32_t w, uint32_t h)
 {
@@ -1948,57 +1880,6 @@ static void create_depth_target(void)
 	ensure_depth_target(w, h);
 }
 
-static void create_triangle(void)
-{
-	struct gpu_pipeline_desc pd;
-	struct gpu_buffer_desc bd;
-
-	memset(&pd, 0, sizeof(pd));
-	pd.color_formats[0]     = (g_format == WGPUTextureFormat_BGRA8Unorm)
-					  ? GPU_FORMAT_BGRA8_UNORM
-					  : GPU_FORMAT_RGBA8_UNORM;
-	pd.color_format_count   = 1;
-	pd.topology             = GPU_TOPOLOGY_TRIANGLE_LIST;
-	pd.sample_count         = 1;
-	pd.depth_format         = GPU_FORMAT_DEPTH32_FLOAT;
-
-	pd.vertex_layout.attr_count   = 2;
-	pd.vertex_layout.stride       = 24;
-	pd.vertex_layout.attrs[0].location = 0;
-	pd.vertex_layout.attrs[0].offset   = 0;
-	pd.vertex_layout.attrs[0].format   = GPU_FORMAT_RGB32_FLOAT;
-	pd.vertex_layout.attrs[1].location = 1;
-	pd.vertex_layout.attrs[1].offset   = 12;
-	pd.vertex_layout.attrs[1].format   = GPU_FORMAT_RGB32_FLOAT;
-
-	pd.vert.src     = TRI_SHADER;
-	pd.vert.stage   = GPU_SHADER_STAGE_VERTEX;
-	pd.vert.dialect = GPU_SHADER_DIALECT_KRUDD;
-	pd.frag.src     = TRI_SHADER;
-	pd.frag.stage   = GPU_SHADER_STAGE_FRAGMENT;
-	pd.frag.dialect = GPU_SHADER_DIALECT_KRUDD;
-
-	g_tri_pso = webgpu_api.pipeline_create(&pd);
-
-	memset(&bd, 0, sizeof(bd));
-	bd.size         = sizeof(TRI_VERTS);
-	bd.usage        = GPU_BUFFER_USAGE_VERTEX;
-	bd.initial_data = TRI_VERTS;
-	g_tri_vbuf = webgpu_api.buffer_create(&bd);
-
-	memset(&bd, 0, sizeof(bd));
-	bd.size         = sizeof(TRI_VIEW_PROJ);
-	bd.usage        = GPU_BUFFER_USAGE_UNIFORM;
-	bd.initial_data = TRI_VIEW_PROJ;
-	g_tri_ubo = webgpu_api.buffer_create(&bd);
-
-	create_depth_target();
-
-	webgpu_status((g_tri_pso && g_tri_vbuf && g_tri_ubo && g_depth)
-		      ? "webgpu: triangle pipeline ready"
-		      : "webgpu: triangle pipeline FAILED");
-}
-
 static void on_device(WGPURequestDeviceStatus status, WGPUDevice device,
 		      WGPUStringView message, void *ud1, void *ud2)
 {
@@ -2015,8 +1896,7 @@ static void on_device(WGPURequestDeviceStatus status, WGPUDevice device,
 	g_queue  = wgpuDeviceGetQueue(device);
 	configure_surface();
 
-	/* The vtable is only usable from here on, so mark ready before building
-	 * the triangle — create_triangle goes through the api like any caller. */
+	/* The device is live: create the samplers every pipeline binds. */
 	{
 		WGPUSamplerDescriptor sd;
 
@@ -2046,10 +1926,10 @@ static void on_device(WGPURequestDeviceStatus status, WGPUDevice device,
 	}
 
 	g_ready = 1;
-	create_triangle();
+	create_depth_target();
 
 	webgpu_announce_renderer();
-	webgpu_status("webgpu: device ready — drawing triangle");
+	webgpu_status("webgpu: device ready");
 	g_log->write(LOG_LEVEL_INFO, "renderer_webgpu: device ready");
 }
 
@@ -2102,75 +1982,66 @@ static void renderer_webgpu_init(void)
 }
 
 /*
- * Draw the triangle through the vtable. Once the render cluster runs on this
- * backend the scene renderer owns the frame and this tick goes away; until
- * then it is the only caller, and it deliberately uses nothing the rest of the
- * engine will not.
+ * Pump the instance so the async adapter/device futures resolve. Before the
+ * device lands the backend is the only registered subsystem and this is the one
+ * thing that has to run each frame; once the render cluster boots the scene
+ * renderer owns the frame and this keeps pumping harmlessly beside it.
+ * AllowSpontaneous callbacks should fire on their own, but processing events
+ * each frame covers backends that need the nudge.
  */
 static void renderer_webgpu_tick(void)
 {
-	gpu_cmd_buf_t cmd;
-	struct gpu_render_pass_desc rp;
-
-	/*
-	 * Pump the instance so the adapter/device futures resolve. AllowSpontaneous
-	 * callbacks should fire on their own, but processing events each frame is
-	 * harmless and covers backends that need the nudge — and it must run before
-	 * the not-ready early-out, or the device would never arrive.
-	 */
 	if (g_instance)
 		wgpuInstanceProcessEvents(g_instance);
-
-	if (!g_ready || !g_probe_owns_frame)
-		return;
-
-	cmd = webgpu_api.cmd_buf_begin();
-	if (!cmd)
-		return;
-
-	memset(&rp, 0, sizeof(rp));
-	rp.color_count       = 1;
-	rp.color[0].texture  = NULL; /* the backbuffer */
-	rp.color[0].load_op  = GPU_LOAD_OP_CLEAR;
-	rp.color[0].store_op = GPU_STORE_OP_STORE;
-	rp.color[0].clear[0] = 0.04f;
-	rp.color[0].clear[1] = 0.04f;
-	rp.color[0].clear[2] = 0.07f;
-	rp.color[0].clear[3] = 1.0f;
-	rp.depth             = g_depth;
-	rp.depth_load_op     = GPU_LOAD_OP_CLEAR;
-	rp.depth_store_op    = GPU_STORE_OP_STORE;
-	rp.clear_depth       = 1.0f;
-
-	webgpu_api.cmd_begin_render_pass(cmd, &rp);
-	if (g_tri_pso && g_tri_vbuf && g_tri_ubo) {
-		webgpu_api.cmd_set_pipeline(cmd, g_tri_pso);
-		webgpu_api.cmd_bind_vertex_buffer(cmd, 0, g_tri_vbuf, 0);
-		webgpu_api.cmd_bind_uniform_buffer(cmd, 0, g_tri_ubo, 0,
-						   sizeof(TRI_VIEW_PROJ));
-		/* Both triangles in one draw: the far one is behind and must be
-		 * rejected, which is the depth test's proof of life. */
-		webgpu_api.cmd_draw(cmd, 6, 1, 0, 0);
-	}
-	webgpu_api.cmd_end_render_pass(cmd);
-	webgpu_api.cmd_buf_submit(cmd);
 }
 
 static void renderer_webgpu_shutdown(void)
 {
+	/*
+	 * texture_destroy defers onto g_pending_destroy (a frame's commands may
+	 * still name the texture); at shutdown no further submit flushes that
+	 * queue, so drain it by hand or the texture and its view leak.
+	 */
 	if (g_depth)
 		webgpu_api.texture_destroy(g_depth);
 	g_depth = NULL;
-	if (g_tri_ubo)
-		webgpu_api.buffer_destroy(g_tri_ubo);
-	if (g_tri_vbuf)
-		webgpu_api.buffer_destroy(g_tri_vbuf);
-	if (g_tri_pso)
-		webgpu_api.pipeline_destroy(g_tri_pso);
-	g_tri_ubo  = NULL;
-	g_tri_vbuf = NULL;
-	g_tri_pso  = NULL;
-	g_ready    = 0;
+	flush_pending_destroys();
+	texreg_reset();
+
+	if (g_mip_vbo)
+		wgpuBufferRelease(g_mip_vbo);
+	if (g_mip_pso)
+		wgpuRenderPipelineRelease(g_mip_pso);
+	if (g_sampler)
+		wgpuSamplerRelease(g_sampler);
+	if (g_depth_sampler)
+		wgpuSamplerRelease(g_depth_sampler);
+	g_mip_vbo       = NULL;
+	g_mip_pso       = NULL;
+	g_sampler       = NULL;
+	g_depth_sampler = NULL;
+
+	/* The platform owns the offscreen backbuffer (native only); it must go
+	 * before the device that created it. */
+	webgpu_platform_teardown();
+
+	if (g_queue)
+		wgpuQueueRelease(g_queue);
+	if (g_device)
+		wgpuDeviceRelease(g_device);
+	if (g_adapter)
+		wgpuAdapterRelease(g_adapter);
+	if (g_surface)
+		wgpuSurfaceRelease(g_surface);
+	if (g_instance)
+		wgpuInstanceRelease(g_instance);
+	g_queue    = NULL;
+	g_device   = NULL;
+	g_adapter  = NULL;
+	g_surface  = NULL;
+	g_instance = NULL;
+
+	g_ready = 0;
 	g_log->write(LOG_LEVEL_INFO, "renderer_webgpu: shutdown");
 }
 
@@ -2190,17 +2061,13 @@ void renderer_webgpu_plugin_entry(struct subsystem_manager *mgr)
 }
 
 /*
- * Hand the frame to the render cluster. Until the device lands the backend is
- * the only registered subsystem, so its tick clears the backbuffer and draws
- * the probe triangle — that is the whole picture at that point. Once the
- * cluster boots, the frame graph owns the backbuffer, and a probe still
- * clearing every frame would simply paint over the scene (a black canvas, which
- * reads exactly like "nothing rendered"). So engine.c calls this as it finishes
- * the deferred boot, and the probe goes quiet for good.
+ * The render cluster is about to own the backbuffer. engine.c calls this as it
+ * finishes the deferred boot, just before it registers the frame graph and
+ * scene renderer; it is the boot milestone that marks the backend handing the
+ * frame off from bring-up to the real render path.
  */
 void renderer_webgpu_release_frame(void)
 {
-	g_probe_owns_frame = 0;
 	webgpu_status("webgpu: render cluster live");
 }
 

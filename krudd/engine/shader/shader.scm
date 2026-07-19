@@ -546,8 +546,13 @@
 ;;! struct (`in.`/`out.`) for that stage, samplers stay bare (they name a
 ;;! module-scope texture var). let* locals are consed on the front during emit.
 (define (shader-wgsl-names form stage)
-	(append
-	  (apply append
+	;;! The emitter needs to know its stage at a `sample` (WGSL restricts the
+	;;! implicit-derivative textureSample to the fragment stage), so carry it
+	;;! in the name alist under a key no DSL identifier can spell.
+	(cons
+	  (cons '*wgsl-stage* stage)
+	  (append
+	    (apply append
 		 (map (lambda (b)
 			(let ((var (shader-wgsl-uniform-var (car b))))
 			  (map (lambda (f)
@@ -576,7 +581,7 @@
 		(map (lambda (tg)
 		       (cons (car tg)
 			     (string-append "out." (symbol->string (car tg)))))
-		     (shader-section form 'targets))))))
+		     (shader-section form 'targets)))))))
 
 ;;! Emit a WGSL expression under NM (name spelling alist) and TENV (name->type,
 ;;! for the mat-truncation special case). Mirrors shader-emit's shape; the
@@ -638,11 +643,16 @@
 		(let* ((tex (shader-wgsl-emit (car args) nm tenv))
 		       (depth (shader-depth-sampler-type?
 				(shader-infer (car args) tenv)))
+		       (in-vertex (let ((p (assq '*wgsl-stage* nm)))
+				    (and p (eq? (cdr p) 'vertex))))
 		       (rest (map (lambda (a) (shader-wgsl-emit a nm tenv))
 				  (cdr args)))
-		       (call (string-append "textureSample(" tex ", "
-					    tex "_sampler, "
-					    (shader-join ", " rest) ")")))
+		       (coords (shader-join ", " rest))
+		       (call (if in-vertex
+				 (string-append "textureSampleLevel(" tex ", "
+						tex "_sampler, " coords ", 0.0)")
+				 (string-append "textureSample(" tex ", "
+						tex "_sampler, " coords ")"))))
 		  (if depth
 		      (string-append "vec4<f32>(" call ")")
 		      call)))

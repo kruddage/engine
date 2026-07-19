@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#include "renderer.h"
 #include "renderer_null.h"
+#include "renderer.h"
 #include "log_api.h"
 #include "subsystem.h"
 #include "subsystem_manager.h"

@@ -70,4 +70,12 @@ void webgpu_platform_status(const char *msg);
 /* Tell the host WebGPU went live (the shell's renderer badge; a no-op natively). */
 void webgpu_platform_announce_renderer(void);
 
+/*
+ * Release any persistent resources this seam owns. Natively that is the
+ * offscreen backbuffer texture (created lazily in webgpu_platform_backbuffer_view);
+ * on the web there is nothing to free — the surface's textures belong to the
+ * compositor. Called from renderer_webgpu_shutdown before the device is released.
+ */
+void webgpu_platform_teardown(void);
+
 #endif /* KRUDD_WEBGPU_PLATFORM_H */

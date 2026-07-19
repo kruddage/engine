@@ -1653,7 +1653,21 @@ static uint32_t scene_preview_render_mesh(uint32_t mesh_ref,
 	mt.scale[0] = mt.scale[1] = mt.scale[2] = 1.0f;
 	mat4_from_transform(&model, &mt);
 
-	memcpy(&ubo[0],  cam.view_proj.m, 16 * sizeof(float));
+	/*
+	 * Adapt the clip-space depth range the same way every live draw path
+	 * does (forward_pass, mask_pass, draw_particles, the shadow write): a
+	 * backend with NDC z in [0, 1] needs mat4_clip_z01, or the near half of
+	 * the frustum lands at z < 0 and gets clipped away. camera_clip_vp reads
+	 * the global camera, so the preview — which frames its own local camera —
+	 * does the same adaptation here by hand.
+	 */
+	{
+		struct mat4 preview_vp = cam.view_proj;
+
+		if (gpu->caps & GPU_CAP_CLIP_Z_ZERO_TO_ONE)
+			mat4_clip_z01(&preview_vp);
+		memcpy(&ubo[0], preview_vp.m, 16 * sizeof(float));
+	}
 	memcpy(&ubo[16], model.m,         16 * sizeof(float));
 	ubo[SCENE_UBO_CAMPOS + 0] = cam.eye[0];
 	ubo[SCENE_UBO_CAMPOS + 1] = cam.eye[1];

@@ -23,6 +23,11 @@
 ;;!     the same krudd-stats / krudd-startup / krudd-subsystems accessors. Its
 ;;!     ImGui draw path (draw_tab_krudd and the Scene tab's Perf roll-up) is gone.
 ;;!
+;;! One panel is not editor chrome and draws every tick regardless: the perf
+;;! HUD, a small top-right FPS readout with a frame-time graph underneath it so
+;;! a hitch is visible in a game's own play view (chess, tic-tac-toe, ...), not
+;;! only in the editor. See kruddgui-perf-hud-draw below.
+;;!
 ;;! Each panel is bracketed by (kgui-panel-begin name x y w h) / (kgui-panel-end):
 ;;! the named region captures any gesture whose down lands inside it, so taps
 ;;! route to the right panel and a finger on one never disturbs the other or the
@@ -2807,6 +2812,117 @@
 	 (h     (max kruddgui-console-min-h
 		     (min (* vh kruddgui-console-max-vh-frac) avail))))
     (kruddgui-assets-draw-into m m w h)))
+
+;;! ------------------------------------------------------------------
+;;! Perf HUD — a tiny always-on FPS + frame-time strip
+;;! ------------------------------------------------------------------
+;;!
+;;! Every panel above is editor chrome: kruddgui.cpp skips (kruddgui-draw)
+;;! entirely in a game's clean play view, so a game of chess or tic-tac-toe
+;;! drew no kruddgui pixels at all. This one is the exception — kruddgui.cpp
+;;! calls (kruddgui-perf-hud-draw) every tick unconditionally, chrome on or
+;;! off, so a hitch is visible whether you are editing a scene or actually
+;;! playing the game. It reads the same krudd-stats accessor as the board
+;;! console's FRAME STATS section for the headline number, and keeps its own
+;;! small ring buffer of recent per-frame ms for the graph underneath — the
+;;! accessor only ever reports the latest frame, and a single number can't
+;;! show a hitch the way a strip of recent frame times can.
+(define kruddgui-perf-hist-n 90)	; ~1.5s of history at 60fps
+(define kruddgui-perf-hist (make-vector kruddgui-perf-hist-n 0.0))
+(define kruddgui-perf-hist-i 0)	; ring buffer's next write slot
+
+(define kruddgui-perf-w 150)
+(define kruddgui-perf-graph-h 34)
+(define kruddgui-perf-pad 8)
+(define kruddgui-perf-header-h 18)
+(define (kruddgui-perf-h)
+  (+ kruddgui-perf-header-h kruddgui-perf-graph-h (* 2 kruddgui-perf-pad)))
+
+(define kruddgui-perf-bg    '(0.04 0.05 0.06 0.72))
+(define kruddgui-perf-track '(0.0  0.0  0.0  0.35))
+(define kruddgui-perf-rule  '(1.0  1.0  1.0  0.18))
+(define kruddgui-perf-fg    '(0.86 0.88 0.92 1.0))
+(define kruddgui-perf-good  '(0.30 0.85 0.40 1.0))
+(define kruddgui-perf-warn  '(0.95 0.75 0.20 1.0))
+(define kruddgui-perf-bad   '(0.92 0.30 0.28 1.0))
+
+;;! Frame budgets in ms for 60fps and 30fps — the two thresholds a sample's
+;;! colour is judged against, and the graph's vertical ceiling (2x the 30fps
+;;! budget, so one very long hitch doesn't flatten the rest of the strip).
+(define kruddgui-perf-budget-60 16.7)
+(define kruddgui-perf-budget-30 33.3)
+(define kruddgui-perf-ceiling (* 2.0 kruddgui-perf-budget-30))
+
+;;! (kruddgui-perf-color ms) green under the 60fps budget, amber up to the
+;;! 30fps budget, red past it — a hitch reads as a red bar at a glance.
+(define (kruddgui-perf-color ms)
+  (cond ((<= ms kruddgui-perf-budget-60) kruddgui-perf-good)
+	((<= ms kruddgui-perf-budget-30) kruddgui-perf-warn)
+	(else                            kruddgui-perf-bad)))
+
+;;! (kruddgui-perf-push! ms) record one frame's ms into the ring buffer,
+;;! overwriting the oldest sample.
+(define (kruddgui-perf-push! ms)
+  (vector-set! kruddgui-perf-hist kruddgui-perf-hist-i ms)
+  (set! kruddgui-perf-hist-i
+	(modulo (+ kruddgui-perf-hist-i 1) kruddgui-perf-hist-n)))
+
+;;! (kruddgui-perf-draw-graph x y w h) the frame-time history as a bar strip
+;;! in the (x y w h) box, oldest sample at the left and newest at the right —
+;;! the ring buffer's next write slot is the oldest — each bar's height
+;;! proportional to its frame ms (clamped to the ceiling) and coloured by
+;;! budget, over a dim track with a rule at the 60fps budget line.
+(define (kruddgui-perf-draw-graph x y w h)
+  (let* ((n      kruddgui-perf-hist-n)
+	 (bw     (/ w n))
+	 (rule-h (* h (/ kruddgui-perf-budget-60 kruddgui-perf-ceiling)))
+	 (rule-y (+ y (- h rule-h))))
+    (kruddgui-rect* (list x y w h) kruddgui-perf-track)
+    (kruddgui-rect* (list x rule-y w 1) kruddgui-perf-rule)
+    (let loop ((i 0))
+      (when (< i n)
+	(let* ((slot (modulo (+ kruddgui-perf-hist-i i) n))
+	       (ms   (min (vector-ref kruddgui-perf-hist slot)
+			  kruddgui-perf-ceiling))
+	       (bh   (max 1.0 (* h (/ ms kruddgui-perf-ceiling))))
+	       (bx   (+ x (* i bw))))
+	  (kruddgui-rect* (list bx (+ y (- h bh)) (max 1.0 (- bw 1)) bh)
+			  (kruddgui-perf-color ms))
+	  (loop (+ i 1)))))))
+
+;;! (kruddgui-perf-hud-draw) the host's per-tick entry point, called every
+;;! frame regardless of editor chrome. Docked top-right, inset by the safe
+;;! area and dropped below the toolbar's band so it never overlaps the
+;;! top-centre undo/redo/play chips when chrome is on; an already-open board
+;;! or assets console may still cover it, same tradeoff the toolbar itself
+;;! makes against those consoles. A no-op when the stats subsystem is absent.
+(define (kruddgui-perf-hud-draw)
+  (let ((s (krudd-stats)))
+    (when s
+      (kruddgui-perf-push! (cadr s))
+      (let* ((vp    (kgui-viewport-size))
+	     (vw    (car vp))
+	     (vh    (cadr vp)))
+	(when (and (> vw 0) (> vh 0))
+	  (let* ((ins   (kruddgui-insets))
+		 (top   (car ins))
+		 (right (cadr ins))
+		 (w     kruddgui-perf-w)
+		 (h     (kruddgui-perf-h))
+		 (x     (- vw right kruddgui-margin w))
+		 (y     (+ top kruddgui-margin kruddgui-tool-h kruddgui-gap))
+		 (fps   (car s)))
+	    (kgui-panel-begin "kgui-perf" x y w h)
+	    (kruddgui-rect* (list x y w h) kruddgui-perf-bg)
+	    (kgui-text (+ x kruddgui-perf-pad) (+ y kruddgui-perf-pad)
+		       (format #f "~,1F fps" fps)
+		       (car kruddgui-perf-fg) (cadr kruddgui-perf-fg)
+		       (caddr kruddgui-perf-fg) (cadddr kruddgui-perf-fg))
+	    (kruddgui-perf-draw-graph
+	     (+ x kruddgui-perf-pad)
+	     (+ y kruddgui-perf-header-h kruddgui-perf-pad)
+	     (- w (* 2 kruddgui-perf-pad)) kruddgui-perf-graph-h)
+	    (kgui-panel-end)))))))
 
 ;;! (kruddgui-draw) the whole layer — the host's per-tick entry point, laid out
 ;;! through the dock shell. Off a safe frame it reserves the top toolbar band

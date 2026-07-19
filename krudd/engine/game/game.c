@@ -23,6 +23,14 @@ static struct {
 
 static int g_count;
 
+/*
+ * Index the last game_load call landed on, -1 before any load. Every
+ * registered game's subsystem ticks each frame regardless of which one the
+ * launcher loaded (subsystem_manager has no notion of "paused"), so this is
+ * what game_active_index() hands back for a tick to gate on.
+ */
+static int g_active = -1;
+
 #ifdef __EMSCRIPTEN__
 /* Editor-chrome toggle (plugin_abi.c, main module): reset per game load. */
 void krudd_set_editor_chrome(int on);
@@ -52,16 +60,20 @@ EM_JS(void, game_launcher_hide, (void), {
 })
 #endif
 
-void game_register(const char *name, void (*load)(void))
+int game_register(const char *name, void (*load)(void))
 {
+	int index;
+
 	if (g_count >= GAME_MAX || !name || !load)
-		return;
-	g_games[g_count].name = name;
-	g_games[g_count].load = load;
+		return -1;
+	index = g_count;
+	g_games[index].name = name;
+	g_games[index].load = load;
 #ifdef __EMSCRIPTEN__
-	game_launcher_add(name, g_count);
+	game_launcher_add(name, index);
 #endif
 	g_count++;
+	return index;
 }
 
 int game_count(void)
@@ -71,8 +83,15 @@ int game_count(void)
 
 void game_load(int index)
 {
-	if (index >= 0 && index < g_count && g_games[index].load)
+	if (index >= 0 && index < g_count && g_games[index].load) {
+		g_active = index;
 		g_games[index].load();
+	}
+}
+
+int game_active_index(void)
+{
+	return g_active;
 }
 
 #ifdef __EMSCRIPTEN__

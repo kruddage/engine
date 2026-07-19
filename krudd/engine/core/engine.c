@@ -5,6 +5,7 @@
 #include "log.h"
 #include "memory.h"
 #include "memory_api.h"
+#include "renderer.h"
 #include "script.h"
 #include "stats_api.h"
 #include "version.h"
@@ -336,6 +337,27 @@ void engine_tick(void)
 	if (frame_count % 60 == 0)
 		LOG_DEBUG("engine: frame %d", frame_count);
 	subsystem_manager_tick(&manager);
+
+	/*
+	 * Close the frame. Every subsystem that draws has now ticked and
+	 * submitted, which is the only point at which that is true — a frame is
+	 * several command buffers (the frame graph, kruddgui's overlay, an open
+	 * preview panel), so no submit is the end of anything. A backend holding
+	 * a per-frame resource gives it back here; see frame-end in renderer.scm
+	 * for why the WebGPU backend cannot do it any earlier.
+	 *
+	 * Looked up rather than cached because the renderer registers at
+	 * different points on the two paths — WebGPU before the plugin boot, GL
+	 * during it — and a tick can land before either.
+	 */
+	{
+		const struct gpu_api *gpu =
+			(const struct gpu_api *)subsystem_manager_get_api(
+				&manager, "renderer");
+
+		if (gpu && gpu->frame_end)
+			gpu->frame_end();
+	}
 #ifdef __EMSCRIPTEN__
 	/* The first tick has now rendered a frame: arm the launcher (see
 	 * krudd_signal_ready). Runs after the render so a click that follows

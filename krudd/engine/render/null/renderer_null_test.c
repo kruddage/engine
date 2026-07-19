@@ -45,6 +45,7 @@ static void test_vtable_fully_populated(void)
 	assert(gpu != NULL);
 	assert(gpu->cmd_buf_begin != NULL);
 	assert(gpu->cmd_buf_submit != NULL);
+	assert(gpu->frame_end != NULL);
 	assert(gpu->pipeline_create != NULL);
 	assert(gpu->pipeline_destroy != NULL);
 	assert(gpu->cmd_set_pipeline != NULL);

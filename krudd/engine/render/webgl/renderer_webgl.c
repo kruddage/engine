@@ -767,6 +767,16 @@ webgl_texture_create(const struct gpu_texture_desc *desc)
 	GLuint tex_id;
 #endif
 
+	/*
+	 * desc->sample_count is ignored: this backend does not advertise
+	 * GPU_CAP_MSAA_RESOLVE, so the scene renderer keeps its single-sample
+	 * path here and never asks for a multisampled target or a resolve. WebGL 2
+	 * MSAA is a different mechanism (multisampled renderbuffers +
+	 * glBlitFramebuffer to resolve, not a per-attachment resolve target), so
+	 * reaching parity means a renderbuffer path here and a blit in
+	 * end_render_pass — tracked as a follow-up. Until then WebGL renders
+	 * single-sample, the documented difference from WebGPU.
+	 */
 	t = g_mem->alloc(sizeof(*t));
 	if (!t)
 		return NULL;

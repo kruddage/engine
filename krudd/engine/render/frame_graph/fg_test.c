@@ -576,6 +576,99 @@ static void test_write_only_transient(void)
 	teardown();
 }
 
+/* -------------------------------------------------------------------------
+ * Test: MSAA resolve target
+ *
+ * Mirrors scene_renderer's MSAA path: a forward pass writes a multisampled
+ * color + depth and resolves the color into a single-sample target; the
+ * composite reads the RESOLVED texture, not the multisampled one. The graph
+ * must (a) emit the resolve target as color[0].resolve_target on the forward
+ * pass's render pass — not as a second color attachment — and (b) allocate and
+ * free the resolve transient like any other produced resource, ordering the
+ * reader after the pass that resolves it.
+ * -------------------------------------------------------------------------
+ */
+static void test_resolve_target(void)
+{
+	const struct gpu_call_record *log;
+	fg_resource_t color, depth, resolve, bb;
+	fg_resource_t fwrites[2];
+	fg_pass_t fwd, comp;
+	uint32_t count, i;
+	int creates = 0, destroys = 0;
+	int fwd_has_resolve = 0, fwd_color_count = -1;
+	int saw_draw = 0;
+	fg_tex_desc cdesc = {
+		.format = GPU_FORMAT_RGBA8_UNORM,
+		.width = 16, .height = 16,
+		.mip_levels = 1, .sample_count = 4,
+	};
+	fg_tex_desc ddesc = cdesc;
+	fg_tex_desc rdesc = cdesc;
+
+	ddesc.format = GPU_FORMAT_DEPTH32_FLOAT;
+	rdesc.sample_count = 1;
+
+	setup();
+
+	color   = fg_declare_transient(g_fg, "scene_color", cdesc);   /* MS */
+	depth   = fg_declare_transient(g_fg, "scene_depth", ddesc);   /* MS */
+	resolve = fg_declare_transient(g_fg, "scene_resolve", rdesc); /* 1x */
+	bb      = fg_import_backbuffer(g_fg);
+
+	fwrites[0] = color;
+	fwrites[1] = depth;
+	fwd  = fg_pass_declare(g_fg, "forward", NULL, 0, fwrites, 2);
+	fg_pass_set_resolve(fwd, 0, resolve);
+	comp = fg_pass_declare(g_fg, "composite", &resolve, 1, &bb, 1);
+
+	fg_pass_set_execute(fwd, pass_a_cb, NULL);
+	fg_pass_set_execute(comp, pass_b_cb, NULL);
+
+	fg_compile(g_fg);
+	renderer_null_reset_log();
+	fg_execute(g_fg);
+
+	log = renderer_null_get_log(&count);
+	for (i = 0; i < count; i++) {
+		switch (log[i].type) {
+		case GPU_CALL_TEXTURE_CREATE:
+			creates++;
+			break;
+		case GPU_CALL_TEXTURE_DESTROY:
+			destroys++;
+			break;
+		case GPU_CALL_CMD_BEGIN_RENDER_PASS:
+			/* The forward pass is the one carrying a resolve; the
+			 * composite writes the backbuffer with no resolve. */
+			if (log[i].args.cmd_begin_render_pass.color0_resolve) {
+				fwd_has_resolve = 1;
+				fwd_color_count =
+					(int)log[i].args.cmd_begin_render_pass.color_count;
+			}
+			break;
+		case GPU_CALL_CMD_DRAW_INDEXED:
+			/* index_count 2 is the composite reading the resolve. */
+			if (log[i].args.cmd_draw_indexed.index_count == 2)
+				saw_draw = 1;
+			break;
+		default:
+			break;
+		}
+	}
+
+	/* The resolve rode on color[0] — not as an extra color attachment. */
+	assert(fwd_has_resolve);
+	assert(fwd_color_count == 1);
+	/* The composite ran, so the reader was scheduled after the resolve. */
+	assert(saw_draw);
+	/* MS color + MS depth + resolve, all allocated and all freed. */
+	assert(creates == 3);
+	assert(destroys == creates);
+
+	teardown();
+}
+
 int main(void)
 {
 	RUN(topological_ordering);
@@ -586,6 +679,7 @@ int main(void)
 	RUN(backbuffer_import);
 	RUN(depth_only_pass);
 	RUN(write_only_transient);
+	RUN(resolve_target);
 
 	printf("%d/%d tests passed\n", tests_passed, tests_run);
 	return tests_passed == tests_run ? 0 : 1;

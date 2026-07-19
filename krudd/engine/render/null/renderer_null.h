@@ -44,7 +44,11 @@ struct gpu_call_record {
 			int      has_vert_src; /* 1 if desc->vert.src != NULL */
 			int      has_frag_src; /* 1 if desc->frag.src != NULL */
 		} pipeline_create;
-		struct { uint32_t color_count;        } cmd_begin_render_pass;
+		struct {
+			uint32_t color_count;
+			/* 1 if color[0] carried a resolve target (MSAA resolve). */
+			int      color0_resolve;
+		} cmd_begin_render_pass;
 		struct { uint32_t count;              } cmd_barrier;
 		struct {
 			uint32_t index_count;

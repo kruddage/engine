@@ -82,6 +82,27 @@ static const struct asset_api   *g_asset;
 
 /* Persistent resources, created once against the device (never per-frame). */
 static gpu_pipeline_t g_default_pso;  /* the built-in scene pipeline; fallback */
+/*
+ * The multisampled twin of g_default_pso, used by the forward pass when it
+ * renders into the multisampled offscreen scene target (the bloom/outline
+ * paths on a backend that advertises GPU_CAP_MSAA_RESOLVE). When MSAA is off
+ * it aliases g_default_pso, so nothing is compiled or destroyed twice.
+ */
+static gpu_pipeline_t g_default_pso_ms;
+/*
+ * Sample count for the scene's multisampled colour/depth targets and the
+ * geometry pipelines that draw into them: 4 when the device can resolve MSAA,
+ * else 1 (every target single-sample, no resolve — the pre-MSAA behaviour).
+ * Fixed at init from the renderer caps.
+ */
+static uint32_t       g_msaa_samples = 1;
+/*
+ * Set for the duration of a forward pass that targets the multisampled
+ * offscreen colour, so forward_pass selects the multisampled pipeline variant.
+ * Cleared for the direct-to-backbuffer fallback (a single-sample target), which
+ * must keep using the single-sample pipelines.
+ */
+static int            g_forward_msaa;
 static gpu_buffer_t   g_ubo_ring;      /* Camera ring: one slot per draw */
 static gpu_buffer_t   g_material_ring; /* Material ring: one slot per draw */
 static uint32_t       g_ring_cursor;   /* bump allocator, shared by both rings */
@@ -395,6 +416,12 @@ static const char *BLOOM_COMPOSITE_SHADER_SRC =
 struct shader_pso {
 	uint32_t       shader_ref;
 	gpu_pipeline_t pso;   /* 0 = the shader failed to compile; use default */
+	/*
+	 * The multisampled variant, drawn by the forward pass into the
+	 * multisampled offscreen target. Aliases pso when MSAA is off (never
+	 * compiled or destroyed twice).
+	 */
+	gpu_pipeline_t pso_ms;
 	uint32_t       mat_block_size; /* std140 bytes of the shader's Material block */
 };
 
@@ -936,7 +963,8 @@ static int material_texture(uint32_t material_ref, uint32_t shader_ref,
  * actually target.
  */
 static gpu_pipeline_t create_pso(const struct gpu_api *gpu, const char *src,
-				 uint32_t color_count, int want_depth)
+				 uint32_t color_count, int want_depth,
+				 uint32_t sample_count)
 {
 	struct gpu_pipeline_desc pd;
 
@@ -946,6 +974,13 @@ static gpu_pipeline_t create_pso(const struct gpu_api *gpu, const char *src,
 	pd.depth_format       = want_depth ? GPU_FORMAT_DEPTH32_FLOAT
 					   : GPU_FORMAT_UNKNOWN;
 	pd.topology           = GPU_TOPOLOGY_TRIANGLE_LIST;
+	/*
+	 * A pipeline's sample count must match the pass it runs in. The scene
+	 * geometry pipelines have a multisampled variant (sample_count > 1) for
+	 * the offscreen MSAA target; the shadow (single-sample depth map) and
+	 * mask (single-sample) pipelines pass 1.
+	 */
+	pd.sample_count       = sample_count ? sample_count : 1;
 
 	/* mesh_vertex: position(vec3) @0, normal(vec3) @12, uv0(vec2) @24. */
 	pd.vertex_layout.attr_count = 3;
@@ -985,7 +1020,14 @@ static void build_pipeline(const struct gpu_api *gpu)
 			     "scene_renderer: scene shader asset unavailable");
 		return;
 	}
-	g_default_pso = create_pso(gpu, src, 1, 1);
+	g_default_pso = create_pso(gpu, src, 1, 1, 1);
+	/*
+	 * The multisampled twin for the offscreen forward pass. With MSAA off it
+	 * is the same pipeline, so there is nothing extra to compile or free.
+	 */
+	g_default_pso_ms = g_msaa_samples > 1
+				 ? create_pso(gpu, src, 1, 1, g_msaa_samples)
+				 : g_default_pso;
 	/*
 	 * Cache the built-in pipeline under the scene-textured shader's id so a
 	 * material that names it (the default) reuses this pipeline instead of
@@ -995,6 +1037,7 @@ static void build_pipeline(const struct gpu_api *gpu)
 	    g_shader_pso_count < SCENE_MAX_SHADER_PSOS) {
 		g_shader_psos[g_shader_pso_count].shader_ref = scene_id;
 		g_shader_psos[g_shader_pso_count].pso        = g_default_pso;
+		g_shader_psos[g_shader_pso_count].pso_ms     = g_default_pso_ms;
 		g_shader_psos[g_shader_pso_count].mat_block_size =
 			shader_material_block_size(src);
 		g_shader_pso_count++;
@@ -1047,7 +1090,8 @@ static void build_outline_resources(const struct gpu_api *gpu)
 	static const uint16_t FS_IDX[3] = { 0, 1, 2 };
 	struct gpu_buffer_desc bd;
 
-	g_mask_pso    = create_pso(gpu, MASK_SHADER_SRC, 1, 0);
+	/* The mask renders into the single-sample sel_mask target, so 1 sample. */
+	g_mask_pso    = create_pso(gpu, MASK_SHADER_SRC, 1, 0, 1);
 	g_outline_pso = create_fullscreen_pso(gpu, OUTLINE_SHADER_SRC);
 	if (!g_mask_pso || !g_outline_pso)
 		g_log->write(LOG_LEVEL_WARN,
@@ -1110,7 +1154,8 @@ static void build_shadow_resources(const struct gpu_api *gpu)
 	struct gpu_render_pass_desc rp;
 	gpu_cmd_buf_t               cmd;
 
-	g_shadow_pso = create_pso(gpu, SHADOW_SHADER_SRC, 0, 1);
+	/* The shadow map is a single-sample depth target, so 1 sample. */
+	g_shadow_pso = create_pso(gpu, SHADOW_SHADER_SRC, 0, 1, 1);
 	if (!g_shadow_pso)
 		g_log->write(LOG_LEVEL_WARN,
 			     "scene_renderer: shadow pipeline unavailable; "
@@ -1170,6 +1215,7 @@ static void add_shader_pso(const struct gpu_api *gpu, uint32_t shader_ref)
 {
 	const char    *src;
 	gpu_pipeline_t pso;
+	gpu_pipeline_t pso_ms;
 
 	if (g_shader_pso_count >= SCENE_MAX_SHADER_PSOS) {
 		g_log->write(LOG_LEVEL_WARN,
@@ -1178,14 +1224,23 @@ static void add_shader_pso(const struct gpu_api *gpu, uint32_t shader_ref)
 		return;
 	}
 	src = (const char *)g_asset->get_data(shader_ref, NULL);
-	pso = src ? create_pso(gpu, src, 1, 1) : 0;
+	pso = src ? create_pso(gpu, src, 1, 1, 1) : 0;
 	if (!pso)
 		g_log->write(LOG_LEVEL_WARN,
 			     "scene_renderer: shader %u failed to compile; "
 			     "using the default", shader_ref);
+	/*
+	 * The multisampled variant, for when this material is drawn in the
+	 * offscreen forward pass. With MSAA off (or a failed compile) it aliases
+	 * pso, so there is nothing extra to build or free.
+	 */
+	pso_ms = (pso && g_msaa_samples > 1)
+			 ? create_pso(gpu, src, 1, 1, g_msaa_samples)
+			 : pso;
 
 	g_shader_psos[g_shader_pso_count].shader_ref = shader_ref;
 	g_shader_psos[g_shader_pso_count].pso        = pso;
+	g_shader_psos[g_shader_pso_count].pso_ms     = pso_ms;
 	g_shader_psos[g_shader_pso_count].mat_block_size =
 		shader_material_block_size(src);
 	g_shader_pso_count++;
@@ -1202,6 +1257,23 @@ static gpu_pipeline_t pso_for_shader(uint32_t shader_ref)
 			return e->pso;
 	}
 	return g_default_pso;
+}
+
+/*
+ * The multisampled twin of pso_for_shader, for the forward pass when it targets
+ * the multisampled offscreen scene colour. Falls back to the multisampled
+ * default, which itself aliases the single-sample default when MSAA is off.
+ */
+static gpu_pipeline_t pso_for_shader_ms(uint32_t shader_ref)
+{
+	struct shader_pso *e;
+
+	if (shader_ref) {
+		e = find_shader_pso(shader_ref);
+		if (e && e->pso_ms)
+			return e->pso_ms;
+	}
+	return g_default_pso_ms;
 }
 
 /*
@@ -2106,6 +2178,15 @@ static void scene_renderer_init(void)
 		return;
 	}
 
+	/*
+	 * 4x MSAA on a backend that can resolve a multisampled colour target to a
+	 * single-sample texture in-pass (WebGPU); otherwise single-sample, the
+	 * pre-MSAA path. Fixed here so every pipeline and offscreen target built
+	 * below agrees on the sample count. See build_pipeline / the tick's
+	 * offscreen paths.
+	 */
+	g_msaa_samples = (gpu->caps & GPU_CAP_MSAA_RESOLVE) ? 4u : 1u;
+
 	build_pipeline(gpu);
 	/* Cosmetic particle system: its pipeline and buffers are created here,
 	 * off-frame like every other persistent resource, and the burst primitive
@@ -2369,7 +2450,8 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 		 * have_pso flag forces the first bind even when the backend's
 		 * pipeline handle is 0 (a valid value for the recording backend).
 		 */
-		pso = pso_for_shader(shader_ref);
+		pso = g_forward_msaa ? pso_for_shader_ms(shader_ref)
+				     : pso_for_shader(shader_ref);
 		if (!have_pso || pso != cur_pso) {
 			gpu->cmd_set_pipeline(cmd, pso);
 			cur_pso  = pso;
@@ -2896,6 +2978,8 @@ static void scene_renderer_tick(void)
 				}
 				g_fg_api->pass_set_color_clear(pass, 0, CLEAR);
 				g_fg_api->pass_set_depth_clear(pass, 1.0f);
+				/* Direct to the single-sample backbuffer: no MSAA. */
+				g_forward_msaa = 0;
 				g_fg_api->pass_set_execute(pass, forward_pass, NULL);
 				g_fg_api->compile(fg);
 				g_fg_api->execute(fg);
@@ -2904,8 +2988,10 @@ static void scene_renderer_tick(void)
 			uint32_t      vw = (uint32_t)g_view_w, vh = (uint32_t)g_view_h;
 			uint32_t      hw = vw > 1 ? vw / 2 : 1;
 			uint32_t      hh = vh > 1 ? vh / 2 : 1;
-			fg_tex_desc   cdesc, ddesc, hdesc;
-			fg_resource_t scene_color, scene_depth, ba, bb2, bc;
+			uint32_t      samples = g_msaa_samples;
+			fg_tex_desc   cdesc, ddesc, hdesc, scdesc, sddesc;
+			fg_resource_t scene_color, scene_depth, scene_resolve, post;
+			fg_resource_t ba, bb2, bc;
 			fg_resource_t fwrites[2], freads[1], xr[1], hr[1], vr[1],
 				      cr[2];
 			uint32_t      frn = 0;
@@ -2922,16 +3008,35 @@ static void scene_renderer_tick(void)
 			hdesc              = cdesc;
 			hdesc.width        = hw;
 			hdesc.height       = hh;
+			/*
+			 * The scene colour + depth the forward pass renders into are
+			 * multisampled; the half-res bloom targets and the resolve
+			 * target stay single-sample (cdesc). The post passes sample
+			 * the resolved colour, not the multisampled one — a multisample
+			 * texture is not directly sampleable — so `post` is the resolve
+			 * when MSAA is on and the scene colour itself when it is off.
+			 */
+			scdesc              = cdesc;
+			scdesc.sample_count = samples;
+			sddesc              = ddesc;
+			sddesc.sample_count = samples;
 
 			scene_color = g_fg_api->declare_transient(fg, "scene_color",
-								  cdesc);
+								  scdesc);
 			scene_depth = g_fg_api->declare_transient(fg, "scene_depth",
-								  ddesc);
+								  sddesc);
 			ba  = g_fg_api->declare_transient(fg, "bloom_a", hdesc);
 			bb2 = g_fg_api->declare_transient(fg, "bloom_b", hdesc);
 			bc  = g_fg_api->declare_transient(fg, "bloom_c", hdesc);
+			scene_resolve = 0;
+			post          = scene_color;
+			if (samples > 1) {
+				scene_resolve = g_fg_api->declare_transient(
+					fg, "scene_resolve", cdesc);
+				post = scene_resolve;
+			}
 
-			g_bloom_frame.scene_color = scene_color;
+			g_bloom_frame.scene_color = post;
 			g_bloom_frame.bloom_a     = ba;
 			g_bloom_frame.bloom_b     = bb2;
 			g_bloom_frame.bloom_c     = bc;
@@ -2944,7 +3049,9 @@ static void scene_renderer_tick(void)
 			fpass = g_fg_api->pass_declare(fg, "forward",
 						       frn ? freads : NULL, frn,
 						       fwrites, 2);
-			xr[0] = scene_color;
+			if (fpass && samples > 1)
+				g_fg_api->pass_set_resolve(fpass, 0, scene_resolve);
+			xr[0] = post;
 			xpass = g_fg_api->pass_declare(fg, "bloom_extract", xr, 1,
 						       &ba, 1);
 			hr[0] = ba;
@@ -2953,7 +3060,7 @@ static void scene_renderer_tick(void)
 			vr[0] = bb2;
 			vpass = g_fg_api->pass_declare(fg, "bloom_blur_v", vr, 1,
 						       &bc, 1);
-			cr[0] = scene_color;
+			cr[0] = post;
 			cr[1] = bc;
 			cpass = g_fg_api->pass_declare(fg, "bloom_composite", cr, 2,
 						       &bb, 1);
@@ -2967,6 +3074,7 @@ static void scene_renderer_tick(void)
 				}
 				g_fg_api->pass_set_color_clear(fpass, 0, CLEAR);
 				g_fg_api->pass_set_depth_clear(fpass, 1.0f);
+				g_forward_msaa = samples > 1;
 				g_fg_api->pass_set_execute(fpass, forward_pass, NULL);
 				g_fg_api->pass_set_execute(xpass, bloom_extract_pass,
 							   NULL);
@@ -2995,8 +3103,9 @@ static void scene_renderer_tick(void)
 		int           bloom = g_bloom_extract_pso && g_bloom_blur_pso &&
 				      g_bloom_composite_pso;
 		uint32_t      vw = (uint32_t)g_view_w, vh = (uint32_t)g_view_h;
-		fg_tex_desc   cdesc, ddesc;
-		fg_resource_t scene_color, scene_depth, mask;
+		uint32_t      samples = g_msaa_samples;
+		fg_tex_desc   cdesc, ddesc, scdesc, sddesc;
+		fg_resource_t scene_color, scene_depth, scene_resolve, post, mask;
 		fg_resource_t fwrites[2], creads[2], freads[1];
 		uint32_t      frn = 0;
 		fg_pass_t     fpass, mpass, cpass;
@@ -3009,10 +3118,28 @@ static void scene_renderer_tick(void)
 		cdesc.sample_count = 1;
 		ddesc              = cdesc;
 		ddesc.format       = GPU_FORMAT_DEPTH32_FLOAT;
+		/*
+		 * Scene colour + depth are multisampled; the mask, the bloom
+		 * half-res targets and outline_lit stay single-sample (cdesc). The
+		 * post passes (bloom, outline composite) sample the resolved colour
+		 * `post`, which is the resolve target when MSAA is on and the scene
+		 * colour itself when it is off.
+		 */
+		scdesc              = cdesc;
+		scdesc.sample_count = samples;
+		sddesc              = ddesc;
+		sddesc.sample_count = samples;
 
-		scene_color = g_fg_api->declare_transient(fg, "scene_color", cdesc);
-		scene_depth = g_fg_api->declare_transient(fg, "scene_depth", ddesc);
+		scene_color = g_fg_api->declare_transient(fg, "scene_color", scdesc);
+		scene_depth = g_fg_api->declare_transient(fg, "scene_depth", sddesc);
 		mask        = g_fg_api->declare_transient(fg, "sel_mask", cdesc);
+		scene_resolve = 0;
+		post          = scene_color;
+		if (samples > 1) {
+			scene_resolve = g_fg_api->declare_transient(
+				fg, "scene_resolve", cdesc);
+			post = scene_resolve;
+		}
 
 		g_outline_frame.mask = mask;
 
@@ -3021,6 +3148,8 @@ static void scene_renderer_tick(void)
 		if (spass) { freads[0] = shadow; frn = 1; }
 		fpass = g_fg_api->pass_declare(fg, "forward", frn ? freads : NULL,
 					       frn, fwrites, 2);
+		if (fpass && samples > 1)
+			g_fg_api->pass_set_resolve(fpass, 0, scene_resolve);
 		mpass = g_fg_api->pass_declare(fg, "sel_mask", NULL, 0, &mask, 1);
 
 		if (bloom) {
@@ -3038,7 +3167,7 @@ static void scene_renderer_tick(void)
 			bc  = g_fg_api->declare_transient(fg, "bloom_c", hdesc);
 			lit = g_fg_api->declare_transient(fg, "outline_lit", cdesc);
 
-			g_bloom_frame.scene_color = scene_color;
+			g_bloom_frame.scene_color = post;
 			g_bloom_frame.bloom_a     = ba;
 			g_bloom_frame.bloom_b     = bb2;
 			g_bloom_frame.bloom_c     = bc;
@@ -3046,7 +3175,7 @@ static void scene_renderer_tick(void)
 			g_bloom_frame.half_h      = hh;
 			g_outline_frame.scene_color = lit;
 
-			xr[0] = scene_color;
+			xr[0] = post;
 			xpass = g_fg_api->pass_declare(fg, "bloom_extract", xr, 1,
 						       &ba, 1);
 			hr[0] = ba;
@@ -3055,7 +3184,7 @@ static void scene_renderer_tick(void)
 			vr[0] = bb2;
 			vpass = g_fg_api->pass_declare(fg, "bloom_blur_v", vr, 1,
 						       &bc, 1);
-			lr[0] = scene_color;
+			lr[0] = post;
 			lr[1] = bc;
 			lpass = g_fg_api->pass_declare(fg, "bloom_composite", lr, 2,
 						       &lit, 1);
@@ -3072,6 +3201,7 @@ static void scene_renderer_tick(void)
 				}
 				g_fg_api->pass_set_color_clear(fpass, 0, CLEAR);
 				g_fg_api->pass_set_depth_clear(fpass, 1.0f);
+				g_forward_msaa = samples > 1;
 				g_fg_api->pass_set_execute(fpass, forward_pass, NULL);
 				g_fg_api->pass_set_color_clear(mpass, 0, MASK_CLEAR);
 				g_fg_api->pass_set_execute(mpass, mask_pass, NULL);
@@ -3089,8 +3219,8 @@ static void scene_renderer_tick(void)
 				g_fg_api->execute(fg);
 			}
 		} else {
-			g_outline_frame.scene_color = scene_color;
-			creads[0] = scene_color;
+			g_outline_frame.scene_color = post;
+			creads[0] = post;
 			creads[1] = mask;
 			cpass = g_fg_api->pass_declare(fg, "outline", creads, 2,
 						       &bb, 1);
@@ -3103,6 +3233,7 @@ static void scene_renderer_tick(void)
 				}
 				g_fg_api->pass_set_color_clear(fpass, 0, CLEAR);
 				g_fg_api->pass_set_depth_clear(fpass, 1.0f);
+				g_forward_msaa = samples > 1;
 				g_fg_api->pass_set_execute(fpass, forward_pass, NULL);
 				g_fg_api->pass_set_color_clear(mpass, 0, MASK_CLEAR);
 				g_fg_api->pass_set_execute(mpass, mask_pass, NULL);
@@ -3164,16 +3295,26 @@ static void scene_renderer_shutdown(void)
 		/*
 		 * The default pipeline is also cached (under the scene shader's
 		 * id), so destroy the distinct cache entries first, then it once.
+		 * Each slot's multisampled twin is destroyed only when it is a
+		 * distinct pipeline (it aliases pso, or the cached default's twin,
+		 * when MSAA is off or the compile failed), so nothing is freed twice.
 		 */
 		for (i = 0; i < g_shader_pso_count; i++) {
+			if (g_shader_psos[i].pso_ms &&
+			    g_shader_psos[i].pso_ms != g_shader_psos[i].pso &&
+			    g_shader_psos[i].pso_ms != g_default_pso_ms)
+				gpu->pipeline_destroy(g_shader_psos[i].pso_ms);
 			if (g_shader_psos[i].pso &&
 			    g_shader_psos[i].pso != g_default_pso)
 				gpu->pipeline_destroy(g_shader_psos[i].pso);
 		}
+		if (g_default_pso_ms && g_default_pso_ms != g_default_pso)
+			gpu->pipeline_destroy(g_default_pso_ms);
 		if (g_default_pso)
 			gpu->pipeline_destroy(g_default_pso);
 	}
 	g_default_pso      = 0;
+	g_default_pso_ms   = 0;
 	g_mask_pso         = 0;
 	g_outline_pso      = 0;
 	g_shadow_pso       = 0;

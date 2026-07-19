@@ -103,6 +103,8 @@ static void null_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 		.args = {
 			.cmd_begin_render_pass = {
 				.color_count = desc->color_count,
+				.color0_resolve = desc->color_count > 0 &&
+					desc->color[0].resolve_target != NULL,
 			},
 		},
 	});
@@ -287,6 +289,17 @@ static void *null_gpu_host_to_device_ptr(void *host_ptr)
 	return host_ptr;
 }
 
+/*
+ * Distinct non-NULL handles from a static pool, so callers can tell one target
+ * from another and a real backend's "non-NULL means a live texture" contract
+ * holds under test — the frame graph, for one, emits a color attachment's
+ * resolve_target as this handle, and a NULL would be indistinguishable from
+ * "no resolve". The pool wraps: the graph frees each transient at its last use,
+ * so only a handful are ever live at once, and destroy is a no-op regardless.
+ */
+static char     g_tex_slots[64];
+static uint32_t g_tex_next;
+
 static gpu_texture_t
 null_texture_create(const struct gpu_texture_desc *desc)
 {
@@ -305,7 +318,7 @@ null_texture_create(const struct gpu_texture_desc *desc)
 			},
 		},
 	});
-	return NULL;
+	return (gpu_texture_t)&g_tex_slots[g_tex_next++ % sizeof(g_tex_slots)];
 }
 
 static void null_cmd_bind_texture(gpu_cmd_buf_t cmd, uint32_t unit,

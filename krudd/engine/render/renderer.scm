@@ -29,12 +29,19 @@
 ;;! for GL must be adapted (mat4-clip-z01) before such a backend rasterizes it.
 ;;! It is a convention, not a feature, but rides the caps word since that is the
 ;;! one per-backend flag the scene layer already queries.
+;;! msaa-resolve advertises that the backend can render a scene pass into a
+;;! multisampled colour target and resolve it to a single-sample texture in the
+;;! same pass (via gpu-color-attachment's resolve-target). WebGPU sets it;
+;;! WebGL (whose MSAA needs a separate multisampled-renderbuffer + blit path)
+;;! and the null renderer leave it clear, so the scene renderer keeps its
+;;! single-sample path on those and asks for no resolve.
 (c-enum gpu-cap
 	(gpu-cap-draw-direct       (<< 1 0))
 	(gpu-cap-draw-indexed      (<< 1 1))
 	(gpu-cap-compute           (<< 1 2))
 	(gpu-cap-bindless          (<< 1 3))
-	(gpu-cap-clip-z-zero-to-one (<< 1 4)))
+	(gpu-cap-clip-z-zero-to-one (<< 1 4))
+	(gpu-cap-msaa-resolve      (<< 1 5)))
 
 (c-section "Enumerations")
 
@@ -136,11 +143,18 @@
 
 (c-section "Render passes")
 
+;;! resolve-target (may be NULL) is the single-sample texture a multisampled
+;;! `texture` resolves into at the end of the pass. It is set only when the
+;;! colour target is multisampled and the backend advertises
+;;! gpu-cap-msaa-resolve; a single-sample pass leaves it NULL and the attachment
+;;! behaves exactly as before this field existed. A backend without the cap
+;;! ignores it (the scene renderer never sets it there).
 (c-struct gpu-color-attachment
-	(texture  gpu-texture)
-	(load-op  gpu-load-op)
-	(store-op gpu-store-op)
-	(clear    (array f32 4)))
+	(texture        gpu-texture)
+	(resolve-target gpu-texture)
+	(load-op        gpu-load-op)
+	(store-op       gpu-store-op)
+	(clear          (array f32 4)))
 
 (c-struct gpu-render-pass-desc
 	(color          (array gpu-color-attachment gpu-max-color-attachments))

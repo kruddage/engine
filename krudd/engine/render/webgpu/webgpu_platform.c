@@ -66,21 +66,28 @@ WGPUSurface webgpu_platform_create_surface(WGPUInstance instance)
 
 void webgpu_platform_backbuffer_size(uint32_t *w, uint32_t *h)
 {
-	double css_w = 0.0;
-	double css_h = 0.0;
+	int cw = 0;
+	int ch = 0;
 
 	/*
-	 * A WebGPU surface draws into the canvas's backing store, whose size is
-	 * the canvas.width/height attributes — not its CSS size. Nothing sets
-	 * those in WebGPU mode (the WebGL path used to, via the GL context), so
-	 * match the backing store to the element's CSS size here; otherwise the
-	 * drawing buffer stays 0x0 and nothing is visible however well the clear
-	 * runs.
+	 * Report the canvas's backing store — canvas.width/height — because that
+	 * is what the surface texture is sized from, whatever width/height
+	 * wgpuSurfaceConfigure was handed.
+	 *
+	 * Read it, do not set it. kruddgui_tick owns the backing store and sizes
+	 * it in DEVICE pixels (css * devicePixelRatio, kruddgui.cpp). This used to
+	 * report the CSS size and write it back, which is identical on a dpr == 1
+	 * display and wrong everywhere else: at dpr 3 the colour attachment came
+	 * back 1236x2535 while the depth target was built 412x845, so every render
+	 * pass failed attachment-size validation and the canvas stayed black on
+	 * every phone and every HiDPI screen. Desktop dpr == 1 hid it completely.
+	 *
+	 * Boot order is self-healing: before kruddgui's first tick this reads the
+	 * canvas default, and create_depth_target rebuilds when the size changes.
 	 */
-	emscripten_get_element_css_size("#canvas", &css_w, &css_h);
-	*w = (css_w >= 1.0) ? (uint32_t)css_w : 800u;
-	*h = (css_h >= 1.0) ? (uint32_t)css_h : 600u;
-	emscripten_set_canvas_element_size("#canvas", (int)*w, (int)*h);
+	emscripten_get_canvas_element_size("#canvas", &cw, &ch);
+	*w = (cw >= 1) ? (uint32_t)cw : 800u;
+	*h = (ch >= 1) ? (uint32_t)ch : 600u;
 }
 
 WGPUTextureView webgpu_platform_backbuffer_view(WGPUDevice device)

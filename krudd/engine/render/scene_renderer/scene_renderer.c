@@ -82,8 +82,10 @@ static const struct asset_api   *g_asset;
 
 /* Persistent resources, created once against the device (never per-frame). */
 static gpu_pipeline_t g_default_pso;  /* the built-in scene pipeline; fallback */
-static gpu_buffer_t   g_ubo;         /* Camera: { view_proj, model, cam_pos } */
-static gpu_buffer_t   g_material_ubo; /* the active material's std140 params */
+static gpu_buffer_t   g_ubo_ring;      /* Camera ring: one slot per draw */
+static gpu_buffer_t   g_material_ring; /* Material ring: one slot per draw */
+static uint32_t       g_ring_cursor;   /* bump allocator, shared by both rings */
+static int            g_ring_overflowed; /* latches so the log fires once */
 static gpu_buffer_t   g_light_ubo;    /* Sun: { light_dir, light_radiance } std140 */
 static int            g_ready;
 
@@ -242,6 +244,33 @@ static const char *OUTLINE_SHADER_SRC =
 #define MATERIAL_HEADER_BYTES  sizeof(uint32_t)     /* the leading shader-ref */
 #define MATERIAL_UBO_MAX       256                  /* std140 param bytes cap  */
 #define MATERIAL_FALLBACK_BYTES 16                  /* one white vec4          */
+
+/*
+ * Per-frame uniform rings.
+ *
+ * A draw's uniforms must survive until the frame's command buffer executes, so
+ * every draw takes its own slot rather than rewriting one buffer at offset 0.
+ * Rewriting was correct only by accident of GL's execution model: GL commands
+ * run in submission order, so each draw saw its own write. WebGPU's
+ * buffer_update is wgpuQueueWriteBuffer, which lands on the queue timeline and
+ * flushes entirely before the frame's command buffer runs — so every draw read
+ * whatever the last entity wrote, and the whole scene collapsed onto one
+ * transform and one material with no error logged.
+ *
+ * 256-byte strides: WebGPU's default minUniformBufferOffsetAlignment is 256 and
+ * WebGL2's UNIFORM_BUFFER_OFFSET_ALIGNMENT is 256 on every target we ship, so
+ * one constant satisfies both. Do not query it per backend.
+ *
+ * Single-buffered on purpose — no double-buffering, no fences. Queue order is
+ * submit(N), writeBuffer(N+1)..., submit(N+1); WebGPU guarantees queue-timeline
+ * ordering, so frame N+1's writes cannot clobber reads that frame N's
+ * already-submitted command buffer will make.
+ */
+#define SCENE_MAX_DRAWS  1024                       /* 512 KB across both rings */
+#define SCENE_UBO_ALIGN  256u
+#define ALIGN_UP_256(n)  (((n) + (SCENE_UBO_ALIGN - 1u)) & ~(SCENE_UBO_ALIGN - 1u))
+#define UBO_STRIDE       ALIGN_UP_256(SCENE_UBO_FLOATS * sizeof(float))
+#define MATERIAL_STRIDE  ALIGN_UP_256(MATERIAL_UBO_MAX)
 
 /*
  * One compiled pipeline per shader a material selects, keyed by the shader's
@@ -1444,6 +1473,35 @@ static int preview_ensure_mesh(const struct gpu_api *gpu, uint32_t mesh_ref)
 }
 
 /*
+ * Take the next uniform-ring slot for a draw. One cursor feeds both rings, so a
+ * draw's camera slot and material slot share an index.
+ *
+ * The cursor is reset exactly once per frame, ahead of every pass, and NOT
+ * between passes: shadow and forward are separate command buffers inside one
+ * frame, they share the queue timeline, and so they must share the ring.
+ *
+ * On overflow this returns 0 (failure) rather than wrapping to slot 0. Wrapping
+ * would reproduce exactly the silent wrong-picture failure the ring exists to
+ * kill; a visibly missing object plus one error line is strictly better than a
+ * plausible wrong one.
+ */
+static int ring_take_slot(uint32_t *out_slot)
+{
+	if (g_ring_cursor >= SCENE_MAX_DRAWS) {
+		if (!g_ring_overflowed) {
+			g_ring_overflowed = 1;
+			g_log->write(LOG_LEVEL_ERROR,
+				     "scene_renderer: uniform ring overflow "
+				     "(> SCENE_MAX_DRAWS draws in a frame); "
+				     "skipping the remaining draws");
+		}
+		return 0;
+	}
+	*out_slot = g_ring_cursor++;
+	return 1;
+}
+
+/*
  * Render mesh_ref shaded with material_ref into the preview target and return
  * the color texture's opaque id (see preview_api.h). Drives the device
  * directly for a single off-frame pass, reusing the scene pipeline, the shared
@@ -1570,10 +1628,22 @@ static uint32_t scene_preview_render_mesh(uint32_t mesh_ref,
 	gpu->cmd_begin_render_pass(cmd, &rp);
 
 	gpu->cmd_set_pipeline(cmd, pso);
-	gpu->buffer_update(g_ubo, 0, ubo, (uint32_t)sizeof(ubo));
-	gpu->cmd_bind_uniform_buffer(cmd, 0, g_ubo, 0, (uint32_t)sizeof(ubo));
-	gpu->buffer_update(g_material_ubo, 0, params, plen);
-	gpu->cmd_bind_uniform_buffer(cmd, 1, g_material_ubo, 0, plen);
+	{
+		uint32_t slot, uoff, moff;
+
+		if (!ring_take_slot(&slot)) {
+			gpu->cmd_end_render_pass(cmd);
+			gpu->cmd_buf_submit(cmd);
+			return 0;
+		}
+		uoff = slot * (uint32_t)UBO_STRIDE;
+		moff = slot * (uint32_t)MATERIAL_STRIDE;
+		gpu->buffer_update(g_ubo_ring, uoff, ubo, (uint32_t)sizeof(ubo));
+		gpu->cmd_bind_uniform_buffer(cmd, 0, g_ubo_ring, uoff,
+					     (uint32_t)sizeof(ubo));
+		gpu->buffer_update(g_material_ring, moff, params, plen);
+		gpu->cmd_bind_uniform_buffer(cmd, 1, g_material_ring, moff, plen);
+	}
 	bind_light(gpu, cmd); /* Sun at slot 2, so a pbr thumbnail lights right */
 	/* The preview renders no shadow pass, so bind the fully-lit dummy where
 	 * each shader's shadow_map lands — unit 0 (pbr) and unit 1 (scene-
@@ -1823,16 +1893,19 @@ static void scene_renderer_init(void)
 
 		memset(&bd, 0, sizeof(bd));
 		bd.usage = GPU_BUFFER_USAGE_UNIFORM;
-		bd.size  = SCENE_UBO_FLOATS * sizeof(float);
-		g_ubo = gpu->buffer_create(&bd);
+		/* One 256-aligned slot per draw, so a draw's uniforms survive
+		 * until the frame's command buffer executes. See the ring
+		 * comment above SCENE_MAX_DRAWS. */
+		bd.size  = SCENE_MAX_DRAWS * (uint32_t)UBO_STRIDE;
+		g_ubo_ring = gpu->buffer_create(&bd);
 
 		/*
-		 * Sized to the largest Material block the renderer will upload;
-		 * each draw fills only its material's actual param bytes and
-		 * binds exactly that range.
+		 * Each slot is sized to the largest Material block the renderer
+		 * will upload; a draw fills only its material's actual param
+		 * bytes and binds exactly that range within its slot.
 		 */
-		bd.size = MATERIAL_UBO_MAX;
-		g_material_ubo = gpu->buffer_create(&bd);
+		bd.size = SCENE_MAX_DRAWS * (uint32_t)MATERIAL_STRIDE;
+		g_material_ring = gpu->buffer_create(&bd);
 
 		/* The Sun block: the scene's one directional light, uploaded per
 		 * frame and bound at slot 2 for the pbr shader. */
@@ -1899,6 +1972,7 @@ static void shadow_pass(struct fg_pass_ctx *ctx, void *userdata)
 		struct mat4                  model;
 		const uint8_t               *mp;
 		uint32_t                     mplen;
+		uint32_t                     slot, uoff;
 
 		if (!w->alive[i] || !(w->mask[i] & COMPONENT_RENDER) ||
 		    !(w->mask[i] & COMPONENT_MATERIAL))
@@ -1910,8 +1984,11 @@ static void shadow_pass(struct fg_pass_ctx *ctx, void *userdata)
 
 		mat4_from_transform(&model, &w->world_xform[i]);
 		memcpy(&ubo[16], model.m, 16 * sizeof(float));
-		gpu->buffer_update(g_ubo, 0, ubo, (uint32_t)sizeof(ubo));
-		gpu->cmd_bind_uniform_buffer(cmd, 0, g_ubo, 0,
+		if (!ring_take_slot(&slot))
+			break; /* overflow: skip the remaining draws */
+		uoff = slot * (uint32_t)UBO_STRIDE;
+		gpu->buffer_update(g_ubo_ring, uoff, ubo, (uint32_t)sizeof(ubo));
+		gpu->cmd_bind_uniform_buffer(cmd, 0, g_ubo_ring, uoff,
 					     (uint32_t)sizeof(ubo));
 		gpu->cmd_bind_vertex_buffer(cmd, 0, m->vbo, 0);
 		gpu->cmd_bind_index_buffer(cmd, m->ebo, 0,
@@ -2016,6 +2093,7 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 		uint32_t                      plen;
 		uint32_t                      mat_ref;
 		uint32_t                      shader_ref;
+		uint32_t                      slot, uoff, moff;
 		gpu_pipeline_t                pso;
 
 		if (!w->alive[i] || !(w->mask[i] & COMPONENT_RENDER))
@@ -2049,11 +2127,16 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 			have_pso = 1;
 		}
 
+		if (!ring_take_slot(&slot))
+			break; /* overflow: skip the remaining draws */
+		uoff = slot * (uint32_t)UBO_STRIDE;
+		moff = slot * (uint32_t)MATERIAL_STRIDE;
+
 		mat4_from_transform(&model, &w->world_xform[i]);
 		memcpy(&ubo[16], model.m, 16 * sizeof(float));
-		gpu->buffer_update(g_ubo, 0, ubo, (uint32_t)sizeof(ubo));
+		gpu->buffer_update(g_ubo_ring, uoff, ubo, (uint32_t)sizeof(ubo));
 
-		gpu->cmd_bind_uniform_buffer(cmd, 0, g_ubo, 0,
+		gpu->cmd_bind_uniform_buffer(cmd, 0, g_ubo_ring, uoff,
 					     (uint32_t)sizeof(ubo));
 
 		/*
@@ -2091,8 +2174,8 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 		} else {
 			memcpy(params, pbytes, plen);
 		}
-		gpu->buffer_update(g_material_ubo, 0, params, plen);
-		gpu->cmd_bind_uniform_buffer(cmd, 1, g_material_ubo, 0, plen);
+		gpu->buffer_update(g_material_ring, moff, params, plen);
+		gpu->cmd_bind_uniform_buffer(cmd, 1, g_material_ring, moff, plen);
 
 		/*
 		 * Bind the sun shadow map and this material's texture. The two
@@ -2183,6 +2266,7 @@ static void mask_pass(struct fg_pass_ctx *ctx, void *userdata)
 	struct mat4                  model;
 	float                        ubo[SCENE_UBO_FLOATS];
 	struct gpu_draw_indexed_args draw;
+	uint32_t                     slot, uoff;
 
 	(void)userdata;
 	if (!gpu || !g_scene || !g_mask_pso)
@@ -2205,9 +2289,14 @@ static void mask_pass(struct fg_pass_ctx *ctx, void *userdata)
 	ubo[SCENE_UBO_CAMPOS + 2] = g_cam.eye[2];
 	ubo[SCENE_UBO_CAMPOS + 3] = 0.0f;
 
+	if (!ring_take_slot(&slot))
+		return; /* overflow: skip this draw */
+	uoff = slot * (uint32_t)UBO_STRIDE;
+
 	gpu->cmd_set_pipeline(cmd, g_mask_pso);
-	gpu->buffer_update(g_ubo, 0, ubo, (uint32_t)sizeof(ubo));
-	gpu->cmd_bind_uniform_buffer(cmd, 0, g_ubo, 0, (uint32_t)sizeof(ubo));
+	gpu->buffer_update(g_ubo_ring, uoff, ubo, (uint32_t)sizeof(ubo));
+	gpu->cmd_bind_uniform_buffer(cmd, 0, g_ubo_ring, uoff,
+				     (uint32_t)sizeof(ubo));
 	gpu->cmd_bind_vertex_buffer(cmd, 0, m->vbo, 0);
 	gpu->cmd_bind_index_buffer(cmd, m->ebo, 0, GPU_INDEX_FORMAT_UINT16);
 
@@ -2385,6 +2474,16 @@ static void scene_renderer_tick(void)
 	bb = g_fg_api->import_backbuffer(fg);
 
 	/*
+	 * Rewind the uniform rings for the frame. This runs once, ahead of every
+	 * pass, and deliberately NOT between passes: shadow and forward are
+	 * separate command buffers within one frame and must share the ring.
+	 * The backend's frame_end would also read correct, but scene_renderer
+	 * does not own that hook, so the reset lives where the frame's passes
+	 * are declared.
+	 */
+	g_ring_cursor = 0;
+
+	/*
 	 * The sun-shadow pass runs first when its depth pipeline compiled: it
 	 * renders the scene's depth from the light into a square depth target the
 	 * forward pass then samples. Declaring it here (and reading it from the
@@ -2494,10 +2593,10 @@ static void scene_renderer_shutdown(void)
 		}
 		for (i = 0; i < g_texture_count; i++)
 			gpu->texture_destroy(g_textures[i].tex);
-		if (g_ubo)
-			gpu->buffer_destroy(g_ubo);
-		if (g_material_ubo)
-			gpu->buffer_destroy(g_material_ubo);
+		if (g_ubo_ring)
+			gpu->buffer_destroy(g_ubo_ring);
+		if (g_material_ring)
+			gpu->buffer_destroy(g_material_ring);
 		if (g_light_ubo)
 			gpu->buffer_destroy(g_light_ubo);
 		if (g_mask_pso)

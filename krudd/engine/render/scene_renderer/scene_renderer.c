@@ -109,12 +109,18 @@ static gpu_buffer_t   g_outline_ubo; /* std140 { vec2 texel; vec4 color; }      
  * target, and the pbr shader compares against it to shade the sun's shadows.
  * g_shadow_pso is the depth-only pipeline (a mask-style position-only shader),
  * g_shadow_res is the per-frame depth transient the forward pass samples, and
- * g_shadow_dummy is a 1x1 "fully lit" texture bound wherever no real shadow map
- * is available (the off-frame mesh preview, or a frame that skips the pass) so
- * the pbr shader's shadow sample reads "unoccluded" rather than garbage.
+ * g_shadow_dummy is a 1x1 depth texture cleared to the far plane (1.0), bound
+ * wherever no real shadow map is available (the off-frame mesh preview, or a
+ * frame that skips the pass) so the shadow sample reads "unoccluded" rather
+ * than garbage. It is a depth texture, not a colour one, because the shaders
+ * declare shadow_map as depth2D -> texture_depth_2d and WebGPU rejects a colour
+ * texture in a depth slot (WebGL was untyped here and did not care).
+ * g_color_dummy is its colour counterpart, for an albedo slot with no texture
+ * to bind (the preview does not upload a material's own texture).
  */
 static gpu_pipeline_t g_shadow_pso;
 static gpu_texture_t  g_shadow_dummy;
+static gpu_texture_t  g_color_dummy;
 static fg_resource_t  g_shadow_res;
 
 #define SHADOW_MAP_DIM 2048          /* sun depth-map resolution (matches tx below)*/
@@ -947,6 +953,8 @@ static void build_shadow_resources(const struct gpu_api *gpu)
 {
 	static const unsigned char WHITE_TEXEL[4] = { 255, 255, 255, 255 };
 	struct gpu_texture_desc     td;
+	struct gpu_render_pass_desc rp;
+	gpu_cmd_buf_t               cmd;
 
 	g_shadow_pso = create_pso(gpu, SHADOW_SHADER_SRC, 0, 1);
 	if (!g_shadow_pso)
@@ -954,6 +962,8 @@ static void build_shadow_resources(const struct gpu_api *gpu)
 			     "scene_renderer: shadow pipeline unavailable; "
 			     "sun casts no shadows");
 
+	/* Colour dummy: a 1x1 white texel for an albedo slot with nothing to
+	 * bind (the preview does not upload the material's own texture). */
 	memset(&td, 0, sizeof(td));
 	td.format       = GPU_FORMAT_RGBA8_UNORM;
 	td.width        = 1;
@@ -961,7 +971,37 @@ static void build_shadow_resources(const struct gpu_api *gpu)
 	td.mip_levels   = 1;
 	td.sample_count = 1;
 	td.initial_data = WHITE_TEXEL;
+	g_color_dummy   = gpu->texture_create(&td);
+
+	/*
+	 * Shadow dummy: a 1x1 depth texture, because the shaders declare
+	 * shadow_map as depth2D -> texture_depth_2d and WebGPU rejects a colour
+	 * texture in that slot. A depth texture cannot be filled by a pixel
+	 * upload (WebGPU has no queue-write to the depth aspect), so it is cleared
+	 * to the far plane (1.0) — which the depth compare reads as unoccluded —
+	 * with a one-shot depth-only pass instead of initial_data.
+	 */
+	memset(&td, 0, sizeof(td));
+	td.format       = GPU_FORMAT_DEPTH32_FLOAT;
+	td.width        = 1;
+	td.height       = 1;
+	td.mip_levels   = 1;
+	td.sample_count = 1;
 	g_shadow_dummy  = gpu->texture_create(&td);
+	if (!g_shadow_dummy)
+		return;
+
+	memset(&rp, 0, sizeof(rp));
+	rp.color_count    = 0;
+	rp.depth          = g_shadow_dummy;
+	rp.depth_load_op  = GPU_LOAD_OP_CLEAR;
+	rp.depth_store_op = GPU_STORE_OP_STORE;
+	rp.clear_depth    = 1.0f;
+
+	cmd = gpu->cmd_buf_begin();
+	gpu->cmd_begin_render_pass(cmd, &rp);
+	gpu->cmd_end_render_pass(cmd);
+	gpu->cmd_buf_submit(cmd);
 }
 
 /*
@@ -1649,12 +1689,27 @@ static uint32_t scene_preview_render_mesh(uint32_t mesh_ref,
 		gpu->cmd_bind_uniform_buffer(cmd, 1, g_material_ring, moff, plen);
 	}
 	bind_light(gpu, cmd); /* Sun at slot 2, so a pbr thumbnail lights right */
-	/* The preview renders no shadow pass, so bind the fully-lit dummy where
-	 * each shader's shadow_map lands — unit 0 (pbr) and unit 1 (scene-
-	 * textured) — so a thumbnail's shadow lookup reads "unoccluded". */
-	if (g_shadow_dummy) {
-		gpu->cmd_bind_texture(cmd, 0, g_shadow_dummy);
-		gpu->cmd_bind_texture(cmd, 1, g_shadow_dummy);
+	/*
+	 * The preview runs no shadow pass, so the depth dummy stands in for the
+	 * shadow map — but it has to land in the right slot with the right type. A
+	 * textured shader puts albedo at unit 0 and the shadow map at unit 1; an
+	 * untextured one puts the shadow map at unit 0. Mirror the forward pass's
+	 * material_texture split so WebGPU sees a depth texture in the depth slot
+	 * and a colour texture in the albedo slot (WebGL is untyped, unchanged).
+	 */
+	{
+		uint32_t       t_ref, tw, th, tpl = 0;
+		const uint8_t *tp = NULL;
+
+		if (material_texture(material_ref, shader_ref, &t_ref, &tw, &th,
+				     &tp, &tpl)) {
+			if (g_color_dummy)
+				gpu->cmd_bind_texture(cmd, 0, g_color_dummy);
+			if (g_shadow_dummy)
+				gpu->cmd_bind_texture(cmd, 1, g_shadow_dummy);
+		} else if (g_shadow_dummy) {
+			gpu->cmd_bind_texture(cmd, 0, g_shadow_dummy);
+		}
 	}
 	gpu->cmd_bind_vertex_buffer(cmd, 0, g_prev_vbo, 0);
 	gpu->cmd_bind_index_buffer(cmd, g_prev_ebo, 0, GPU_INDEX_FORMAT_UINT16);
@@ -2626,6 +2681,8 @@ static void scene_renderer_shutdown(void)
 			gpu->pipeline_destroy(g_shadow_pso);
 		if (g_shadow_dummy)
 			gpu->texture_destroy(g_shadow_dummy);
+		if (g_color_dummy)
+			gpu->texture_destroy(g_color_dummy);
 		if (g_fs_vbo)
 			gpu->buffer_destroy(g_fs_vbo);
 		if (g_fs_ebo)
@@ -2649,6 +2706,7 @@ static void scene_renderer_shutdown(void)
 	g_outline_pso      = 0;
 	g_shadow_pso       = 0;
 	g_shadow_dummy     = 0;
+	g_color_dummy      = 0;
 	g_shadow_res       = 0;
 	g_fs_vbo           = 0;
 	g_fs_ebo           = 0;

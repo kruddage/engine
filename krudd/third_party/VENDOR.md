@@ -39,6 +39,29 @@ git tag, so the pin is a mirror commit whose `s7.c`/`s7.h` match that
 version+date exactly. Re-vendoring means bumping `s7.artifact` (version, date,
 commit, checksums) — see the comment at the top of that file.
 
+## Local patches
+
+`s7.c` is **no longer byte-identical to the pinned upstream commit.** We carry
+one local patch; `S7_C_SHA256` in `s7.artifact` is therefore the checksum of the
+*patched* file, not of the upstream download.
+
+| Patch | Where | Why |
+|---|---|---|
+| Drop the `(string-ref var 0)` → `string_ref_p_p0` swap in the `p_pi` branch of the fx optimizer | `s7.c`, search `KRUDD-LOCAL PATCH` | Upstream stores an `s7_p_pp_t` and then calls it through `s7_p_pi_t`. Benign UB on a register ABI; a hard `indirect call signature mismatch` trap on wasm, which killed the frame loop on any `(string-ref name 0)`. |
+
+**Re-vendoring now has an extra step, and getting it wrong fails silently.**
+`sync.sh` re-downloads whenever the committed file doesn't match `S7_C_SHA256`,
+so a bump that only updates the checksums will quietly replace the patched
+`s7.c` with pristine upstream and reintroduce the trap — with a green native
+suite, because nothing native can see it. To re-vendor:
+
+1. Check whether upstream fixed it (the `p_pi` branch near `fx_c_si_direct`). If
+   so, drop the patch and this section, and take the plain upstream file.
+2. If not, download upstream, re-apply the patch, *then* set `S7_C_SHA256` from
+   the patched file.
+3. Either way, verify in a **browser** — load a game and tap the board. The
+   native suite cannot catch a wasm-only signature mismatch.
+
 ## License compatibility
 
 0BSD combining into a `GPL-2.0-or-later` work is the standard permissive-inbound

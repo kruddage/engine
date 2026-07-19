@@ -58127,8 +58127,23 @@ static bool fx_tree_in(s7_scheme *sc, s7_pointer tree, s7_pointer var1, s7_point
 	    {
 	      if (opt3_direct(cdr(p)) == (s7_pointer)vector_ref_p_pi)
 		return(with_fx(tree, fx_vector_ref_tc));
-	      if ((opt3_direct(cdr(p)) == (s7_pointer)string_ref_p_pi) && (integer(caddr(p)) == 0))
-		set_opt3_direct(cdr(p), string_ref_p_p0);
+	      /* KRUDD-LOCAL PATCH (see third_party/VENDOR.md "Local patches").
+	       * Upstream drops a `(string-ref var 0)` special case in here:
+	       *   if ((opt3_direct(cdr(p)) == (s7_pointer)string_ref_p_pi) && (integer(caddr(p)) == 0))
+	       *     set_opt3_direct(cdr(p), string_ref_p_p0);
+	       * That swaps in string_ref_p_p0, whose third parameter is an s7_pointer
+	       * (s7_p_pp_t) — but this branch then installs fx_c_ti_direct, which calls the
+	       * stored pointer through s7_p_pi_t, whose third parameter is an s7_int. On a
+	       * register ABI that mismatch is invisible UB and the call just works, which is
+	       * why the native suite stays green. wasm type-checks every indirect call, so
+	       * there it is a hard trap — "RuntimeError: indirect call signature mismatch" —
+	       * killing the frame loop the moment any Scheme evaluates (string-ref name 0).
+	       * For us that is the ray-pick rules sitting behind every game.
+	       * The two sibling swap sites are fine: fx_c_ac_direct and fx_c_tc_direct both
+	       * call through s7_p_pp_t, which string_ref_p_p0 actually matches.
+	       * Dropping the special case costs one integer unbox per (string-ref s 0) and
+	       * restores a correctly-typed call. Still present in upstream master as of
+	       * 2026-07-19; re-check on re-vendor and drop this patch once fixed. */
 	      return(with_fx(tree, (opt3_direct(cdr(p)) == (s7_pointer)remainder_p_pi) ? fx_c_ti_remainder : fx_c_ti_direct));
 	    }
 

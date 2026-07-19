@@ -135,6 +135,16 @@ static gpu_buffer_t   g_outline_ubo; /* std140 { vec2 texel; vec4 color; }      
 static gpu_pipeline_t g_bloom_extract_pso;   /* threshold the bright part       */
 static gpu_pipeline_t g_bloom_blur_pso;      /* separable 9-tap, run H then V    */
 static gpu_pipeline_t g_bloom_composite_pso; /* add blurred bloom onto the scene */
+/*
+ * The composite targets the backbuffer when the outline is off, and an
+ * offscreen "outline_lit" when it is on. Those are two different attachment
+ * states — the backbuffer carries the backend's emulated depth, the offscreen
+ * target carries none — and WebGPU validates a pipeline against the pass it
+ * runs in, so one pipeline cannot serve both. Same reason the scene geometry
+ * pipelines carry a multisampled variant; g_bloom_composite_to_bb selects.
+ */
+static gpu_pipeline_t g_bloom_composite_bb_pso;
+static int            g_bloom_composite_to_bb;
 static gpu_buffer_t   g_blur_ubo;            /* std140 { vec2 dir }              */
 #define BLUR_UBO_FLOATS 4                    /* vec2 dir + 2 pad (std140 -> 16B) */
 
@@ -1050,15 +1060,25 @@ static void build_pipeline(const struct gpu_api *gpu)
  * composite, which reads the offscreen scene and the mask and writes the
  * backbuffer.
  */
+/*
+ * WANT_DEPTH follows the same rule as create_pso: a pipeline has to describe
+ * the pass it runs in, and WebGPU validates that in both directions. It is not
+ * about the shader wanting depth — none of these read or write it — but about
+ * whether the pass carries a depth attachment at all. A full-screen pass that
+ * targets the BACKBUFFER does, because the backend emulates GL's
+ * default-framebuffer depth there; one that targets an offscreen colour target
+ * does not.
+ */
 static gpu_pipeline_t create_fullscreen_pso(const struct gpu_api *gpu,
-					    const char *src)
+					    const char *src, int want_depth)
 {
 	struct gpu_pipeline_desc pd;
 
 	memset(&pd, 0, sizeof(pd));
 	pd.color_formats[0]   = GPU_FORMAT_RGBA8_UNORM;
 	pd.color_format_count = 1;
-	pd.depth_format       = GPU_FORMAT_UNKNOWN;
+	pd.depth_format       = want_depth ? GPU_FORMAT_DEPTH32_FLOAT
+					   : GPU_FORMAT_UNKNOWN;
 	pd.topology           = GPU_TOPOLOGY_TRIANGLE_LIST;
 
 	pd.vertex_layout.attr_count = 1;
@@ -1092,7 +1112,8 @@ static void build_outline_resources(const struct gpu_api *gpu)
 
 	/* The mask renders into the single-sample sel_mask target, so 1 sample. */
 	g_mask_pso    = create_pso(gpu, MASK_SHADER_SRC, 1, 0, 1);
-	g_outline_pso = create_fullscreen_pso(gpu, OUTLINE_SHADER_SRC);
+	/* The outline pass draws into the backbuffer, which carries emulated depth. */
+	g_outline_pso = create_fullscreen_pso(gpu, OUTLINE_SHADER_SRC, 1);
 	if (!g_mask_pso || !g_outline_pso)
 		g_log->write(LOG_LEVEL_WARN,
 			     "scene_renderer: outline pipeline unavailable; "
@@ -1125,10 +1146,13 @@ static void build_bloom_resources(const struct gpu_api *gpu)
 {
 	struct gpu_buffer_desc bd;
 
-	g_bloom_extract_pso   = create_fullscreen_pso(gpu, BLOOM_EXTRACT_SHADER_SRC);
-	g_bloom_blur_pso      = create_fullscreen_pso(gpu, BLOOM_BLUR_SHADER_SRC);
-	g_bloom_composite_pso = create_fullscreen_pso(gpu, BLOOM_COMPOSITE_SHADER_SRC);
-	if (!g_bloom_extract_pso || !g_bloom_blur_pso || !g_bloom_composite_pso)
+	g_bloom_extract_pso   = create_fullscreen_pso(gpu, BLOOM_EXTRACT_SHADER_SRC, 0);
+	g_bloom_blur_pso      = create_fullscreen_pso(gpu, BLOOM_BLUR_SHADER_SRC, 0);
+	g_bloom_composite_pso = create_fullscreen_pso(gpu, BLOOM_COMPOSITE_SHADER_SRC, 0);
+	g_bloom_composite_bb_pso =
+		create_fullscreen_pso(gpu, BLOOM_COMPOSITE_SHADER_SRC, 1);
+	if (!g_bloom_extract_pso || !g_bloom_blur_pso || !g_bloom_composite_pso ||
+	    !g_bloom_composite_bb_pso)
 		g_log->write(LOG_LEVEL_WARN,
 			     "scene_renderer: bloom pipeline unavailable; "
 			     "bloom disabled");
@@ -2777,11 +2801,14 @@ static void bloom_composite_pass(struct fg_pass_ctx *ctx, void *userdata)
 {
 	const struct gpu_api *gpu = fg_ctx_gpu(ctx);
 	gpu_cmd_buf_t         cmd = fg_ctx_cmd(ctx);
+	gpu_pipeline_t        pso = g_bloom_composite_to_bb
+					    ? g_bloom_composite_bb_pso
+					    : g_bloom_composite_pso;
 
 	(void)userdata;
-	if (!gpu || !g_bloom_composite_pso)
+	if (!gpu || !pso)
 		return;
-	gpu->cmd_set_pipeline(cmd, g_bloom_composite_pso);
+	gpu->cmd_set_pipeline(cmd, pso);
 	/* Alphabetical unit rule: bloom -> 0, scene -> 1. */
 	gpu->cmd_bind_texture(cmd, 0, fg_ctx_resource(ctx, g_bloom_frame.bloom_c));
 	gpu->cmd_bind_texture(cmd, 1, fg_ctx_resource(ctx, g_bloom_frame.scene_color));
@@ -3064,6 +3091,7 @@ static void scene_renderer_tick(void)
 			cr[1] = bc;
 			cpass = g_fg_api->pass_declare(fg, "bloom_composite", cr, 2,
 						       &bb, 1);
+			g_bloom_composite_to_bb = 1;
 
 			if (fpass && xpass && hpass && vpass && cpass &&
 			    (!shadow || spass)) {
@@ -3188,6 +3216,7 @@ static void scene_renderer_tick(void)
 			lr[1] = bc;
 			lpass = g_fg_api->pass_declare(fg, "bloom_composite", lr, 2,
 						       &lit, 1);
+			g_bloom_composite_to_bb = 0;
 			cr[0] = lit;
 			cr[1] = mask;
 			cpass = g_fg_api->pass_declare(fg, "outline", cr, 2, &bb, 1);
@@ -3290,6 +3319,8 @@ static void scene_renderer_shutdown(void)
 			gpu->pipeline_destroy(g_bloom_blur_pso);
 		if (g_bloom_composite_pso)
 			gpu->pipeline_destroy(g_bloom_composite_pso);
+		if (g_bloom_composite_bb_pso)
+			gpu->pipeline_destroy(g_bloom_composite_bb_pso);
 		if (g_blur_ubo)
 			gpu->buffer_destroy(g_blur_ubo);
 		/*
@@ -3327,6 +3358,7 @@ static void scene_renderer_shutdown(void)
 	g_bloom_extract_pso   = 0;
 	g_bloom_blur_pso      = 0;
 	g_bloom_composite_pso = 0;
+	g_bloom_composite_bb_pso = 0;
 	g_blur_ubo            = 0;
 	g_shader_pso_count = 0;
 	g_mesh_count       = 0;

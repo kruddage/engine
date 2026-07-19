@@ -14,6 +14,15 @@
 			"tolerance": 0.002,
 			"settle_ms": 6000,
 			"note": "The #570 WGSL triangle probe. Static, so tolerance is tight. Mode is 'self' because the WebGL path renders the whole engine here, not a triangle -- there is no comparable reference until PR4 registers scene_renderer on the WebGPU path. WebGPU is the page default now, so webgl_query pins the baseline shot to ?renderer=webgl explicitly rather than relying on an unparented default."
+		},
+		{
+			"id": "parity",
+			"query": "?renderer=webgpu",
+			"webgl_query": "?renderer=webgl",
+			"mode": "diff",
+			"tolerance": 0.002,
+			"settle_ms": 6000,
+			"note": "The parity meter: the whole engine under both backends, WebGL as the reference. This is the scene the 'diff' mode was built for, and it was blocked until scene_renderer ran on the WebGPU path (#595). EXPECTED TO FAIL until the port finishes -- the number is the point, not the verdict. It should shrink as gaps close: the editor UI is absent under WebGPU until kruddgui's shaders flip, and scene textures have no mip chain until generate_mips lands, so today's diff is dominated by those two. render-diff is not run in CI, so a failing scene here costs no one a build; read it as a progress meter you run by hand."
 		}
 	]
 }

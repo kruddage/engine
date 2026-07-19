@@ -6,3 +6,6 @@ krudd/krudd
 public/
 /tools/render-diff/out/
 /tools/dawn-smoke/out/
+
+# agent worktrees (isolated subagent checkouts)
+.claude/worktrees/

@@ -400,7 +400,8 @@ static const char *PBR_HEAD =
 	"    (Material (block 1) (layout std140)\n"
 	"      (base_color vec4  (edit color) (default 0.82 0.82 0.85 1.0))\n"
 	"      (metallic   float (edit range 0.0 1.0) (default 0.1))\n"
-	"      (roughness  float (edit range 0.0 1.0) (default 0.5)))\n"
+	"      (roughness  float (edit range 0.0 1.0) (default 0.5))\n"
+	"      (emissive   vec3  (edit color) (default 0.0 0.0 0.0)))\n"
 	"    (Sun (block 2) (layout std140)\n"
 	"      (light_dir       vec3)\n"
 	"      (light_radiance  vec3)\n"
@@ -452,7 +453,7 @@ static const char *PBR_TAIL =
 	"           (spec_i (* pref (+ (* f0 (swizzle eab x)) (swizzle eab y))))\n"
 	"           (diff_i (* (env_irradiance n) albedo (- 1.0 metallic)))\n"
 	"           (amb    (+ (* diff_i 0.7) spec_i))\n"
-	"           (color  (+ amb lo))\n"
+	"           (color  (+ amb lo emissive))\n"
 	"           (gamma  (tonemap color)))\n"
 	"      (set frag_color (vec4 gamma 1.0)))))\n";
 
@@ -673,12 +674,14 @@ static void seed_textured_material(const char *path, uint32_t shader_ref,
 /*
  * Seed a built-in PBR material: the v3 wire form with no texture trailer, just
  * [shader-ref u32][Material block std140].  The pbr shader's Material block is
- * { base_color vec4; metallic float; roughness float; }, which std140-packs to
- * 32 bytes (base_color @0, metallic @16, roughness @20, the block rounded up to
- * 32), so the material is 4 + 32 = 36 bytes with the trailing pad left zero.
- * There is no texture slot: material_texture reads none because the bytes end
- * exactly at header + block, so the shader renders its pure parametric shading.
- * A zero shader_ref makes this a no-op.
+ * { base_color vec4; metallic float; roughness float; emissive vec3; }, which
+ * std140-packs to 48 bytes (base_color @0, metallic @16, roughness @20,
+ * emissive @32, the block rounded up to 48), so the material is 4 + 48 = 52
+ * bytes.  This seeder writes no emissive, leaving it zero (see the memset), so
+ * these built-ins are non-emissive; the field exists for materials that author
+ * a glow.  There is no texture slot: material_texture reads none because the
+ * bytes end exactly at header + block, so the shader renders its pure
+ * parametric shading.  A zero shader_ref makes this a no-op.
  */
 static void seed_pbr_material(const char *path, uint32_t shader_ref,
 			      const float rgba[4], float metallic,
@@ -693,14 +696,19 @@ static void seed_pbr_material(const char *path, uint32_t shader_ref,
 	e = alloc_entry(path);
 	if (!e)
 		return;
-	n = (uint32_t)(sizeof(uint32_t)      /* shader-ref                 */
-		       + 8 * sizeof(float)); /* std140 Material block (32B) */
+	n = (uint32_t)(sizeof(uint32_t)       /* shader-ref                 */
+		       + 12 * sizeof(float)); /* std140 Material block (48B) */
 	e->data = g_mem->alloc(n);
 	if (!e->data) {
 		e->state = ASSET_ERROR;
 		return;
 	}
-	memset(e->data, 0, n);            /* leaves the block's tail pad zero */
+	/*
+	 * The zero fill is load-bearing: it leaves the block's pad AND the
+	 * emissive vec3 (@32 in the block, so @36 here) at zero, so a material
+	 * seeded through this path is non-emissive without naming emissive.
+	 */
+	memset(e->data, 0, n);
 	p = (unsigned char *)e->data;
 	memcpy(p,      &shader_ref, sizeof(shader_ref)); /* @0  shader-ref  */
 	memcpy(p + 4,  rgba, 4 * sizeof(float));         /* @4  base_color  */

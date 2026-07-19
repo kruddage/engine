@@ -91,6 +91,19 @@
 (define (chess-square-z name)
   (- 4.5 (string->number (substring name 4 5))))
 
+;;! --- feedback -----------------------------------------------------------
+
+;;! (chess-spark x z count) fires a small cosmetic particle puff of COUNT
+;;! particles at world (x, z), a little above the board, in a warm ivory-dust
+;;! colour — the "piece landed here" flourish. Guarded on particle-burst! being
+;;! bound: the renderer registers it (scene_renderer's register_particle_script),
+;;! but the headless rules test runs with no renderer, so there the primitive is
+;;! absent and the puff is simply skipped — the rules never depend on it, exactly
+;;! as tic-tac-toe's ttt-spark is guarded.
+(define (chess-spark x z count)
+  (when (defined? 'particle-burst!)
+    (particle-burst! x 0.25 z 0.85 0.72 0.45 count)))
+
 ;;! --- moving -------------------------------------------------------------
 
 ;;! (chess-place! id x z) drops piece ID onto the board at world (x, z),
@@ -106,6 +119,7 @@
 ;;! passes the turn. Returns 1 (a plain move happened).
 (define (chess-move! selid x z)
   (chess-place! selid x z)
+  (chess-spark x z 16)
   (set! *chess-sel* -1)
   (chess-toggle-turn)
   1)
@@ -122,6 +136,7 @@
         (begin
           (scene-destroy-named! tname)
           (chess-place! selid (car pos) (caddr pos))
+          (chess-spark (car pos) (caddr pos) 34)
           (set! *chess-sel* -1)
           (chess-toggle-turn)
           2)

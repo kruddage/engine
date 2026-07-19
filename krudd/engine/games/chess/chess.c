@@ -17,6 +17,7 @@
 #include "subsystem_manager.h"
 #include "game.h"
 #include "script.h"
+#include "audio_api.h"
 
 #include "chess_scene_scm.h"
 #include "chess_rules_scm.h"
@@ -31,6 +32,14 @@ void krudd_set_editor_chrome(int on);
 
 /* Resolved before register() so init/tick/load can reach the world and rules. */
 static const struct entity_api *g_scene;
+
+/*
+ * Resolved like g_scene: the "audio" subsystem registers before "chess" in the
+ * engine's static table, so it is live by the time chess_plugin_entry looks it
+ * up. NULL (and every call below a no-op) on a build with no audio backend,
+ * exactly as g_scene's callbacks are guarded.
+ */
+static const struct audio_api *g_audio;
 
 /* Last selection dispatched, so a held selection fires the rules only once. */
 static int32_t g_last_sel = -1;
@@ -68,16 +77,35 @@ static void chess_load(void)
 }
 
 /*
+ * Sound cue off chess-on-selected's return: 0 = a pick or a no-op click (silent,
+ * it moved nothing), 1 = a piece slid to an empty square (a soft wood tap), 2 = a
+ * capture (a sharper cue). The two built-in sounds (asset_plugin.c) need no new
+ * authoring, just an assignment; a build with no audio backend leaves g_audio
+ * NULL and every call a no-op.
+ */
+static void chess_play_sound(int32_t code)
+{
+	if (!g_audio || !g_audio->play_path)
+		return;
+	if (code == 1)
+		g_audio->play_path("builtin://sound/blip", 0.6f, 0.0f, 1.0f);
+	else if (code == 2)
+		g_audio->play_path("builtin://sound/beep", 0.7f, 0.0f, 1.0f);
+}
+
+/*
  * Forward the click edge to the rules. The engine's existing ray pick already
  * turns a viewport click into the selected entity; when that selection changes
  * to a new entity, hand its id to chess-on-selected with the world bound. Whether
  * it names a piece to pick up, a destination square, or something else is the
  * rules' decision — this side only detects the edge, so a held selection fires
- * once. Two such edges (a piece, then where it goes) make one move.
+ * once. Two such edges (a piece, then where it goes) make one move; the rules'
+ * return says whether that second click moved (1), captured (2), or did neither
+ * (0), which is all the cue below needs.
  */
 static void chess_tick(void)
 {
-	int32_t sel;
+	int32_t sel, code;
 
 	if (!g_scene || !g_scene->get_selected || !g_scene->dispatch_scm)
 		return;
@@ -85,8 +113,10 @@ static void chess_tick(void)
 	if (sel == g_last_sel)
 		return;
 	g_last_sel = sel;
-	if (sel >= 0)
-		g_scene->dispatch_scm("chess-on-selected", sel);
+	if (sel >= 0) {
+		code = g_scene->dispatch_scm("chess-on-selected", sel);
+		chess_play_sound(code);
+	}
 }
 
 static const struct subsystem chess_desc = {
@@ -99,6 +129,7 @@ void chess_plugin_entry(struct subsystem_manager *mgr)
 {
 	/* The "scene" api is the entity plugin, registered before this one. */
 	g_scene = subsystem_manager_get_api(mgr, "scene");
+	g_audio = subsystem_manager_get_api(mgr, "audio");
 	subsystem_manager_register(mgr, &chess_desc);
 	/* Offer the game on the launcher rather than building it at boot. */
 	game_register("Chess", chess_load);

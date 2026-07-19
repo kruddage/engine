@@ -2827,9 +2827,11 @@
 ;;! small ring buffer of recent per-frame ms for the graph underneath — the
 ;;! accessor only ever reports the latest frame, and a single number can't
 ;;! show a hitch the way a strip of recent frame times can.
-(define kruddgui-perf-hist-n 90)	; ~1.5s of history at 60fps
+;;! ~1.5s of history at 60fps.
+(define kruddgui-perf-hist-n 90)
 (define kruddgui-perf-hist (make-vector kruddgui-perf-hist-n 0.0))
-(define kruddgui-perf-hist-i 0)	; ring buffer's next write slot
+;;! The ring buffer's next write slot.
+(define kruddgui-perf-hist-i 0)
 
 (define kruddgui-perf-w 150)
 (define kruddgui-perf-graph-h 34)

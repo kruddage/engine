@@ -104,6 +104,34 @@ static gpu_buffer_t   g_fs_ebo;
 static gpu_buffer_t   g_outline_ubo; /* std140 { vec2 texel; vec4 color; }       */
 
 /*
+ * Bloom post resources (#bloom). The plain forward path renders the scene into
+ * an offscreen colour, then extract -> blur H -> blur V -> composite adds a glow
+ * around the bright part. The three pipelines share the full-screen quad above;
+ * g_blur_ubo carries the separable blur's per-tap step. Null pipelines make the
+ * tick fall back to a direct forward-to-backbuffer pass with no bloom, so bloom
+ * is a pure add-on that never breaks ordinary rendering.
+ */
+static gpu_pipeline_t g_bloom_extract_pso;   /* threshold the bright part       */
+static gpu_pipeline_t g_bloom_blur_pso;      /* separable 9-tap, run H then V    */
+static gpu_pipeline_t g_bloom_composite_pso; /* add blurred bloom onto the scene */
+static gpu_buffer_t   g_blur_ubo;            /* std140 { vec2 dir }              */
+#define BLUR_UBO_FLOATS 4                    /* vec2 dir + 2 pad (std140 -> 16B) */
+
+/*
+ * Per-frame bloom transients + half-res size the tick publishes for the passes.
+ * Three distinct blur targets (not a two-buffer ping-pong) so every hazard is a
+ * plain read-after-write — extract->a, blur H a->b, blur V b->c, composite reads
+ * c — which is the only ordering the frame graph the outline path uses tracks.
+ */
+static struct {
+	fg_resource_t scene_color;
+	fg_resource_t bloom_a;    /* extract out / blur-H in  */
+	fg_resource_t bloom_b;    /* blur-H out / blur-V in   */
+	fg_resource_t bloom_c;    /* blur-V out / composite in */
+	uint32_t      half_w, half_h;
+} g_bloom_frame;
+
+/*
  * Sun shadow-map resources (#sun-shadows). Before the forward pass the tick
  * renders the scene's depth from the light's viewpoint into a square depth
  * target, and the pbr shader compares against it to shade the sun's shadows.
@@ -214,6 +242,85 @@ static const char *OUTLINE_SHADER_SRC =
 	"           (col  (mix (swizzle (sample scene v_uv) rgb)\n"
 	"                      (swizzle color rgb) edge)))\n"
 	"      (set frag_color (vec4 col 1.0)))))\n";
+
+/*
+ * Bloom is a three-pass LDR post chain over the offscreen scene colour, run in
+ * the plain (non-outline) forward path: extract the bright part, blur it
+ * separably, then add it back. It operates on the tonemapped scene the material
+ * shaders already wrote (each pbr surface tonemaps itself), so this is cheap
+ * "display-space" bloom — a glow around bright speculars and emissive, not a
+ * physically-correct HDR bloom. All three are full-screen-triangle shaders that
+ * reuse the outline path's clip-space quad and UV convention.
+ *
+ * Extract: keep only what a luma threshold leaves, weighted so the knee is soft
+ * rather than a hard cut. The scene is already [0,1], so the threshold is in
+ * display space; 0.75 catches hot highlights and any emissive above mid-grey.
+ */
+static const char *BLOOM_EXTRACT_SHADER_SRC =
+	"(shader bloom_extract\n"
+	"  (inputs (a_pos vec2 (location 0)))\n"
+	"  (uniforms (scene sampler2D))\n"
+	"  (varyings (v_uv vec2))\n"
+	"  (targets (frag_color vec4 (location 0)))\n"
+	"  (vertex\n"
+	"    (set v_uv (+ (* a_pos 0.5) 0.5))\n"
+	"    (set position (vec4 a_pos 0.0 1.0)))\n"
+	"  (fragment\n"
+	"    (let* ((c (swizzle (sample scene v_uv) rgb))\n"
+	"           (l (dot c (vec3 0.2126 0.7152 0.0722)))\n"
+	"           (k (max (- l 0.75) 0.0))\n"
+	"           (w (/ k (+ l 0.0001))))\n"
+	"      (set frag_color (vec4 (* c w) 1.0)))))\n";
+
+/*
+ * Blur: one separable 9-tap Gaussian, run twice (horizontal then vertical) off
+ * the same pipeline. `dir` is the per-tap texel step along the axis this pass
+ * blurs — the tick sets it to (1/w, 0) then (0, 1/h) of the half-res target.
+ * The weights are a normalised sigma~2 Gaussian (they sum to 1), so the pass
+ * preserves total brightness.
+ */
+static const char *BLOOM_BLUR_SHADER_SRC =
+	"(shader bloom_blur\n"
+	"  (inputs (a_pos vec2 (location 0)))\n"
+	"  (uniforms\n"
+	"    (Blur (block 0) (layout std140)\n"
+	"      (dir vec2))\n"
+	"    (src sampler2D))\n"
+	"  (varyings (v_uv vec2))\n"
+	"  (targets (frag_color vec4 (location 0)))\n"
+	"  (vertex\n"
+	"    (set v_uv (+ (* a_pos 0.5) 0.5))\n"
+	"    (set position (vec4 a_pos 0.0 1.0)))\n"
+	"  (fragment\n"
+	"    (let* ((s0 (* (swizzle (sample src v_uv) rgb) 0.2270270))\n"
+	"           (s1 (* (+ (swizzle (sample src (+ v_uv (* dir 1.0))) rgb)\n"
+	"                     (swizzle (sample src (- v_uv (* dir 1.0))) rgb)) 0.1945946))\n"
+	"           (s2 (* (+ (swizzle (sample src (+ v_uv (* dir 2.0))) rgb)\n"
+	"                     (swizzle (sample src (- v_uv (* dir 2.0))) rgb)) 0.1216216))\n"
+	"           (s3 (* (+ (swizzle (sample src (+ v_uv (* dir 3.0))) rgb)\n"
+	"                     (swizzle (sample src (- v_uv (* dir 3.0))) rgb)) 0.0540540))\n"
+	"           (s4 (* (+ (swizzle (sample src (+ v_uv (* dir 4.0))) rgb)\n"
+	"                     (swizzle (sample src (- v_uv (* dir 4.0))) rgb)) 0.0162162)))\n"
+	"      (set frag_color (vec4 (+ s0 s1 s2 s3 s4) 1.0)))))\n";
+
+/*
+ * Composite: add the blurred bloom back onto the full-res scene. Two samplers,
+ * bound by the backend's alphabetical unit rule (bloom -> 0, scene -> 1). The
+ * add is scaled so the glow reads as a halo, not a wash.
+ */
+static const char *BLOOM_COMPOSITE_SHADER_SRC =
+	"(shader bloom_composite\n"
+	"  (inputs (a_pos vec2 (location 0)))\n"
+	"  (uniforms (bloom sampler2D) (scene sampler2D))\n"
+	"  (varyings (v_uv vec2))\n"
+	"  (targets (frag_color vec4 (location 0)))\n"
+	"  (vertex\n"
+	"    (set v_uv (+ (* a_pos 0.5) 0.5))\n"
+	"    (set position (vec4 a_pos 0.0 1.0)))\n"
+	"  (fragment\n"
+	"    (let* ((s (swizzle (sample scene v_uv) rgb))\n"
+	"           (b (swizzle (sample bloom v_uv) rgb)))\n"
+	"      (set frag_color (vec4 (+ s (* b 0.65)) 1.0)))))\n";
 
 /*
  * The shared Camera uniform block, std140-packed: view_proj[16] + model[16] +
@@ -962,6 +1069,30 @@ static void build_outline_resources(const struct gpu_api *gpu)
 	bd.usage        = GPU_BUFFER_USAGE_UNIFORM;
 	bd.size         = OUTLINE_UBO_FLOATS * sizeof(float);
 	g_outline_ubo = gpu->buffer_create(&bd);
+}
+
+/*
+ * Compile the three bloom pipelines and the blur's uniform buffer, off-frame.
+ * All three are full-screen and reuse the quad build_outline_resources made, so
+ * this must run after it. Any failed compile leaves a null handle and the tick
+ * takes its no-bloom fallback, so bloom never breaks ordinary rendering.
+ */
+static void build_bloom_resources(const struct gpu_api *gpu)
+{
+	struct gpu_buffer_desc bd;
+
+	g_bloom_extract_pso   = create_fullscreen_pso(gpu, BLOOM_EXTRACT_SHADER_SRC);
+	g_bloom_blur_pso      = create_fullscreen_pso(gpu, BLOOM_BLUR_SHADER_SRC);
+	g_bloom_composite_pso = create_fullscreen_pso(gpu, BLOOM_COMPOSITE_SHADER_SRC);
+	if (!g_bloom_extract_pso || !g_bloom_blur_pso || !g_bloom_composite_pso)
+		g_log->write(LOG_LEVEL_WARN,
+			     "scene_renderer: bloom pipeline unavailable; "
+			     "bloom disabled");
+
+	memset(&bd, 0, sizeof(bd));
+	bd.usage = GPU_BUFFER_USAGE_UNIFORM;
+	bd.size  = BLUR_UBO_FLOATS * sizeof(float);
+	g_blur_ubo = gpu->buffer_create(&bd);
 }
 
 /*
@@ -2010,6 +2141,7 @@ static void scene_renderer_init(void)
 	}
 
 	build_outline_resources(gpu);
+	build_bloom_resources(gpu);
 	build_shadow_resources(gpu);
 
 	/* A fixed camera framing the unit primitives at the origin. */
@@ -2466,6 +2598,88 @@ static void composite_pass(struct fg_pass_ctx *ctx, void *userdata)
 	gpu->cmd_draw_indexed(cmd, &draw);
 }
 
+/* One full-screen-triangle draw of PSO reading TEX at unit 0. Shared by the
+ * bloom extract pass and (with a bound UBO) the blur; the composite binds two
+ * textures itself. */
+static void fullscreen_draw(const struct gpu_api *gpu, gpu_cmd_buf_t cmd)
+{
+	struct gpu_draw_indexed_args draw;
+
+	gpu->cmd_bind_vertex_buffer(cmd, 0, g_fs_vbo, 0);
+	gpu->cmd_bind_index_buffer(cmd, g_fs_ebo, 0, GPU_INDEX_FORMAT_UINT16);
+	memset(&draw, 0, sizeof(draw));
+	draw.index_count    = 3;
+	draw.instance_count = 1;
+	gpu->cmd_draw_indexed(cmd, &draw);
+}
+
+/* Bloom, pass 1: threshold the offscreen scene into the half-res bright target. */
+static void bloom_extract_pass(struct fg_pass_ctx *ctx, void *userdata)
+{
+	const struct gpu_api *gpu = fg_ctx_gpu(ctx);
+	gpu_cmd_buf_t         cmd = fg_ctx_cmd(ctx);
+
+	(void)userdata;
+	if (!gpu || !g_bloom_extract_pso)
+		return;
+	gpu->cmd_set_pipeline(cmd, g_bloom_extract_pso);
+	gpu->cmd_bind_texture(cmd, 0, fg_ctx_resource(ctx, g_bloom_frame.scene_color));
+	fullscreen_draw(gpu, cmd);
+}
+
+/* One separable blur pass over INPUT with per-tap step (dx, dy). */
+static void bloom_blur(struct fg_pass_ctx *ctx, fg_resource_t input,
+		       float dx, float dy)
+{
+	const struct gpu_api *gpu = fg_ctx_gpu(ctx);
+	gpu_cmd_buf_t         cmd = fg_ctx_cmd(ctx);
+	float                 ubo[BLUR_UBO_FLOATS];
+
+	if (!gpu || !g_bloom_blur_pso)
+		return;
+	memset(ubo, 0, sizeof(ubo));
+	ubo[0] = dx;
+	ubo[1] = dy;
+	gpu->cmd_set_pipeline(cmd, g_bloom_blur_pso);
+	gpu->buffer_update(g_blur_ubo, 0, ubo, (uint32_t)sizeof(ubo));
+	gpu->cmd_bind_uniform_buffer(cmd, 0, g_blur_ubo, 0, (uint32_t)sizeof(ubo));
+	gpu->cmd_bind_texture(cmd, 0, fg_ctx_resource(ctx, input));
+	fullscreen_draw(gpu, cmd);
+}
+
+/* Bloom, pass 2: horizontal blur of the bright target (bloom_a -> bloom_b). */
+static void bloom_blur_h_pass(struct fg_pass_ctx *ctx, void *userdata)
+{
+	(void)userdata;
+	bloom_blur(ctx, g_bloom_frame.bloom_a,
+		   g_bloom_frame.half_w ? 1.0f / (float)g_bloom_frame.half_w : 0.0f,
+		   0.0f);
+}
+
+/* Bloom, pass 3: vertical blur back the other way (bloom_b -> bloom_a). */
+static void bloom_blur_v_pass(struct fg_pass_ctx *ctx, void *userdata)
+{
+	(void)userdata;
+	bloom_blur(ctx, g_bloom_frame.bloom_b, 0.0f,
+		   g_bloom_frame.half_h ? 1.0f / (float)g_bloom_frame.half_h : 0.0f);
+}
+
+/* Bloom, pass 4: add the blurred bloom onto the full-res scene, into the bb. */
+static void bloom_composite_pass(struct fg_pass_ctx *ctx, void *userdata)
+{
+	const struct gpu_api *gpu = fg_ctx_gpu(ctx);
+	gpu_cmd_buf_t         cmd = fg_ctx_cmd(ctx);
+
+	(void)userdata;
+	if (!gpu || !g_bloom_composite_pso)
+		return;
+	gpu->cmd_set_pipeline(cmd, g_bloom_composite_pso);
+	/* Alphabetical unit rule: bloom -> 0, scene -> 1. */
+	gpu->cmd_bind_texture(cmd, 0, fg_ctx_resource(ctx, g_bloom_frame.bloom_c));
+	gpu->cmd_bind_texture(cmd, 1, fg_ctx_resource(ctx, g_bloom_frame.scene_color));
+	fullscreen_draw(gpu, cmd);
+}
+
 /* A live entity's name, or NULL — a self-contained twin of world_entity_name
  * so the renderer need not link the entity module for one lookup. */
 static const char *camera_entity_name(const struct world *w, uint32_t e)
@@ -2627,23 +2841,118 @@ static void scene_renderer_tick(void)
 	}
 	g_shadow_res = shadow;
 
+	/*
+	 * Bloom runs when its pipelines compiled and the UI has reported a
+	 * viewport to size the offscreen targets to — the forward pass renders
+	 * into an offscreen colour, then extract/blur/blur/composite adds a glow
+	 * on the way to the backbuffer. Without either (a headless or pre-report
+	 * frame, or a failed compile) the renderer falls back to the direct
+	 * forward-to-backbuffer pass it has always been, at zero added cost.
+	 */
 	if (!outline) {
-		fg_resource_t freads[1];
-		uint32_t      frn = 0;
+		int bloom = g_bloom_extract_pso && g_bloom_blur_pso &&
+			    g_bloom_composite_pso && g_view_w > 0.0f &&
+			    g_view_h > 0.0f;
 
-		if (spass) { freads[0] = shadow; frn = 1; }
-		pass = g_fg_api->pass_declare(fg, "forward", frn ? freads : NULL,
-					      frn, &bb, 1);
-		if (pass && (!shadow || spass)) {
-			if (spass) {
-				g_fg_api->pass_set_depth_clear(spass, 1.0f);
-				g_fg_api->pass_set_execute(spass, shadow_pass, NULL);
+		if (!bloom) {
+			fg_resource_t freads[1];
+			uint32_t      frn = 0;
+
+			if (spass) { freads[0] = shadow; frn = 1; }
+			pass = g_fg_api->pass_declare(fg, "forward",
+						      frn ? freads : NULL, frn,
+						      &bb, 1);
+			if (pass && (!shadow || spass)) {
+				if (spass) {
+					g_fg_api->pass_set_depth_clear(spass, 1.0f);
+					g_fg_api->pass_set_execute(spass,
+								   shadow_pass, NULL);
+				}
+				g_fg_api->pass_set_color_clear(pass, 0, CLEAR);
+				g_fg_api->pass_set_depth_clear(pass, 1.0f);
+				g_fg_api->pass_set_execute(pass, forward_pass, NULL);
+				g_fg_api->compile(fg);
+				g_fg_api->execute(fg);
 			}
-			g_fg_api->pass_set_color_clear(pass, 0, CLEAR);
-			g_fg_api->pass_set_depth_clear(pass, 1.0f);
-			g_fg_api->pass_set_execute(pass, forward_pass, NULL);
-			g_fg_api->compile(fg);
-			g_fg_api->execute(fg);
+		} else {
+			uint32_t      vw = (uint32_t)g_view_w, vh = (uint32_t)g_view_h;
+			uint32_t      hw = vw > 1 ? vw / 2 : 1;
+			uint32_t      hh = vh > 1 ? vh / 2 : 1;
+			fg_tex_desc   cdesc, ddesc, hdesc;
+			fg_resource_t scene_color, scene_depth, ba, bb2, bc;
+			fg_resource_t fwrites[2], freads[1], xr[1], hr[1], vr[1],
+				      cr[2];
+			uint32_t      frn = 0;
+			fg_pass_t     fpass, xpass, hpass, vpass, cpass;
+
+			memset(&cdesc, 0, sizeof(cdesc));
+			cdesc.format       = GPU_FORMAT_RGBA8_UNORM;
+			cdesc.width        = vw;
+			cdesc.height       = vh;
+			cdesc.mip_levels   = 1;
+			cdesc.sample_count = 1;
+			ddesc              = cdesc;
+			ddesc.format       = GPU_FORMAT_DEPTH32_FLOAT;
+			hdesc              = cdesc;
+			hdesc.width        = hw;
+			hdesc.height       = hh;
+
+			scene_color = g_fg_api->declare_transient(fg, "scene_color",
+								  cdesc);
+			scene_depth = g_fg_api->declare_transient(fg, "scene_depth",
+								  ddesc);
+			ba  = g_fg_api->declare_transient(fg, "bloom_a", hdesc);
+			bb2 = g_fg_api->declare_transient(fg, "bloom_b", hdesc);
+			bc  = g_fg_api->declare_transient(fg, "bloom_c", hdesc);
+
+			g_bloom_frame.scene_color = scene_color;
+			g_bloom_frame.bloom_a     = ba;
+			g_bloom_frame.bloom_b     = bb2;
+			g_bloom_frame.bloom_c     = bc;
+			g_bloom_frame.half_w      = hw;
+			g_bloom_frame.half_h      = hh;
+
+			fwrites[0] = scene_color;
+			fwrites[1] = scene_depth;
+			if (spass) { freads[0] = shadow; frn = 1; }
+			fpass = g_fg_api->pass_declare(fg, "forward",
+						       frn ? freads : NULL, frn,
+						       fwrites, 2);
+			xr[0] = scene_color;
+			xpass = g_fg_api->pass_declare(fg, "bloom_extract", xr, 1,
+						       &ba, 1);
+			hr[0] = ba;
+			hpass = g_fg_api->pass_declare(fg, "bloom_blur_h", hr, 1,
+						       &bb2, 1);
+			vr[0] = bb2;
+			vpass = g_fg_api->pass_declare(fg, "bloom_blur_v", vr, 1,
+						       &bc, 1);
+			cr[0] = scene_color;
+			cr[1] = bc;
+			cpass = g_fg_api->pass_declare(fg, "bloom_composite", cr, 2,
+						       &bb, 1);
+
+			if (fpass && xpass && hpass && vpass && cpass &&
+			    (!shadow || spass)) {
+				if (spass) {
+					g_fg_api->pass_set_depth_clear(spass, 1.0f);
+					g_fg_api->pass_set_execute(spass,
+								   shadow_pass, NULL);
+				}
+				g_fg_api->pass_set_color_clear(fpass, 0, CLEAR);
+				g_fg_api->pass_set_depth_clear(fpass, 1.0f);
+				g_fg_api->pass_set_execute(fpass, forward_pass, NULL);
+				g_fg_api->pass_set_execute(xpass, bloom_extract_pass,
+							   NULL);
+				g_fg_api->pass_set_execute(hpass, bloom_blur_h_pass,
+							   NULL);
+				g_fg_api->pass_set_execute(vpass, bloom_blur_v_pass,
+							   NULL);
+				g_fg_api->pass_set_execute(cpass,
+							   bloom_composite_pass, NULL);
+				g_fg_api->compile(fg);
+				g_fg_api->execute(fg);
+			}
 		}
 	} else {
 		uint32_t      vw = (uint32_t)g_view_w, vh = (uint32_t)g_view_h;
@@ -2734,6 +3043,14 @@ static void scene_renderer_shutdown(void)
 			gpu->buffer_destroy(g_fs_ebo);
 		if (g_outline_ubo)
 			gpu->buffer_destroy(g_outline_ubo);
+		if (g_bloom_extract_pso)
+			gpu->pipeline_destroy(g_bloom_extract_pso);
+		if (g_bloom_blur_pso)
+			gpu->pipeline_destroy(g_bloom_blur_pso);
+		if (g_bloom_composite_pso)
+			gpu->pipeline_destroy(g_bloom_composite_pso);
+		if (g_blur_ubo)
+			gpu->buffer_destroy(g_blur_ubo);
 		/*
 		 * The default pipeline is also cached (under the scene shader's
 		 * id), so destroy the distinct cache entries first, then it once.
@@ -2756,6 +3073,10 @@ static void scene_renderer_shutdown(void)
 	g_fs_vbo           = 0;
 	g_fs_ebo           = 0;
 	g_outline_ubo      = 0;
+	g_bloom_extract_pso   = 0;
+	g_bloom_blur_pso      = 0;
+	g_bloom_composite_pso = 0;
+	g_blur_ubo            = 0;
 	g_shader_pso_count = 0;
 	g_mesh_count       = 0;
 	g_texture_count    = 0;

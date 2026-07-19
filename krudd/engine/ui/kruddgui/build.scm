@@ -66,4 +66,11 @@
 		(private (root "core/include") (raw "${generated}")
 			(raw "../third_party"))
 		(link "script"))
-	(test "kgui_assets" "kgui_assets_test")))
+	(test "kgui_assets" "kgui_assets_test")
+
+	(executable "kgui_perf_test"
+		(sources "kgui_perf_test.c")
+		(private (root "core/include") (raw "${generated}")
+			(raw "../third_party"))
+		(link "script"))
+	(test "kgui_perf" "kgui_perf_test")))

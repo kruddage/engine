@@ -1610,6 +1610,15 @@ static void kruddgui_tick(void)
 		call_scm_panel("kruddgui-draw");
 
 	/*
+	 * The perf HUD is not editor chrome: it draws every tick regardless of
+	 * krudd_editor_chrome(), so a hitch is visible in a game's play view
+	 * (chess, tic-tac-toe, ...) as well as the editor. It owns its own
+	 * input region (kgui-panel-begin), so it traps its own small corner
+	 * rather than leaking a tap through to the game underneath.
+	 */
+	call_scm_panel("kruddgui-perf-hud-draw");
+
+	/*
 	 * Commit the regions the image just declared as the set the async
 	 * callbacks route against, and clear the one-frame results (taps, drag,
 	 * wheel) the image consumed. Doing it after the eval — which is what

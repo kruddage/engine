@@ -232,6 +232,67 @@
 (check "the clip-space write goes through the position builtin"
        (has? kvs "out.position = vec4<f32>(q.x, (0.0 - q.y), 0.0, 1.0);"))
 
+;;! Byte index of SUB in S, or -1 — for asserting module-scope order (a helper
+;;! must sit below the vars it reads and above the entry point that calls it).
+(define (idx s sub)
+	(let ((hl (string-length s)) (nl (string-length sub)))
+	  (let loop ((i 0))
+	    (cond ((> (+ i nl) hl) -1)
+		  ((string=? (substring s i (+ i nl)) sub) i)
+		  (else (loop (+ i 1)))))))
+
+(display "wgsl: functions (reusable helpers)\n")
+;;! The same helped shader the GLSL oracle checks, so both targets lower one
+;;! source: a pure tonemap, a shadow_at that samples a depth map only inside the
+;;! helper, and an unreached `unused`.
+(define fn-shader "(shader helped
+  (inputs (a_pos vec3 (location 0)) (a_uv0 vec2 (location 1)))
+  (uniforms (Camera (block 0) (layout std140) (view_proj mat4))
+            (shadow_map depth2D))
+  (varyings (v_uv vec2) (v_lightpos vec4))
+  (targets (frag_color vec4 (location 0)))
+  (functions
+    (tonemap ((color vec3)) vec3
+      (let* ((mapped (/ color (+ color (vec3 1.0 1.0 1.0))))
+             (g (pow mapped (vec3 0.4545 0.4545 0.4545))))
+        (return g)))
+    (shadow_at ((lp vec4)) float
+      (let* ((uv (swizzle lp xy))
+             (s (swizzle (sample shadow_map uv) r)))
+        (return s)))
+    (unused ((x float)) float
+      (return (* x 2.0))))
+  (vertex
+    (set v_uv a_uv0)
+    (set position (* view_proj (vec4 a_pos 1.0))))
+  (fragment
+    (let* ((sh (shadow_at v_lightpos))
+           (col (tonemap (vec3 sh sh sh))))
+      (set frag_color (vec4 col 1.0)))))")
+(define hfs (shader-transpile-wgsl fn-shader "fragment"))
+(define hvs (shader-transpile-wgsl fn-shader "vertex"))
+(check "a helper lowers to a WGSL fn with typed params and return"
+       (has? hfs "fn tonemap(color : vec3<f32>) -> vec3<f32> {"))
+(check "its let* -> let and (return EXPR) -> return"
+       (and (has? hfs "let mapped = (color / (color + vec3<f32>(1.0, 1.0, 1.0)));")
+	    (has? hfs "return g;")))
+(check "a sampling helper is fragment-only: textureSample, depth widened to vec4"
+       (has? hfs "let s = vec4<f32>(textureSample(shadow_map, shadow_map_sampler, uv)).r;"))
+(check "a call reads as a WGSL call, typed by the helper's return"
+       (and (has? hfs "let sh = shadow_at(in.v_lightpos);")
+	    (has? hfs "let col = tonemap(vec3<f32>(sh, sh, sh));")))
+(check "the fragment binds a sampler only its helper reads (transitive refs)"
+       (and (has? hfs "@group(1) @binding(0) var shadow_map : texture_depth_2d;")
+	    (has? hfs "@group(1) @binding(1) var shadow_map_sampler : sampler;")))
+(check "helpers sit below their module-scope vars and above the entry point"
+       (and (< (idx hfs "var shadow_map :") (idx hfs "fn tonemap"))
+	    (< (idx hfs "fn shadow_at") (idx hfs "@fragment"))))
+(check "an unreached helper is not emitted"
+       (not (has? hfs "fn unused")))
+(check "the vertex reaches no helper, so emits none and no helper-only binding"
+       (and (not (has? hvs "fn shadow_at")) (not (has? hvs "fn tonemap"))
+	    (not (has? hvs "shadow_map"))))
+
 ;;! When KRUDD_WGSL_DUMP names a directory, also write the emitted WGSL there so
 ;;! run-tests.sh can hand it to naga(1) for a real validation pass — the checks
 ;;! above prove the shape, naga proves the WGSL actually compiles. Skipped (and
@@ -255,7 +316,8 @@
 		    (shader-transpile-wgsl
 		      "(shader glow (targets (c vec4 (location 0)))
                          (fragment (set c (vec4 1.0 1.0 1.0 1.0))))"
-		      "fragment")))))
+		      "fragment"))
+	(write-wgsl "helped.frag.wgsl" hfs))))
 
 (if (= fail-count 0)
     (begin (display "WGSL-TESTS: OK\n") (exit 0))

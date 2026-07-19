@@ -47,6 +47,16 @@ static void null_cmd_buf_submit(gpu_cmd_buf_t cmd)
 	});
 }
 
+/* Logged like every other call, so a test can assert the engine reaches the
+ * frame boundary exactly once per tick. The null backend owns nothing to free. */
+static void null_frame_end(void)
+{
+	g_log->write(LOG_LEVEL_INFO, "renderer_null: frame_end");
+	log_append((struct gpu_call_record){
+		.type = GPU_CALL_FRAME_END,
+	});
+}
+
 static gpu_pipeline_t
 null_pipeline_create(const struct gpu_pipeline_desc *desc)
 {
@@ -340,6 +350,7 @@ static const struct gpu_api null_api = {
 	.caps                   = GPU_CAP_DRAW_INDEXED | GPU_CAP_COMPUTE,
 	.cmd_buf_begin          = null_cmd_buf_begin,
 	.cmd_buf_submit         = null_cmd_buf_submit,
+	.frame_end              = null_frame_end,
 	.pipeline_create        = null_pipeline_create,
 	.pipeline_destroy       = null_pipeline_destroy,
 	.cmd_set_pipeline       = null_cmd_set_pipeline,

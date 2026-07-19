@@ -203,6 +203,15 @@ static void webgl_cmd_buf_submit(gpu_cmd_buf_t cmd)
 	g_cmd_buf.active = 0;
 }
 
+/*
+ * Nothing to do: GL's default framebuffer is always there, so this backend
+ * holds no per-frame resource to give back. The WebGPU backend, which owns the
+ * canvas surface texture for the frame, is what the boundary exists for.
+ */
+static void webgl_frame_end(void)
+{
+}
+
 static gpu_pipeline_t
 webgl_pipeline_create(const struct gpu_pipeline_desc *desc)
 {
@@ -868,6 +877,7 @@ static const struct gpu_api webgl_api = {
 	.caps                   = GPU_CAP_DRAW_DIRECT | GPU_CAP_DRAW_INDEXED,
 	.cmd_buf_begin          = webgl_cmd_buf_begin,
 	.cmd_buf_submit         = webgl_cmd_buf_submit,
+	.frame_end              = webgl_frame_end,
 	.pipeline_create        = webgl_pipeline_create,
 	.pipeline_destroy       = webgl_pipeline_destroy,
 	.cmd_set_pipeline       = webgl_cmd_set_pipeline,

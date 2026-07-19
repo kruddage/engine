@@ -197,23 +197,23 @@
 ;;! primitive).
 (define (entity-script-tick id src t params)
   (catch #t
-    (lambda ()
-      (let ((hooks (entity-script-resolve id src)))
-        (when hooks
-          (set! *params* params)
-          (unless (hash-table-ref *entity-script-begun* id)
-            (let ((h (entity-script-clause hooks 'on-begin)))
-              (when h (h id)))
-            (hash-table-set! *entity-script-begun* id #t))
-          (let ((h (entity-script-clause hooks 'on-tick)))
-            (when h (h id t)))
-          (set! *params* '()))))
-    (lambda args
-      (set! *params* '())
-      (krudd-log 2 (string-append "entity-script: fault on entity "
-                                  (number->string id) ": "
-                                  (entity-script-error->string args)))
-      #f)))
+         (lambda ()
+           (let ((hooks (entity-script-resolve id src)))
+             (when hooks
+               (set! *params* params)
+               (unless (hash-table-ref *entity-script-begun* id)
+                 (let ((h (entity-script-clause hooks 'on-begin)))
+                   (when h (h id)))
+                 (hash-table-set! *entity-script-begun* id #t))
+               (let ((h (entity-script-clause hooks 'on-tick)))
+                 (when h (h id t)))
+               (set! *params* '()))))
+         (lambda args
+           (set! *params* '())
+           (krudd-log 2 (string-append "entity-script: fault on entity "
+                                       (number->string id) ": "
+                                       (entity-script-error->string args)))
+           #f)))
 
 ;;! Run the on-destroy hook (if any) for entity ID and forget its cached
 ;;! binding, so a later rebind re-resolves and re-fires on-begin.

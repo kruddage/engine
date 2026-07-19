@@ -99,9 +99,9 @@
 ;;! the bake.
 (define (sound-script-params src)
   (catch #t
-    (lambda ()
-      (script-params-form (with-input-from-string src (lambda () (read)))))
-    (lambda args (cons 0 '()))))
+         (lambda ()
+           (script-params-form (with-input-from-string src (lambda () (read)))))
+         (lambda args (cons 0 '()))))
 
 ;;! Read channel K (a real in [-1,1]) from a sample result, or FALLBACK when the
 ;;! list is short or the channel is non-numeric — so a malformed frame degrades
@@ -137,30 +137,30 @@
 (define (sound-script-run src params rate frames channels)
   (set! *params* params)
   (let ((result
-          (catch #t
-            (lambda ()
-              (let ((sample (eval (with-input-from-string src
-                                                          (lambda () (read)))
-                                  (rootlet)))
-                    (buf (make-float-vector (* frames channels) 0.0))
-                    (mono (= channels 1)))
-                (do ((i 0 (+ i 1)))
-                    ((= i frames) buf)
-                  (let* ((t (/ (exact->inexact i) rate))
-                         (s (sample t))
-                         (j (* i channels)))
-                    (if mono
-                        (float-vector-set! buf j (snd-clamp (snd-mono s)))
-                        (if (pair? s)
-                            (let ((l (snd-chan s 0 0.0)))
-                              (float-vector-set! buf j       (snd-clamp l))
-                              (float-vector-set! buf (+ j 1) (snd-clamp (snd-chan s 1 l))))
-                            (let ((m (snd-clamp (if (real? s) s 0.0))))
-                              (float-vector-set! buf j       m)
-                              (float-vector-set! buf (+ j 1) m))))))))
-            (lambda args
-              (krudd-log 2 (string-append "sound-script: fault: " src))
-              #f))))
+         (catch #t
+                (lambda ()
+                  (let ((sample (eval (with-input-from-string src
+                                        (lambda () (read)))
+                                      (rootlet)))
+                        (buf (make-float-vector (* frames channels) 0.0))
+                        (mono (= channels 1)))
+                    (do ((i 0 (+ i 1)))
+                        ((= i frames) buf)
+                      (let* ((t (/ (exact->inexact i) rate))
+                             (s (sample t))
+                             (j (* i channels)))
+                        (if mono
+                            (float-vector-set! buf j (snd-clamp (snd-mono s)))
+                            (if (pair? s)
+                                (let ((l (snd-chan s 0 0.0)))
+                                  (float-vector-set! buf j       (snd-clamp l))
+                                  (float-vector-set! buf (+ j 1) (snd-clamp (snd-chan s 1 l))))
+                                (let ((m (snd-clamp (if (real? s) s 0.0))))
+                                  (float-vector-set! buf j       m)
+                                  (float-vector-set! buf (+ j 1) m))))))))
+                (lambda args
+                  (krudd-log 2 (string-append "sound-script: fault: " src))
+                  #f))))
     (set! *params* '())
     result))
 

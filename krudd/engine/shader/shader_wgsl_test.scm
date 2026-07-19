@@ -14,18 +14,18 @@
 (define fail-count 0)
 
 (define (check name ok)
-	(if ok
-	    (display (string-append "  ok    " name "\n"))
-	    (begin
-	      (set! fail-count (+ fail-count 1))
-	      (display (string-append "  FAIL  " name "\n")))))
+  (if ok
+      (display (string-append "  ok    " name "\n"))
+      (begin
+        (set! fail-count (+ fail-count 1))
+        (display (string-append "  FAIL  " name "\n")))))
 
 (define (has? s sub)
-	(let ((hl (string-length s)) (nl (string-length sub)))
-	  (let loop ((i 0))
-	    (cond ((> (+ i nl) hl) #f)
-		  ((string=? (substring s i (+ i nl)) sub) #t)
-		  (else (loop (+ i 1)))))))
+  (let ((hl (string-length s)) (nl (string-length sub)))
+    (let loop ((i 0))
+      (cond ((> (+ i nl) hl) #f)
+            ((string=? (substring s i (+ i nl)) sub) #t)
+            (else (loop (+ i 1)))))))
 
 ;;! The built-in scene shader — the exact DSL asset_plugin seeds, matching the
 ;;! GLSL oracle so both targets are checked against the same source.
@@ -57,14 +57,14 @@
 (display "wgsl: vertex codegen\n")
 (check "the vertex entry point is a @vertex fn returning VertexOutput"
        (and (has? vs "@vertex\n")
-	    (has? vs "fn vs_main(in : VertexInput) -> VertexOutput {")))
+            (has? vs "fn vs_main(in : VertexInput) -> VertexOutput {")))
 (check "a used uniform block becomes a WGSL struct, all its fields typed"
        (has? vs "struct Camera {\n\tview_proj : mat4x4<f32>,\n\tmodel : mat4x4<f32>,\n};"))
 (check "the block binds at @group(0) @binding(N) from its (block N)"
        (has? vs "@group(0) @binding(0) var<uniform> u_Camera : Camera;"))
 (check "vertex inputs carry their @location in a VertexInput struct"
        (and (has? vs "struct VertexInput {")
-	    (has? vs "@location(1) a_normal : vec3<f32>,")))
+            (has? vs "@location(1) a_normal : vec3<f32>,")))
 (check "the output struct pairs @builtin(position) with the used varying"
        (has? vs "struct VertexOutput {\n\t@builtin(position) position : vec4<f32>,\n\t@location(0) v_normal : vec3<f32>,\n};"))
 (check "mat3(mat4) truncates by columns — WGSL has no direct constructor"
@@ -77,7 +77,7 @@
 (display "wgsl: fragment codegen\n")
 (check "the fragment entry point takes FragmentInput, returns FragmentOutput"
        (and (has? fs "@fragment\n")
-	    (has? fs "fn fs_main(in : FragmentInput) -> FragmentOutput {")))
+            (has? fs "fn fs_main(in : FragmentInput) -> FragmentOutput {")))
 (check "the read-side varying carries the matching @location in FragmentInput"
        (has? fs "struct FragmentInput {\n\t@location(0) v_normal : vec3<f32>,\n};"))
 (check "the color target lands in a FragmentOutput struct with its @location"
@@ -159,7 +159,7 @@
 ;;! a new type name it has no meaning for.
 (check "GLSL spells depth2D as sampler2D"
        (has? (shader-transpile depth-shader "fragment")
-	     "uniform sampler2D shadow_map;"))
+             "uniform sampler2D shadow_map;"))
 
 (display "wgsl: missing-stage / no-varying shader\n")
 (let* ((frag-only "(shader glow (targets (c vec4 (location 0)))
@@ -167,11 +167,11 @@
        (gvs (shader-transpile-wgsl frag-only "vertex"))
        (gfs (shader-transpile-wgsl frag-only "fragment")))
   (check "a shader with only a fragment stage has no vertex WGSL"
-	 (eq? #f gvs))
+         (eq? #f gvs))
   (check "a fragment that reads no varyings takes no input parameter"
-	 (has? gfs "fn fs_main() -> FragmentOutput {"))
+         (has? gfs "fn fs_main() -> FragmentOutput {"))
   (check "its lone target still writes through out.*"
-	 (has? gfs "out.c = vec4<f32>(1.0, 1.0, 1.0, 1.0);")))
+         (has? gfs "out.c = vec4<f32>(1.0, 1.0, 1.0, 1.0);")))
 
 ;;! kruddgui's SDF overlay shader — the same DSL shader_test.scm checks the GLSL
 ;;! lowering of, here on the WGSL side. This is the shader that will put the
@@ -221,25 +221,25 @@
        (not (has? kfs "u_View")))
 (check "the atlas sampler is a texture/sampler pair at group 1 bindings 0 and 1"
        (and (has? kfs "@group(1) @binding(0) var u_tex : texture_2d<f32>;")
-	    (has? kfs "@group(1) @binding(1) var u_tex_sampler : sampler;")))
+            (has? kfs "@group(1) @binding(1) var u_tex_sampler : sampler;")))
 (check "(sample u_tex v_uv) lowers to textureSample with the companion sampler"
        (has? kfs "let d = textureSample(u_tex, u_tex_sampler, in.v_uv).a;"))
 (check "the varyings keep matching locations across the stage boundary"
        (and (has? kvs "@location(0) v_uv : vec2<f32>,")
-	    (has? kvs "@location(1) v_col : vec4<f32>,")
-	    (has? kfs "@location(0) v_uv : vec2<f32>,")
-	    (has? kfs "@location(1) v_col : vec4<f32>,")))
+            (has? kvs "@location(1) v_col : vec4<f32>,")
+            (has? kfs "@location(0) v_uv : vec2<f32>,")
+            (has? kfs "@location(1) v_col : vec4<f32>,")))
 (check "the clip-space write goes through the position builtin"
        (has? kvs "out.position = vec4<f32>(q.x, (0.0 - q.y), 0.0, 1.0);"))
 
 ;;! Byte index of SUB in S, or -1 — for asserting module-scope order (a helper
 ;;! must sit below the vars it reads and above the entry point that calls it).
 (define (idx s sub)
-	(let ((hl (string-length s)) (nl (string-length sub)))
-	  (let loop ((i 0))
-	    (cond ((> (+ i nl) hl) -1)
-		  ((string=? (substring s i (+ i nl)) sub) i)
-		  (else (loop (+ i 1)))))))
+  (let ((hl (string-length s)) (nl (string-length sub)))
+    (let loop ((i 0))
+      (cond ((> (+ i nl) hl) -1)
+            ((string=? (substring s i (+ i nl)) sub) i)
+            (else (loop (+ i 1)))))))
 
 (display "wgsl: functions (reusable helpers)\n")
 ;;! The same helped shader the GLSL oracle checks, so both targets lower one
@@ -275,23 +275,23 @@
        (has? hfs "fn tonemap(color : vec3<f32>) -> vec3<f32> {"))
 (check "its let* -> let and (return EXPR) -> return"
        (and (has? hfs "let mapped = (color / (color + vec3<f32>(1.0, 1.0, 1.0)));")
-	    (has? hfs "return g;")))
+            (has? hfs "return g;")))
 (check "a sampling helper is fragment-only: textureSample, depth widened to vec4"
        (has? hfs "let s = vec4<f32>(textureSample(shadow_map, shadow_map_sampler, uv)).r;"))
 (check "a call reads as a WGSL call, typed by the helper's return"
        (and (has? hfs "let sh = shadow_at(in.v_lightpos);")
-	    (has? hfs "let col = tonemap(vec3<f32>(sh, sh, sh));")))
+            (has? hfs "let col = tonemap(vec3<f32>(sh, sh, sh));")))
 (check "the fragment binds a sampler only its helper reads (transitive refs)"
        (and (has? hfs "@group(1) @binding(0) var shadow_map : texture_depth_2d;")
-	    (has? hfs "@group(1) @binding(1) var shadow_map_sampler : sampler;")))
+            (has? hfs "@group(1) @binding(1) var shadow_map_sampler : sampler;")))
 (check "helpers sit below their module-scope vars and above the entry point"
        (and (< (idx hfs "var shadow_map :") (idx hfs "fn tonemap"))
-	    (< (idx hfs "fn shadow_at") (idx hfs "@fragment"))))
+            (< (idx hfs "fn shadow_at") (idx hfs "@fragment"))))
 (check "an unreached helper is not emitted"
        (not (has? hfs "fn unused")))
 (check "the vertex reaches no helper, so emits none and no helper-only binding"
        (and (not (has? hvs "fn shadow_at")) (not (has? hvs "fn tonemap"))
-	    (not (has? hvs "shadow_map"))))
+            (not (has? hvs "shadow_map"))))
 
 ;;! When KRUDD_WGSL_DUMP names a directory, also write the emitted WGSL there so
 ;;! run-tests.sh can hand it to naga(1) for a real validation pass — the checks
@@ -300,27 +300,27 @@
 (let ((dir (getenv "KRUDD_WGSL_DUMP")))
   (if (and (string? dir) (> (string-length dir) 0))
       (let ((write-wgsl
-	      (lambda (path text)
-		(if (string? text)
-		    (call-with-output-file (string-append dir "/" path)
-		      (lambda (p) (write-string text p)))))))
-	(write-wgsl "scene.vert.wgsl" vs)
-	(write-wgsl "scene.frag.wgsl" fs)
-	(write-wgsl "tex.vert.wgsl"   tvs)
-	(write-wgsl "tex.frag.wgsl"   tfs)
-	;;! kruddgui's overlay: the fwidth path, and the only shader here whose
-	;;! WGSL a real backend rejects loudly if the derivative lowers wrong.
-	(write-wgsl "kgui-sdf.vert.wgsl" kvs)
-	(write-wgsl "kgui-sdf.frag.wgsl" kfs)
-	(write-wgsl "glow.frag.wgsl"
-		    (shader-transpile-wgsl
-		      "(shader glow (targets (c vec4 (location 0)))
+             (lambda (path text)
+               (if (string? text)
+                   (call-with-output-file (string-append dir "/" path)
+                     (lambda (p) (write-string text p)))))))
+        (write-wgsl "scene.vert.wgsl" vs)
+        (write-wgsl "scene.frag.wgsl" fs)
+        (write-wgsl "tex.vert.wgsl"   tvs)
+        (write-wgsl "tex.frag.wgsl"   tfs)
+        ;;! kruddgui's overlay: the fwidth path, and the only shader here whose
+        ;;! WGSL a real backend rejects loudly if the derivative lowers wrong.
+        (write-wgsl "kgui-sdf.vert.wgsl" kvs)
+        (write-wgsl "kgui-sdf.frag.wgsl" kfs)
+        (write-wgsl "glow.frag.wgsl"
+                    (shader-transpile-wgsl
+                     "(shader glow (targets (c vec4 (location 0)))
                          (fragment (set c (vec4 1.0 1.0 1.0 1.0))))"
-		      "fragment"))
-	(write-wgsl "helped.frag.wgsl" hfs))))
+                     "fragment"))
+        (write-wgsl "helped.frag.wgsl" hfs))))
 
 (if (= fail-count 0)
     (begin (display "WGSL-TESTS: OK\n") (exit 0))
     (begin (display (string-append "WGSL-TESTS: FAIL ("
-				   (number->string fail-count) ")\n"))
-	   (exit 1)))
+                                   (number->string fail-count) ")\n"))
+           (exit 1)))

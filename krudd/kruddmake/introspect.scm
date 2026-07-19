@@ -1,99 +1,99 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
 
 (define (krudd-whitespace? c)
-	(or (char=? c #\space) (char=? c #\tab)
-	    (char=? c #\newline) (char=? c #\return)))
+  (or (char=? c #\space) (char=? c #\tab)
+      (char=? c #\newline) (char=? c #\return)))
 
 (define (krudd-strip s)
-	(let* ((n (string-length s))
-	       (start (let loop ((i 0))
-			(if (and (< i n) (krudd-whitespace? (string-ref s i)))
-			    (loop (+ i 1)) i)))
-	       (end (let loop ((i n))
-		      (if (and (> i start)
-			       (krudd-whitespace? (string-ref s (- i 1))))
-			  (loop (- i 1)) i))))
-		(if (>= start end) "" (substring s start end))))
+  (let* ((n (string-length s))
+         (start (let loop ((i 0))
+                  (if (and (< i n) (krudd-whitespace? (string-ref s i)))
+                      (loop (+ i 1)) i)))
+         (end (let loop ((i n))
+                (if (and (> i start)
+                         (krudd-whitespace? (string-ref s (- i 1))))
+                    (loop (- i 1)) i))))
+    (if (>= start end) "" (substring s start end))))
 
 (define (krudd-slurp path)
-	(call-with-input-file path
-	  (lambda (port)
-	    (let loop ((cs '()) (c (read-char port)))
-	      (if (eof-object? c)
-		  (list->string (reverse cs))
-		  (loop (cons c cs) (read-char port)))))))
+  (call-with-input-file path
+    (lambda (port)
+      (let loop ((cs '()) (c (read-char port)))
+        (if (eof-object? c)
+            (list->string (reverse cs))
+            (loop (cons c cs) (read-char port)))))))
 
 (define (krudd-repo-root) (or (getenv "KRUDD_ROOT") "."))
 
 (define (krudd-version)
-	(let ((v (getenv "KRUDD_VERSION")))
-		(if (and v (> (string-length v) 0)) v "0.0.0-dev")))
+  (let ((v (getenv "KRUDD_VERSION")))
+    (if (and v (> (string-length v) 0)) v "0.0.0-dev")))
 
 (define (krudd-git args)
-	(krudd-strip
-	  (system (string-append "cd \"" (krudd-repo-root) "\" && git " args
-				 " 2>/dev/null")
-		  #t)))
+  (krudd-strip
+   (system (string-append "cd \"" (krudd-repo-root) "\" && git " args
+                          " 2>/dev/null")
+           #t)))
 
 (define (krudd-version-core version)
-	(let loop ((i 0))
-		(cond ((>= i (string-length version)) version)
-		      ((or (char=? (string-ref version i) #\-)
-			   (char=? (string-ref version i) #\+))
-		       (substring version 0 i))
-		      (else (loop (+ i 1))))))
+  (let loop ((i 0))
+    (cond ((>= i (string-length version)) version)
+          ((or (char=? (string-ref version i) #\-)
+               (char=? (string-ref version i) #\+))
+           (substring version 0 i))
+          (else (loop (+ i 1))))))
 
 (define (krudd-commit-hash)
-	(let ((h (krudd-git "rev-parse --short HEAD")))
-		(if (> (string-length h) 0) h "unknown")))
+  (let ((h (krudd-git "rev-parse --short HEAD")))
+    (if (> (string-length h) 0) h "unknown")))
 
 (define (krudd-build-date)
-	(let ((d (krudd-strip (system "date -u +%Y-%m-%d" #t))))
-		(if (> (string-length d) 0) d "unknown")))
+  (let ((d (krudd-strip (system "date -u +%Y-%m-%d" #t))))
+    (if (> (string-length d) 0) d "unknown")))
 
 (define (krudd-split s ch)
-	(let loop ((i 0) (start 0) (out '()))
-		(cond ((>= i (string-length s))
-		       (reverse (cons (substring s start i) out)))
-		      ((char=? (string-ref s i) ch)
-		       (loop (+ i 1) (+ i 1) (cons (substring s start i) out)))
-		      (else (loop (+ i 1) start out)))))
+  (let loop ((i 0) (start 0) (out '()))
+    (cond ((>= i (string-length s))
+           (reverse (cons (substring s start i) out)))
+          ((char=? (string-ref s i) ch)
+           (loop (+ i 1) (+ i 1) (cons (substring s start i) out)))
+          (else (loop (+ i 1) start out)))))
 
 (define (krudd-template-values)
-	(let* ((version (krudd-version))
-	       (parts   (krudd-split (krudd-version-core version) #\.)))
-		(list (cons "PROJECT_NAME" "krudd")
-		      (cons "PROJECT_VERSION" version)
-		      (cons "PROJECT_VERSION_MAJOR" (list-ref parts 0))
-		      (cons "PROJECT_VERSION_MINOR" (list-ref parts 1))
-		      (cons "PROJECT_VERSION_PATCH" (list-ref parts 2))
-		      (cons "GIT_COMMIT_HASH" (krudd-commit-hash))
-		      (cons "BUILD_DATE" (krudd-build-date)))))
+  (let* ((version (krudd-version))
+         (parts   (krudd-split (krudd-version-core version) #\.)))
+    (list (cons "PROJECT_NAME" "krudd")
+          (cons "PROJECT_VERSION" version)
+          (cons "PROJECT_VERSION_MAJOR" (list-ref parts 0))
+          (cons "PROJECT_VERSION_MINOR" (list-ref parts 1))
+          (cons "PROJECT_VERSION_PATCH" (list-ref parts 2))
+          (cons "GIT_COMMIT_HASH" (krudd-commit-hash))
+          (cons "BUILD_DATE" (krudd-build-date)))))
 
 (define (krudd-replace s old new)
-	(let ((ol (string-length old)))
-		(let loop ((i 0) (out ""))
-		  (cond ((> (+ i ol) (string-length s))
-			 (string-append out (substring s i)))
-			((string=? (substring s i (+ i ol)) old)
-			 (loop (+ i ol) (string-append out new)))
-			(else (loop (+ i 1)
-				    (string-append out
-						   (string (string-ref s i)))))))))
+  (let ((ol (string-length old)))
+    (let loop ((i 0) (out ""))
+      (cond ((> (+ i ol) (string-length s))
+             (string-append out (substring s i)))
+            ((string=? (substring s i (+ i ol)) old)
+             (loop (+ i ol) (string-append out new)))
+            (else (loop (+ i 1)
+                        (string-append out
+                                       (string (string-ref s i)))))))))
 
 (define (krudd-configure-file in out)
-	(let loop ((text (krudd-slurp in)) (vals (krudd-template-values)))
-		(if (null? vals)
-		    (call-with-output-file out
-		      (lambda (port) (write-string text port)))
-		    (loop (krudd-replace text (string-append "@" (caar vals) "@")
-					 (cdar vals))
-			  (cdr vals)))))
+  (let loop ((text (krudd-slurp in)) (vals (krudd-template-values)))
+    (if (null? vals)
+        (call-with-output-file out
+          (lambda (port) (write-string text port)))
+        (loop (krudd-replace text (string-append "@" (caar vals) "@")
+                             (cdar vals))
+              (cdr vals)))))
 
 (define (krudd-hex-byte b)
-	(let ((digits "0123456789abcdef"))
-		(string (string-ref digits (quotient b 16))
-			(string-ref digits (remainder b 16)))))
+  (let ((digits "0123456789abcdef"))
+    (string (string-ref digits (quotient b 16))
+            (string-ref digits (remainder b 16)))))
 
 ;;! Emit the byte array as one growing string-output port rather than folding a
 ;;! running (string-append acc ...) — the latter is O(n^2) in the file length and,
@@ -101,123 +101,123 @@
 ;;! OOM-killed mid-render. The port appends in amortised O(n); the emitted bytes
 ;;! are unchanged.
 (define (krudd-bytes->c-init s)
-	(let ((n    (string-length s))
-	      (port (open-output-string)))
-		(let loop ((i 0))
-		  (if (>= i n)
-		      (begin
-			(write-string "(char)0x00" port)
-			(get-output-string port))
-		      (begin
-			(write-string "(char)0x" port)
-			(write-string (krudd-hex-byte
-					(char->integer (string-ref s i)))
-				      port)
-			(write-string "," port)
-			(if (= 0 (modulo (+ i 1) 12)) (write-string "\n\t" port))
-			(loop (+ i 1)))))))
+  (let ((n    (string-length s))
+        (port (open-output-string)))
+    (let loop ((i 0))
+      (if (>= i n)
+          (begin
+            (write-string "(char)0x00" port)
+            (get-output-string port))
+          (begin
+            (write-string "(char)0x" port)
+            (write-string (krudd-hex-byte
+                           (char->integer (string-ref s i)))
+                          port)
+            (write-string "," port)
+            (if (= 0 (modulo (+ i 1) 12)) (write-string "\n\t" port))
+            (loop (+ i 1)))))))
 
 (define (krudd-embed-file in out symbol)
-	(let ((init (krudd-bytes->c-init (krudd-slurp in))))
-		(call-with-output-file out
-		  (lambda (port)
-		    (write-string
-		      (string-append
-			"/* SPDX-License-Identifier: GPL-2.0-or-later */\n"
-			"/* Generated by krudd. Do not edit. */\n"
-			"#ifndef " symbol "_H\n"
-			"#define " symbol "_H\n\n"
-			"static const char " symbol "[] = {\n\t"
-			init "\n};\n\n"
-			"#endif /* " symbol "_H */\n")
-		      port)))))
+  (let ((init (krudd-bytes->c-init (krudd-slurp in))))
+    (call-with-output-file out
+      (lambda (port)
+        (write-string
+         (string-append
+          "/* SPDX-License-Identifier: GPL-2.0-or-later */\n"
+          "/* Generated by krudd. Do not edit. */\n"
+          "#ifndef " symbol "_H\n"
+          "#define " symbol "_H\n\n"
+          "static const char " symbol "[] = {\n\t"
+          init "\n};\n\n"
+          "#endif /* " symbol "_H */\n")
+         port)))))
 
 (define (krudd-filter pred lst)
-	(cond ((null? lst) '())
-	      ((pred (car lst)) (cons (car lst) (krudd-filter pred (cdr lst))))
-	      (else (krudd-filter pred (cdr lst)))))
+  (cond ((null? lst) '())
+        ((pred (car lst)) (cons (car lst) (krudd-filter pred (cdr lst))))
+        (else (krudd-filter pred (cdr lst)))))
 
 (define (krudd-join sep lst)
-	(cond ((null? lst) "")
-	      ((null? (cdr lst)) (car lst))
-	      (else (string-append (car lst) sep (krudd-join sep (cdr lst))))))
+  (cond ((null? lst) "")
+        ((null? (cdr lst)) (car lst))
+        (else (string-append (car lst) sep (krudd-join sep (cdr lst))))))
 
 (define (krudd-upcase s)
-	(list->string (map char-upcase (string->list s))))
+  (list->string (map char-upcase (string->list s))))
 
 (define (krudd-snake s)
-	(krudd-replace (if (symbol? s) (symbol->string s) s) "-" "_"))
+  (krudd-replace (if (symbol? s) (symbol->string s) s) "-" "_"))
 
 (define (krudd-screaming s) (krudd-upcase (krudd-snake s)))
 
 (define (krudd-basename path)
-	(let loop ((i (- (string-length path) 1)))
-	  (cond ((< i 0) path)
-		((char=? (string-ref path i) #\/) (substring path (+ i 1)))
-		(else (loop (- i 1))))))
+  (let loop ((i (- (string-length path) 1)))
+    (cond ((< i 0) path)
+          ((char=? (string-ref path i) #\/) (substring path (+ i 1)))
+          (else (loop (- i 1))))))
 
 (define (krudd-strip-ext s)
-	(let loop ((i (- (string-length s) 1)))
-	  (cond ((< i 0) s)
-		((char=? (string-ref s i) #\.) (substring s 0 i))
-		(else (loop (- i 1))))))
+  (let loop ((i (- (string-length s) 1)))
+    (cond ((< i 0) s)
+          ((char=? (string-ref s i) #\.) (substring s 0 i))
+          (else (loop (- i 1))))))
 
 (define (krudd-rel-label path)
-	(let ((pfx (string-append (krudd-repo-root) "/")))
-	  (if (and (>= (string-length path) (string-length pfx))
-		   (string=? (substring path 0 (string-length pfx)) pfx))
-	      (substring path (string-length pfx))
-	      (krudd-basename path))))
+  (let ((pfx (string-append (krudd-repo-root) "/")))
+    (if (and (>= (string-length path) (string-length pfx))
+             (string=? (substring path 0 (string-length pfx)) pfx))
+        (substring path (string-length pfx))
+        (krudd-basename path))))
 
 (define (krudd-scm-forms path)
-	(call-with-input-file path
-	  (lambda (port)
-	    (let loop ((acc '()))
-	      (let ((form (read port)))
-		(if (eof-object? form) (reverse acc)
-		    (loop (cons form acc))))))))
+  (call-with-input-file path
+    (lambda (port)
+      (let loop ((acc '()))
+        (let ((form (read port)))
+          (if (eof-object? form) (reverse acc)
+              (loop (cons form acc))))))))
 
 (define (krudd-scm-int-defs path)
-	(krudd-filter
-	  (lambda (x) x)
-	  (map (lambda (form)
-		 (and (pair? form) (eq? (car form) 'define)
-		      (pair? (cdr form)) (symbol? (cadr form))
-		      (pair? (cddr form)) (integer? (caddr form))
-		      (cons (cadr form) (caddr form))))
-	       (krudd-scm-forms path))))
+  (krudd-filter
+   (lambda (x) x)
+   (map (lambda (form)
+          (and (pair? form) (eq? (car form) 'define)
+               (pair? (cdr form)) (symbol? (cadr form))
+               (pair? (cddr form)) (integer? (caddr form))
+               (cons (cadr form) (caddr form))))
+        (krudd-scm-forms path))))
 
 (define krudd-scalar-ctypes
-	'((i8 . "int8_t")  (i16 . "int16_t")  (i32 . "int32_t")  (i64 . "int64_t")
-	  (u8 . "uint8_t") (u16 . "uint16_t") (u32 . "uint32_t") (u64 . "uint64_t")
-	  (f32 . "float")  (f64 . "double")))
+  '((i8 . "int8_t")  (i16 . "int16_t")  (i32 . "int32_t")  (i64 . "int64_t")
+    (u8 . "uint8_t") (u16 . "uint16_t") (u32 . "uint32_t") (u64 . "uint64_t")
+    (f32 . "float")  (f64 . "double")))
 
 (define (krudd-scalar? k) (and (symbol? k) (assq k krudd-scalar-ctypes) #t))
 (define (krudd-float-kind? k) (or (eq? k 'f32) (eq? k 'f64)))
 (define (krudd-scalar-ctype k)
-	(let ((p (assq k krudd-scalar-ctypes)))
-	  (if p (cdr p) (error 'krudd-abi-bad-scalar k))))
+  (let ((p (assq k krudd-scalar-ctypes)))
+    (if p (cdr p) (error 'krudd-abi-bad-scalar k))))
 
 (define (krudd-char-kind? k)   (and (pair? k) (eq? (car k) 'char)))
 (define (krudd-vector-kind? k) (and (pair? k) (eq? (car k) 'vector)))
 
 (define (krudd-c-size n)
-	(cond ((symbol? n) (krudd-screaming n))
-	      ((and (integer? n) (>= n 0)) (number->string n))
-	      (else (error 'krudd-abi-bad-size n))))
+  (cond ((symbol? n) (krudd-screaming n))
+        ((and (integer? n) (>= n 0)) (number->string n))
+        (else (error 'krudd-abi-bad-size n))))
 
 (define (krudd-elem-ctype names t)
-	(cond ((krudd-scalar? t) (krudd-scalar-ctype t))
-	      ((and (symbol? t) (memq t names))
-	       (string-append "struct " (krudd-snake t)))
-	      (else (error 'krudd-abi-bad-type t))))
+  (cond ((krudd-scalar? t) (krudd-scalar-ctype t))
+        ((and (symbol? t) (memq t names))
+         (string-append "struct " (krudd-snake t)))
+        (else (error 'krudd-abi-bad-type t))))
 
 (define (krudd-abi-structs forms)
-	(krudd-filter (lambda (f) (and (pair? f) (eq? (car f) 'define-c-struct)))
-		      forms))
+  (krudd-filter (lambda (f) (and (pair? f) (eq? (car f) 'define-c-struct)))
+                forms))
 (define (krudd-abi-exports forms)
-	(krudd-filter (lambda (f) (and (pair? f) (eq? (car f) 'define-c-export)))
-		      forms))
+  (krudd-filter (lambda (f) (and (pair? f) (eq? (car f) 'define-c-export)))
+                forms))
 
 (define (krudd-struct-name s)   (cadr s))
 (define (krudd-struct-fields s) (cddr s))
@@ -228,466 +228,466 @@
 (define (krudd-export-proc e) (car (krudd-export-sig e)))
 
 (define (krudd-export-parts e)
-	(let loop ((l (cdr (krudd-export-sig e))) (args '()))
-	  (cond ((null? l) (error 'krudd-abi-export-no-arrow e))
-		((eq? (car l) '->) (cons (reverse args) (cadr l)))
-		(else (loop (cdr l) (cons (car l) args))))))
+  (let loop ((l (cdr (krudd-export-sig e))) (args '()))
+    (cond ((null? l) (error 'krudd-abi-export-no-arrow e))
+          ((eq? (car l) '->) (cons (reverse args) (cadr l)))
+          (else (loop (cdr l) (cons (car l) args))))))
 
 (define (krudd-export-calls e)
-	(let ((c (caddr e)))
-	  (if (and (pair? c) (eq? (car c) 'calls))
-	      (symbol->string (cadr c))
-	      (error 'krudd-abi-export-no-calls e))))
+  (let ((c (caddr e)))
+    (if (and (pair? c) (eq? (car c) 'calls))
+        (symbol->string (cadr c))
+        (error 'krudd-abi-export-no-calls e))))
 
 (define (krudd-export-return-vector? ret)
-	(and (pair? ret) (eq? (car ret) 'vector)))
+  (and (pair? ret) (eq? (car ret) 'vector)))
 
 (define (krudd-abi-check structs exports names)
-	(for-each (lambda (s)
-		    (for-each (lambda (f) (krudd-check-field names s f))
-			      (krudd-struct-fields s)))
-		  structs)
-	(for-each (lambda (e) (krudd-check-export names e)) exports))
+  (for-each (lambda (s)
+              (for-each (lambda (f) (krudd-check-field names s f))
+                        (krudd-struct-fields s)))
+            structs)
+  (for-each (lambda (e) (krudd-check-export names e)) exports))
 
 (define (krudd-check-field names s f)
-	(if (not (and (pair? f) (symbol? (car f))))
-	    (error 'krudd-abi-bad-field f))
-	(let ((kind (cadr f)))
-	  (cond
-	    ((krudd-scalar? kind) #t)
-	    ((krudd-char-kind? kind)
-	     (or (symbol? (cadr kind)) (integer? (cadr kind))
-		 (error 'krudd-abi-bad-char kind)))
-	    ((krudd-vector-kind? kind)
-	     (let ((t (cadr kind)) (cf (krudd-field-count-field f)))
-	       (if (not cf) (error 'krudd-abi-vector-needs-count f))
-	       (if (krudd-vector-kind? t) (error 'krudd-abi-nested-vector f))
-	       (if (not (or (krudd-scalar? t) (memq t names)))
-		   (error 'krudd-abi-bad-vector-type t))
-	       (krudd-c-size (caddr kind))
-	       (krudd-check-count-field s cf)))
-	    (else (error 'krudd-abi-unsupported-kind kind)))))
+  (if (not (and (pair? f) (symbol? (car f))))
+      (error 'krudd-abi-bad-field f))
+  (let ((kind (cadr f)))
+    (cond
+     ((krudd-scalar? kind) #t)
+     ((krudd-char-kind? kind)
+      (or (symbol? (cadr kind)) (integer? (cadr kind))
+          (error 'krudd-abi-bad-char kind)))
+     ((krudd-vector-kind? kind)
+      (let ((t (cadr kind)) (cf (krudd-field-count-field f)))
+        (if (not cf) (error 'krudd-abi-vector-needs-count f))
+        (if (krudd-vector-kind? t) (error 'krudd-abi-nested-vector f))
+        (if (not (or (krudd-scalar? t) (memq t names)))
+            (error 'krudd-abi-bad-vector-type t))
+        (krudd-c-size (caddr kind))
+        (krudd-check-count-field s cf)))
+     (else (error 'krudd-abi-unsupported-kind kind)))))
 
 (define (krudd-check-count-field s cf)
-	(let ((sib (krudd-filter (lambda (g) (eq? (car g) cf))
-				 (krudd-struct-fields s))))
-	  (if (not (and (pair? sib) (memq (cadr (car sib)) '(u32 i32))))
-	      (error 'krudd-abi-bad-count-field cf))))
+  (let ((sib (krudd-filter (lambda (g) (eq? (car g) cf))
+                           (krudd-struct-fields s))))
+    (if (not (and (pair? sib) (memq (cadr (car sib)) '(u32 i32))))
+        (error 'krudd-abi-bad-count-field cf))))
 
 (define (krudd-check-export names e)
-	(let* ((parts (krudd-export-parts e))
-	       (args  (car parts))
-	       (ret   (cdr parts)))
-	  (for-each
-	    (lambda (a)
-	      (if (not (and (pair? a) (symbol? (car a))
-			    (or (eq? (cadr a) 'string) (krudd-scalar? (cadr a)))))
-		  (error 'krudd-abi-bad-export-arg a)))
-	    args)
-	  (cond ((krudd-export-return-vector? ret)
-		 (let ((t (cadr ret)))
-		   (if (not (or (krudd-scalar? t) (memq t names)))
-		       (error 'krudd-abi-bad-return t))))
-		((krudd-scalar? ret) #t)
-		(else (error 'krudd-abi-bad-return ret)))
-	  (krudd-export-calls e)))
+  (let* ((parts (krudd-export-parts e))
+         (args  (car parts))
+         (ret   (cdr parts)))
+    (for-each
+     (lambda (a)
+       (if (not (and (pair? a) (symbol? (car a))
+                     (or (eq? (cadr a) 'string) (krudd-scalar? (cadr a)))))
+           (error 'krudd-abi-bad-export-arg a)))
+     args)
+    (cond ((krudd-export-return-vector? ret)
+           (let ((t (cadr ret)))
+             (if (not (or (krudd-scalar? t) (memq t names)))
+                 (error 'krudd-abi-bad-return t))))
+          ((krudd-scalar? ret) #t)
+          (else (error 'krudd-abi-bad-return ret)))
+    (krudd-export-calls e)))
 
 (define (krudd-header-field names f)
-	(let ((cname (krudd-snake (car f)))
-	      (kind  (cadr f)))
-	  (cond
-	    ((krudd-scalar? kind)
-	     (string-append "\t" (krudd-scalar-ctype kind) " " cname ";"))
-	    ((krudd-char-kind? kind)
-	     (string-append "\tchar " cname "[" (krudd-c-size (cadr kind)) "];"))
-	    ((krudd-vector-kind? kind)
-	     (string-append "\t" (krudd-elem-ctype names (cadr kind)) " "
-			    cname "[" (krudd-c-size (caddr kind)) "];"))
-	    (else (error 'krudd-abi-bad-kind kind)))))
+  (let ((cname (krudd-snake (car f)))
+        (kind  (cadr f)))
+    (cond
+     ((krudd-scalar? kind)
+      (string-append "\t" (krudd-scalar-ctype kind) " " cname ";"))
+     ((krudd-char-kind? kind)
+      (string-append "\tchar " cname "[" (krudd-c-size (cadr kind)) "];"))
+     ((krudd-vector-kind? kind)
+      (string-append "\t" (krudd-elem-ctype names (cadr kind)) " "
+                     cname "[" (krudd-c-size (caddr kind)) "];"))
+     (else (error 'krudd-abi-bad-kind kind)))))
 
 (define (krudd-header-struct names s)
-	(string-append
-	  "struct " (krudd-snake (krudd-struct-name s)) " {\n"
-	  (krudd-join "\n" (map (lambda (f) (krudd-header-field names f))
-				(krudd-struct-fields s)))
-	  "\n};"))
+  (string-append
+   "struct " (krudd-snake (krudd-struct-name s)) " {\n"
+   (krudd-join "\n" (map (lambda (f) (krudd-header-field names f))
+                         (krudd-struct-fields s)))
+   "\n};"))
 
 (define (krudd-c-param arg)
-	(let ((nm (krudd-snake (car arg))) (kind (cadr arg)))
-	  (cond ((eq? kind 'string) (string-append "const char *" nm))
-		((krudd-scalar? kind)
-		 (string-append (krudd-scalar-ctype kind) " " nm))
-		(else (error 'krudd-abi-bad-arg kind)))))
+  (let ((nm (krudd-snake (car arg))) (kind (cadr arg)))
+    (cond ((eq? kind 'string) (string-append "const char *" nm))
+          ((krudd-scalar? kind)
+           (string-append (krudd-scalar-ctype kind) " " nm))
+          (else (error 'krudd-abi-bad-arg kind)))))
 
 (define (krudd-export-prototype names e)
-	(let* ((parts  (krudd-export-parts e))
-	       (ret    (cdr parts))
-	       (proc   (krudd-snake (krudd-export-proc e)))
-	       (params (map krudd-c-param (car parts))))
-	  (if (krudd-export-return-vector? ret)
-	      (string-append
-		"int32_t " proc "("
-		(krudd-join ", "
-		  (append params
-			  (list (string-append (krudd-elem-ctype names (cadr ret))
-					       " *out")
-				(string-append "int32_t "
-					       (krudd-snake (caddr ret))))))
-		");")
-	      (string-append (krudd-scalar-ctype ret) " " proc "("
-			     (krudd-join ", " params) ");"))))
+  (let* ((parts  (krudd-export-parts e))
+         (ret    (cdr parts))
+         (proc   (krudd-snake (krudd-export-proc e)))
+         (params (map krudd-c-param (car parts))))
+    (if (krudd-export-return-vector? ret)
+        (string-append
+         "int32_t " proc "("
+         (krudd-join ", "
+                     (append params
+                             (list (string-append (krudd-elem-ctype names (cadr ret))
+                                                  " *out")
+                                   (string-append "int32_t "
+                                                  (krudd-snake (caddr ret))))))
+         ");")
+        (string-append (krudd-scalar-ctype ret) " " proc "("
+                       (krudd-join ", " params) ");"))))
 
 (define (krudd-gen-header out header-name structs exports ints names label)
-	(let ((guard (krudd-upcase (krudd-replace header-name "." "_"))))
-	  (call-with-output-file out
-	    (lambda (port)
-	      (write-string
-		(string-append
-		  "/* SPDX-License-Identifier: GPL-2.0-or-later */\n"
-		  "/* Generated by krudd from " label ". Do not edit. */\n"
-		  "#ifndef " guard "\n"
-		  "#define " guard "\n\n"
-		  "#include <stdint.h>\n\n"
-		  "#ifdef __cplusplus\n"
-		  "extern \"C\" {\n"
-		  "#endif\n\n"
-		  (krudd-join "\n"
-		    (map (lambda (d)
-			   (string-append "#define " (krudd-screaming (car d)) " "
-					  (number->string (cdr d))))
-			 ints))
-		  "\n\n"
-		  (krudd-join "\n\n"
-		    (map (lambda (s) (krudd-header-struct names s)) structs))
-		  "\n\n"
-		  (krudd-join "\n"
-		    (map (lambda (e) (krudd-export-prototype names e)) exports))
-		  "\n\n"
-		  "#ifdef __cplusplus\n"
-		  "}\n"
-		  "#endif\n\n"
-		  "#endif /* " guard " */\n")
-		port)))))
+  (let ((guard (krudd-upcase (krudd-replace header-name "." "_"))))
+    (call-with-output-file out
+      (lambda (port)
+        (write-string
+         (string-append
+          "/* SPDX-License-Identifier: GPL-2.0-or-later */\n"
+          "/* Generated by krudd from " label ". Do not edit. */\n"
+          "#ifndef " guard "\n"
+          "#define " guard "\n\n"
+          "#include <stdint.h>\n\n"
+          "#ifdef __cplusplus\n"
+          "extern \"C\" {\n"
+          "#endif\n\n"
+          (krudd-join "\n"
+                      (map (lambda (d)
+                             (string-append "#define " (krudd-screaming (car d)) " "
+                                            (number->string (cdr d))))
+                           ints))
+          "\n\n"
+          (krudd-join "\n\n"
+                      (map (lambda (s) (krudd-header-struct names s)) structs))
+          "\n\n"
+          (krudd-join "\n"
+                      (map (lambda (e) (krudd-export-prototype names e)) exports))
+          "\n\n"
+          "#ifdef __cplusplus\n"
+          "}\n"
+          "#endif\n\n"
+          "#endif /* " guard " */\n")
+         port)))))
 
 (define (krudd-scalar-read kind expr)
-	(string-append "(" (krudd-scalar-ctype kind) ")"
-		       (if (krudd-float-kind? kind) "s7_real(" "s7_integer(")
-		       expr ")"))
+  (string-append "(" (krudd-scalar-ctype kind) ")"
+                 (if (krudd-float-kind? kind) "s7_real(" "s7_integer(")
+                 expr ")"))
 
 (define (krudd-marshal-field base names f)
-	(let ((cname (krudd-snake (car f)))
-	      (kind  (cadr f)))
-	  (cond
-	    ((krudd-scalar? kind)
-	     (string-append "\tout->" cname " = " (krudd-scalar-read kind "f")
-			    ";\n"))
-	    ((krudd-char-kind? kind)
-	     (let ((sz (krudd-c-size (cadr kind))))
-	       (string-append
-		 "\tif (s7_is_string(f)) {\n"
-		 "\t\tconst char *s = s7_string(f);\n"
-		 "\t\tsize_t n = strlen(s);\n\n"
-		 "\t\tif (n > " sz " - 1)\n"
-		 "\t\t\tn = " sz " - 1;\n"
-		 "\t\tmemcpy(out->" cname ", s, n);\n"
-		 "\t\tout->" cname "[n] = '\\0';\n"
-		 "\t}\n")))
-	    ((krudd-vector-kind? kind)
-	     (let ((t  (cadr kind))
-		   (sz (krudd-c-size (caddr kind)))
-		   (cf (krudd-snake (krudd-field-count-field f))))
-	       (string-append
-		 "\t{\n"
-		 "\t\tuint32_t n = 0;\n\n"
-		 "\t\twhile (s7_is_pair(f) && n < " sz ") {\n"
-		 (if (krudd-scalar? t)
-		     (string-append "\t\t\tout->" cname "[n] = "
-				    (krudd-scalar-read t "s7_car(f)") ";\n")
-		     (string-append "\t\t\t" base "_marshal_" (krudd-snake t)
-				    "(s7, s7_car(f), &out->" cname "[n]);\n"))
-		 "\t\t\tn++;\n"
-		 "\t\t\tf = s7_cdr(f);\n"
-		 "\t\t}\n"
-		 "\t\tout->" cf " = n;\n"
-		 "\t}\n")))
-	    (else (error 'krudd-abi-bad-kind kind)))))
+  (let ((cname (krudd-snake (car f)))
+        (kind  (cadr f)))
+    (cond
+     ((krudd-scalar? kind)
+      (string-append "\tout->" cname " = " (krudd-scalar-read kind "f")
+                     ";\n"))
+     ((krudd-char-kind? kind)
+      (let ((sz (krudd-c-size (cadr kind))))
+        (string-append
+         "\tif (s7_is_string(f)) {\n"
+         "\t\tconst char *s = s7_string(f);\n"
+         "\t\tsize_t n = strlen(s);\n\n"
+         "\t\tif (n > " sz " - 1)\n"
+         "\t\t\tn = " sz " - 1;\n"
+         "\t\tmemcpy(out->" cname ", s, n);\n"
+         "\t\tout->" cname "[n] = '\\0';\n"
+         "\t}\n")))
+     ((krudd-vector-kind? kind)
+      (let ((t  (cadr kind))
+            (sz (krudd-c-size (caddr kind)))
+            (cf (krudd-snake (krudd-field-count-field f))))
+        (string-append
+         "\t{\n"
+         "\t\tuint32_t n = 0;\n\n"
+         "\t\twhile (s7_is_pair(f) && n < " sz ") {\n"
+         (if (krudd-scalar? t)
+             (string-append "\t\t\tout->" cname "[n] = "
+                            (krudd-scalar-read t "s7_car(f)") ";\n")
+             (string-append "\t\t\t" base "_marshal_" (krudd-snake t)
+                            "(s7, s7_car(f), &out->" cname "[n]);\n"))
+         "\t\t\tn++;\n"
+         "\t\t\tf = s7_cdr(f);\n"
+         "\t\t}\n"
+         "\t\tout->" cf " = n;\n"
+         "\t}\n")))
+     (else (error 'krudd-abi-bad-kind kind)))))
 
 (define (krudd-gen-marshaler base names s)
-	(let* ((cname  (krudd-snake (krudd-struct-name s)))
-	       (fields (krudd-struct-fields s))
-	       (counts (krudd-filter (lambda (x) x)
-				     (map krudd-field-count-field fields)))
-	       (data   (krudd-filter (lambda (f) (not (memq (car f) counts)))
-				     fields))
-	       (arity  (length data)))
-	  (string-append
-	    "static void " base "_marshal_" cname
-	    "(s7_scheme *s7, s7_pointer v,\n\t\tstruct " cname " *out)\n"
-	    "{\n"
-	    (if (> arity 0) "\ts7_pointer f;\n\n" "")
-	    "\tmemset(out, 0, sizeof(*out));\n"
-	    "\tif (!s7_is_pair(v))\n\t\treturn;\n"
-	    "\tassert(s7_list_length(s7, v) == " (number->string arity) ");\n"
-	    (if (> arity 0) "\n" "")
-	    (krudd-join ""
-	      (map (lambda (f)
-		     (string-append "\tf = s7_car(v);\n\tv = s7_cdr(v);\n"
-				    (krudd-marshal-field base names f)))
-		   data))
-	    "}\n")))
+  (let* ((cname  (krudd-snake (krudd-struct-name s)))
+         (fields (krudd-struct-fields s))
+         (counts (krudd-filter (lambda (x) x)
+                               (map krudd-field-count-field fields)))
+         (data   (krudd-filter (lambda (f) (not (memq (car f) counts)))
+                               fields))
+         (arity  (length data)))
+    (string-append
+     "static void " base "_marshal_" cname
+     "(s7_scheme *s7, s7_pointer v,\n\t\tstruct " cname " *out)\n"
+     "{\n"
+     (if (> arity 0) "\ts7_pointer f;\n\n" "")
+     "\tmemset(out, 0, sizeof(*out));\n"
+     "\tif (!s7_is_pair(v))\n\t\treturn;\n"
+     "\tassert(s7_list_length(s7, v) == " (number->string arity) ");\n"
+     (if (> arity 0) "\n" "")
+     (krudd-join ""
+                 (map (lambda (f)
+                        (string-append "\tf = s7_car(v);\n\tv = s7_cdr(v);\n"
+                                       (krudd-marshal-field base names f)))
+                      data))
+     "}\n")))
 
 (define (krudd-s7-arglist args)
-	(if (null? args)
-	    "s7_nil(s7)"
-	    (string-append
-	      "s7_list(s7, " (number->string (length args)) ",\n\t\t\t\t"
-	      (krudd-join ",\n\t\t\t\t"
-		(map (lambda (a)
-		       (let ((nm (krudd-snake (car a))) (kind (cadr a)))
-			 (cond ((eq? kind 'string)
-				(string-append "s7_make_string(s7, " nm ")"))
-			       ((krudd-float-kind? kind)
-				(string-append "s7_make_real(s7, " nm ")"))
-			       (else
-				(string-append "s7_make_integer(s7, " nm ")")))))
-		     args))
-	      ")")))
+  (if (null? args)
+      "s7_nil(s7)"
+      (string-append
+       "s7_list(s7, " (number->string (length args)) ",\n\t\t\t\t"
+       (krudd-join ",\n\t\t\t\t"
+                   (map (lambda (a)
+                          (let ((nm (krudd-snake (car a))) (kind (cadr a)))
+                            (cond ((eq? kind 'string)
+                                   (string-append "s7_make_string(s7, " nm ")"))
+                                  ((krudd-float-kind? kind)
+                                   (string-append "s7_make_real(s7, " nm ")"))
+                                  (else
+                                   (string-append "s7_make_integer(s7, " nm ")")))))
+                        args))
+       ")")))
 
 (define (krudd-guard args vector? maxname)
-	(krudd-join " || "
-	  (append
-	    (krudd-filter (lambda (x) x)
-	      (map (lambda (a)
-		     (and (eq? (cadr a) 'string)
-			  (string-append "!" (krudd-snake (car a)))))
-		   args))
-	    (if vector?
-		(list "!out" (string-append maxname " <= 0"))
-		'()))))
+  (krudd-join " || "
+              (append
+               (krudd-filter (lambda (x) x)
+                             (map (lambda (a)
+                                    (and (eq? (cadr a) 'string)
+                                         (string-append "!" (krudd-snake (car a)))))
+                                  args))
+               (if vector?
+                   (list "!out" (string-append maxname " <= 0"))
+                   '()))))
 
 (define (krudd-gen-driver base names e)
-	(let* ((parts (krudd-export-parts e))
-	       (args  (car parts))
-	       (ret   (cdr parts))
-	       (proc  (krudd-snake (krudd-export-proc e)))
-	       (calls (krudd-export-calls e)))
-	  (if (krudd-export-return-vector? ret)
-	      (krudd-gen-driver-vector base names proc args ret calls)
-	      (krudd-gen-driver-scalar base proc args ret calls))))
+  (let* ((parts (krudd-export-parts e))
+         (args  (car parts))
+         (ret   (cdr parts))
+         (proc  (krudd-snake (krudd-export-proc e)))
+         (calls (krudd-export-calls e)))
+    (if (krudd-export-return-vector? ret)
+        (krudd-gen-driver-vector base names proc args ret calls)
+        (krudd-gen-driver-scalar base proc args ret calls))))
 
 (define (krudd-gen-driver-vector base names proc args ret calls)
-	(let* ((t       (cadr ret))
-	       (maxname (krudd-snake (caddr ret)))
-	       (params  (append (map krudd-c-param args)
-				(list (string-append (krudd-elem-ctype names t)
-						     " *out")
-				      (string-append "int32_t " maxname))))
-	       (elem    (if (krudd-scalar? t)
-			    (string-append "out[count] = "
-					   (krudd-scalar-read t "s7_car(res)") ";")
-			    (string-append base "_marshal_" (krudd-snake t)
-					   "(s7, s7_car(res), &out[count]);"))))
-	  (string-append
-	    "int32_t " proc "(" (krudd-join ", " params) ")\n"
-	    "{\n"
-	    "\ts7_scheme *s7;\n"
-	    "\ts7_pointer proc, res;\n"
-	    "\tint32_t    count = 0;\n\n"
-	    "\tif (" (krudd-guard args #t maxname) ")\n\t\treturn 0;\n\n"
-	    "\ts7 = " base "_ensure();\n"
-	    "\tif (!s7)\n\t\treturn 0;\n\n"
-	    "\tproc = s7_name_to_value(s7, \"" calls "\");\n"
-	    "\tif (!s7_is_procedure(proc))\n\t\treturn 0;\n\n"
-	    "\tres = s7_call(s7, proc, " (krudd-s7-arglist args) ");\n\n"
-	    "\twhile (count < " maxname " && s7_is_pair(res)) {\n"
-	    "\t\t" elem "\n"
-	    "\t\tcount++;\n"
-	    "\t\tres = s7_cdr(res);\n"
-	    "\t}\n"
-	    "\treturn count;\n"
-	    "}\n")))
+  (let* ((t       (cadr ret))
+         (maxname (krudd-snake (caddr ret)))
+         (params  (append (map krudd-c-param args)
+                          (list (string-append (krudd-elem-ctype names t)
+                                               " *out")
+                                (string-append "int32_t " maxname))))
+         (elem    (if (krudd-scalar? t)
+                      (string-append "out[count] = "
+                                     (krudd-scalar-read t "s7_car(res)") ";")
+                      (string-append base "_marshal_" (krudd-snake t)
+                                     "(s7, s7_car(res), &out[count]);"))))
+    (string-append
+     "int32_t " proc "(" (krudd-join ", " params) ")\n"
+     "{\n"
+     "\ts7_scheme *s7;\n"
+     "\ts7_pointer proc, res;\n"
+     "\tint32_t    count = 0;\n\n"
+     "\tif (" (krudd-guard args #t maxname) ")\n\t\treturn 0;\n\n"
+     "\ts7 = " base "_ensure();\n"
+     "\tif (!s7)\n\t\treturn 0;\n\n"
+     "\tproc = s7_name_to_value(s7, \"" calls "\");\n"
+     "\tif (!s7_is_procedure(proc))\n\t\treturn 0;\n\n"
+     "\tres = s7_call(s7, proc, " (krudd-s7-arglist args) ");\n\n"
+     "\twhile (count < " maxname " && s7_is_pair(res)) {\n"
+     "\t\t" elem "\n"
+     "\t\tcount++;\n"
+     "\t\tres = s7_cdr(res);\n"
+     "\t}\n"
+     "\treturn count;\n"
+     "}\n")))
 
 (define (krudd-gen-driver-scalar base proc args ret calls)
-	(let ((rtype (krudd-scalar-ctype ret))
-	      (guard (krudd-guard args #f "")))
-	  (string-append
-	    rtype " " proc "(" (krudd-join ", " (map krudd-c-param args)) ")\n"
-	    "{\n"
-	    "\ts7_scheme *s7;\n"
-	    "\ts7_pointer proc, res;\n\n"
-	    (if (string=? guard "")
-		""
-		(string-append "\tif (" guard ")\n\t\treturn 0;\n\n"))
-	    "\ts7 = " base "_ensure();\n"
-	    "\tif (!s7)\n\t\treturn 0;\n\n"
-	    "\tproc = s7_name_to_value(s7, \"" calls "\");\n"
-	    "\tif (!s7_is_procedure(proc))\n\t\treturn 0;\n\n"
-	    "\tres = s7_call(s7, proc, " (krudd-s7-arglist args) ");\n"
-	    "\treturn " (krudd-scalar-read ret "res") ";\n"
-	    "}\n")))
+  (let ((rtype (krudd-scalar-ctype ret))
+        (guard (krudd-guard args #f "")))
+    (string-append
+     rtype " " proc "(" (krudd-join ", " (map krudd-c-param args)) ")\n"
+     "{\n"
+     "\ts7_scheme *s7;\n"
+     "\ts7_pointer proc, res;\n\n"
+     (if (string=? guard "")
+         ""
+         (string-append "\tif (" guard ")\n\t\treturn 0;\n\n"))
+     "\ts7 = " base "_ensure();\n"
+     "\tif (!s7)\n\t\treturn 0;\n\n"
+     "\tproc = s7_name_to_value(s7, \"" calls "\");\n"
+     "\tif (!s7_is_procedure(proc))\n\t\treturn 0;\n\n"
+     "\tres = s7_call(s7, proc, " (krudd-s7-arglist args) ");\n"
+     "\treturn " (krudd-scalar-read ret "res") ";\n"
+     "}\n")))
 
 (define (krudd-gen-shim out header-name base image structs exports names label)
-	(call-with-output-file out
-	  (lambda (port)
-	    (write-string
-	      (string-append
-		"/* SPDX-License-Identifier: GPL-2.0-or-later */\n"
-		"/* Generated by krudd from " label ". Do not edit. */\n"
-		"#include \"" header-name "\"\n\n"
-		"#include \"script.h\"\n\n"
-		"#include \"s7.h\"\n\n"
-		"#include <assert.h>\n"
-		"#include <string.h>\n\n"
-		"static const char " base "_scm_image[] = {\n\t"
-		image "\n};\n\n"
-		"/*\n"
-		" * Return the interpreter with the module loaded, or NULL if it\n"
-		" * could not be started. The image is evaluated once; s7 is\n"
-		" * process-global, so the definitions persist across calls.\n"
-		" */\n"
-		"static s7_scheme *" base "_ensure(void)\n"
-		"{\n"
-		"\tstatic int  loaded;\n"
-		"\ts7_scheme  *s7 = script_s7();\n\n"
-		"\tif (s7 && !loaded) {\n"
-		"\t\tscript_eval(" base "_scm_image);\n"
-		"\t\tloaded = 1;\n"
-		"\t}\n"
-		"\treturn s7;\n"
-		"}\n\n"
-		(krudd-join "\n"
-		  (map (lambda (s)
-			 (let ((nm (krudd-snake (krudd-struct-name s))))
-			   (string-append "static void " base "_marshal_" nm
-			     "(s7_scheme *s7, s7_pointer v,\n\t\tstruct "
-			     nm " *out);")))
-		       structs))
-		"\n\n"
-		(krudd-join "\n"
-		  (map (lambda (s) (krudd-gen-marshaler base names s)) structs))
-		"\n"
-		(krudd-join "\n"
-		  (map (lambda (e) (krudd-gen-driver base names e)) exports)))
-	      port))))
+  (call-with-output-file out
+    (lambda (port)
+      (write-string
+       (string-append
+        "/* SPDX-License-Identifier: GPL-2.0-or-later */\n"
+        "/* Generated by krudd from " label ". Do not edit. */\n"
+        "#include \"" header-name "\"\n\n"
+        "#include \"script.h\"\n\n"
+        "#include \"s7.h\"\n\n"
+        "#include <assert.h>\n"
+        "#include <string.h>\n\n"
+        "static const char " base "_scm_image[] = {\n\t"
+        image "\n};\n\n"
+        "/*\n"
+        " * Return the interpreter with the module loaded, or NULL if it\n"
+        " * could not be started. The image is evaluated once; s7 is\n"
+        " * process-global, so the definitions persist across calls.\n"
+        " */\n"
+        "static s7_scheme *" base "_ensure(void)\n"
+        "{\n"
+        "\tstatic int  loaded;\n"
+        "\ts7_scheme  *s7 = script_s7();\n\n"
+        "\tif (s7 && !loaded) {\n"
+        "\t\tscript_eval(" base "_scm_image);\n"
+        "\t\tloaded = 1;\n"
+        "\t}\n"
+        "\treturn s7;\n"
+        "}\n\n"
+        (krudd-join "\n"
+                    (map (lambda (s)
+                           (let ((nm (krudd-snake (krudd-struct-name s))))
+                             (string-append "static void " base "_marshal_" nm
+                                            "(s7_scheme *s7, s7_pointer v,\n\t\tstruct "
+                                            nm " *out);")))
+                         structs))
+        "\n\n"
+        (krudd-join "\n"
+                    (map (lambda (s) (krudd-gen-marshaler base names s)) structs))
+        "\n"
+        (krudd-join "\n"
+                    (map (lambda (e) (krudd-gen-driver base names e)) exports)))
+       port))))
 
 (define (krudd-embed-scheme-module in header-out shim-out)
-	(let* ((forms       (krudd-scm-forms in))
-	       (structs     (krudd-abi-structs forms))
-	       (exports     (krudd-abi-exports forms))
-	       (ints        (krudd-scm-int-defs in))
-	       (names       (map krudd-struct-name structs))
-	       (header-name (krudd-basename header-out))
-	       (base        (krudd-strip-ext header-name))
-	       (label       (krudd-rel-label in)))
-	  (krudd-abi-check structs exports names)
-	  (krudd-gen-header header-out header-name structs exports ints names label)
-	  (krudd-gen-shim shim-out header-name base
-			  (krudd-bytes->c-init (krudd-slurp in))
-			  structs exports names label)))
+  (let* ((forms       (krudd-scm-forms in))
+         (structs     (krudd-abi-structs forms))
+         (exports     (krudd-abi-exports forms))
+         (ints        (krudd-scm-int-defs in))
+         (names       (map krudd-struct-name structs))
+         (header-name (krudd-basename header-out))
+         (base        (krudd-strip-ext header-name))
+         (label       (krudd-rel-label in)))
+    (krudd-abi-check structs exports names)
+    (krudd-gen-header header-out header-name structs exports ints names label)
+    (krudd-gen-shim shim-out header-name base
+                    (krudd-bytes->c-init (krudd-slurp in))
+                    structs exports names label)))
 
 (define krudd-math-binops
-	'((+ . "+") (- . "-") (* . "*") (/ . "/")))
+  '((+ . "+") (- . "-") (* . "*") (/ . "/")))
 
 (define krudd-math-intrinsics
-	'((tan . "tanf") (sin . "sinf") (cos . "cosf") (sqrt . "sqrtf")))
+  '((tan . "tanf") (sin . "sinf") (cos . "cosf") (sqrt . "sqrtf")))
 
 (define (krudd-math-num->c n)
-	(string-append (number->string (exact->inexact n)) "f"))
+  (string-append (number->string (exact->inexact n)) "f"))
 
 (define (krudd-math-expr e)
-	(cond
-	  ((number? e) (krudd-math-num->c e))
-	  ((symbol? e) (krudd-snake e))
-	  ((and (pair? e) (assq (car e) krudd-math-binops))
-	   (if (< (length (cdr e)) 2)
-	       (error 'krudd-math-binop-arity e)
-	       (string-append "("
-		 (krudd-join
-		   (string-append " " (cdr (assq (car e) krudd-math-binops)) " ")
-		   (map krudd-math-expr (cdr e)))
-		 ")")))
-	  ((and (pair? e) (assq (car e) krudd-math-intrinsics))
-	   (string-append (cdr (assq (car e) krudd-math-intrinsics))
-			  "(" (krudd-join ", " (map krudd-math-expr (cdr e))) ")"))
-	  (else (error 'krudd-math-bad-expr e))))
+  (cond
+   ((number? e) (krudd-math-num->c e))
+   ((symbol? e) (krudd-snake e))
+   ((and (pair? e) (assq (car e) krudd-math-binops))
+    (if (< (length (cdr e)) 2)
+        (error 'krudd-math-binop-arity e)
+        (string-append "("
+                       (krudd-join
+                        (string-append " " (cdr (assq (car e) krudd-math-binops)) " ")
+                        (map krudd-math-expr (cdr e)))
+                       ")")))
+   ((and (pair? e) (assq (car e) krudd-math-intrinsics))
+    (string-append (cdr (assq (car e) krudd-math-intrinsics))
+                   "(" (krudd-join ", " (map krudd-math-expr (cdr e))) ")"))
+   (else (error 'krudd-math-bad-expr e))))
 
 (define (krudd-math-fn-parts sig)
-	(let loop ((l (cdr sig)) (args '()))
-	  (cond ((null? l) (error 'krudd-math-no-arrow sig))
-		((eq? (car l) '->) (list (car sig) (reverse args) (cadr l)))
-		(else
-		 (let ((a (car l)))
-		   (if (not (and (pair? a) (symbol? (car a))
-				 (krudd-float-kind? (cadr a))))
-		       (error 'krudd-math-bad-arg a))
-		   (loop (cdr l)
-			 (cons (cons (krudd-snake (car a))
-				     (krudd-scalar-ctype (cadr a)))
-			       args)))))))
+  (let loop ((l (cdr sig)) (args '()))
+    (cond ((null? l) (error 'krudd-math-no-arrow sig))
+          ((eq? (car l) '->) (list (car sig) (reverse args) (cadr l)))
+          (else
+           (let ((a (car l)))
+             (if (not (and (pair? a) (symbol? (car a))
+                           (krudd-float-kind? (cadr a))))
+                 (error 'krudd-math-bad-arg a))
+             (loop (cdr l)
+                   (cons (cons (krudd-snake (car a))
+                               (krudd-scalar-ctype (cadr a)))
+                         args)))))))
 
 (define (krudd-math-emit-mat4 cols)
-	(if (not (= (length cols) 4)) (error 'krudd-math-mat4-cols cols))
-	(let ((elts (apply append
-			    (map (lambda (c)
-				   (if (not (and (pair? c) (eq? (car c) 'vec4)
-						 (= (length (cdr c)) 4)))
-				       (error 'krudd-math-bad-col c))
-				   (cdr c))
-				 cols))))
-	  (let loop ((i 0) (l elts) (acc ""))
-	    (if (null? l) acc
-		(loop (+ i 1) (cdr l)
-		      (string-append acc "\tout->m[" (number->string i) "] = "
-				     (krudd-math-expr (car l)) ";\n"))))))
+  (if (not (= (length cols) 4)) (error 'krudd-math-mat4-cols cols))
+  (let ((elts (apply append
+                     (map (lambda (c)
+                            (if (not (and (pair? c) (eq? (car c) 'vec4)
+                                          (= (length (cdr c)) 4)))
+                                (error 'krudd-math-bad-col c))
+                            (cdr c))
+                          cols))))
+    (let loop ((i 0) (l elts) (acc ""))
+      (if (null? l) acc
+          (loop (+ i 1) (cdr l)
+                (string-append acc "\tout->m[" (number->string i) "] = "
+                               (krudd-math-expr (car l)) ";\n"))))))
 
 (define (krudd-math-emit-form f)
-	(cond
-	  ((and (pair? f) (eq? (car f) 'let*))
-	   (string-append
-	     (apply string-append
-		    (map (lambda (b)
-			   (string-append "\tfloat " (krudd-snake (car b)) " = "
-					  (krudd-math-expr (cadr b)) ";\n"))
-			 (cadr f)))
-	     "\n"
-	     (krudd-math-emit-form (caddr f))))
-	  ((and (pair? f) (eq? (car f) 'mat4-cols))
-	   (krudd-math-emit-mat4 (cdr f)))
-	  (else (error 'krudd-math-bad-body f))))
+  (cond
+   ((and (pair? f) (eq? (car f) 'let*))
+    (string-append
+     (apply string-append
+            (map (lambda (b)
+                   (string-append "\tfloat " (krudd-snake (car b)) " = "
+                                  (krudd-math-expr (cadr b)) ";\n"))
+                 (cadr f)))
+     "\n"
+     (krudd-math-emit-form (caddr f))))
+   ((and (pair? f) (eq? (car f) 'mat4-cols))
+    (krudd-math-emit-mat4 (cdr f)))
+   (else (error 'krudd-math-bad-body f))))
 
 (define (krudd-math-emit-fn form)
-	(let* ((parts (krudd-math-fn-parts (cadr form)))
-	       (name  (krudd-snake (car parts)))
-	       (args  (cadr parts))
-	       (ret   (caddr parts))
-	       (body  (cddr form)))
-	  (if (not (eq? ret 'mat4)) (error 'krudd-math-unsupported-return ret))
-	  (if (not (= (length body) 1)) (error 'krudd-math-body-arity form))
-	  (string-append
-	    "void " name "(struct mat4 *out"
-	    (apply string-append
-		   (map (lambda (a) (string-append ", " (cdr a) " " (car a))) args))
-	    ")\n{\n"
-	    (krudd-math-emit-form (car body))
-	    "}\n")))
+  (let* ((parts (krudd-math-fn-parts (cadr form)))
+         (name  (krudd-snake (car parts)))
+         (args  (cadr parts))
+         (ret   (caddr parts))
+         (body  (cddr form)))
+    (if (not (eq? ret 'mat4)) (error 'krudd-math-unsupported-return ret))
+    (if (not (= (length body) 1)) (error 'krudd-math-body-arity form))
+    (string-append
+     "void " name "(struct mat4 *out"
+     (apply string-append
+            (map (lambda (a) (string-append ", " (cdr a) " " (car a))) args))
+     ")\n{\n"
+     (krudd-math-emit-form (car body))
+     "}\n")))
 
 (define (krudd-emit-math-module in c-out)
-	(let* ((forms (krudd-scm-forms in))
-	       (fns   (krudd-filter (lambda (f)
-				      (and (pair? f) (eq? (car f) 'define-c-fn)))
-				    forms))
-	       (label (krudd-rel-label in)))
-	  (if (null? fns) (error 'krudd-math-no-fns in))
-	  (call-with-output-file c-out
-	    (lambda (port)
-	      (write-string
-		(string-append
-		  "/* SPDX-License-Identifier: GPL-2.0-or-later */\n"
-		  "/* Generated by krudd from " label ". Do not edit. */\n"
-		  "#include \"math_types.h\"\n\n"
-		  "#include <math.h>\n\n"
-		  (krudd-join "\n" (map krudd-math-emit-fn fns)))
-		port)))))
+  (let* ((forms (krudd-scm-forms in))
+         (fns   (krudd-filter (lambda (f)
+                                (and (pair? f) (eq? (car f) 'define-c-fn)))
+                              forms))
+         (label (krudd-rel-label in)))
+    (if (null? fns) (error 'krudd-math-no-fns in))
+    (call-with-output-file c-out
+      (lambda (port)
+        (write-string
+         (string-append
+          "/* SPDX-License-Identifier: GPL-2.0-or-later */\n"
+          "/* Generated by krudd from " label ". Do not edit. */\n"
+          "#include \"math_types.h\"\n\n"
+          "#include <math.h>\n\n"
+          (krudd-join "\n" (map krudd-math-emit-fn fns)))
+         port)))))
 
 ;;! Interface-header emitter. Turns a declarative spec (c-include, c-handle,
 ;;! c-enum, c-define, c-typedef, c-struct) into a pure C ABI header. Unlike the
@@ -696,153 +696,153 @@
 ;;! file order so C sees every type declared before it is used.
 
 (define (krudd-if-ends-star? s)
-	(let ((n (string-length s)))
-	  (and (> n 0) (char=? (string-ref s (- n 1)) #\*))))
+  (let ((n (string-length s)))
+    (and (> n 0) (char=? (string-ref s (- n 1)) #\*))))
 
 (define (krudd-if-var ctype name)
-	(if (krudd-if-ends-star? ctype)
-	    (string-append ctype name)
-	    (string-append ctype " " name)))
+  (if (krudd-if-ends-star? ctype)
+      (string-append ctype name)
+      (string-append ctype " " name)))
 
 (define (krudd-if-registry forms)
-	(krudd-filter
-	  (lambda (x) x)
-	  (map (lambda (f)
-		 (case (car f)
-		   ((c-handle)  (cons (cadr f) 'handle))
-		   ((c-enum)    (cons (cadr f) 'enum))
-		   ((c-typedef) (cons (cadr f) 'typedef))
-		   ((c-struct)  (cons (cadr f) 'struct))
-		   (else #f)))
-	       forms)))
+  (krudd-filter
+   (lambda (x) x)
+   (map (lambda (f)
+          (case (car f)
+            ((c-handle)  (cons (cadr f) 'handle))
+            ((c-enum)    (cons (cadr f) 'enum))
+            ((c-typedef) (cons (cadr f) 'typedef))
+            ((c-struct)  (cons (cadr f) 'struct))
+            (else #f)))
+        forms)))
 
 (define (krudd-if-kind reg name)
-	(let ((p (assq name reg))) (and p (cdr p))))
+  (let ((p (assq name reg))) (and p (cdr p))))
 
 (define (krudd-if-ctype reg t)
-	(cond
-	  ((eq? t 'void) "void")
-	  ((eq? t 'char) "char")
-	  ((eq? t 'size_t) "size_t")
-	  ((krudd-scalar? t) (krudd-scalar-ctype t))
-	  ((symbol? t)
-	   (let ((kind (krudd-if-kind reg t)))
-	     (cond ((eq? kind 'handle) (string-append (krudd-snake t) "_t"))
-		   ((eq? kind 'struct) (string-append "struct " (krudd-snake t)))
-		   ((or (eq? kind 'enum) (eq? kind 'typedef)) (krudd-snake t))
-		   (else (error 'krudd-if-unknown-type t)))))
-	  ((and (pair? t) (eq? (car t) 'const))
-	   (string-append "const " (krudd-if-ctype reg (cadr t))))
-	  ((and (pair? t) (eq? (car t) 'ptr))
-	   (let ((base (krudd-if-ctype reg (cadr t))))
-	     (string-append base (if (krudd-if-ends-star? base) "*" " *"))))
-	  (else (error 'krudd-if-bad-type t))))
+  (cond
+   ((eq? t 'void) "void")
+   ((eq? t 'char) "char")
+   ((eq? t 'size_t) "size_t")
+   ((krudd-scalar? t) (krudd-scalar-ctype t))
+   ((symbol? t)
+    (let ((kind (krudd-if-kind reg t)))
+      (cond ((eq? kind 'handle) (string-append (krudd-snake t) "_t"))
+            ((eq? kind 'struct) (string-append "struct " (krudd-snake t)))
+            ((or (eq? kind 'enum) (eq? kind 'typedef)) (krudd-snake t))
+            (else (error 'krudd-if-unknown-type t)))))
+   ((and (pair? t) (eq? (car t) 'const))
+    (string-append "const " (krudd-if-ctype reg (cadr t))))
+   ((and (pair? t) (eq? (car t) 'ptr))
+    (let ((base (krudd-if-ctype reg (cadr t))))
+      (string-append base (if (krudd-if-ends-star? base) "*" " *"))))
+   (else (error 'krudd-if-bad-type t))))
 
 (define (krudd-if-val v)
-	(cond ((integer? v) (number->string v))
-	      ((and (pair? v) (eq? (car v) '<<))
-	       (string-append (number->string (cadr v)) "u << "
-			      (number->string (caddr v))))
-	      (else (error 'krudd-if-bad-value v))))
+  (cond ((integer? v) (number->string v))
+        ((and (pair? v) (eq? (car v) '<<))
+         (string-append (number->string (cadr v)) "u << "
+                        (number->string (caddr v))))
+        (else (error 'krudd-if-bad-value v))))
 
 (define (krudd-if-size s)
-	(cond ((integer? s) (number->string s))
-	      ((symbol? s) (krudd-screaming s))
-	      (else (error 'krudd-if-bad-size s))))
+  (cond ((integer? s) (number->string s))
+        ((symbol? s) (krudd-screaming s))
+        (else (error 'krudd-if-bad-size s))))
 
 (define (krudd-if-render-handle form)
-	(let ((s (krudd-snake (cadr form))))
-	  (string-append "typedef struct " s " *" s "_t;")))
+  (let ((s (krudd-snake (cadr form))))
+    (string-append "typedef struct " s " *" s "_t;")))
 
 (define (krudd-if-enum-member m)
-	(if (pair? m)
-	    (string-append "\t" (krudd-screaming (car m)) " = "
-			   (krudd-if-val (cadr m)) ",")
-	    (string-append "\t" (krudd-screaming m) ",")))
+  (if (pair? m)
+      (string-append "\t" (krudd-screaming (car m)) " = "
+                     (krudd-if-val (cadr m)) ",")
+      (string-append "\t" (krudd-screaming m) ",")))
 
 (define (krudd-if-render-enum form)
-	(string-append
-	  "typedef enum {\n"
-	  (krudd-join "\n" (map krudd-if-enum-member (cddr form)))
-	  "\n} " (krudd-snake (cadr form)) ";"))
+  (string-append
+   "typedef enum {\n"
+   (krudd-join "\n" (map krudd-if-enum-member (cddr form)))
+   "\n} " (krudd-snake (cadr form)) ";"))
 
 (define (krudd-if-render-define form)
-	(let ((name (krudd-screaming (cadr form))) (val (caddr form)))
-	  (string-append "#define " name " "
-	    (if (pair? val)
-		(string-append "(" (krudd-if-val val) ")")
-		(krudd-if-val val)))))
+  (let ((name (krudd-screaming (cadr form))) (val (caddr form)))
+    (string-append "#define " name " "
+                   (if (pair? val)
+                       (string-append "(" (krudd-if-val val) ")")
+                       (krudd-if-val val)))))
 
 (define (krudd-if-render-typedef reg form)
-	(string-append "typedef " (krudd-if-ctype reg (caddr form)) " "
-		       (krudd-snake (cadr form)) ";"))
+  (string-append "typedef " (krudd-if-ctype reg (caddr form)) " "
+                 (krudd-snake (cadr form)) ";"))
 
 (define (krudd-if-param reg p)
-	(krudd-if-var (krudd-if-ctype reg (cadr p)) (krudd-snake (car p))))
+  (krudd-if-var (krudd-if-ctype reg (cadr p)) (krudd-snake (car p))))
 
 (define (krudd-if-fnptr reg name ret params)
-	(let ((rct   (krudd-if-ctype reg ret))
-	      (plist (if (null? params)
-			 "void"
-			 (krudd-join ", "
-			   (map (lambda (p) (krudd-if-param reg p)) params)))))
-	  (string-append
-	    (if (krudd-if-ends-star? rct) rct (string-append rct " "))
-	    "(*" name ")(" plist ");")))
+  (let ((rct   (krudd-if-ctype reg ret))
+        (plist (if (null? params)
+                   "void"
+                   (krudd-join ", "
+                               (map (lambda (p) (krudd-if-param reg p)) params)))))
+    (string-append
+     (if (krudd-if-ends-star? rct) rct (string-append rct " "))
+     "(*" name ")(" plist ");")))
 
 (define (krudd-if-field reg f)
-	(let ((name (krudd-snake (car f))) (spec (cadr f)))
-	  (cond
-	    ((and (pair? spec) (eq? (car spec) 'array))
-	     (string-append "\t" (krudd-if-ctype reg (cadr spec)) " " name
-			    "[" (krudd-if-size (caddr spec)) "];"))
-	    ((and (pair? spec) (eq? (car spec) 'fn))
-	     (string-append "\t"
-			    (krudd-if-fnptr reg name (cadr spec) (caddr spec))))
-	    (else
-	     (string-append "\t"
-			    (krudd-if-var (krudd-if-ctype reg spec) name) ";")))))
+  (let ((name (krudd-snake (car f))) (spec (cadr f)))
+    (cond
+     ((and (pair? spec) (eq? (car spec) 'array))
+      (string-append "\t" (krudd-if-ctype reg (cadr spec)) " " name
+                     "[" (krudd-if-size (caddr spec)) "];"))
+     ((and (pair? spec) (eq? (car spec) 'fn))
+      (string-append "\t"
+                     (krudd-if-fnptr reg name (cadr spec) (caddr spec))))
+     (else
+      (string-append "\t"
+                     (krudd-if-var (krudd-if-ctype reg spec) name) ";")))))
 
 (define (krudd-if-render-struct reg form)
-	(string-append
-	  "struct " (krudd-snake (cadr form)) " {\n"
-	  (krudd-join "\n" (map (lambda (f) (krudd-if-field reg f)) (cddr form)))
-	  "\n};"))
+  (string-append
+   "struct " (krudd-snake (cadr form)) " {\n"
+   (krudd-join "\n" (map (lambda (f) (krudd-if-field reg f)) (cddr form)))
+   "\n};"))
 
 (define (krudd-if-render reg form)
-	(case (car form)
-	  ((c-section) (string-append "/* --- " (cadr form) " --- */"))
-	  ((c-handle)  (krudd-if-render-handle form))
-	  ((c-enum)    (krudd-if-render-enum form))
-	  ((c-define)  (krudd-if-render-define form))
-	  ((c-typedef) (krudd-if-render-typedef reg form))
-	  ((c-struct)  (krudd-if-render-struct reg form))
-	  (else (error 'krudd-if-unknown-form (car form)))))
+  (case (car form)
+    ((c-section) (string-append "/* --- " (cadr form) " --- */"))
+    ((c-handle)  (krudd-if-render-handle form))
+    ((c-enum)    (krudd-if-render-enum form))
+    ((c-define)  (krudd-if-render-define form))
+    ((c-typedef) (krudd-if-render-typedef reg form))
+    ((c-struct)  (krudd-if-render-struct reg form))
+    (else (error 'krudd-if-unknown-form (car form)))))
 
 (define (krudd-emit-interface-header in out)
-	(let* ((forms    (krudd-scm-forms in))
-	       (reg      (krudd-if-registry forms))
-	       (label    (krudd-rel-label in))
-	       (hname    (krudd-basename out))
-	       (guard    (krudd-upcase (krudd-replace hname "." "_")))
-	       (includes (krudd-filter (lambda (f) (eq? (car f) 'c-include))
-				       forms))
-	       (decls    (krudd-filter (lambda (f) (not (eq? (car f) 'c-include)))
-				       forms)))
-	  (call-with-output-file out
-	    (lambda (port)
-	      (write-string
-		(string-append
-		  "/* SPDX-License-Identifier: GPL-2.0-or-later */\n"
-		  "/* Generated by krudd from " label ". Do not edit. */\n"
-		  "#ifndef " guard "\n"
-		  "#define " guard "\n\n"
-		  (krudd-join "\n"
-		    (map (lambda (f) (string-append "#include <" (cadr f) ">"))
-			 includes))
-		  "\n\n"
-		  (krudd-join "\n\n"
-		    (map (lambda (f) (krudd-if-render reg f)) decls))
-		  "\n\n"
-		  "#endif /* " guard " */\n")
-		port)))))
+  (let* ((forms    (krudd-scm-forms in))
+         (reg      (krudd-if-registry forms))
+         (label    (krudd-rel-label in))
+         (hname    (krudd-basename out))
+         (guard    (krudd-upcase (krudd-replace hname "." "_")))
+         (includes (krudd-filter (lambda (f) (eq? (car f) 'c-include))
+                                 forms))
+         (decls    (krudd-filter (lambda (f) (not (eq? (car f) 'c-include)))
+                                 forms)))
+    (call-with-output-file out
+      (lambda (port)
+        (write-string
+         (string-append
+          "/* SPDX-License-Identifier: GPL-2.0-or-later */\n"
+          "/* Generated by krudd from " label ". Do not edit. */\n"
+          "#ifndef " guard "\n"
+          "#define " guard "\n\n"
+          (krudd-join "\n"
+                      (map (lambda (f) (string-append "#include <" (cadr f) ">"))
+                           includes))
+          "\n\n"
+          (krudd-join "\n\n"
+                      (map (lambda (f) (krudd-if-render reg f)) decls))
+          "\n\n"
+          "#endif /* " guard " */\n")
+         port)))))

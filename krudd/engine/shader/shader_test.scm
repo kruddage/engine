@@ -7,18 +7,18 @@
 (define fail-count 0)
 
 (define (check name ok)
-	(if ok
-	    (display (string-append "  ok    " name "\n"))
-	    (begin
-	      (set! fail-count (+ fail-count 1))
-	      (display (string-append "  FAIL  " name "\n")))))
+  (if ok
+      (display (string-append "  ok    " name "\n"))
+      (begin
+        (set! fail-count (+ fail-count 1))
+        (display (string-append "  FAIL  " name "\n")))))
 
 (define (has? s sub)
-	(let ((hl (string-length s)) (nl (string-length sub)))
-	  (let loop ((i 0))
-	    (cond ((> (+ i nl) hl) #f)
-		  ((string=? (substring s i (+ i nl)) sub) #t)
-		  (else (loop (+ i 1)))))))
+  (let ((hl (string-length s)) (nl (string-length sub)))
+    (let loop ((i 0))
+      (cond ((> (+ i nl) hl) #f)
+            ((string=? (substring s i (+ i nl)) sub) #t)
+            (else (loop (+ i 1)))))))
 
 ;;! The built-in scene shader, the exact DSL asset_plugin seeds.
 (define scene "(shader scene
@@ -105,26 +105,26 @@
        (= (car mp) 64))
 (check "base_color: vec4 color at offset 0, size 16, 4 components"
        (equal? (list-ref mp 1)
-	       (list "base_color" "vec4" 0 16 4 "color" 0 0 '())))
+               (list "base_color" "vec4" 0 16 4 "color" 0 0 '())))
 (check "roughness: float range [0 1] at offset 16, size 4, 1 component"
        (equal? (list-ref mp 2)
-	       (list "roughness" "float" 16 4 1 "range" 0 1 '())))
+               (list "roughness" "float" 16 4 1 "range" 0 1 '())))
 (check "tint: vec3 color aligns to 16 (offset 32), size 12, 3 components"
        (equal? (list-ref mp 3)
-	       (list "tint" "vec3" 32 12 3 "color" 0 0 '())))
+               (list "tint" "vec3" 32 12 3 "color" 0 0 '())))
 (check "uv_scale: unhinted vec2 aligns to 8 (offset 48), size 8, kind none"
        (equal? (list-ref mp 4)
-	       (list "uv_scale" "vec2" 48 8 2 "none" 0 0 '())))
+               (list "uv_scale" "vec2" 48 8 2 "none" 0 0 '())))
 (check "the scene shader's single base_color is one color param, block size 16"
        (let ((sp (shader-material-params scene)))
-	 (and (= (car sp) 16)
-	      (equal? (list-ref sp 1)
-		      (list "base_color" "vec4" 0 16 4 "color" 0 0 '())))))
+         (and (= (car sp) 16)
+              (equal? (list-ref sp 1)
+                      (list "base_color" "vec4" 0 16 4 "color" 0 0 '())))))
 (check "a shader with no Material block reports size 0 and no params"
        (equal? (shader-material-params
-		 "(shader n (targets (c vec4 (location 0)))
+                "(shader n (targets (c vec4 (location 0)))
 		    (fragment (set c (vec4 1.0 1.0 1.0 1.0))))")
-	       (list 0)))
+               (list 0)))
 
 (display "shader: samplers\n")
 ;;! A shader declaring a sampler alongside a std140 Material block: the fragment
@@ -156,8 +156,8 @@
        (not (has? tvs "sampler2D")))
 (check "a sampler is not a material param (only base_color is, block size 16)"
        (let ((mp (shader-material-params tex-shader)))
-	 (and (= (car mp) 16) (= (length (cdr mp)) 1)
-	      (equal? (car (list-ref mp 1)) "base_color"))))
+         (and (= (car mp) 16) (= (length (cdr mp)) 1)
+              (equal? (car (list-ref mp 1)) "base_color"))))
 
 ;;! kruddgui's SDF overlay shader — the reason fwidth and (precision highp) exist,
 ;;! and the shape they have to work on. kruddgui still compiles the hand-written
@@ -233,18 +233,18 @@
 (let ((frag-only "(shader glow (targets (c vec4 (location 0)))
                     (fragment (set c (vec4 1.0 1.0 1.0 1.0))))"))
   (check "a shader with only a fragment stage has no vertex GLSL"
-	 (eq? #f (shader-transpile frag-only "vertex")))
+         (eq? #f (shader-transpile frag-only "vertex")))
   (check "and its fragment stage still transpiles"
-	 (string? (shader-transpile frag-only "fragment"))))
+         (string? (shader-transpile frag-only "fragment"))))
 
 ;;! Byte index of SUB in S, or -1 — for asserting one fragment precedes another
 ;;! (a helper must be emitted above the main() that calls it).
 (define (idx s sub)
-	(let ((hl (string-length s)) (nl (string-length sub)))
-	  (let loop ((i 0))
-	    (cond ((> (+ i nl) hl) -1)
-		  ((string=? (substring s i (+ i nl)) sub) i)
-		  (else (loop (+ i 1)))))))
+  (let ((hl (string-length s)) (nl (string-length sub)))
+    (let loop ((i 0))
+      (cond ((> (+ i nl) hl) -1)
+            ((string=? (substring s i (+ i nl)) sub) i)
+            (else (loop (+ i 1)))))))
 
 (display "shader: functions (reusable helpers)\n")
 ;;! Two helpers that pull their weight — a pure tonemap and a shadow_at that
@@ -282,27 +282,27 @@
        (has? hfs "vec3 tonemap(vec3 color) {"))
 (check "its let* locals and (return EXPR) lower like a stage body's"
        (and (has? hfs "vec3 mapped = (color / (color + vec3(1.0, 1.0, 1.0)));")
-	    (has? hfs "return g;")))
+            (has? hfs "return g;")))
 (check "a sampling helper reads the sampler as a global and returns its tap"
        (and (has? hfs "float shadow_at(vec4 lp) {")
-	    (has? hfs "float s = texture(shadow_map, uv).r;")))
+            (has? hfs "float s = texture(shadow_map, uv).r;")))
 (check "a call is a plain GLSL call, typed by the helper's return"
        (and (has? hfs "float sh = shadow_at(v_lightpos);")
-	    (has? hfs "vec3 col = tonemap(vec3(sh, sh, sh));")))
+            (has? hfs "vec3 col = tonemap(vec3(sh, sh, sh));")))
 (check "helpers are emitted above the main() that calls them"
        (and (>= (idx hfs "vec3 tonemap(vec3 color)") 0)
-	    (< (idx hfs "vec3 tonemap(vec3 color)") (idx hfs "void main"))
-	    (< (idx hfs "float shadow_at(vec4 lp)") (idx hfs "void main"))))
+            (< (idx hfs "vec3 tonemap(vec3 color)") (idx hfs "void main"))
+            (< (idx hfs "float shadow_at(vec4 lp)") (idx hfs "void main"))))
 (check "the stage declares a sampler only its helper reads (transitive refs)"
        (has? hfs "uniform sampler2D shadow_map;"))
 (check "an unreached helper is not emitted"
        (not (has? hfs "unused")))
 (check "the vertex reaches no helper, so emits none and no helper-only binding"
        (and (not (has? hvs "tonemap")) (not (has? hvs "shadow_at"))
-	    (not (has? hvs "shadow_map"))))
+            (not (has? hvs "shadow_map"))))
 
 (if (= fail-count 0)
     (begin (display "SHADER-TESTS: OK\n") (exit 0))
     (begin (display (string-append "SHADER-TESTS: FAIL ("
-				   (number->string fail-count) ")\n"))
-	   (exit 1)))
+                                   (number->string fail-count) ")\n"))
+           (exit 1)))

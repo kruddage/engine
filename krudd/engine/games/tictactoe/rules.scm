@@ -117,11 +117,11 @@
 ;;! pbr-ruby; an O is the flat torus ring, in pbr-sapphire.
 (define (ttt-x-form x z)
   `(entity (name "mark") (at ,x 0.15 ,z)
-     (children
-       (entity (mesh "builtin://mesh/box") (material "builtin://material/pbr-ruby")
-               (rotate 0 45 0) (scale 0.6 0.09 0.14))
-       (entity (mesh "builtin://mesh/box") (material "builtin://material/pbr-ruby")
-               (rotate 0 -45 0) (scale 0.6 0.09 0.14)))))
+           (children
+            (entity (mesh "builtin://mesh/box") (material "builtin://material/pbr-ruby")
+                    (rotate 0 45 0) (scale 0.6 0.09 0.14))
+            (entity (mesh "builtin://mesh/box") (material "builtin://material/pbr-ruby")
+                    (rotate 0 -45 0) (scale 0.6 0.09 0.14)))))
 
 (define (ttt-o-form x z)
   `(entity (name "mark")
@@ -152,9 +152,9 @@
 
 (define (ttt-place i kind)
   (scene-entity-build
-    (if (= kind 1) (ttt-x-form (ttt-cell-x i) (ttt-cell-z i))
-                   (ttt-o-form (ttt-cell-x i) (ttt-cell-z i)))
-    -1))
+   (if (= kind 1) (ttt-x-form (ttt-cell-x i) (ttt-cell-z i))
+       (ttt-o-form (ttt-cell-x i) (ttt-cell-z i)))
+   -1))
 
 ;;! (ttt-strike kind ln) draws the win: a thin bar laid over the three cells of
 ;;! the winning line LN, spanning from its first cell's centre to its last, in
@@ -180,11 +180,11 @@
                       ((= dx dz) -45)
                       (else 45))))
       (scene-entity-build
-        `(entity (name "mark")
-                 (mesh "builtin://mesh/box") (material ,(ttt-strike-material kind))
-                 (at ,mx 0.32 ,mz) (rotate 0 ,ang 0)
-                 (scale ,(+ len 0.5) 0.08 0.14))
-        -1)
+       `(entity (name "mark")
+                (mesh "builtin://mesh/box") (material ,(ttt-strike-material kind))
+                (at ,mx 0.32 ,mz) (rotate 0 ,ang 0)
+                (scale ,(+ len 0.5) 0.08 0.14))
+       -1)
       ;;! A bigger celebratory burst along the winning line's midpoint.
       (ttt-spark mx mz kind 90))))
 
@@ -209,7 +209,7 @@
            (ttt-strike win (ttt-winning-line))
            (ttt-award win)
            (krudd-log 0 (string-append "tictactoe: "
-                         (if (= win 1) "X" "O") " wins")))
+                                       (if (= win 1) "X" "O") " wins")))
           ((ttt-full?)
            (set! *ttt-over* 3)
            (krudd-log 0 "tictactoe: draw"))
@@ -223,11 +223,11 @@
 ;;! empty cell places — an occupied cell, a mark, or the board are all no-ops.
 (define (ttt-on-selected id)
   (catch #t
-    (lambda ()
-      (if (not (= *ttt-over* 0))
-          (begin (ttt-restart) 1)
-          (let ((cell (ttt-cell-index (scene-entity-name id))))
-            (if (and cell (< cell 9) (= 0 (vector-ref *ttt-board* cell)))
-                (ttt-place-move cell *ttt-turn*)
-                0))))
-    (lambda args (krudd-log 2 "tictactoe: rule fault") 0)))
+         (lambda ()
+           (if (not (= *ttt-over* 0))
+               (begin (ttt-restart) 1)
+               (let ((cell (ttt-cell-index (scene-entity-name id))))
+                 (if (and cell (< cell 9) (= 0 (vector-ref *ttt-board* cell)))
+                     (ttt-place-move cell *ttt-turn*)
+                     0))))
+         (lambda args (krudd-log 2 "tictactoe: rule fault") 0)))

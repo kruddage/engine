@@ -68,29 +68,29 @@
         (cons (list->string (reverse out)) (reverse spans))
         (let ((c (string-ref text i)))
           (cond
-            ((and (eqv? c #\*)
-                  (< (+ i 1) len)
-                  (eqv? (string-ref text (+ i 1)) #\*))
-             (let find ((j (+ i 2)))
-               (cond
-                 ((>= (+ j 1) len)
-                  (md-inline-scan text (+ i 1) (+ o 1) (cons c out) spans ns))
-                 ((and (eqv? (string-ref text j) #\*)
-                       (eqv? (string-ref text (+ j 1)) #\*))
-                  (md-copy-run text (+ i 2) j o out spans ns md-span-bold
-                               (+ j 2)))
-                 (else (find (+ j 1))))))
-            ((eqv? c #\`)
-             (let find ((j (+ i 1)))
-               (cond
-                 ((>= j len)
-                  (md-inline-scan text (+ i 1) (+ o 1) (cons c out) spans ns))
-                 ((eqv? (string-ref text j) #\`)
-                  (md-copy-run text (+ i 1) j o out spans ns md-span-code
-                               (+ j 1)))
-                 (else (find (+ j 1))))))
-            (else
-             (md-inline-scan text (+ i 1) (+ o 1) (cons c out) spans ns)))))))
+           ((and (eqv? c #\*)
+                 (< (+ i 1) len)
+                 (eqv? (string-ref text (+ i 1)) #\*))
+            (let find ((j (+ i 2)))
+              (cond
+               ((>= (+ j 1) len)
+                (md-inline-scan text (+ i 1) (+ o 1) (cons c out) spans ns))
+               ((and (eqv? (string-ref text j) #\*)
+                     (eqv? (string-ref text (+ j 1)) #\*))
+                (md-copy-run text (+ i 2) j o out spans ns md-span-bold
+                             (+ j 2)))
+               (else (find (+ j 1))))))
+           ((eqv? c #\`)
+            (let find ((j (+ i 1)))
+              (cond
+               ((>= j len)
+                (md-inline-scan text (+ i 1) (+ o 1) (cons c out) spans ns))
+               ((eqv? (string-ref text j) #\`)
+                (md-copy-run text (+ i 1) j o out spans ns md-span-code
+                             (+ j 1)))
+               (else (find (+ j 1))))))
+           (else
+            (md-inline-scan text (+ i 1) (+ o 1) (cons c out) spans ns)))))))
 
 (define (md-copy-run text open close o out spans ns style resume)
   (let copy ((k open) (oo o) (ob out))
@@ -125,28 +125,28 @@
                            (+ eol 1)
                            eol)))
             (cond
-              (in-fence
-               (if (md-fence? line)
-                   (loop next #f acc)
-                   (loop next #t
-                         (cons (list md-block-code 0 (md-take line 0) '())
-                               acc))))
-              ((md-fence? line)
-               (loop next #t acc))
-              ((md-blank? line)
-               (loop next #f acc))
-              ((> (md-count-hashes line) 0)
-               (let* ((hashes (md-count-hashes line))
-                      (start  (md-skip-spaces line hashes)))
-                 (loop next #f
-                       (cons (md-block md-block-heading hashes
-                                       (md-take line start))
-                             acc))))
-              ((md-list-marker? line)
-               (loop next #f
-                     (cons (md-block md-block-list-item 0 (md-take line 2))
-                           acc)))
-              (else
-               (loop next #f
-                     (cons (md-block md-block-paragraph 0 (md-take line 0))
-                           acc)))))))))
+             (in-fence
+              (if (md-fence? line)
+                  (loop next #f acc)
+                  (loop next #t
+                        (cons (list md-block-code 0 (md-take line 0) '())
+                              acc))))
+             ((md-fence? line)
+              (loop next #t acc))
+             ((md-blank? line)
+              (loop next #f acc))
+             ((> (md-count-hashes line) 0)
+              (let* ((hashes (md-count-hashes line))
+                     (start  (md-skip-spaces line hashes)))
+                (loop next #f
+                      (cons (md-block md-block-heading hashes
+                                      (md-take line start))
+                            acc))))
+             ((md-list-marker? line)
+              (loop next #f
+                    (cons (md-block md-block-list-item 0 (md-take line 2))
+                          acc)))
+             (else
+              (loop next #f
+                    (cons (md-block md-block-paragraph 0 (md-take line 0))
+                          acc)))))))))

@@ -163,26 +163,26 @@
 ;;! slab, the ground) with a piece in hand cancels the pick.
 (define (chess-on-selected id)
   (catch #t
-    (lambda ()
-      (let ((name (scene-entity-name id)))
-        (cond
-          ;;! First click: pick up a piece of the side to move, else ignore.
-          ((< *chess-sel* 0)
-           (if (and (chess-piece? name)
+         (lambda ()
+           (let ((name (scene-entity-name id)))
+             (cond
+              ;;! First click: pick up a piece of the side to move, else ignore.
+              ((< *chess-sel* 0)
+               (if (and (chess-piece? name)
+                        (= (chess-piece-colour name) *chess-turn*))
+                   (begin (chess-pick! id) 0)
+                   0))
+              ;;! Second click on one of your own pieces: re-pick it, no move.
+              ((and (chess-piece? name)
                     (= (chess-piece-colour name) *chess-turn*))
-               (begin (chess-pick! id) 0)
-               0))
-          ;;! Second click on one of your own pieces: re-pick it, no move.
-          ((and (chess-piece? name)
-                (= (chess-piece-colour name) *chess-turn*))
-           (chess-pick! id) 0)
-          ;;! Second click on an enemy piece: capture it.
-          ((chess-piece? name)
-           (chess-capture! *chess-sel* id))
-          ;;! Second click on an empty square: slide there.
-          ((chess-square? name)
-           (chess-move! *chess-sel* (chess-square-x name)
-                        (chess-square-z name)))
-          ;;! Second click on anything else (board slab, ground): deselect.
-          (else (chess-drop!) 0))))
-    (lambda args (krudd-log 2 "chess: rule fault") 0)))
+               (chess-pick! id) 0)
+              ;;! Second click on an enemy piece: capture it.
+              ((chess-piece? name)
+               (chess-capture! *chess-sel* id))
+              ;;! Second click on an empty square: slide there.
+              ((chess-square? name)
+               (chess-move! *chess-sel* (chess-square-x name)
+                            (chess-square-z name)))
+              ;;! Second click on anything else (board slab, ground): deselect.
+              (else (chess-drop!) 0))))
+         (lambda args (krudd-log 2 "chess: rule fault") 0)))

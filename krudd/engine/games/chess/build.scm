@@ -3,7 +3,7 @@
 	(sources "chess.c")
 	(public "." (root "abi") (root "core/include") (root "game"))
 	(private (raw "${generated}"))
-	(link "subsystem_manager" "game"))
+	(link "subsystem_manager" "script" "game"))
  (native-only
 	(executable "chess_test"
 		(sources "chess_test.c"

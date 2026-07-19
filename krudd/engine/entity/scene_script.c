@@ -194,6 +194,27 @@ static s7_pointer sp_scene_entity_name(s7_scheme *sc, s7_pointer args)
 }
 
 /*
+ * (scene-entity-pos id) -> the entity's authored local position as a three-item
+ * list (x y z), or #f when id is not a live entity. The read twin of the position
+ * scene-xform! writes: game rules that relocate a picked entity (a chess piece
+ * moving to a captured square) need the target's current spot, which only the
+ * host knows. Top-level entities have no parent, so local is world here — the
+ * pieces a game moves are all roots.
+ */
+static s7_pointer sp_scene_entity_pos(s7_scheme *sc, s7_pointer args)
+{
+	int32_t id = arg_id(args);
+
+	if (id_ok(id)) {
+		const float *p = g_w->local[id].position;
+
+		return s7_list(sc, 3, s7_make_real(sc, p[0]),
+			       s7_make_real(sc, p[1]), s7_make_real(sc, p[2]));
+	}
+	return s7_f(sc);
+}
+
+/*
  * (scene-destroy-named! "name") -> count of matches destroyed. Tombstones every
  * live entity whose name equals NAME; a destroy cascades to descendants, so
  * removing a composite (a named X parent) takes its unnamed bars with it. This
@@ -244,6 +265,8 @@ void scene_script_init(void)
 			   "(scene-name! id name) set entity name");
 	s7_define_function(sc, "scene-entity-name", sp_scene_entity_name, 1, 0,
 			   false, "(scene-entity-name id) -> name string");
+	s7_define_function(sc, "scene-entity-pos", sp_scene_entity_pos, 1, 0,
+			   false, "(scene-entity-pos id) -> (x y z) or #f");
 	s7_define_function(sc, "scene-destroy-named!", sp_scene_destroy_named, 1,
 			   0, false,
 			   "(scene-destroy-named! name) destroy entities by name");

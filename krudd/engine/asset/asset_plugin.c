@@ -249,6 +249,53 @@ static const char *TONEMAP_FN =
 	"                            (vec3 0.0 0.0 0.0) (vec3 1.0 1.0 1.0))))\n"
 	"        (return (pow mapped (vec3 0.4545 0.4545 0.4545)))))\n";
 
+/*
+ * Analytic image-based lighting, shared by the pbr shaders. Instead of a
+ * captured HDRI cubemap (which needs cube-sampler support the DSL and both
+ * backends still lack, plus prefiltering the WebGPU backend has no compute to
+ * bake), the environment is a function of direction, evaluated per fragment —
+ * the "mobile IBL" approach: it gives metals a real directional reflection and
+ * dielectrics an environment-tinted fill for pure ALU, no textures.
+ *
+ *   env_radiance(dir): the environment seen along dir — a studio-ish gradient,
+ *     cool sky at the zenith, a bright warm horizon band, dark ground. This is
+ *     what a mirror-smooth surface reflects; sampling it in the reflection
+ *     direction is the specular probe.
+ *
+ *   env_irradiance(n): the diffuse (cosine-integrated) version — a soft
+ *     hemisphere with no horizon spike, standing in for the irradiance map. It
+ *     doubles as the fully-rough specular, so a rough surface blurs toward it.
+ *
+ *   env_brdf_approx(rough, ndv): Karis's analytic fit of the split-sum BRDF
+ *     integral (from "Physically Based Shading on Mobile") — returns the (scale,
+ *     bias) that would otherwise come from a precomputed BRDF LUT, so specular
+ *     IBL is F0*scale + bias. exp2 is folded into exp (exp2(x) = exp(x*ln2)),
+ *     the DSL knowing exp but not exp2.
+ */
+static const char *ENV_IBL_FN =
+	"    (env_radiance ((dir vec3)) vec3\n"
+	"      (let* ((y       (swizzle dir y))\n"
+	"             (sky     (vec3 0.55 0.68 0.92))\n"
+	"             (ground  (vec3 0.16 0.15 0.14))\n"
+	"             (horizon (vec3 1.0 0.96 0.88))\n"
+	"             (base    (mix ground sky (+ 0.5 (* 0.5 y))))\n"
+	"             (hb      (pow (- 1.0 (abs y)) 3.0)))\n"
+	"        (return (mix base horizon (* 0.5 hb)))))\n"
+	"    (env_irradiance ((n vec3)) vec3\n"
+	"      (let* ((y      (swizzle n y))\n"
+	"             (sky    (vec3 0.42 0.50 0.62))\n"
+	"             (ground (vec3 0.20 0.19 0.17)))\n"
+	"        (return (mix ground sky (+ 0.5 (* 0.5 y))))))\n"
+	"    (env_brdf_approx ((rough float) (ndv float)) vec2\n"
+	"      (let* ((c0 (vec4 -1.0 -0.0275 -0.572 0.022))\n"
+	"             (c1 (vec4 1.0 0.0425 1.04 -0.04))\n"
+	"             (r  (+ (* rough c0) c1))\n"
+	"             (a004 (+ (* (min (* (swizzle r x) (swizzle r x))\n"
+	"                              (exp (* -6.4324 ndv)))\n"
+	"                         (swizzle r x))\n"
+	"                      (swizzle r y))))\n"
+	"        (return (+ (* (vec2 -1.04 1.04) a004) (swizzle r zw)))))\n";
+
 static const char *SCENE_TEXTURED_HEAD =
 	"(shader scene-textured\n"
 	"  (inputs\n"
@@ -313,11 +360,13 @@ static const float DEFAULT_MATERIAL_COLOR[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
  * F0 = mix(0.04, base_color, metallic).  Direct light is one directional key
  * read from the Sun block — its world-space direction and radiance are uploaded
  * by scene_renderer from the scene's light entity (a COMPONENT_LIGHT entity),
- * or a default sun when the scene has none.  A cheap sky/ground hemisphere
- * stands in for image-based lighting so metals still read instead of going
- * black.  The view direction is the real one — cam_pos (in the Camera block)
- * minus the interpolated world position — so specular highlights track the
- * camera.
+ * or a default sun when the scene has none.  Ambient is analytic image-based
+ * lighting (see ENV_IBL_FN): the environment reflected in the view's mirror
+ * direction feeds a split-sum specular term, and a soft irradiance hemisphere
+ * feeds diffuse, so metals reflect a lit environment instead of going black.
+ * The view direction is the real one — cam_pos (in the Camera block) minus the
+ * interpolated world position — so both the specular highlight and the
+ * environment reflection track the camera.
  *
  * The sun casts shadows: the Sun block also carries light_view_proj, the
  * light's world→clip matrix scene_renderer builds each frame, and the shader
@@ -351,7 +400,8 @@ static const char *PBR_HEAD =
 	"    (Material (block 1) (layout std140)\n"
 	"      (base_color vec4  (edit color) (default 0.82 0.82 0.85 1.0))\n"
 	"      (metallic   float (edit range 0.0 1.0) (default 0.1))\n"
-	"      (roughness  float (edit range 0.0 1.0) (default 0.5)))\n"
+	"      (roughness  float (edit range 0.0 1.0) (default 0.5))\n"
+	"      (emissive   vec3  (edit color) (default 0.0 0.0 0.0)))\n"
 	"    (Sun (block 2) (layout std140)\n"
 	"      (light_dir       vec3)\n"
 	"      (light_radiance  vec3)\n"
@@ -397,11 +447,13 @@ static const char *PBR_TAIL =
 	"           (diff   (* kd albedo 0.31831))\n"
 	"           (shadow (sun_shadow v_lightpos ndl))\n"
 	"           (lo     (* (+ diff spec) light_radiance ndl shadow))\n"
-	"           (sky    (vec3 0.55 0.62 0.75))\n"
-	"           (ground (vec3 0.20 0.19 0.17))\n"
-	"           (hemi   (mix ground sky (+ 0.5 (* 0.5 (swizzle n y)))))\n"
-	"           (amb    (* 0.45 (+ (* hemi albedo (- 1.0 metallic)) (* hemi f0))))\n"
-	"           (color  (+ amb lo))\n"
+	"           (refl   (reflect (- v) n))\n"
+	"           (pref   (mix (env_radiance refl) (env_irradiance n) roughness))\n"
+	"           (eab    (env_brdf_approx roughness ndv))\n"
+	"           (spec_i (* pref (+ (* f0 (swizzle eab x)) (swizzle eab y))))\n"
+	"           (diff_i (* (env_irradiance n) albedo (- 1.0 metallic)))\n"
+	"           (amb    (+ (* diff_i 0.7) spec_i))\n"
+	"           (color  (+ amb lo emissive))\n"
 	"           (gamma  (tonemap color)))\n"
 	"      (set frag_color (vec4 gamma 1.0)))))\n";
 
@@ -506,10 +558,12 @@ static const char *PBR_TEXTURED_TAIL =
 	"           (diff   (* kd albedo 0.31831))\n"
 	"           (shadow (sun_shadow v_lightpos ndl))\n"
 	"           (lo     (* (+ diff spec) light_radiance ndl shadow))\n"
-	"           (sky    (vec3 0.55 0.62 0.75))\n"
-	"           (ground (vec3 0.20 0.19 0.17))\n"
-	"           (hemi   (mix ground sky (+ 0.5 (* 0.5 (swizzle n y)))))\n"
-	"           (amb    (* 0.45 (+ (* hemi albedo (- 1.0 metallic)) (* hemi f0))))\n"
+	"           (refl   (reflect (- v) n))\n"
+	"           (pref   (mix (env_radiance refl) (env_irradiance n) roughness))\n"
+	"           (eab    (env_brdf_approx roughness ndv))\n"
+	"           (spec_i (* pref (+ (* f0 (swizzle eab x)) (swizzle eab y))))\n"
+	"           (diff_i (* (env_irradiance n) albedo (- 1.0 metallic)))\n"
+	"           (amb    (+ (* diff_i 0.7) spec_i))\n"
 	"           (color  (+ amb lo))\n"
 	"           (gamma  (tonemap color)))\n"
 	"      (set frag_color (vec4 gamma 1.0)))))\n";
@@ -620,12 +674,14 @@ static void seed_textured_material(const char *path, uint32_t shader_ref,
 /*
  * Seed a built-in PBR material: the v3 wire form with no texture trailer, just
  * [shader-ref u32][Material block std140].  The pbr shader's Material block is
- * { base_color vec4; metallic float; roughness float; }, which std140-packs to
- * 32 bytes (base_color @0, metallic @16, roughness @20, the block rounded up to
- * 32), so the material is 4 + 32 = 36 bytes with the trailing pad left zero.
- * There is no texture slot: material_texture reads none because the bytes end
- * exactly at header + block, so the shader renders its pure parametric shading.
- * A zero shader_ref makes this a no-op.
+ * { base_color vec4; metallic float; roughness float; emissive vec3; }, which
+ * std140-packs to 48 bytes (base_color @0, metallic @16, roughness @20,
+ * emissive @32, the block rounded up to 48), so the material is 4 + 48 = 52
+ * bytes.  This seeder writes no emissive, leaving it zero (see the memset), so
+ * these built-ins are non-emissive; the field exists for materials that author
+ * a glow.  There is no texture slot: material_texture reads none because the
+ * bytes end exactly at header + block, so the shader renders its pure
+ * parametric shading.  A zero shader_ref makes this a no-op.
  */
 static void seed_pbr_material(const char *path, uint32_t shader_ref,
 			      const float rgba[4], float metallic,
@@ -640,14 +696,19 @@ static void seed_pbr_material(const char *path, uint32_t shader_ref,
 	e = alloc_entry(path);
 	if (!e)
 		return;
-	n = (uint32_t)(sizeof(uint32_t)      /* shader-ref                 */
-		       + 8 * sizeof(float)); /* std140 Material block (32B) */
+	n = (uint32_t)(sizeof(uint32_t)       /* shader-ref                 */
+		       + 12 * sizeof(float)); /* std140 Material block (48B) */
 	e->data = g_mem->alloc(n);
 	if (!e->data) {
 		e->state = ASSET_ERROR;
 		return;
 	}
-	memset(e->data, 0, n);            /* leaves the block's tail pad zero */
+	/*
+	 * The zero fill is load-bearing: it leaves the block's pad AND the
+	 * emissive vec3 (@32 in the block, so @36 here) at zero, so a material
+	 * seeded through this path is non-emissive without naming emissive.
+	 */
+	memset(e->data, 0, n);
 	p = (unsigned char *)e->data;
 	memcpy(p,      &shader_ref, sizeof(shader_ref)); /* @0  shader-ref  */
 	memcpy(p + 4,  rgba, 4 * sizeof(float));         /* @4  base_color  */
@@ -930,7 +991,7 @@ static void seed_builtins(void)
 		static const float PLASTIC[4] = { 0.85f, 0.13f, 0.16f, 1.0f };
 		char        pbuf[8192];
 		const char *pparts[] = { PBR_HEAD, SUN_SHADOW_FN, TONEMAP_FN,
-					 PBR_TAIL };
+					 ENV_IBL_FN, PBR_TAIL };
 		uint32_t pshader = seed_shader_parts(
 			"builtin://shader/pbr", pbuf, sizeof(pbuf), pparts,
 			sizeof(pparts) / sizeof(pparts[0]));
@@ -1014,7 +1075,8 @@ static void seed_builtins(void)
 	{
 		char        shader_src[8192];
 		const char *parts[] = { PBR_TEXTURED_HEAD, SUN_SHADOW_FN,
-					TONEMAP_FN, PBR_TEXTURED_TAIL };
+					TONEMAP_FN, ENV_IBL_FN,
+					PBR_TEXTURED_TAIL };
 		uint32_t    grass_tex =
 			seed_texture("builtin://texture/grass",
 				     GRASS_TEXTURE_SCRIPT_SRC);

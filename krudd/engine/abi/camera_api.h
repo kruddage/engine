@@ -14,9 +14,9 @@
  * the rendered meshes.  The transform gizmo (#178) is the first consumer: it
  * reads view_proj to place its handles and eye to size them by distance.
  *
- * A UI that knows the drawable pixel size (kruddboard) calls set_viewport each
- * frame; the renderer and every overlay then share one aspect, so a non-1.6
- * canvas no longer skews the projection.
+ * A UI that knows the drawable pixel size (the viewport bridge, ui/viewport)
+ * calls set_viewport each frame; the renderer and every overlay then share one
+ * aspect, so a non-1.6 canvas no longer skews the projection.
  */
 struct camera_api {
 	/* Copy the current view·projection matrix into *out. */

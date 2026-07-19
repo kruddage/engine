@@ -4,9 +4,9 @@
    (public "." (root "abi"))
    (link "log" "memory" "subsystem" "subsystem_manager" "m"))
  ;;! The mesh-script bridge (source -> mesh_blob) as a shared library, so both the
- ;;! renderer (upload) and kruddboard (click-to-pick raycast) resolve one copy of
- ;;! mesh_script_generate rather than each compiling the source (which would
- ;;! duplicate the symbol in the single WASM module).
+ ;;! renderer (upload) and the viewport bridge (click-to-pick raycast) resolve one
+ ;;! copy of mesh_script_generate rather than each compiling the source (which
+ ;;! would duplicate the symbol in the single WASM module).
  (library "mesh_script"
    (sources "mesh_script.c")
    (public "." (root "abi"))

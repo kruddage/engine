@@ -53,20 +53,20 @@ header {
 
 .version {
 	font-size: 11px;
-	color: #555;
+	color: #999;
 	letter-spacing: 0.1em;
 	cursor: pointer;
 	user-select: none;
 }
 
 .version:hover {
-	color: #888;
+	color: #ccc;
 }
 
 .version-detail {
 	display: none;
 	font-size: 11px;
-	color: #444;
+	color: #777;
 	letter-spacing: 0.05em;
 }
 
@@ -542,7 +542,7 @@ footer {
 <header>
 	<span class="wordmark">KRUDD</span>
 	<span class="version" id="version" title="click for build info">18.2.0</span>
-	<span class="version-detail" id="version-detail">commit 6f30868 &middot; built 2026-07-19</span>
+	<span class="version-detail" id="version-detail">commit 0174403 &middot; built 2026-07-19</span>
 	<span class="renderer" id="renderer-badge" title="renderer: detecting&hellip;">&mdash;</span>
 	<button class="menu-btn" id="menu-btn" title="back to the menu">&#9776; menu</button>
 </header>
@@ -908,13 +908,13 @@ footer {
 var Module = {
 	locateFile: function (path, prefix) {
 		if (path.endsWith('.wasm'))
-			return prefix + path.replace(/\.wasm$/, '.6f30868.wasm');
+			return prefix + path.replace(/\.wasm$/, '.0174403.wasm');
 		return prefix + path;
 	}
 };
 </script>
 
-<script async type="text/javascript" src="index.6f30868.js"></script>
+<script async type="text/javascript" src="index.0174403.js"></script>
 
 </body>
 </html>

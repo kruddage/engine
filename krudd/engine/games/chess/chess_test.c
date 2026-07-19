@@ -6,9 +6,11 @@
  * standard opening position: the right entity count, and the key pieces sitting
  * on the right squares by name. No GPU and no asset catalog are needed — the
  * mesh/material paths resolve to "unbound", which still spawns every named
- * entity, so the layout is fully checkable headless. This slice has no rules, so
- * there is nothing else to drive; a later move-logic slice would add its own
- * checks the way tictactoe_test drives clicks.
+ * entity, so the layout is fully checkable headless. It then drives the rules the
+ * way the plugin's tick does — hand a picked entity's id to chess-on-selected
+ * with the world bound (scene_script_call) — over a small hand-built board, and
+ * checks the two-click select→move flow: a slide, a capture, re-picking, a
+ * deselect, and turn alternation. No GPU or browser is needed.
  */
 #include "world.h"
 #include "scene_script.h"
@@ -17,8 +19,10 @@
 #include "log.h"
 
 #include "chess_scene_scm.h"
+#include "chess_rules_scm.h"
 
 #include <assert.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
@@ -102,15 +106,163 @@ static void test_rebuild_is_stable(void)
 	assert(a == b && a == CHESS_ENTITY_COUNT);
 }
 
+/*
+ * A tiny hand-built board for driving the rules, entity ids 0..3 in this order:
+ *   0  wP-e2   a white pawn on e2   (world 0.5, 2.5)
+ *   1  sq-e4   an empty target tile (world 0.5, 0.5)
+ *   2  bP-e7   a black pawn on e7   (world 0.5, -2.5)   — a capture target
+ *   3  wN-b1   a white knight on b1 (world -2.5, 3.5)   — a second white piece
+ * The rules read names and positions and move by id, so no meshes or catalog are
+ * needed; the y a piece lands at is the authored 0.03.
+ */
+static const char *RULES_BOARD =
+	"(scene c"
+	"  (entity (name \"wP-e2\") (at 0.5 0.03 2.5))"
+	"  (entity (name \"sq-e4\") (at 0.5 0.02 0.5))"
+	"  (entity (name \"bP-e7\") (at 0.5 0.03 -2.5))"
+	"  (entity (name \"wN-b1\") (at -2.5 0.03 3.5))"
+	"  (entity (name \"board-base\") (at 0.0 -0.16 0.0)))";
+
+/* Click the entity whose id is `id`, returning chess-on-selected's code. */
+static int32_t click(int32_t id)
+{
+	return scene_script_call(&w, NULL, "chess-on-selected", id);
+}
+
+/* Poll *chess-turn*: 1 white to move, 2 black. */
+static int32_t turn(void)
+{
+	return scene_script_call(&w, NULL, "chess-turn", 0);
+}
+
+/*
+ * The world's game-outline target — what the renderer's outline pass highlights
+ * in-game. The rules set it through scene-outline! (world_set_outline) as the
+ * player picks a piece up, so a headless test can watch the pick/drop directly
+ * even though the ring itself needs a GPU to draw.
+ */
+static int32_t outline(void)
+{
+	return world_get_outline(&w);
+}
+
+/* #t when entity `id`'s local position is (x, *, z) within a hair. */
+static int at_xz(int32_t id, float x, float z)
+{
+	const float *p = w.local[id].position;
+
+	return fabsf(p[0] - x) < 1e-4f && fabsf(p[2] - z) < 1e-4f;
+}
+
+static void reset_rules_board(void)
+{
+	world_reset(&w);
+	assert(scene_script_build(&w, NULL, RULES_BOARD) == 5);
+	scene_script_call(&w, NULL, "chess-reset", 0);
+}
+
+/* Two clicks — pick a pawn, then an empty square — slide it and pass the turn. */
+static void test_move_and_turn(void)
+{
+	reset_rules_board();
+
+	assert(turn() == 1);             /* white to move */
+	assert(click(0) == 0);           /* pick up wP-e2 (a selection, no move) */
+	assert(at_xz(0, 0.5f, 2.5f));    /* still home until the second click */
+	assert(turn() == 1);             /* selecting does not pass the turn */
+	assert(click(1) == 1);           /* click sq-e4 -> slide there */
+	assert(at_xz(0, 0.5f, 0.5f));    /* the pawn is on e4 now */
+	assert(turn() == 2);             /* and it is black's move */
+}
+
+/* Picking an enemy piece as the destination removes it and takes its square. */
+static void test_capture(void)
+{
+	reset_rules_board();
+
+	assert(click(0) == 0);           /* pick up wP-e2 */
+	assert(click(2) == 2);           /* click bP-e7 -> capture (code 2) */
+	assert(!w.alive[2]);             /* the black pawn is gone */
+	assert(at_xz(0, 0.5f, -2.5f));   /* the white pawn stands on e7 */
+	assert(turn() == 2);             /* turn passed */
+}
+
+/* Clicking your own piece while one is picked re-picks it rather than moving. */
+static void test_repick(void)
+{
+	reset_rules_board();
+
+	assert(click(0) == 0);           /* pick up the pawn */
+	assert(click(3) == 0);           /* click the knight (also white) -> re-pick */
+	assert(at_xz(0, 0.5f, 2.5f));    /* the pawn did not move */
+	assert(turn() == 1);             /* no move, still white */
+	assert(click(1) == 1);           /* now sq-e4 moves the KNIGHT, not the pawn */
+	assert(at_xz(3, 0.5f, 0.5f));    /* knight on e4 */
+	assert(at_xz(0, 0.5f, 2.5f));    /* pawn untouched */
+	assert(turn() == 2);
+}
+
+/* A first click on the wrong side's piece (or empty space) picks up nothing. */
+static void test_wrong_side_ignored(void)
+{
+	reset_rules_board();
+
+	assert(click(2) == 0);           /* black pawn, white to move -> ignored */
+	assert(turn() == 1);
+	assert(click(1) == 0);           /* an empty square with nothing picked -> no-op */
+	assert(turn() == 1);
+	assert(w.alive[2]);              /* nothing was moved or captured */
+}
+
+/*
+ * The outline target tracks the picked piece: set on a pick, moved on a re-pick,
+ * cleared on a move, a capture, or a deselect — and never set by picking the
+ * wrong side. This is the state the renderer's in-game outline pass reads.
+ */
+static void test_outline_tracks_pick(void)
+{
+	reset_rules_board();
+
+	assert(outline() == -1);         /* nothing picked at the start */
+	assert(click(0) == 0);           /* pick up wP-e2 */
+	assert(outline() == 0);          /* the pawn is outlined */
+	assert(click(3) == 0);           /* re-pick the knight */
+	assert(outline() == 3);          /* outline follows to the knight */
+	assert(click(1) == 1);           /* move it to e4 */
+	assert(outline() == -1);         /* a move clears the outline */
+
+	reset_rules_board();
+	assert(click(0) == 0);           /* pick the pawn */
+	assert(click(2) == 2);           /* capture the black pawn */
+	assert(outline() == -1);         /* a capture clears it too */
+
+	reset_rules_board();
+	assert(click(0) == 0);           /* pick the pawn */
+	assert(outline() == 0);
+	assert(click(4) == 0);           /* click the board slab -> deselect */
+	assert(outline() == -1);         /* deselect clears the outline */
+	assert(turn() == 1);             /* and did not pass the turn */
+
+	reset_rules_board();
+	assert(click(2) == 0);           /* black piece, white to move -> ignored */
+	assert(outline() == -1);         /* nothing picked, nothing outlined */
+}
+
 int main(void)
 {
 	log_init();
 	script_init();       /* loads scene_script.scm (scene-build) */
 	scene_script_init(); /* registers the scene-* host primitives */
+	script_eval(CHESS_RULES_SCM); /* load the rules into the image */
 
 	test_scene_builds();
 	test_starting_position();
 	test_rebuild_is_stable();
+	test_move_and_turn();
+	test_capture();
+	test_repick();
+	test_wrong_side_ignored();
+	test_outline_tracks_pick();
 
 	printf("chess_test: ok\n");
 	return 0;

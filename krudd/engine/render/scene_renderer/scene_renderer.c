@@ -2487,9 +2487,24 @@ static int outline_selected_entity(const struct world *w, uint32_t *out_id)
 {
 	int32_t sel;
 
-	if (!g_scene || !g_scene->get_selected)
+	if (!g_scene)
 		return 0;
-	sel = g_scene->get_selected();
+	/*
+	 * In editor chrome the outline follows the editor selection; in-game
+	 * (chrome off) it follows the game's own outline target — the piece the
+	 * chess rules picked up, set through entity_api.set_outline — so the ring
+	 * shows in play, not just in the editor. Either source must still name a
+	 * live, drawable mesh to be worth the pass.
+	 */
+	if (EDITOR_CHROME()) {
+		if (!g_scene->get_selected)
+			return 0;
+		sel = g_scene->get_selected();
+	} else {
+		if (!g_scene->get_outline)
+			return 0;
+		sel = g_scene->get_outline();
+	}
 	if (sel < 0 || (uint32_t)sel >= w->count)
 		return 0;
 	if (!w->alive[sel] || !(w->mask[sel] & COMPONENT_RENDER))
@@ -2580,8 +2595,19 @@ static void composite_pass(struct fg_pass_ctx *ctx, void *userdata)
 	memset(ubo, 0, sizeof(ubo));
 	ubo[0] = g_view_w > 0.0f ? OUTLINE_THICKNESS / g_view_w : 0.0f; /* texel.x */
 	ubo[1] = g_view_h > 0.0f ? OUTLINE_THICKNESS / g_view_h : 0.0f; /* texel.y */
-	ubo[4] = 1.0f; /* color.r */
-	ubo[7] = 1.0f; /* color.a — red, opaque */
+	/*
+	 * Editor selection outlines red; an in-game outline (a picked chess
+	 * piece, chrome off) uses a warm gold that reads on both the ivory and
+	 * the ebony pieces where a hard red would fight the dark set.
+	 */
+	if (EDITOR_CHROME()) {
+		ubo[4] = 1.0f;              /* red   */
+	} else {
+		ubo[4] = 1.0f;             /* gold: */
+		ubo[5] = 0.78f;            /* r 1.0 */
+		ubo[6] = 0.30f;            /* g .78 b .30 */
+	}
+	ubo[7] = 1.0f; /* color.a — opaque */
 
 	gpu->cmd_set_pipeline(cmd, g_outline_pso);
 	gpu->buffer_update(g_outline_ubo, 0, ubo, (uint32_t)sizeof(ubo));
@@ -2797,7 +2823,7 @@ static void scene_renderer_tick(void)
 	 * selected) the renderer stays the single forward-to-backbuffer pass it
 	 * has always been, at zero added cost.
 	 */
-	outline = EDITOR_CHROME() && w && g_mask_pso && g_outline_pso &&
+	outline = w && g_mask_pso && g_outline_pso &&
 		  g_view_w > 0.0f && g_view_h > 0.0f &&
 		  outline_selected_entity(w, &sel);
 
@@ -2955,6 +2981,19 @@ static void scene_renderer_tick(void)
 			}
 		}
 	} else {
+		/*
+		 * A mesh is outlined this frame. When the bloom pipelines are up
+		 * the two post chains compose (#630/#622): the forward scene is
+		 * bloomed into a full-res intermediate `lit`, then the outline
+		 * edge is drawn over `lit` on the way to the backbuffer, so the
+		 * piece both glows and wears its selection ring. Both stages
+		 * reuse their existing shaders unchanged — bloom_composite just
+		 * targets `lit` instead of the backbuffer, and the outline
+		 * composite reads `lit` as its scene. Without bloom it is the
+		 * plain forward -> mask -> outline path.
+		 */
+		int           bloom = g_bloom_extract_pso && g_bloom_blur_pso &&
+				      g_bloom_composite_pso;
 		uint32_t      vw = (uint32_t)g_view_w, vh = (uint32_t)g_view_h;
 		fg_tex_desc   cdesc, ddesc;
 		fg_resource_t scene_color, scene_depth, mask;
@@ -2975,8 +3014,7 @@ static void scene_renderer_tick(void)
 		scene_depth = g_fg_api->declare_transient(fg, "scene_depth", ddesc);
 		mask        = g_fg_api->declare_transient(fg, "sel_mask", cdesc);
 
-		g_outline_frame.scene_color = scene_color;
-		g_outline_frame.mask        = mask;
+		g_outline_frame.mask = mask;
 
 		fwrites[0] = scene_color;
 		fwrites[1] = scene_depth;
@@ -2984,23 +3022,95 @@ static void scene_renderer_tick(void)
 		fpass = g_fg_api->pass_declare(fg, "forward", frn ? freads : NULL,
 					       frn, fwrites, 2);
 		mpass = g_fg_api->pass_declare(fg, "sel_mask", NULL, 0, &mask, 1);
-		creads[0] = scene_color;
-		creads[1] = mask;
-		cpass = g_fg_api->pass_declare(fg, "outline", creads, 2, &bb, 1);
 
-		if (fpass && mpass && cpass && (!shadow || spass)) {
-			if (spass) {
-				g_fg_api->pass_set_depth_clear(spass, 1.0f);
-				g_fg_api->pass_set_execute(spass, shadow_pass, NULL);
+		if (bloom) {
+			uint32_t      hw = vw > 1 ? vw / 2 : 1;
+			uint32_t      hh = vh > 1 ? vh / 2 : 1;
+			fg_tex_desc   hdesc = cdesc;
+			fg_resource_t ba, bb2, bc, lit;
+			fg_resource_t xr[1], hr[1], vr[1], lr[2], cr[2];
+			fg_pass_t     xpass, hpass, vpass, lpass;
+
+			hdesc.width  = hw;
+			hdesc.height = hh;
+			ba  = g_fg_api->declare_transient(fg, "bloom_a", hdesc);
+			bb2 = g_fg_api->declare_transient(fg, "bloom_b", hdesc);
+			bc  = g_fg_api->declare_transient(fg, "bloom_c", hdesc);
+			lit = g_fg_api->declare_transient(fg, "outline_lit", cdesc);
+
+			g_bloom_frame.scene_color = scene_color;
+			g_bloom_frame.bloom_a     = ba;
+			g_bloom_frame.bloom_b     = bb2;
+			g_bloom_frame.bloom_c     = bc;
+			g_bloom_frame.half_w      = hw;
+			g_bloom_frame.half_h      = hh;
+			g_outline_frame.scene_color = lit;
+
+			xr[0] = scene_color;
+			xpass = g_fg_api->pass_declare(fg, "bloom_extract", xr, 1,
+						       &ba, 1);
+			hr[0] = ba;
+			hpass = g_fg_api->pass_declare(fg, "bloom_blur_h", hr, 1,
+						       &bb2, 1);
+			vr[0] = bb2;
+			vpass = g_fg_api->pass_declare(fg, "bloom_blur_v", vr, 1,
+						       &bc, 1);
+			lr[0] = scene_color;
+			lr[1] = bc;
+			lpass = g_fg_api->pass_declare(fg, "bloom_composite", lr, 2,
+						       &lit, 1);
+			cr[0] = lit;
+			cr[1] = mask;
+			cpass = g_fg_api->pass_declare(fg, "outline", cr, 2, &bb, 1);
+
+			if (fpass && mpass && xpass && hpass && vpass && lpass &&
+			    cpass && (!shadow || spass)) {
+				if (spass) {
+					g_fg_api->pass_set_depth_clear(spass, 1.0f);
+					g_fg_api->pass_set_execute(spass,
+								   shadow_pass, NULL);
+				}
+				g_fg_api->pass_set_color_clear(fpass, 0, CLEAR);
+				g_fg_api->pass_set_depth_clear(fpass, 1.0f);
+				g_fg_api->pass_set_execute(fpass, forward_pass, NULL);
+				g_fg_api->pass_set_color_clear(mpass, 0, MASK_CLEAR);
+				g_fg_api->pass_set_execute(mpass, mask_pass, NULL);
+				g_fg_api->pass_set_execute(xpass, bloom_extract_pass,
+							   NULL);
+				g_fg_api->pass_set_execute(hpass, bloom_blur_h_pass,
+							   NULL);
+				g_fg_api->pass_set_execute(vpass, bloom_blur_v_pass,
+							   NULL);
+				g_fg_api->pass_set_execute(lpass,
+							   bloom_composite_pass, NULL);
+				g_fg_api->pass_set_execute(cpass, composite_pass,
+							   NULL);
+				g_fg_api->compile(fg);
+				g_fg_api->execute(fg);
 			}
-			g_fg_api->pass_set_color_clear(fpass, 0, CLEAR);
-			g_fg_api->pass_set_depth_clear(fpass, 1.0f);
-			g_fg_api->pass_set_execute(fpass, forward_pass, NULL);
-			g_fg_api->pass_set_color_clear(mpass, 0, MASK_CLEAR);
-			g_fg_api->pass_set_execute(mpass, mask_pass, NULL);
-			g_fg_api->pass_set_execute(cpass, composite_pass, NULL);
-			g_fg_api->compile(fg);
-			g_fg_api->execute(fg);
+		} else {
+			g_outline_frame.scene_color = scene_color;
+			creads[0] = scene_color;
+			creads[1] = mask;
+			cpass = g_fg_api->pass_declare(fg, "outline", creads, 2,
+						       &bb, 1);
+
+			if (fpass && mpass && cpass && (!shadow || spass)) {
+				if (spass) {
+					g_fg_api->pass_set_depth_clear(spass, 1.0f);
+					g_fg_api->pass_set_execute(spass,
+								   shadow_pass, NULL);
+				}
+				g_fg_api->pass_set_color_clear(fpass, 0, CLEAR);
+				g_fg_api->pass_set_depth_clear(fpass, 1.0f);
+				g_fg_api->pass_set_execute(fpass, forward_pass, NULL);
+				g_fg_api->pass_set_color_clear(mpass, 0, MASK_CLEAR);
+				g_fg_api->pass_set_execute(mpass, mask_pass, NULL);
+				g_fg_api->pass_set_execute(cpass, composite_pass,
+							   NULL);
+				g_fg_api->compile(fg);
+				g_fg_api->execute(fg);
+			}
 		}
 	}
 	g_fg_api->destroy(fg);

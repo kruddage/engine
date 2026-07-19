@@ -67,6 +67,7 @@ void world_reset(struct world *w)
 	w->count = 0;
 	w->name_bytes = 0;
 	w->selected = -1;
+	w->outline = -1;
 }
 
 int32_t world_create_entity(struct world *w, int32_t parent,
@@ -119,6 +120,9 @@ void world_destroy_entity(struct world *w, int32_t e)
 	/* The cascade may have killed the selected entity; drop a stale ref. */
 	if (w->selected >= 0 && !w->alive[w->selected])
 		w->selected = -1;
+	/* Likewise the game's outline target (a captured piece is destroyed). */
+	if (w->outline >= 0 && !w->alive[w->outline])
+		w->outline = -1;
 }
 
 /*
@@ -363,6 +367,21 @@ void world_set_selected(struct world *w, int32_t e)
 int32_t world_get_selected(const struct world *w)
 {
 	return w->selected;
+}
+
+void world_set_outline(struct world *w, int32_t e)
+{
+	if (e < 0) {
+		w->outline = -1;
+		return;
+	}
+	if ((uint32_t)e < w->count && w->alive[e])
+		w->outline = e;
+}
+
+int32_t world_get_outline(const struct world *w)
+{
+	return w->outline;
 }
 
 const char *world_entity_name(const struct world *w, uint32_t e)

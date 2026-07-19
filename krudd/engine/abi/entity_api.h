@@ -137,6 +137,15 @@ struct entity_api {
 	void    (*set_selected)(int32_t id);
 
 	/*
+	 * Game-driven outline target: the entity the renderer outlines in-game,
+	 * independent of the editor selection above. A game's rules set it (the
+	 * chess piece the player picked up) so the selection outline shows
+	 * outside editor chrome; -1 = none, set ignores stale/out-of-range ids.
+	 */
+	int32_t (*get_outline)(void);
+	void    (*set_outline)(int32_t id);
+
+	/*
 	 * Simulation mode: paused skips world_tick + entity scripts for the
 	 * frame (the editor's "Paused" state), so the scene holds still while
 	 * everything else — rendering, gizmo, undo/redo — keeps running.

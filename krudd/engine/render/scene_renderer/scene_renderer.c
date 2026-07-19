@@ -445,6 +445,10 @@ static void light_quat_rotate(const float q[4], const float v[3], float out[3])
  * from this matrix matches the window depth the pass wrote. Column-major, filled
  * directly (there is no mat4_ortho in the math library). A directional light has
  * no perspective, so its shadow frustum is a box.
+ *
+ * A [0, 1]-clip backend needs the near half of this range lifted out of clip
+ * rejection; shadow_pass adapts the built matrix (mat4_clip_z01) for its write
+ * rather than baking a second convention in here.
  */
 static void light_ortho(struct mat4 *out, float half, float near, float far)
 {
@@ -1949,6 +1953,7 @@ static void shadow_pass(struct fg_pass_ctx *ctx, void *userdata)
 	const struct world   *w;
 	uint32_t              i;
 	float                 ubo[SCENE_UBO_FLOATS];
+	struct mat4           shadow_vp;
 
 	(void)userdata;
 	if (!gpu || !g_scene || !g_shadow_pso)
@@ -1957,8 +1962,22 @@ static void shadow_pass(struct fg_pass_ctx *ctx, void *userdata)
 	if (!w)
 		return;
 
-	/* The light matrix is the whole pass's view_proj; only model changes. */
-	memcpy(&ubo[0], g_light.view_proj.m, 16 * sizeof(float));
+	/*
+	 * The light matrix is the whole pass's view_proj; only model changes.
+	 *
+	 * g_light.view_proj is GL-convention (NDC z in [-1, 1]). On a [0, 1]-clip
+	 * backend (WebGPU) that would put the near half of the shadow frustum at
+	 * clip z < 0 — clipped away — and write raw NDC z into the map. Adapting
+	 * it here maps light depth into [0, 1] and stores 0.5*z + 0.5, which is
+	 * exactly the window-depth value the forward pass already reconstructs for
+	 * the compare (uvw.z = proj.z*0.5 + 0.5). So only this write copy is
+	 * adapted: the forward pass keeps the GL matrix (bind_light) and the pbr
+	 * shader needs no change. On GL the cap is clear and this is a no-op.
+	 */
+	shadow_vp = g_light.view_proj;
+	if (gpu->caps & GPU_CAP_CLIP_Z_ZERO_TO_ONE)
+		mat4_clip_z01(&shadow_vp);
+	memcpy(&ubo[0], shadow_vp.m, 16 * sizeof(float));
 	ubo[SCENE_UBO_CAMPOS + 0] = 0.0f;
 	ubo[SCENE_UBO_CAMPOS + 1] = 0.0f;
 	ubo[SCENE_UBO_CAMPOS + 2] = 0.0f;

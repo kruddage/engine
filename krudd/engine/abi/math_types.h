@@ -50,6 +50,17 @@ void mat4_look_at(struct mat4 *out, const float eye[3],
 		  const float center[3], const float up[3]);
 
 /*
+ * Adapt a projection (or view*projection) built for the GL clip convention
+ * (NDC z in [-1, 1]) to the [0, 1] convention WebGPU / D3D / Metal use, in
+ * place.  Pre-composes z' = 0.5*z + 0.5*w in clip space, so after the
+ * perspective divide the mapped depth runs [0, 1] instead of [-1, 1].  x, y,
+ * and w are untouched, so screen-space projection (which divides by w and
+ * reads x, y) is unchanged.  The renderer applies this only when the active
+ * backend advertises GPU_CAP_CLIP_Z_ZERO_TO_ONE; the GL path never calls it.
+ */
+void mat4_clip_z01(struct mat4 *m);
+
+/*
  * Model matrix from a world-space transform (TRS: translate * rotate
  * * scale).  struct transform is defined in world.h.
  */

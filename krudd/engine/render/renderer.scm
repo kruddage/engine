@@ -22,11 +22,19 @@
 
 (c-section "Capability flags")
 
+;;! clip-z-zero-to-one advertises the backend's clip-space depth convention:
+;;! set when NDC z runs [0, 1] (WebGPU, D3D, Metal), clear when it runs [-1, 1]
+;;! (OpenGL / WebGL). A GL-convention projection puts the near half of its depth
+;;! range at clip z < 0, which a [0,1] backend clips away, so a projection built
+;;! for GL must be adapted (mat4-clip-z01) before such a backend rasterizes it.
+;;! It is a convention, not a feature, but rides the caps word since that is the
+;;! one per-backend flag the scene layer already queries.
 (c-enum gpu-cap
-	(gpu-cap-draw-direct  (<< 1 0))
-	(gpu-cap-draw-indexed (<< 1 1))
-	(gpu-cap-compute      (<< 1 2))
-	(gpu-cap-bindless     (<< 1 3)))
+	(gpu-cap-draw-direct       (<< 1 0))
+	(gpu-cap-draw-indexed      (<< 1 1))
+	(gpu-cap-compute           (<< 1 2))
+	(gpu-cap-bindless          (<< 1 3))
+	(gpu-cap-clip-z-zero-to-one (<< 1 4)))
 
 (c-section "Enumerations")
 

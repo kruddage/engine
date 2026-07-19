@@ -381,6 +381,29 @@ static void camera_get_view_proj(struct mat4 *out)
 	*out = g_cam.view_proj;
 }
 
+/*
+ * Adapt the camera's view_proj for the active backend's clip-space convention
+ * before it reaches a vertex shader's output position. g_cam.view_proj is
+ * GL-convention (NDC z in [-1, 1]); on a [0, 1]-clip backend (WebGPU) that
+ * puts the near part of the frustum at clip z < 0, which the backend clips
+ * away outright rather than just shading wrong (the same failure #608 fixed
+ * for the shadow write). mat4_clip_z01 lifts it into [0, 1].
+ *
+ * Every draw path that outputs camera-space clip position (forward_pass,
+ * mask_pass, draw_particles) calls this at its write site rather than
+ * mutating g_cam.view_proj itself, so camera_get_view_proj keeps returning
+ * the GL-convention matrix editor overlays and picking unproject against —
+ * those run on the CPU and never touch a backend's clip volume.
+ */
+static struct mat4 camera_clip_vp(const struct gpu_api *gpu)
+{
+	struct mat4 vp = g_cam.view_proj;
+
+	if (gpu->caps & GPU_CAP_CLIP_Z_ZERO_TO_ONE)
+		mat4_clip_z01(&vp);
+	return vp;
+}
+
 static void camera_get_eye(float out[3])
 {
 	if (!out)
@@ -2110,7 +2133,11 @@ static void draw_particles(const struct gpu_api *gpu, gpu_cmd_buf_t cmd)
 		return;
 	up[0] /= len; up[1] /= len; up[2] /= len;
 
-	particles_render(gpu, cmd, g_cam.view_proj.m, right, up);
+	{
+		struct mat4 vp = camera_clip_vp(gpu);
+
+		particles_render(gpu, cmd, vp.m, right, up);
+	}
 }
 
 /*
@@ -2129,6 +2156,7 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 	gpu_pipeline_t        cur_pso = 0;
 	int                   have_pso = 0;
 	gpu_texture_t         shadow_tex;
+	struct mat4           cam_vp;
 
 	(void)userdata;
 	if (!gpu || !g_scene)
@@ -2137,7 +2165,8 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 	if (!w)
 		return;
 
-	memcpy(&ubo[0], g_cam.view_proj.m, 16 * sizeof(float));
+	cam_vp = camera_clip_vp(gpu);
+	memcpy(&ubo[0], cam_vp.m, 16 * sizeof(float));
 	/* cam_pos is constant across the frame; only model changes per draw. */
 	ubo[SCENE_UBO_CAMPOS + 0] = g_cam.eye[0];
 	ubo[SCENE_UBO_CAMPOS + 1] = g_cam.eye[1];
@@ -2338,6 +2367,7 @@ static void mask_pass(struct fg_pass_ctx *ctx, void *userdata)
 	const uint8_t               *pbytes;
 	struct mesh_gpu             *m;
 	struct mat4                  model;
+	struct mat4                  cam_vp;
 	float                        ubo[SCENE_UBO_FLOATS];
 	struct gpu_draw_indexed_args draw;
 	uint32_t                     slot, uoff;
@@ -2353,7 +2383,8 @@ static void mask_pass(struct fg_pass_ctx *ctx, void *userdata)
 	if (!m)
 		return;
 
-	memcpy(&ubo[0], g_cam.view_proj.m, 16 * sizeof(float));
+	cam_vp = camera_clip_vp(gpu);
+	memcpy(&ubo[0], cam_vp.m, 16 * sizeof(float));
 	mat4_from_transform(&model, &w->world_xform[sel]);
 	memcpy(&ubo[16], model.m, 16 * sizeof(float));
 	/* The mask shader reads only the matrices, but the block is uploaded

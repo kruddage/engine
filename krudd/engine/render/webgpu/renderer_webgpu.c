@@ -62,6 +62,12 @@ static WGPUSampler       g_sampler;  /* one linear/repeat sampler for every unit
 static WGPUSampler       g_depth_sampler; /* non-filtering, for depth textures */
 static uint32_t          g_texture_generation; /* bumped on every destroy */
 
+/* The mip-chain blit pipeline (see generate_mip_chain), built lazily on the
+ * first texture that asks for mips rather than at device bring-up, since most
+ * runs never need it (a shadow map or render target never sets generate_mips). */
+static WGPURenderPipeline g_mip_pso;
+static WGPUBuffer         g_mip_vbo;
+
 /* Textures the caller has released but this frame's commands may still name.
  * Sized well past the frame graph's transient count so a frame never overruns
  * it in practice; see webgpu_texture_destroy for what happens if one does. */
@@ -1308,6 +1314,249 @@ static void webgpu_cmd_set_scissor(gpu_cmd_buf_t cmd, int32_t x, int32_t y,
 					    (uint32_t)(y1 - y0));
 }
 
+/* --------------------------------------------------------- mip chain */
+
+/*
+ * WebGL builds mip chains through glGenerateMipmap, which allocates every
+ * level itself; WebGPU textures are immutable once created, so a texture that
+ * wants mips has to declare the full chain up front, and something has to
+ * fill levels 1..N-1 in explicitly. This is that "something": a tiny
+ * fullscreen-quad blit pipeline, hand-authored in WGSL rather than the krudd
+ * DSL because it samples one specific mip level of a texture — a per-level
+ * WGPUTextureView the shader DSL's binding model has no way to express — and
+ * runs entirely inside this file rather than through the generic gpu_api
+ * command-recording path, since it happens at texture_create() before any
+ * frame's command buffer exists (mirroring the immediate, synchronous
+ * wgpuQueueWriteTexture already used for level 0's initial data, a few lines
+ * below).
+ *
+ * Downsampling is a single bilinear tap per destination texel: rendering a
+ * full [0,1] UV quad into a target at half the source's resolution lands
+ * each destination texel's sample point exactly between four source texels,
+ * so the hardware's linear filter is doing a 2x2 box filter for free. No
+ * sampling ever lands outside [0,1], so the shared repeat-wrap sampler
+ * (g_sampler) is safe to reuse here.
+ */
+static const char *MIP_BLIT_WGSL =
+	"struct VOut {\n"
+	"  @builtin(position) position : vec4<f32>,\n"
+	"  @location(0) uv : vec2<f32>,\n"
+	"};\n"
+	"@vertex\n"
+	"fn vs_main(@location(0) pos : vec2<f32>, @location(1) uv : vec2<f32>) -> VOut {\n"
+	"  var out : VOut;\n"
+	"  out.position = vec4<f32>(pos, 0.0, 1.0);\n"
+	"  out.uv = uv;\n"
+	"  return out;\n"
+	"}\n"
+	"@group(0) @binding(0) var mip_sampler : sampler;\n"
+	"@group(0) @binding(1) var mip_src : texture_2d<f32>;\n"
+	"@fragment\n"
+	"fn fs_main(in : VOut) -> @location(0) vec4<f32> {\n"
+	"  return textureSample(mip_src, mip_sampler, in.uv);\n"
+	"}\n";
+
+/* A clip-space quad (two triangles) with matching [0,1] UVs; see the comment
+ * above MIP_BLIT_WGSL for why a plain full-quad sample is the right filter. */
+static const float MIP_BLIT_VERTS[] = {
+	/* pos.xy          uv.xy */
+	-1.0f,  1.0f,      0.0f, 0.0f, /* top-left */
+	-1.0f, -1.0f,      0.0f, 1.0f, /* bottom-left */
+	 1.0f,  1.0f,      1.0f, 0.0f, /* top-right */
+	 1.0f,  1.0f,      1.0f, 0.0f, /* top-right */
+	-1.0f, -1.0f,      0.0f, 1.0f, /* bottom-left */
+	 1.0f, -1.0f,      1.0f, 1.0f, /* bottom-right */
+};
+
+/* Full mip chain length for a 2D extent, matching WebGL's implicit
+ * floor(log2(max(w,h))) + 1 (glGenerateMipmap's rule). */
+static uint32_t mip_chain_length(uint32_t w, uint32_t h)
+{
+	uint32_t levels = 1;
+	uint32_t m = w > h ? w : h;
+
+	while (m > 1) {
+		m >>= 1;
+		levels++;
+	}
+	return levels;
+}
+
+static void ensure_mip_blit_resources(void)
+{
+	WGPUShaderModule mod;
+	WGPUVertexAttribute attrs[2];
+	WGPUVertexBufferLayout vblayout;
+	WGPUColorTargetState target;
+	WGPUFragmentState frag;
+	WGPURenderPipelineDescriptor pd;
+	WGPUBufferDescriptor bd;
+
+	if (g_mip_pso)
+		return;
+
+	mod = make_module(MIP_BLIT_WGSL);
+	if (!mod) {
+		g_log->write(LOG_LEVEL_ERROR,
+			     "renderer_webgpu: mip blit shader module failed");
+		return;
+	}
+
+	memset(attrs, 0, sizeof(attrs));
+	attrs[0].format         = WGPUVertexFormat_Float32x2;
+	attrs[0].offset         = 0;
+	attrs[0].shaderLocation = 0;
+	attrs[1].format         = WGPUVertexFormat_Float32x2;
+	attrs[1].offset         = 2 * sizeof(float);
+	attrs[1].shaderLocation = 1;
+
+	memset(&vblayout, 0, sizeof(vblayout));
+	vblayout.arrayStride    = 4 * sizeof(float);
+	vblayout.stepMode       = WGPUVertexStepMode_Vertex;
+	vblayout.attributeCount = 2;
+	vblayout.attributes     = attrs;
+
+	memset(&target, 0, sizeof(target));
+	/* Every mip-chain caller today bakes RGBA8 procedural textures (see the
+	 * GL backend's texture_create); this pipeline is built once and reused,
+	 * so it is pinned to that one format rather than re-derived per call. */
+	target.format    = WGPUTextureFormat_RGBA8Unorm;
+	target.writeMask = WGPUColorWriteMask_All;
+
+	memset(&frag, 0, sizeof(frag));
+	frag.module     = mod;
+	frag.entryPoint = str_view("fs_main");
+	frag.targetCount = 1;
+	frag.targets     = &target;
+
+	memset(&pd, 0, sizeof(pd));
+	pd.layout                = NULL; /* auto layout from the WGSL above */
+	pd.vertex.module         = mod;
+	pd.vertex.entryPoint     = str_view("vs_main");
+	pd.vertex.bufferCount    = 1;
+	pd.vertex.buffers        = &vblayout;
+	pd.primitive.topology    = WGPUPrimitiveTopology_TriangleList;
+	pd.multisample.count     = 1;
+	pd.multisample.mask      = 0xFFFFFFFFu;
+	pd.fragment              = &frag;
+
+	g_mip_pso = wgpuDeviceCreateRenderPipeline(g_device, &pd);
+	wgpuShaderModuleRelease(mod);
+	if (!g_mip_pso) {
+		g_log->write(LOG_LEVEL_ERROR,
+			     "renderer_webgpu: mip blit pipeline creation failed");
+		return;
+	}
+
+	memset(&bd, 0, sizeof(bd));
+	bd.size  = sizeof(MIP_BLIT_VERTS);
+	bd.usage = WGPUBufferUsage_Vertex | WGPUBufferUsage_CopyDst;
+	g_mip_vbo = wgpuDeviceCreateBuffer(g_device, &bd);
+	if (g_mip_vbo)
+		wgpuQueueWriteBuffer(g_queue, g_mip_vbo, 0, MIP_BLIT_VERTS,
+				     sizeof(MIP_BLIT_VERTS));
+}
+
+/*
+ * Fill mip levels 1..t->mip_levels-1 by successively blitting each level into
+ * the next, half-res each step. Every step is its own tiny command buffer,
+ * submitted synchronously — texture_create has no frame command buffer to
+ * record into, and this runs once per baked texture rather than per frame.
+ */
+static void generate_mip_chain(struct gpu_texture *t)
+{
+	uint32_t level;
+
+	ensure_mip_blit_resources();
+	if (!g_mip_pso || !g_mip_vbo)
+		return;
+
+	for (level = 0; level + 1 < t->mip_levels; level++) {
+		WGPUTextureViewDescriptor vd;
+		WGPUTextureView       src_view, dst_view;
+		WGPUBindGroupLayout   bgl;
+		WGPUBindGroupEntry    entries[2];
+		WGPUBindGroupDescriptor bgd;
+		WGPUBindGroup         bg;
+		WGPURenderPassColorAttachment att;
+		WGPURenderPassDescriptor rpd;
+		WGPUCommandEncoder    enc;
+		WGPURenderPassEncoder pass;
+		WGPUCommandBuffer     cmdbuf;
+
+		memset(&vd, 0, sizeof(vd));
+		vd.format          = WGPUTextureFormat_RGBA8Unorm;
+		vd.baseMipLevel    = level;
+		vd.mipLevelCount   = 1;
+		vd.baseArrayLayer  = 0;
+		vd.arrayLayerCount = 1;
+		vd.dimension       = WGPUTextureViewDimension_2D;
+		vd.aspect          = WGPUTextureAspect_All;
+		src_view = wgpuTextureCreateView(t->tex, &vd);
+
+		vd.baseMipLevel = level + 1;
+		dst_view = wgpuTextureCreateView(t->tex, &vd);
+
+		if (!src_view || !dst_view) {
+			g_log->write(LOG_LEVEL_ERROR,
+				     "renderer_webgpu: mip level %u view failed",
+				     level + 1);
+			if (src_view) wgpuTextureViewRelease(src_view);
+			if (dst_view) wgpuTextureViewRelease(dst_view);
+			break;
+		}
+
+		bgl = wgpuRenderPipelineGetBindGroupLayout(g_mip_pso, 0);
+		memset(entries, 0, sizeof(entries));
+		entries[0].binding = 0;
+		entries[0].sampler = g_sampler;
+		entries[1].binding = 1;
+		entries[1].textureView = src_view;
+		memset(&bgd, 0, sizeof(bgd));
+		bgd.layout     = bgl;
+		bgd.entryCount = 2;
+		bgd.entries    = entries;
+		bg = wgpuDeviceCreateBindGroup(g_device, &bgd);
+		wgpuBindGroupLayoutRelease(bgl);
+
+		memset(&att, 0, sizeof(att));
+		att.view          = dst_view;
+		att.depthSlice    = WGPU_DEPTH_SLICE_UNDEFINED;
+		att.loadOp        = WGPULoadOp_Clear;
+		att.storeOp       = WGPUStoreOp_Store;
+		att.clearValue.r  = 0.0;
+		att.clearValue.g  = 0.0;
+		att.clearValue.b  = 0.0;
+		att.clearValue.a  = 0.0;
+
+		memset(&rpd, 0, sizeof(rpd));
+		rpd.colorAttachmentCount = 1;
+		rpd.colorAttachments     = &att;
+
+		enc  = wgpuDeviceCreateCommandEncoder(g_device, NULL);
+		pass = wgpuCommandEncoderBeginRenderPass(enc, &rpd);
+		if (bg) {
+			wgpuRenderPassEncoderSetPipeline(pass, g_mip_pso);
+			wgpuRenderPassEncoderSetBindGroup(pass, 0, bg, 0, NULL);
+			wgpuRenderPassEncoderSetVertexBuffer(
+				pass, 0, g_mip_vbo, 0, sizeof(MIP_BLIT_VERTS));
+			wgpuRenderPassEncoderDraw(pass, 6, 1, 0, 0);
+		}
+		wgpuRenderPassEncoderEnd(pass);
+		wgpuRenderPassEncoderRelease(pass);
+
+		cmdbuf = wgpuCommandEncoderFinish(enc, NULL);
+		wgpuQueueSubmit(g_queue, 1, &cmdbuf);
+		wgpuCommandBufferRelease(cmdbuf);
+		wgpuCommandEncoderRelease(enc);
+
+		if (bg)
+			wgpuBindGroupRelease(bg);
+		wgpuTextureViewRelease(src_view);
+		wgpuTextureViewRelease(dst_view);
+	}
+}
+
 static gpu_texture_t webgpu_texture_create(const struct gpu_texture_desc *desc)
 {
 	struct gpu_texture *t;
@@ -1325,6 +1574,17 @@ static gpu_texture_t webgpu_texture_create(const struct gpu_texture_desc *desc)
 	t->height     = desc->height;
 	t->format     = desc->format;
 	t->mip_levels = desc->mip_levels ? desc->mip_levels : 1;
+	/*
+	 * A caller asking for generate_mips typically still describes only level
+	 * 0 (see scene_renderer.c's ensure_textures, which sets mip_levels = 1
+	 * alongside generate_mips = 1) — that is enough for GL, where
+	 * glGenerateMipmap allocates the rest of the chain itself. WebGPU
+	 * textures are immutable once created, so the full chain has to be sized
+	 * here, before wgpuDeviceCreateTexture, or there is nowhere for
+	 * generate_mip_chain to blit into.
+	 */
+	if (desc->generate_mips && t->mip_levels <= 1)
+		t->mip_levels = mip_chain_length(desc->width, desc->height);
 
 	memset(&td, 0, sizeof(td));
 	td.dimension     = WGPUTextureDimension_2D;
@@ -1377,8 +1637,18 @@ static gpu_texture_t webgpu_texture_create(const struct gpu_texture_desc *desc)
 				      (size_t)desc->width * desc->height * bpp,
 				      &layout, &extent);
 	}
-	if (desc->generate_mips)
-		STUB_ONCE("generate_mips (needs a blit chain on WebGPU)");
+	if (desc->generate_mips) {
+		if (desc->format == GPU_FORMAT_RGBA8_UNORM) {
+			generate_mip_chain(t);
+		} else {
+			/* The blit pipeline is pinned to RGBA8Unorm (see
+			 * ensure_mip_blit_resources) because it is the engine's
+			 * only sampled/color-target format today; a caller
+			 * asking for mips on anything else needs that pipeline
+			 * generalized first. */
+			STUB_ONCE("generate_mips only supports RGBA8_UNORM textures");
+		}
+	}
 
 	return (gpu_texture_t)t;
 }

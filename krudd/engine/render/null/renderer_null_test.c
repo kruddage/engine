@@ -65,6 +65,11 @@ static void test_vtable_fully_populated(void)
 	assert(gpu->texture_create != NULL);
 	assert(gpu->texture_destroy != NULL);
 	assert(gpu->cmd_bind_texture != NULL);
+	assert(gpu->texture_handle != NULL);
+	assert(gpu->cmd_bind_texture_handle != NULL);
+	/* The null backend owns no device objects, so it issues no ids —
+	 * the one backend for which 0 is the whole of the contract. */
+	assert(gpu->texture_handle(NULL) == 0u);
 }
 
 static void test_cmd_buf_begin_returns_null(void)

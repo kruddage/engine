@@ -804,22 +804,27 @@ static void webgl_cmd_bind_texture(gpu_cmd_buf_t cmd, uint32_t unit,
 }
 
 /*
- * Bind a texture to a unit by its raw GL name — the escape hatch for a UI layer
- * (kruddgui) that composites an external texture it only holds by native handle
- * (a kruddboard bake or a scene-preview target). Mirrors webgl_cmd_bind_texture
- * but takes the name directly instead of a gpu_texture. Handle 0 unbinds.
+ * Bind a texture to a unit by the id texture_handle issued — for a UI layer
+ * (kruddgui) that composites an external texture it holds only as an id (a
+ * kruddboard bake or a scene-preview target). Mirrors webgl_cmd_bind_texture but
+ * takes the id instead of a gpu_texture. Id 0 unbinds.
+ *
+ * GL needs no resolution step: its ids *are* GL texture names, so the id maps to
+ * the object by construction. A destroyed texture's name is invalid to GL, which
+ * binds it as an incomplete texture and samples zero — the "resolves to nothing"
+ * the vtable asks for, arrived at by GL's own rules rather than a lookup.
  */
-static void webgl_cmd_bind_texture_native(gpu_cmd_buf_t cmd, uint32_t unit,
-					  uint32_t native_handle)
+static void webgl_cmd_bind_texture_handle(gpu_cmd_buf_t cmd, uint32_t unit,
+					  uint32_t handle)
 {
 	(void)cmd;
 #ifdef __EMSCRIPTEN__
 	glActiveTexture(GL_TEXTURE0 + unit);
-	glBindTexture(GL_TEXTURE_2D, (GLuint)native_handle);
+	glBindTexture(GL_TEXTURE_2D, (GLuint)handle);
 	glActiveTexture(GL_TEXTURE0); /* leave unit 0 active for the next binder */
 #else
 	(void)unit;
-	(void)native_handle;
+	(void)handle;
 #endif
 }
 
@@ -842,11 +847,16 @@ static void webgl_texture_destroy(gpu_texture_t texture)
 }
 
 /*
- * The GL texture name behind an opaque gpu_texture — the escape hatch a UI layer
- * uses to composite a render-target texture through its own stack (kruddgui hands
- * it to kgui-image). 0 for a null texture or a build without a live GL context.
+ * An opaque id naming a texture, for a UI layer that composites a render-target
+ * texture through its own stack (kruddgui hands it to kgui-image). GL's own
+ * texture name serves: it is already a stable integer that names the object for
+ * as long as it lives, so the backend needs no side table to satisfy the
+ * contract. Callers may not rely on that — the id is opaque to them, and the
+ * WebGPU backend issues something entirely different.
+ *
+ * 0 for a null texture or a build without a live GL context.
  */
-static uint32_t webgl_texture_native_handle(gpu_texture_t texture)
+static uint32_t webgl_texture_handle(gpu_texture_t texture)
 {
 	struct gpu_texture *t = (struct gpu_texture *)texture;
 
@@ -881,8 +891,8 @@ static const struct gpu_api webgl_api = {
 	.texture_create         = webgl_texture_create,
 	.texture_destroy        = webgl_texture_destroy,
 	.cmd_bind_texture       = webgl_cmd_bind_texture,
-	.texture_native_handle  = webgl_texture_native_handle,
-	.cmd_bind_texture_native = webgl_cmd_bind_texture_native,
+	.texture_handle         = webgl_texture_handle,
+	.cmd_bind_texture_handle = webgl_cmd_bind_texture_handle,
 };
 
 #ifdef __EMSCRIPTEN__

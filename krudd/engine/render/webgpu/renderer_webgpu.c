@@ -39,6 +39,7 @@
 #include "memory_api.h"
 #include "script.h"
 #include "webgpu_platform.h"
+#include "texture_registry.h"
 
 #include <webgpu/webgpu.h>
 
@@ -1350,6 +1351,13 @@ static void webgpu_texture_destroy(gpu_texture_t texture)
 	if (!t)
 		return;
 	g_texture_generation++;
+	/*
+	 * Forget it here rather than at the deferred release: the caller has said
+	 * the texture is done with, so its ids must stop resolving now. Leaving
+	 * them live until the flush would let a draw later this frame sample a
+	 * texture the engine considers destroyed.
+	 */
+	texreg_forget(t);
 
 	if (g_pending_destroy_count < WGPU_MAX_PENDING_DESTROY) {
 		g_pending_destroy[g_pending_destroy_count++] = t;
@@ -1398,23 +1406,35 @@ static void webgpu_cmd_bind_texture(gpu_cmd_buf_t cmd, uint32_t unit,
 }
 
 /*
- * There is no meaningful u32 native handle in WebGPU — the GL texture name this
- * returns is a GL-specific escape hatch for the UI layer. Reworking it together
- * with cmd_bind_texture_native is a breaking change to the vtable contract, so
- * it lands with its consumers in the slice that ports kruddgui.
+ * WebGPU has no integer that names a texture — a WGPUTexture is a pointer, and
+ * the id has to survive a trip through Scheme as a number. So the backend hands
+ * out ids from texture_registry, whose id algebra (and, more to the point, its
+ * stale-id behaviour) is specified and tested there.
  */
-static uint32_t webgpu_texture_native_handle(gpu_texture_t texture)
+static uint32_t webgpu_texture_handle(gpu_texture_t texture)
 {
-	(void)texture;
-	STUB_ONCE("texture_native_handle (no WebGPU equivalent; see kruddgui slice)");
-	return 0;
+	uint32_t handle;
+
+	if (!texture)
+		return 0;
+
+	handle = texreg_intern(texture);
+	if (!handle)
+		g_log->write(LOG_LEVEL_ERROR,
+			     "renderer_webgpu: texture handle registry full (%d)",
+			     TEXREG_CAPACITY);
+	return handle;
 }
 
-static void webgpu_cmd_bind_texture_native(gpu_cmd_buf_t cmd, uint32_t unit,
-					   uint32_t native_handle)
+/*
+ * Bind by id. Resolving to NULL is not an error: an id whose texture has been
+ * destroyed unbinds the unit, which the vtable specifies and which a UI holding
+ * a stale id across a rebake relies on.
+ */
+static void webgpu_cmd_bind_texture_handle(gpu_cmd_buf_t cmd, uint32_t unit,
+					   uint32_t handle)
 {
-	(void)cmd; (void)unit; (void)native_handle;
-	STUB_ONCE("cmd_bind_texture_native (no WebGPU equivalent)");
+	webgpu_cmd_bind_texture(cmd, unit, (gpu_texture_t)texreg_resolve(handle));
 }
 
 static void *webgpu_gpu_malloc(size_t size)
@@ -1456,8 +1476,8 @@ static const struct gpu_api webgpu_api = {
 	.texture_create          = webgpu_texture_create,
 	.texture_destroy         = webgpu_texture_destroy,
 	.cmd_bind_texture        = webgpu_cmd_bind_texture,
-	.texture_native_handle   = webgpu_texture_native_handle,
-	.cmd_bind_texture_native = webgpu_cmd_bind_texture_native,
+	.texture_handle          = webgpu_texture_handle,
+	.cmd_bind_texture_handle = webgpu_cmd_bind_texture_handle,
 };
 
 /* ------------------------------------------------- surface and device */

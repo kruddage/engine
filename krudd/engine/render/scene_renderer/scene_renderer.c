@@ -1445,7 +1445,7 @@ static int preview_ensure_mesh(const struct gpu_api *gpu, uint32_t mesh_ref)
 
 /*
  * Render mesh_ref shaded with material_ref into the preview target and return
- * the color texture's native handle (see preview_api.h). Drives the device
+ * the color texture's opaque id (see preview_api.h). Drives the device
  * directly for a single off-frame pass, reusing the scene pipeline, the shared
  * Camera/Material UBOs and the mesh upload path so the thumbnail matches how the
  * mesh draws in-scene. Returns 0 on any failure.
@@ -1593,7 +1593,7 @@ static uint32_t scene_preview_render_mesh(uint32_t mesh_ref,
 	gpu->cmd_end_render_pass(cmd);
 	gpu->cmd_buf_submit(cmd);
 
-	return gpu->texture_native_handle(g_prev_color);
+	return gpu->texture_handle(g_prev_color);
 }
 
 /* Free the preview's targets and mesh buffers — called from shutdown. */

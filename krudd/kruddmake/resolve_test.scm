@@ -153,15 +153,15 @@
             (not (contains? ninja-text "side_module"))))
 (check "C++ module compiles with emcc_cxx and its wasm-flags"
        (and (contains? ninja-text
-                       (string-append "build wasm-obj/kruddboard/ui/kruddboard/"
-                                      "kruddboard.cpp.o: emcc_cxx "))
+                       (string-append "build wasm-obj/kruddgui/ui/kruddgui/"
+                                      "kruddgui.cpp.o: emcc_cxx "))
             (contains? ninja-text "emcxxflags = --std=c++17")))
 (check "plugin archive folds into the main module link"
        (and (contains? ninja-text
                        (string-append "main_module wasm-obj/index/core/engine.c.o "
                                       "wasm-obj/index/core/plugin_abi.c.o "))
             (contains? ninja-text "wasm/libedit_plugin.a")
-            (contains? ninja-text "wasm/libkruddboard.a")))
+            (contains? ninja-text "wasm/libkruddgui.a")))
 (check "default target is native"
        (contains? ninja-text "default native"))
 (check "wasm main module stanza present"

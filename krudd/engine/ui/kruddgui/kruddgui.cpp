@@ -46,7 +46,6 @@ extern "C" {
 
 double get_device_pixel_ratio(void);	/* plugin_abi.c (main module) */
 int    krudd_is_touch_device(void);
-int    krudd_editor_chrome(void);	/* 0 in a game's clean play view */
 
 /*
  * The web text-input bridge (plugin_abi.c, main module) — the hidden <input>
@@ -1598,16 +1597,6 @@ static void kruddgui_tick(void)
 		s_vp_ptr.clicked  = 0;
 		s_vp_ptr.released = 0;
 	}
-
-	/*
-	 * The panels are the editor. In a game's clean play view (editor chrome
-	 * off) skip drawing them: with no panel drawn no input region is
-	 * declared, so every gesture falls through to the viewport pick below —
-	 * exactly what a game wants. The overlay loop above still ran, so
-	 * click-to-pick and the camera-aspect sync are unaffected.
-	 */
-	if (krudd_editor_chrome())
-		call_scm_panel("kruddgui-draw");
 
 	/*
 	 * The perf HUD is not editor chrome: it draws every tick regardless of

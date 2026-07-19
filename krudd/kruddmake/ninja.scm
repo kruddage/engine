@@ -444,10 +444,6 @@
      (string-append gen "/chess_rules_scm.h")
      "CHESS_RULES_SCM")
     (krudd-embed-file
-     (string-append srcroot "/games/demo/demo.scm")
-     (string-append gen "/demo_scene_scm.h")
-     "DEMO_SCENE_SCM")
-    (krudd-embed-file
      (string-append srcroot "/ui/kruddgui/kruddgui.scm")
      (string-append gen "/kruddgui_scm.h") "KRUDDGUI_SCM")
     (krudd-embed-scheme-module

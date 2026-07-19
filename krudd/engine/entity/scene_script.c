@@ -215,6 +215,22 @@ static s7_pointer sp_scene_entity_pos(s7_scheme *sc, s7_pointer args)
 }
 
 /*
+ * (scene-outline! id) -> id. Marks entity ID as the game's outline target (the
+ * renderer's selection-outline pass highlights it in-game), or clears it when ID
+ * is -1 / not a live entity. This is how image-side rules light up the picked
+ * piece before its move: the read side is host-only (the renderer), so there is
+ * no scene-outline getter here — the rules only ever set it.
+ */
+static s7_pointer sp_scene_outline(s7_scheme *sc, s7_pointer args)
+{
+	int32_t id = arg_id(args);
+
+	if (g_w)
+		world_set_outline(g_w, id_ok(id) ? id : -1);
+	return s7_make_integer(sc, id);
+}
+
+/*
  * (scene-destroy-named! "name") -> count of matches destroyed. Tombstones every
  * live entity whose name equals NAME; a destroy cascades to descendants, so
  * removing a composite (a named X parent) takes its unnamed bars with it. This
@@ -267,6 +283,8 @@ void scene_script_init(void)
 			   false, "(scene-entity-name id) -> name string");
 	s7_define_function(sc, "scene-entity-pos", sp_scene_entity_pos, 1, 0,
 			   false, "(scene-entity-pos id) -> (x y z) or #f");
+	s7_define_function(sc, "scene-outline!", sp_scene_outline, 1, 0, false,
+			   "(scene-outline! id) mark id as the game outline (-1 clears)");
 	s7_define_function(sc, "scene-destroy-named!", sp_scene_destroy_named, 1,
 			   0, false,
 			   "(scene-destroy-named! name) destroy entities by name");

@@ -120,7 +120,8 @@ static const char *RULES_BOARD =
 	"  (entity (name \"wP-e2\") (at 0.5 0.03 2.5))"
 	"  (entity (name \"sq-e4\") (at 0.5 0.02 0.5))"
 	"  (entity (name \"bP-e7\") (at 0.5 0.03 -2.5))"
-	"  (entity (name \"wN-b1\") (at -2.5 0.03 3.5)))";
+	"  (entity (name \"wN-b1\") (at -2.5 0.03 3.5))"
+	"  (entity (name \"board-base\") (at 0.0 -0.16 0.0)))";
 
 /* Click the entity whose id is `id`, returning chess-on-selected's code. */
 static int32_t click(int32_t id)
@@ -134,6 +135,17 @@ static int32_t turn(void)
 	return scene_script_call(&w, NULL, "chess-turn", 0);
 }
 
+/*
+ * The world's game-outline target — what the renderer's outline pass highlights
+ * in-game. The rules set it through scene-outline! (world_set_outline) as the
+ * player picks a piece up, so a headless test can watch the pick/drop directly
+ * even though the ring itself needs a GPU to draw.
+ */
+static int32_t outline(void)
+{
+	return world_get_outline(&w);
+}
+
 /* #t when entity `id`'s local position is (x, *, z) within a hair. */
 static int at_xz(int32_t id, float x, float z)
 {
@@ -145,7 +157,7 @@ static int at_xz(int32_t id, float x, float z)
 static void reset_rules_board(void)
 {
 	world_reset(&w);
-	assert(scene_script_build(&w, NULL, RULES_BOARD) == 4);
+	assert(scene_script_build(&w, NULL, RULES_BOARD) == 5);
 	scene_script_call(&w, NULL, "chess-reset", 0);
 }
 
@@ -202,6 +214,40 @@ static void test_wrong_side_ignored(void)
 	assert(w.alive[2]);              /* nothing was moved or captured */
 }
 
+/*
+ * The outline target tracks the picked piece: set on a pick, moved on a re-pick,
+ * cleared on a move, a capture, or a deselect — and never set by picking the
+ * wrong side. This is the state the renderer's in-game outline pass reads.
+ */
+static void test_outline_tracks_pick(void)
+{
+	reset_rules_board();
+
+	assert(outline() == -1);         /* nothing picked at the start */
+	assert(click(0) == 0);           /* pick up wP-e2 */
+	assert(outline() == 0);          /* the pawn is outlined */
+	assert(click(3) == 0);           /* re-pick the knight */
+	assert(outline() == 3);          /* outline follows to the knight */
+	assert(click(1) == 1);           /* move it to e4 */
+	assert(outline() == -1);         /* a move clears the outline */
+
+	reset_rules_board();
+	assert(click(0) == 0);           /* pick the pawn */
+	assert(click(2) == 2);           /* capture the black pawn */
+	assert(outline() == -1);         /* a capture clears it too */
+
+	reset_rules_board();
+	assert(click(0) == 0);           /* pick the pawn */
+	assert(outline() == 0);
+	assert(click(4) == 0);           /* click the board slab -> deselect */
+	assert(outline() == -1);         /* deselect clears the outline */
+	assert(turn() == 1);             /* and did not pass the turn */
+
+	reset_rules_board();
+	assert(click(2) == 0);           /* black piece, white to move -> ignored */
+	assert(outline() == -1);         /* nothing picked, nothing outlined */
+}
+
 int main(void)
 {
 	log_init();
@@ -216,6 +262,7 @@ int main(void)
 	test_capture();
 	test_repick();
 	test_wrong_side_ignored();
+	test_outline_tracks_pick();
 
 	printf("chess_test: ok\n");
 	return 0;

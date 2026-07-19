@@ -264,6 +264,16 @@ static void scene_set_selected(int32_t id)
 	world_set_selected(&g_world, id);
 }
 
+static int32_t scene_get_outline(void)
+{
+	return world_get_outline(&g_world);
+}
+
+static void scene_set_outline(int32_t id)
+{
+	world_set_outline(&g_world, id);
+}
+
 static int32_t scene_get_paused(void)
 {
 	return g_paused;
@@ -293,6 +303,8 @@ static const struct entity_api g_entity_api = {
 	.set_texture_params = scene_set_texture_params,
 	.get_selected   = scene_get_selected,
 	.set_selected   = scene_set_selected,
+	.get_outline    = scene_get_outline,
+	.set_outline    = scene_set_outline,
 	.get_paused     = scene_get_paused,
 	.set_paused     = scene_set_paused,
 };

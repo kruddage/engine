@@ -84,6 +84,7 @@ struct world {
 	uint32_t         count;       /* high-water mark, not the live count */
 	uint32_t         name_bytes;  /* bytes used in names */
 	int32_t          selected;    /* editor selection: -1 none, else live id */
+	int32_t          outline;     /* game outline: -1 none, else live id */
 	uint8_t          alive[WORLD_MAX_ENTITIES];        /* 0 = tombstoned */
 	uint32_t         mask[WORLD_MAX_ENTITIES];         /* component_bit OR-set */
 	int32_t          parent[WORLD_MAX_ENTITIES];       /* -1 root; parent<child */
@@ -252,6 +253,15 @@ const uint8_t *world_texture_params(const struct world *w, uint32_t e,
  */
 void    world_set_selected(struct world *w, int32_t e);
 int32_t world_get_selected(const struct world *w);
+
+/*
+ * The game-driven outline target: the entity the renderer's selection-outline
+ * pass highlights in-game, independent of the editor `selected` above. A game's
+ * rules set it (a chess piece the player picked up) so the outline shows outside
+ * editor chrome; -1 = none. Same stale-id discipline as selected.
+ */
+void    world_set_outline(struct world *w, int32_t e);
+int32_t world_get_outline(const struct world *w);
 
 /* The entity's name, or NULL when it has no COMPONENT_NAME / no stored name. */
 const char *world_entity_name(const struct world *w, uint32_t e);

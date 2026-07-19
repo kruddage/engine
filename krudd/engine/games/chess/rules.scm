@@ -36,7 +36,8 @@
 ;;! and a fresh load may call it with none, exactly like ttt-reset.
 (define (chess-reset . ignored)
   (set! *chess-turn* 1)
-  (set! *chess-sel* -1))
+  (set! *chess-sel* -1)
+  (scene-outline! -1))
 
 ;;! (chess-turn ignored) -> *chess-turn*, a read hook the host (or a test) polls
 ;;! through dispatch_scm (which calls with one integer argument).
@@ -45,6 +46,18 @@
 ;;! (chess-toggle-turn) passes the move to the other side.
 (define (chess-toggle-turn)
   (set! *chess-turn* (if (= *chess-turn* 1) 2 1)))
+
+;;! (chess-pick! id) picks a piece up: record it and light its selection outline
+;;! (scene-outline!, honoured by the renderer's outline pass in-game). (chess-
+;;! drop!) is the inverse — clear the pick and the outline — run on a move, a
+;;! capture, or a deselect, so the highlight only ever rides the piece in hand.
+(define (chess-pick! id)
+  (set! *chess-sel* id)
+  (scene-outline! id))
+
+(define (chess-drop!)
+  (set! *chess-sel* -1)
+  (scene-outline! -1))
 
 ;;! --- name parsing -------------------------------------------------------
 
@@ -120,7 +133,7 @@
 (define (chess-move! selid x z)
   (chess-place! selid x z)
   (chess-spark x z 16)
-  (set! *chess-sel* -1)
+  (chess-drop!)
   (chess-toggle-turn)
   1)
 
@@ -137,7 +150,7 @@
           (scene-destroy-named! tname)
           (chess-place! selid (car pos) (caddr pos))
           (chess-spark (car pos) (caddr pos) 34)
-          (set! *chess-sel* -1)
+          (chess-drop!)
           (chess-toggle-turn)
           2)
         0)))
@@ -157,12 +170,12 @@
           ((< *chess-sel* 0)
            (if (and (chess-piece? name)
                     (= (chess-piece-colour name) *chess-turn*))
-               (begin (set! *chess-sel* id) 0)
+               (begin (chess-pick! id) 0)
                0))
           ;;! Second click on one of your own pieces: re-pick it, no move.
           ((and (chess-piece? name)
                 (= (chess-piece-colour name) *chess-turn*))
-           (set! *chess-sel* id) 0)
+           (chess-pick! id) 0)
           ;;! Second click on an enemy piece: capture it.
           ((chess-piece? name)
            (chess-capture! *chess-sel* id))
@@ -171,5 +184,5 @@
            (chess-move! *chess-sel* (chess-square-x name)
                         (chess-square-z name)))
           ;;! Second click on anything else (board slab, ground): deselect.
-          (else (set! *chess-sel* -1) 0))))
+          (else (chess-drop!) 0))))
     (lambda args (krudd-log 2 "chess: rule fault") 0)))

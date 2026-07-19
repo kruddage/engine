@@ -296,6 +296,33 @@ static const char *ENV_IBL_FN =
 	"                      (swizzle r y))))\n"
 	"        (return (+ (* (vec2 -1.04 1.04) a004) (swizzle r zw)))))\n";
 
+/*
+ * Cheap subsurface approximation for waxy dielectrics — ivory, marble, wax —
+ * shared by the pbr shader, gated behind the Material block's `subsurface`
+ * strength so metals and the board wood (strength 0) opt out and pay only a
+ * few ALU ops. Real ivory reads the way it does because light penetrates a
+ * millimetre and scatters back; two terms fake that without any SSS pass:
+ *
+ *   wrap_diffuse(ndl, w): the wrap-diffuse falloff (ndl + w)/(1 + w) clamped at
+ *     zero, which bleeds the key light slightly past the terminator so the
+ *     shaded side glows instead of dropping hard to ambient. w is the wrap
+ *     width; at w = 0 it collapses to max(ndl, 0), the ordinary lambert term,
+ *     so a strength-0 material is bit-for-bit the old shading and needs no gate.
+ *
+ *   fresnel_rim(ndv, power): a Schlick-style grazing term (1 - ndv)^power, the
+ *     scalar the pbr shader tints sky-cool and scales by strength to catch a
+ *     soft translucent glow on the piece's silhouette. Reusable on its own — it
+ *     is just the view-fresnel shape without an F0.
+ *
+ * Both take their per-pixel inputs as parameters and touch no sampler, so they
+ * lower identically to GLSL and WGSL like the other shared helpers.
+ */
+static const char *SUBSURFACE_FN =
+	"    (wrap_diffuse ((ndl float) (w float)) float\n"
+	"      (return (max (/ (+ ndl w) (+ 1.0 w)) 0.0)))\n"
+	"    (fresnel_rim ((ndv float) (power float)) float\n"
+	"      (return (pow (- 1.0 ndv) power)))\n";
+
 static const char *SCENE_TEXTURED_HEAD =
 	"(shader scene-textured\n"
 	"  (inputs\n"
@@ -401,7 +428,8 @@ static const char *PBR_HEAD =
 	"      (base_color vec4  (edit color) (default 0.82 0.82 0.85 1.0))\n"
 	"      (metallic   float (edit range 0.0 1.0) (default 0.1))\n"
 	"      (roughness  float (edit range 0.0 1.0) (default 0.5))\n"
-	"      (emissive   vec3  (edit color) (default 0.0 0.0 0.0)))\n"
+	"      (emissive   vec3  (edit color) (default 0.0 0.0 0.0))\n"
+	"      (subsurface float (edit range 0.0 1.0) (default 0.0)))\n"
 	"    (Sun (block 2) (layout std140)\n"
 	"      (light_dir       vec3)\n"
 	"      (light_radiance  vec3)\n"
@@ -427,7 +455,8 @@ static const char *PBR_TAIL =
 	"           (l      (normalize light_dir))\n"
 	"           (v      (normalize (- cam_pos v_worldpos)))\n"
 	"           (h      (normalize (+ l v)))\n"
-	"           (ndl    (max (dot n l) 0.0))\n"
+	"           (ndlraw (dot n l))\n"
+	"           (ndl    (max ndlraw 0.0))\n"
 	"           (ndv    (max (dot n v) 0.0001))\n"
 	"           (ndh    (max (dot n h) 0.0))\n"
 	"           (vdh    (max (dot v h) 0.0))\n"
@@ -446,14 +475,27 @@ static const char *PBR_TAIL =
 	"           (kd     (* (- (vec3 1.0 1.0 1.0) fres) (- 1.0 metallic)))\n"
 	"           (diff   (* kd albedo 0.31831))\n"
 	"           (shadow (sun_shadow v_lightpos ndl))\n"
-	"           (lo     (* (+ diff spec) light_radiance ndl shadow))\n"
+	/*
+	 * Wrap-diffuse widens the key light's reach past the terminator for a
+	 * waxy material; at subsurface 0 the wrap width is 0 so ndld == ndl and
+	 * the direct term is unchanged. Specular still uses the hard ndl.
+	 */
+	"           (ssw    (* subsurface 0.5))\n"
+	"           (ndld   (wrap_diffuse ndlraw ssw))\n"
+	"           (lo     (* (+ (* diff ndld) (* spec ndl)) light_radiance shadow))\n"
 	"           (refl   (reflect (- v) n))\n"
 	"           (pref   (mix (env_radiance refl) (env_irradiance n) roughness))\n"
 	"           (eab    (env_brdf_approx roughness ndv))\n"
 	"           (spec_i (* pref (+ (* f0 (swizzle eab x)) (swizzle eab y))))\n"
 	"           (diff_i (* (env_irradiance n) albedo (- 1.0 metallic)))\n"
 	"           (amb    (+ (* diff_i 0.7) spec_i))\n"
-	"           (color  (+ amb lo emissive))\n"
+	/*
+	 * Fresnel rim: a sky-tinted grazing glow (the scene's own irradiance as
+	 * the tint) scaled by subsurface, so translucent edges catch light.
+	 */
+	"           (rim    (* (env_irradiance n) (* subsurface\n"
+	"                        (* 0.5 (fresnel_rim ndv 4.0)))))\n"
+	"           (color  (+ amb lo emissive rim))\n"
 	"           (gamma  (tonemap color)))\n"
 	"      (set frag_color (vec4 gamma 1.0)))))\n";
 
@@ -685,7 +727,7 @@ static void seed_textured_material(const char *path, uint32_t shader_ref,
  */
 static void seed_pbr_material(const char *path, uint32_t shader_ref,
 			      const float rgba[4], float metallic,
-			      float roughness)
+			      float roughness, float subsurface)
 {
 	struct asset_entry *e;
 	uint32_t            n;
@@ -704,9 +746,11 @@ static void seed_pbr_material(const char *path, uint32_t shader_ref,
 		return;
 	}
 	/*
-	 * The zero fill is load-bearing: it leaves the block's pad AND the
-	 * emissive vec3 (@32 in the block, so @36 here) at zero, so a material
-	 * seeded through this path is non-emissive without naming emissive.
+	 * The zero fill is load-bearing: it leaves the emissive vec3 (@32 in the
+	 * block, so @36 here) at zero, so a material seeded through this path is
+	 * non-emissive without naming emissive. subsurface lands at block @44
+	 * (@48 here) — the last float of the 48-byte block, formerly pure pad —
+	 * so the block size is unchanged; it stays zero unless a caller opts in.
 	 */
 	memset(e->data, 0, n);
 	p = (unsigned char *)e->data;
@@ -714,6 +758,7 @@ static void seed_pbr_material(const char *path, uint32_t shader_ref,
 	memcpy(p + 4,  rgba, 4 * sizeof(float));         /* @4  base_color  */
 	memcpy(p + 20, &metallic,  sizeof(metallic));    /* @20 metallic    */
 	memcpy(p + 24, &roughness, sizeof(roughness));   /* @24 roughness   */
+	memcpy(p + 48, &subsurface, sizeof(subsurface)); /* @48 subsurface  */
 	e->size      = n;
 	e->state     = ASSET_LOADED;
 	e->kind      = ASSET_KIND_PRIMITIVE;
@@ -991,15 +1036,15 @@ static void seed_builtins(void)
 		static const float PLASTIC[4] = { 0.85f, 0.13f, 0.16f, 1.0f };
 		char        pbuf[8192];
 		const char *pparts[] = { PBR_HEAD, SUN_SHADOW_FN, TONEMAP_FN,
-					 ENV_IBL_FN, PBR_TAIL };
+					 ENV_IBL_FN, SUBSURFACE_FN, PBR_TAIL };
 		uint32_t pshader = seed_shader_parts(
 			"builtin://shader/pbr", pbuf, sizeof(pbuf), pparts,
 			sizeof(pparts) / sizeof(pparts[0]));
 
 		seed_pbr_material("builtin://material/pbr-metal", pshader,
-				  GOLD, 1.0f, 0.30f);
+				  GOLD, 1.0f, 0.30f, 0.0f);
 		seed_pbr_material("builtin://material/pbr-plastic", pshader,
-				  PLASTIC, 0.0f, 0.45f);
+				  PLASTIC, 0.0f, 0.45f, 0.0f);
 
 		/*
 		 * Gem-toned dielectrics off the same pbr shader: low metallic
@@ -1019,9 +1064,9 @@ static void seed_builtins(void)
 			static const float STONE[4]    = { 0.78f, 0.74f, 0.64f, 1.0f };
 
 			seed_pbr_material("builtin://material/pbr-ruby", pshader,
-					  RUBY, 0.05f, 0.12f);
+					  RUBY, 0.05f, 0.12f, 0.0f);
 			seed_pbr_material("builtin://material/pbr-sapphire", pshader,
-					  SAPPHIRE, 0.05f, 0.12f);
+					  SAPPHIRE, 0.05f, 0.12f, 0.0f);
 			/*
 			 * A calm, neutral dielectric for a game board's playing
 			 * squares — the "just one heightfield of texture, not
@@ -1029,7 +1074,7 @@ static void seed_builtins(void)
 			 * scene.scm): matte sandstone rather than a busy pattern.
 			 */
 			seed_pbr_material("builtin://material/pbr-stone", pshader,
-					  STONE, 0.0f, 0.75f);
+					  STONE, 0.0f, 0.75f, 0.0f);
 		}
 
 		/*
@@ -1042,6 +1087,13 @@ static void seed_builtins(void)
 		 * light and dark squares — a warm maple and a deep walnut, matte
 		 * (higher roughness) so the wood reads as a surface the polished
 		 * pieces sit on, not a second set of mirrors.
+		 *
+		 * Ivory alone opts into the pbr shader's subsurface term (the
+		 * last seed_pbr_material argument): a wrap-diffuse + fresnel rim
+		 * that fakes the waxy translucency real ivory gets from light
+		 * scattering a millimetre in. Ebony (near-black, absorbs) and the
+		 * wood squares stay at 0 — the effect is a dielectric-glow, not
+		 * something metals or dark wood should carry.
 		 */
 		{
 			static const float IVORY[4]  = { 0.90f, 0.85f, 0.74f, 1.0f };
@@ -1050,13 +1102,13 @@ static void seed_builtins(void)
 			static const float DARKSQ[4]  = { 0.28f, 0.17f, 0.10f, 1.0f };
 
 			seed_pbr_material("builtin://material/chess-ivory", pshader,
-					  IVORY, 0.0f, 0.32f);
+					  IVORY, 0.0f, 0.32f, 0.6f);
 			seed_pbr_material("builtin://material/chess-ebony", pshader,
-					  EBONY, 0.0f, 0.28f);
+					  EBONY, 0.0f, 0.28f, 0.0f);
 			seed_pbr_material("builtin://material/board-light", pshader,
-					  LIGHTSQ, 0.0f, 0.55f);
+					  LIGHTSQ, 0.0f, 0.55f, 0.0f);
 			seed_pbr_material("builtin://material/board-dark", pshader,
-					  DARKSQ, 0.0f, 0.50f);
+					  DARKSQ, 0.0f, 0.50f, 0.0f);
 		}
 	}
 

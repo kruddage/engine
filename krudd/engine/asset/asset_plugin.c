@@ -231,13 +231,22 @@ static const char *SUN_SHADOW_FN =
 	"        (return (mix 1.0 pcf inrng))))\n";
 
 /*
- * tonemap(color): Reinhard maps the HDR radiance to [0,1] and a gamma 1/2.2
- * encodes it for display. Shared by the pbr shaders, which shade in linear HDR;
- * scene-textured writes an already-[0,1] colour and needs none.
+ * tonemap(color): the ACES filmic curve (Narkowicz's fitted approximation)
+ * maps the HDR radiance to [0,1], then a gamma 1/2.2 encodes it for display.
+ * ACES replaces the plainer Reinhard curve this used to run: it lifts the mid-
+ * tones, rolls bright highlights toward white instead of desaturating them to
+ * grey, and adds the gentle S-shaped contrast that reads as "filmic" — the
+ * single cheapest step toward a cinematic look. Fitted num/den are evaluated
+ * per channel, clamped to [0,1] (ACES can overshoot slightly), then encoded.
+ * Shared by the pbr shaders, which shade in linear HDR; scene-textured writes
+ * an already-[0,1] colour and needs none.
  */
 static const char *TONEMAP_FN =
 	"    (tonemap ((color vec3)) vec3\n"
-	"      (let* ((mapped (/ color (+ color (vec3 1.0 1.0 1.0)))))\n"
+	"      (let* ((num    (* color (+ (* 2.51 color) 0.03)))\n"
+	"             (den    (+ (* color (+ (* 2.43 color) 0.59)) 0.14))\n"
+	"             (mapped (clamp (/ num den)\n"
+	"                            (vec3 0.0 0.0 0.0) (vec3 1.0 1.0 1.0))))\n"
 	"        (return (pow mapped (vec3 0.4545 0.4545 0.4545)))))\n";
 
 static const char *SCENE_TEXTURED_HEAD =

@@ -1,5 +1,24 @@
 # Changelog
 
+## [18.2.0](https://github.com/kruddage/engine/compare/v18.1.0...v18.2.0) (2026-07-19)
+
+
+### Features
+
+* **chess:** camera zones for turn, selection, and post-move hold ([#658](https://github.com/kruddage/engine/issues/658)) ([d345602](https://github.com/kruddage/engine/commit/d34560279899511cc4f3098858cff067b775af9b))
+* **kruddgui:** add a small always-on FPS + frame-time perf HUD ([#646](https://github.com/kruddage/engine/issues/646)) ([99a28cf](https://github.com/kruddage/engine/commit/99a28cff22a31aa415b1d7718e682df4f1cc3d0a))
+* **render:** 4x MSAA for the scene via multisampled target + resolve ([#628](https://github.com/kruddage/engine/issues/628)) ([#637](https://github.com/kruddage/engine/issues/637)) ([f3214e8](https://github.com/kruddage/engine/commit/f3214e802831df11072f3f1b10c34a8b1063e932))
+
+
+### Bug Fixes
+
+* **render:** restore WebGPU rendering broken by the bloom post chain ([#648](https://github.com/kruddage/engine/issues/648)) ([d7a1542](https://github.com/kruddage/engine/commit/d7a15429e9041f5243762becbd0db7e4ee882f56))
+
+
+### Documentation
+
+* **standard:** add philosophy preamble and a Scheme section ([#647](https://github.com/kruddage/engine/issues/647)) ([#653](https://github.com/kruddage/engine/issues/653)) ([7d09f64](https://github.com/kruddage/engine/commit/7d09f6400040931b871753f8e259b2e735fdb5fc))
+
 ## [18.1.0](https://github.com/kruddage/engine/compare/v18.0.0...v18.1.0) (2026-07-19)
 
 

@@ -20,7 +20,7 @@
              (link "subsystem" "subsystem_manager" "log" "memory" "script")
              (wasm-modules "asset_plugin" "edit_plugin" "entity_plugin"
                            "renderer_webgl" "renderer_webgpu" "frame_graph" "scene_renderer"
-                           "kruddgui" "audio_scriptnode"
+                           "viewport" "kruddgui" "audio_scriptnode"
                            "tictactoe_game" "chess_game"))
 
  (native-only

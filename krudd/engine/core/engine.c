@@ -69,6 +69,7 @@ int  renderer_webgpu_device_ready(void);
 void renderer_webgpu_release_frame(void);
 void fg_plugin_entry(struct subsystem_manager *mgr);
 void scene_renderer_plugin_entry(struct subsystem_manager *mgr);
+void viewport_plugin_entry(struct subsystem_manager *mgr);
 void kruddgui_plugin_entry(struct subsystem_manager *mgr);
 void audio_scriptnode_plugin_entry(struct subsystem_manager *mgr);
 void tictactoe_plugin_entry(struct subsystem_manager *mgr);
@@ -90,6 +91,13 @@ static const struct {
 	{ "renderer_webgl", renderer_webgl_plugin_entry },
 	{ "fg",             fg_plugin_entry             },
 	{ "scene_renderer", scene_renderer_plugin_entry },
+	/*
+	 * The viewport bridge resolves the "camera" and "scene" apis (both up by
+	 * now) and registers a kruddgui overlay from its first tick; ordering it
+	 * before kruddgui means that tick runs first, so the overlay is live for
+	 * kruddgui's very first tick rather than one frame late.
+	 */
+	{ "viewport",       viewport_plugin_entry       },
 	{ "kruddgui",       kruddgui_plugin_entry       },
 	/*
 	 * Built-in games register last: they resolve the "scene" api (entity

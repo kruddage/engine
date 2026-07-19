@@ -61,6 +61,26 @@ lands:
 - **`diff`** — compare WebGPU against WebGL, the reference implementation.
   The real oracle: *does my port match yet?*
 
+## Deterministic capture
+
+The scenes animate, and the engine drives that animation off `performance.now()`
+(its frame dt). A fixed wall-clock settle therefore captures a different
+animation phase every run — and because WebGPU boots slower than WebGL, the two
+backends land at *systematically* different phases, a ~16% asymmetric noise
+floor that buried real changes (#603).
+
+So before any page script runs, the harness installs a virtual clock that
+advances **one fixed step per rendered frame** and is decoupled from wall time.
+Frame index, not elapsed milliseconds, is the animation phase, so frame N is the
+same phase on both backends no matter how long boot took. Each scene sets
+`capture_frames`: the harness anchors at first render (it intercepts
+`kruddSetReady`), waits that many frames, then *holds* the clock so the phase
+stays pinned while overlays are hidden and the screenshot is taken. `settle_ms`
+is now the wall-clock ceiling on reaching that frame, not a fixed wait —
+capture returns as soon as the frame lands.
+
+`Date.now()` is left real, so asset loading and cache-busting are untouched.
+
 Today there is one scene — the WGSL triangle probe, mode `self`. WebGPU is the
 page default (`engine.c`), registered alone with the whole GL cluster skipped;
 `?renderer=webgl` opts back into the full engine. So the `webgpu` shot draws a
@@ -123,7 +143,7 @@ self-documenting. If it recurs, that log is the thing to read.
   different size fails loudly with a size mismatch rather than silently
   rescaling.
 - The triangle probe is static and compares bit-exact between runs; the default
-  0.2% tolerance is headroom for animated scenes later. If live-tick animation
-  makes tolerances too noisy to be useful, the fix is an engine-side hook that
-  runs a fixed number of ticks and holds, which the harness would call before
-  capturing.
+  0.2% tolerance is headroom for animated scenes. Animation noise is handled by
+  the deterministic clock above (a virtual clock the harness drives and holds),
+  not by an engine-side hook — nothing has to be baked into the build, so the
+  same harness works against any PR preview.

@@ -238,6 +238,77 @@ const GPU_ERROR_SHIM = `
 })();
 `;
 
+// ------------------------------------------------ deterministic capture clock
+
+/*
+ * The parity scene animates, and the engine drives that animation off its
+ * frame dt, which comes from performance.now() (emscripten_get_now). Under a
+ * wall-clock settle the two backends boot at different speeds and land on
+ * different animation phases on every run — WebGPU boots slower, so it is
+ * systematically behind — which is the ~16% *asymmetric* noise floor that
+ * swamps real changes (#603).
+ *
+ * Replace real time, before any page script runs, with a virtual clock that
+ * advances one fixed step per rendered animation frame and nothing else. Two
+ * consequences make capture reproducible:
+ *
+ *   - Frame index, not wall-clock, is the phase. Frame N is the same animation
+ *     phase on both backends no matter how long boot took, so the harness can
+ *     wait for a fixed frame count instead of a fixed number of milliseconds.
+ *   - The clock can be *held*. Once the harness has the frame it wants, it
+ *     freezes the clock so the phase cannot drift while overlays are hidden and
+ *     the screenshot (and any blank-capture retry) is taken.
+ *
+ * The capture window is anchored at first render: the shell assigns
+ * window.kruddSetReady after this script runs, so we intercept the assignment
+ * and record the frame it first fires on. Both backends run the same ready
+ * logic under the same virtual clock, so any gap between "ready" and "the scene
+ * animates" is the same number of frames on each and cancels out. Date.now() is
+ * left real, so asset loading and cache-busting are untouched.
+ */
+const DETERMINISTIC_CLOCK = `
+(() => {
+	const STEP_MS = 1000 / 60;   // fixed per-frame dt
+	let vt = 0;                  // virtual time (ms)
+	let frame = 0;               // animation-frame index
+	let lastReal = -1;           // real rAF timestamp of the current frame
+	let readyFrame = -1;         // frame index kruddSetReady first fired on
+	let held = false;            // frozen for capture
+
+	/* Advance once per real animation frame. All rAF callbacks in one frame
+	 * share a timestamp, so keying on it stops multiple rAF consumers (the
+	 * engine loop, kruddgui, the DOM) from over-advancing the clock. */
+	const realRAF = window.requestAnimationFrame.bind(window);
+	window.requestAnimationFrame = (cb) => realRAF((realTs) => {
+		if (!held && realTs !== lastReal) {
+			lastReal = realTs;
+			frame++;
+			vt = frame * STEP_MS;
+		}
+		return cb(vt);
+	});
+
+	/* The engine reads performance.now() for its frame dt. The override is in
+	 * place before the wasm runtime captures a reference to it. */
+	performance.now = () => vt;
+
+	let realReady = null;
+	Object.defineProperty(window, 'kruddSetReady', {
+		configurable: true,
+		get() { return realReady; },
+		set(fn) {
+			realReady = function (...a) {
+				if (readyFrame < 0) readyFrame = frame;
+				return fn.apply(this, a);
+			};
+		},
+	});
+
+	window.__renderDiffClock = () => ({ frame, readyFrame, held });
+	window.__renderDiffHold  = () => { held = true; return frame; };
+})();
+`;
+
 // ------------------------------------------------------------ capturing
 
 async function openPage(cdp) {
@@ -247,6 +318,9 @@ async function openPage(cdp) {
 	await cdp.send('Page.enable', {}, sessionId);
 	await cdp.send('Runtime.enable', {}, sessionId);
 	await cdp.send('Log.enable', {}, sessionId);
+	/* Order matters only in that both run before page scripts: the clock
+	 * installs its rAF/now overrides, the shim wraps requestDevice. */
+	await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: DETERMINISTIC_CLOCK }, sessionId);
 	await cdp.send('Page.addScriptToEvaluateOnNewDocument', { source: GPU_ERROR_SHIM }, sessionId);
 
 	return { targetId, sessionId };
@@ -295,8 +369,33 @@ async function evaluate(cdp, sessionId, expression, awaitPromise = false) {
 	return r.result.value;
 }
 
-/* Capture one URL, clipped to the canvas. Returns base64 PNG + diagnostics. */
-async function capture(cdp, url, canvasSel, settleMs) {
+/*
+ * Wait until the injected clock reports we are a fixed number of frames past
+ * first render (kruddSetReady), or until the wall-clock timeout. Deterministic
+ * across backends: the clock advances per rendered frame, not per millisecond,
+ * so "captureFrames past ready" is the same animation phase whether a backend
+ * boots fast or slow. Returns { reached, frame, readyFrame }.
+ */
+async function awaitCaptureFrame(cdp, sessionId, captureFrames, timeoutMs) {
+	const deadline = Date.now() + timeoutMs;
+	let last = { frame: 0, readyFrame: -1 };
+	while (Date.now() < deadline) {
+		const c = await evaluate(cdp, sessionId,
+			'window.__renderDiffClock ? window.__renderDiffClock() : null');
+		if (c) {
+			last = c;
+			if (c.readyFrame >= 0 && c.frame >= c.readyFrame + captureFrames)
+				return { reached: true, ...c };
+		}
+		await sleep(50);
+	}
+	return { reached: false, ...last };
+}
+
+/* Capture one URL, clipped to the canvas. Returns base64 PNG + diagnostics.
+ * `captureFrames` is how many rendered frames past first render to settle for;
+ * `timeoutMs` is the wall-clock ceiling on reaching that frame. */
+async function capture(cdp, url, canvasSel, { captureFrames, timeoutMs }) {
 	const { targetId, sessionId } = await openPage(cdp);
 	const diags = [];
 	const stopCollecting = collectDiagnostics(cdp, sessionId, diags);
@@ -313,7 +412,21 @@ async function capture(cdp, url, canvasSel, settleMs) {
 		if (!await loaded)
 			diags.push({ level: 'error', source: 'harness',
 				     text: 'page load event never fired (timeout)' });
-		await sleep(settleMs);
+
+		/*
+		 * Settle on a frame count, not the wall clock, then freeze. Waiting a
+		 * fixed number of frames past first render lands both backends on the
+		 * same animation phase (see DETERMINISTIC_CLOCK); holding the clock
+		 * keeps that phase pinned through overlay-hiding, the screenshot, and
+		 * any blank-capture retry.
+		 */
+		const clock = await awaitCaptureFrame(cdp, sessionId, captureFrames, timeoutMs);
+		await evaluate(cdp, sessionId, 'window.__renderDiffHold && window.__renderDiffHold()');
+		if (!clock.reached)
+			diags.push({ level: 'warning', source: 'harness',
+				     text: `capture frame not reached in ${timeoutMs}ms `
+					  + `(ready=${clock.readyFrame}, frame=${clock.frame}); `
+					  + 'captured on the fallback timeout' });
 
 		/*
 		 * Hide the shell's overlays before capturing. They are HTML sitting
@@ -523,11 +636,15 @@ const results = [];
 
 try {
 	for (const scene of scenes) {
-		const settle = scene.settle_ms ?? 5000;
+		/* How many rendered frames past first render to settle for, and the
+		 * wall-clock ceiling on reaching that frame. settle_ms is a timeout
+		 * now, not a fixed wait — capture returns as soon as the frame lands. */
+		const captureFrames = scene.capture_frames ?? 180;
+		const timeoutMs = scene.settle_ms ?? 15000;
 		const url = base + (scene.query ?? '');
 		process.stdout.write(`\n${scene.id}  [${scene.mode}]  ${url}\n`);
 
-		const shot = await capture(cdp, url, canvasSel, settle);
+		const shot = await capture(cdp, url, canvasSel, { captureFrames, timeoutMs });
 		writeFileSync(join(OUT, `${scene.id}.webgpu.png`), Buffer.from(shot.png, 'base64'));
 
 		/* GPU validation errors are reported whether or not the pixels match —
@@ -565,7 +682,7 @@ try {
 				}
 			} else if (scene.mode === 'diff') {
 				const glUrl = base + (scene.webgl_query ?? '');
-				const glShot = await capture(cdp, glUrl, canvasSel, settle);
+				const glShot = await capture(cdp, glUrl, canvasSel, { captureFrames, timeoutMs });
 				writeFileSync(join(OUT, `${scene.id}.webgl.png`), Buffer.from(glShot.png, 'base64'));
 				reference = glShot.png;
 				refLabel = 'webgl';

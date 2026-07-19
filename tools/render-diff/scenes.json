@@ -3,6 +3,9 @@
 	"//canvas": "CSS selector screenshots are clipped to. The page chrome differs",
 	"//canvas2": "by backend on purpose (the header badge reads WEBGL vs WEBGPU),",
 	"//canvas3": "so a full-page diff would always fail. Clip to the canvas.",
+	"//timing": "capture_frames = rendered frames past first render to settle for",
+	"//timing2": "under the deterministic clock (#603); settle_ms = wall-clock",
+	"//timing3": "ceiling on reaching that frame, not a fixed wait.",
 	"canvas": "#canvas",
 
 	"scenes": [
@@ -12,8 +15,9 @@
 			"webgl_query": "?renderer=webgl",
 			"mode": "self",
 			"tolerance": 0.002,
-			"settle_ms": 6000,
-			"note": "The #570 WGSL triangle probe. Static, so tolerance is tight. Mode is 'self' because the WebGL path renders the whole engine here, not a triangle -- there is no comparable reference until PR4 registers scene_renderer on the WebGPU path. WebGPU is the page default now, so webgl_query pins the baseline shot to ?renderer=webgl explicitly rather than relying on an unparented default."
+			"capture_frames": 60,
+			"settle_ms": 12000,
+			"note": "The #570 WGSL triangle probe. Static, so tolerance is tight and the frame count is only there to clear boot. Mode is 'self' because the WebGL path renders the whole engine here, not a triangle -- there is no comparable reference until PR4 registers scene_renderer on the WebGPU path. WebGPU is the page default now, so webgl_query pins the baseline shot to ?renderer=webgl explicitly rather than relying on an unparented default."
 		},
 		{
 			"id": "parity",
@@ -21,8 +25,9 @@
 			"webgl_query": "?renderer=webgl",
 			"mode": "diff",
 			"tolerance": 0.002,
-			"settle_ms": 6000,
-			"note": "The parity meter: the whole engine under both backends, WebGL as the reference. This is the scene the 'diff' mode was built for, and it was blocked until scene_renderer ran on the WebGPU path (#595). EXPECTED TO FAIL until the port finishes -- the number is the point, not the verdict. It should shrink as gaps close: the editor UI is absent under WebGPU until kruddgui's shaders flip, and scene textures have no mip chain until generate_mips lands, so today's diff is dominated by those two. render-diff is not run in CI, so a failing scene here costs no one a build; read it as a progress meter you run by hand."
+			"capture_frames": 180,
+			"settle_ms": 15000,
+			"note": "The parity meter: the whole engine under both backends, WebGL as the reference. This is the scene the 'diff' mode was built for, and it was blocked until scene_renderer ran on the WebGPU path (#595). Capture is now deterministic (#603): the injected clock advances one step per rendered frame and both backends are shot at frame 180 past first render, so the number is reproducible across runs and across backends rather than sampling a random animation phase. EXPECTED TO FAIL until the port finishes -- the number is the point, not the verdict. It should shrink as gaps close: today's diff is dominated by the missing mip chain (#605) and the depth-range convention (#606). render-diff is not run in CI, so a failing scene here costs no one a build; read it as a progress meter you run by hand."
 		}
 	]
 }

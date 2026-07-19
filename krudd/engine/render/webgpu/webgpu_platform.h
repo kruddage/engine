@@ -32,9 +32,14 @@
 WGPUSurface webgpu_platform_create_surface(WGPUInstance instance);
 
 /*
- * Backbuffer size in physical pixels, never zero — a platform with nothing
- * sensible to report substitutes a default rather than handing back a 0x0
- * drawing buffer, which renders as a blank screen with no error anywhere.
+ * Backbuffer size in physical (device) pixels, never zero — a platform with
+ * nothing sensible to report substitutes a default rather than handing back a
+ * 0x0 drawing buffer, which renders as a blank screen with no error anywhere.
+ *
+ * DEVICE pixels, not CSS pixels: on the web the two differ by devicePixelRatio,
+ * and every colour/depth attachment in a pass must agree on one of them or the
+ * pass fails validation. Read-only — the canvas backing store belongs to
+ * kruddgui_tick.
  */
 void webgpu_platform_backbuffer_size(uint32_t *w, uint32_t *h);
 

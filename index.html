@@ -542,7 +542,7 @@ footer {
 <header>
 	<span class="wordmark">KRUDD</span>
 	<span class="version" id="version" title="click for build info">17.16.0</span>
-	<span class="version-detail" id="version-detail">commit 91154be &middot; built 2026-07-19</span>
+	<span class="version-detail" id="version-detail">commit 25b8587 &middot; built 2026-07-19</span>
 	<span class="renderer" id="renderer-badge" title="renderer: detecting&hellip;">&mdash;</span>
 	<button class="menu-btn" id="menu-btn" title="back to the menu">&#9776; menu</button>
 </header>
@@ -796,13 +796,23 @@ footer {
 		refreshRendererTitle();
 	};
 
-	/* Append a line to the WebGPU probe's diagnostic log panel (see the
+	/*
+	 * Append a line to the WebGPU probe's diagnostic log panel (see the
 	 * .webgpu-log note in the stylesheet). Called from the WebGPU backend via
-	 * EM_JS at each step; reveals the panel on the first line and keeps it
-	 * scrolled to the newest entry. */
+	 * EM_JS at each step; keeps the panel scrolled to the newest entry.
+	 *
+	 * Opt-in via ?webgpulog=1. WebGPU is the default renderer now, so this
+	 * panel was bring-up scaffolding parked on every user's screen. It stays
+	 * reachable rather than deleted because it is the only WebGPU diagnostic
+	 * that survives on a phone, where there is no console to open — which is
+	 * exactly how the dpr != 1 black screen (#610) got reported.
+	 */
+	window.kruddWebGPULogEnabled =
+		new URLSearchParams(location.search).get('webgpulog') === '1';
+
 	window.kruddWebGPULog = function (msg) {
 		var box = document.getElementById('webgpu-log');
-		if (!box)
+		if (!box || !window.kruddWebGPULogEnabled)
 			return;
 		box.classList.add('visible');
 		var line = document.createElement('div');
@@ -813,19 +823,17 @@ footer {
 		box.scrollTop = box.scrollHeight;
 	};
 
-	/* The WebGPU backend clears the canvas itself and does not register the
-	 * launcher's games, so hide the launcher overlay up front — otherwise its
-	 * near-opaque panel would sit over the cleared canvas. */
-	(function hideLauncherForWebGPU() {
-		try {
-			if (window.kruddWantsWebGPU()) {
-				var l = document.getElementById('launcher');
-				if (l)
-					l.classList.add('hidden');
-			}
-		} catch (e) {}
-	})();
-
+	/*
+	 * The launcher used to be hidden on the WebGPU path, because the backend
+	 * drew nothing but its own clear and registered none of the launcher's
+	 * games, so the panel would have sat over an empty canvas offering nothing.
+	 *
+	 * Both halves of that stopped being true: finish_plugin_boot runs the whole
+	 * plugin table on either backend (engine.c), so Editor and Tic-Tac-Toe
+	 * register and run, and the scene renders. Hiding it therefore did nothing
+	 * but deny every user of the DEFAULT renderer any way to reach either one.
+	 * The launcher is backend-agnostic now, so there is no gate here at all.
+	 */
 	/* Probe WebGPU support once at load; requestAdapter is async, so the
 	 * tooltip updates whenever it resolves. Absent navigator.gpu is a plain
 	 * "unavailable", not an error. Skipped on Firefox — it's locked to WebGL
@@ -900,13 +908,13 @@ footer {
 var Module = {
 	locateFile: function (path, prefix) {
 		if (path.endsWith('.wasm'))
-			return prefix + path.replace(/\.wasm$/, '.91154be.wasm');
+			return prefix + path.replace(/\.wasm$/, '.25b8587.wasm');
 		return prefix + path;
 	}
 };
 </script>
 
-<script async type="text/javascript" src="index.91154be.js"></script>
+<script async type="text/javascript" src="index.25b8587.js"></script>
 
 </body>
 </html>

@@ -922,6 +922,18 @@ static void seed_builtins(void)
 	seed_mesh("builtin://mesh/heightfield",  HEIGHTFIELD_MESH_SCRIPT_SRC);
 	seed_mesh("builtin://mesh/sdf-rook",     SDF_ROOK_MESH_SCRIPT_SRC);
 
+	/*
+	 * The chess set — five lathed pieces plus the blocky knight (see
+	 * builtin_mesh_scripts.h). games/chess binds these by path; kept here
+	 * beside the other lathe built-ins since they showcase the same engine.
+	 */
+	seed_mesh("builtin://mesh/chess-pawn",   CHESS_PAWN_MESH_SCRIPT_SRC);
+	seed_mesh("builtin://mesh/chess-rook",   CHESS_ROOK_MESH_SCRIPT_SRC);
+	seed_mesh("builtin://mesh/chess-bishop", CHESS_BISHOP_MESH_SCRIPT_SRC);
+	seed_mesh("builtin://mesh/chess-queen",  CHESS_QUEEN_MESH_SCRIPT_SRC);
+	seed_mesh("builtin://mesh/chess-king",   CHESS_KING_MESH_SCRIPT_SRC);
+	seed_mesh("builtin://mesh/chess-knight", CHESS_KNIGHT_MESH_SCRIPT_SRC);
+
 	seed_script("builtin://script/spinner", SPINNER_SCRIPT_SRC);
 	seed_script("builtin://script/bounce",  BOUNCE_SCRIPT_SRC);
 	seed_script("builtin://script/wobble",  WOBBLE_SCRIPT_SRC);
@@ -1018,6 +1030,33 @@ static void seed_builtins(void)
 			 */
 			seed_pbr_material("builtin://material/pbr-stone", pshader,
 					  STONE, 0.0f, 0.75f);
+		}
+
+		/*
+		 * The chess set's four materials, all off the same pbr shader
+		 * (games/chess). The two piece materials are matte dielectrics
+		 * (metallic 0): a warm near-white "ivory" for the white army and
+		 * a near-black "ebony" for the black, both at a low-ish roughness
+		 * so the analytic highlight gives turned pieces a soft sheen
+		 * rather than a plastic glare. The two board materials are the
+		 * light and dark squares — a warm maple and a deep walnut, matte
+		 * (higher roughness) so the wood reads as a surface the polished
+		 * pieces sit on, not a second set of mirrors.
+		 */
+		{
+			static const float IVORY[4]  = { 0.90f, 0.85f, 0.74f, 1.0f };
+			static const float EBONY[4]  = { 0.06f, 0.055f, 0.05f, 1.0f };
+			static const float LIGHTSQ[4] = { 0.80f, 0.66f, 0.46f, 1.0f };
+			static const float DARKSQ[4]  = { 0.28f, 0.17f, 0.10f, 1.0f };
+
+			seed_pbr_material("builtin://material/chess-ivory", pshader,
+					  IVORY, 0.0f, 0.32f);
+			seed_pbr_material("builtin://material/chess-ebony", pshader,
+					  EBONY, 0.0f, 0.28f);
+			seed_pbr_material("builtin://material/board-light", pshader,
+					  LIGHTSQ, 0.0f, 0.55f);
+			seed_pbr_material("builtin://material/board-dark", pshader,
+					  DARKSQ, 0.0f, 0.50f);
 		}
 	}
 
@@ -1597,6 +1636,73 @@ static const struct asset_decl_field sdf_rook_mesh_decl[] = {
 };
 
 /*
+ * The chess pieces advertise their sweep the way the other lathe built-ins do:
+ * a surface of revolution over a silhouette (the knight is the exception — a
+ * lathed pedestal fused with box blocks, so it lists no single profile). The
+ * vertex/index counts are the geometry's fingerprint, moving only when a piece's
+ * silhouette in builtin_mesh_scripts.h does.
+ */
+static const struct asset_decl_field chess_pawn_mesh_decl[] = {
+	{ "format",     "krudd-mesh"                },
+	{ "topology",   "triangles"                 },
+	{ "surface",    "revolution (mesh-lathe)"   },
+	{ "segments",   "sectors 24, profile 15"    },
+	{ "vertices",   "375"                       },
+	{ "indices",    "2016"                      },
+	{ "attributes", "position, normal, uv0"     },
+};
+
+static const struct asset_decl_field chess_rook_mesh_decl[] = {
+	{ "format",     "krudd-mesh"                },
+	{ "topology",   "triangles"                 },
+	{ "surface",    "revolution (mesh-lathe)"   },
+	{ "segments",   "sectors 24, profile 15"    },
+	{ "vertices",   "375"                       },
+	{ "indices",    "2016"                      },
+	{ "attributes", "position, normal, uv0"     },
+};
+
+static const struct asset_decl_field chess_bishop_mesh_decl[] = {
+	{ "format",     "krudd-mesh"                },
+	{ "topology",   "triangles"                 },
+	{ "surface",    "revolution (mesh-lathe)"   },
+	{ "segments",   "sectors 24, profile 17"    },
+	{ "vertices",   "425"                       },
+	{ "indices",    "2304"                      },
+	{ "attributes", "position, normal, uv0"     },
+};
+
+static const struct asset_decl_field chess_queen_mesh_decl[] = {
+	{ "format",     "krudd-mesh"                },
+	{ "topology",   "triangles"                 },
+	{ "surface",    "revolution (mesh-lathe)"   },
+	{ "segments",   "sectors 24, profile 19"    },
+	{ "vertices",   "475"                       },
+	{ "indices",    "2592"                      },
+	{ "attributes", "position, normal, uv0"     },
+};
+
+static const struct asset_decl_field chess_king_mesh_decl[] = {
+	{ "format",     "krudd-mesh"                },
+	{ "topology",   "triangles"                 },
+	{ "surface",    "revolution (mesh-lathe)"   },
+	{ "segments",   "sectors 24, profile 19"    },
+	{ "vertices",   "475"                       },
+	{ "indices",    "2592"                      },
+	{ "attributes", "position, normal, uv0"     },
+};
+
+static const struct asset_decl_field chess_knight_mesh_decl[] = {
+	{ "format",     "krudd-mesh"                },
+	{ "topology",   "triangles"                 },
+	{ "surface",    "lathe + boxes (approx)"    },
+	{ "segments",   "sectors 24, profile 9"     },
+	{ "vertices",   "273"                       },
+	{ "indices",    "1224"                      },
+	{ "attributes", "position, normal, uv0"     },
+};
+
+/*
  * A texture asset is one (texture NAME (shade (u v) ...)) Scheme form. It
  * advertises its source format and its authored params — resolution-independent,
  * so it reports no fixed dimensions (the material picks the bake size), the way a
@@ -1668,6 +1774,18 @@ static const struct builtin_desc builtin_descs[] = {
 	  ARRAY_SIZE(heightfield_mesh_decl) },
 	{ "builtin://mesh/sdf-rook", sdf_rook_mesh_decl,
 	  ARRAY_SIZE(sdf_rook_mesh_decl) },
+	{ "builtin://mesh/chess-pawn", chess_pawn_mesh_decl,
+	  ARRAY_SIZE(chess_pawn_mesh_decl) },
+	{ "builtin://mesh/chess-rook", chess_rook_mesh_decl,
+	  ARRAY_SIZE(chess_rook_mesh_decl) },
+	{ "builtin://mesh/chess-bishop", chess_bishop_mesh_decl,
+	  ARRAY_SIZE(chess_bishop_mesh_decl) },
+	{ "builtin://mesh/chess-queen", chess_queen_mesh_decl,
+	  ARRAY_SIZE(chess_queen_mesh_decl) },
+	{ "builtin://mesh/chess-king", chess_king_mesh_decl,
+	  ARRAY_SIZE(chess_king_mesh_decl) },
+	{ "builtin://mesh/chess-knight", chess_knight_mesh_decl,
+	  ARRAY_SIZE(chess_knight_mesh_decl) },
 	{ "builtin://texture/checker", checker_texture_decl,
 	  ARRAY_SIZE(checker_texture_decl) },
 	{ "builtin://texture/gradient", gradient_texture_decl,

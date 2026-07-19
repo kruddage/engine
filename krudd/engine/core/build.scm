@@ -21,7 +21,7 @@
 	(wasm-modules "asset_plugin" "edit_plugin" "entity_plugin"
 		"renderer_webgl" "renderer_webgpu" "frame_graph" "scene_renderer"
 		"kruddboard" "kruddgui" "audio_scriptnode"
-		"demo_game" "tictactoe_game"))
+		"demo_game" "tictactoe_game" "chess_game"))
 
  (native-only
 	;;! The offscreen WebGPU harness. Needs native Dawn, so it is skipped

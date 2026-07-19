@@ -18,4 +18,5 @@
  "ui/kruddgui"
  "game"
  "games/demo"
- "games/tictactoe")
+ "games/tictactoe"
+ "games/chess")

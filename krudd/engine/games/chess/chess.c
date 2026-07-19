@@ -44,6 +44,16 @@ static const struct audio_api *g_audio;
 /* Last selection dispatched, so a held selection fires the rules only once. */
 static int32_t g_last_sel = -1;
 
+/*
+ * This game's own slot in the launcher registry (game_register's return),
+ * -1 until plugin entry runs. chess_tick compares it against
+ * game_active_index() so the rules only fire while chess is the loaded
+ * game — the "chess" subsystem ticks every frame regardless of what the
+ * launcher loaded, and without this guard a selection made in ANY loaded
+ * scene (tic-tac-toe, the editor) was handed to chess-on-selected too.
+ */
+static int g_my_index = -1;
+
 static void chess_init(void)
 {
 	/*
@@ -107,6 +117,9 @@ static void chess_tick(void)
 {
 	int32_t sel, code;
 
+	/* Not the loaded game right now: leave whatever scene IS loaded alone. */
+	if (g_my_index < 0 || game_active_index() != g_my_index)
+		return;
 	if (!g_scene || !g_scene->get_selected || !g_scene->dispatch_scm)
 		return;
 	sel = g_scene->get_selected();
@@ -132,5 +145,5 @@ void chess_plugin_entry(struct subsystem_manager *mgr)
 	g_audio = subsystem_manager_get_api(mgr, "audio");
 	subsystem_manager_register(mgr, &chess_desc);
 	/* Offer the game on the launcher rather than building it at boot. */
-	game_register("Chess", chess_load);
+	g_my_index = game_register("Chess", chess_load);
 }

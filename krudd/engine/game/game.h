@@ -17,15 +17,28 @@
 
 /*
  * Register a loadable scene. NAME is the button label (must outlive the process —
- * a string literal); LOAD builds it into the world when chosen. Ignored past a
- * small fixed capacity, or on NULL args.
+ * a string literal); LOAD builds it into the world when chosen. Returns the slot
+ * INDEX game_load will use to pick it, which a game with a per-frame tick should
+ * hold onto and compare against game_active_index() (see below) so its tick can
+ * tell whether it is the loaded game. Returns -1, and registers nothing, past a
+ * small fixed capacity or on NULL args.
  */
-void game_register(const char *name, void (*load)(void));
+int  game_register(const char *name, void (*load)(void));
 
 /* Number of registered games. */
 int  game_count(void);
 
 /* Load the game at INDEX (runs its load callback). Out-of-range is a no-op. */
 void game_load(int index);
+
+/*
+ * Index of the game the last successful game_load landed on, or -1 before any
+ * load (e.g. at boot, sitting on the launcher menu). Every registered game's
+ * subsystem ticks every frame regardless of what the launcher loaded, so a
+ * game whose tick reaches into its own rules must gate on
+ * game_active_index() == <its own registered index> first — otherwise it
+ * fires against whatever scene happens to be loaded, not just its own.
+ */
+int  game_active_index(void);
 
 #endif /* GAME_H */

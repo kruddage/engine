@@ -69,6 +69,16 @@ static int32_t g_last_sel = -1;
  */
 static int32_t g_last_score = -1;
 
+/*
+ * This game's own slot in the launcher registry (game_register's return),
+ * -1 until plugin entry runs. tictactoe_tick compares it against
+ * game_active_index() so the rules only fire while tic-tac-toe is the
+ * loaded game — the "tictactoe" subsystem ticks every frame regardless of
+ * what the launcher loaded, and without this guard a selection made in ANY
+ * loaded scene (chess, the editor) was handed to ttt-on-selected too.
+ */
+static int g_my_index = -1;
+
 static void tictactoe_init(void)
 {
 	/*
@@ -169,6 +179,9 @@ static void tictactoe_tick(void)
 {
 	int32_t sel, before, after, moved;
 
+	/* Not the loaded game right now: leave whatever scene IS loaded alone. */
+	if (g_my_index < 0 || game_active_index() != g_my_index)
+		return;
 	if (!g_scene || !g_scene->get_selected || !g_scene->dispatch_scm)
 		return;
 	sel = g_scene->get_selected();
@@ -197,5 +210,5 @@ void tictactoe_plugin_entry(struct subsystem_manager *mgr)
 	g_audio = subsystem_manager_get_api(mgr, "audio");
 	subsystem_manager_register(mgr, &tictactoe_desc);
 	/* Offer the game on the launcher rather than building it at boot. */
-	game_register("Tic-Tac-Toe", tictactoe_load);
+	g_my_index = game_register("Tic-Tac-Toe", tictactoe_load);
 }

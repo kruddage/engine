@@ -1,10 +1,10 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
-(;;! The id table behind texture-handle. Split out of renderer_webgpu.c and
- ;;! kept free of WebGPU types so it builds — and is tested — without Dawn:
- ;;! the `(dawn)` library below is skipped natively when no prefix is
- ;;! configured, which is every CI run, so logic left inside it is logic CI
- ;;! never compiles.
- (library "webgpu_texture_registry"
+((library "webgpu_texture_registry"
+	;;! The id table behind texture-handle. Split out of renderer_webgpu.c
+	;;! and kept free of WebGPU types so it builds — and is tested — without
+	;;! Dawn: the `(dawn)` library below is skipped natively when no prefix
+	;;! is configured, which is every CI run, so logic left inside it is
+	;;! logic CI never compiles.
 	(sources "texture_registry.c")
 	(public "."))
  (library "renderer_webgpu"

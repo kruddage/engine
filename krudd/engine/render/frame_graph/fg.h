@@ -98,6 +98,18 @@ void fg_pass_set_color_clear(fg_pass_t pass, uint32_t index,
 			      const float rgba[4]);
 void fg_pass_set_depth_clear(fg_pass_t pass, float depth);
 
+/*
+ * Resolve color attachment `color_index` of this pass into `resolve_target` (a
+ * declared transient) at pass end — the multisampled-to-single-sample step. The
+ * graph allocates and lifetimes the resolve target like any other write and
+ * emits it as gpu_color_attachment.resolve_target; passes that read it depend on
+ * this pass. Only meaningful when the color target is multisampled and the
+ * backend advertises GPU_CAP_MSAA_RESOLVE — the caller gates on that; a backend
+ * without it ignores the resolve_target and renders single-sample.
+ */
+void fg_pass_set_resolve(fg_pass_t pass, uint32_t color_index,
+			  fg_resource_t resolve_target);
+
 void fg_compile(struct fg *fg);
 void fg_execute(struct fg *fg);
 
@@ -118,6 +130,9 @@ struct fg_api {
 	void          (*pass_set_color_clear)(fg_pass_t pass, uint32_t index,
 					      const float rgba[4]);
 	void          (*pass_set_depth_clear)(fg_pass_t pass, float depth);
+	void          (*pass_set_resolve)(fg_pass_t pass,
+					  uint32_t color_index,
+					  fg_resource_t resolve_target);
 	void          (*compile)(struct fg *fg);
 	void          (*execute)(struct fg *fg);
 };

@@ -1022,6 +1022,20 @@ static void webgpu_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 			}
 		}
 
+		/*
+		 * MSAA resolve: when the attachment names a single-sample
+		 * resolve target, WebGPU resolves this (multisampled) colour into
+		 * it as the pass ends — the multisampled-to-single-sample step the
+		 * post passes need, since they sample the resolved texture. NULL
+		 * (every single-sample pass) leaves it unset, exactly as before.
+		 */
+		if (a->resolve_target) {
+			struct gpu_texture *rt =
+				(struct gpu_texture *)a->resolve_target;
+
+			color[i].resolveTarget = rt->view;
+		}
+
 		color[i].depthSlice   = WGPU_DEPTH_SLICE_UNDEFINED;
 		color[i].loadOp       = (desc->color_count == 0)
 						? WGPULoadOp_Clear
@@ -1544,10 +1558,18 @@ static gpu_texture_t webgpu_texture_create(const struct gpu_texture_desc *desc)
 	 * usually both (a shadow map is a depth target this frame and a sampled
 	 * texture the next), so ask for both up front rather than guessing from
 	 * the descriptor. CopyDst covers pixel uploads.
+	 *
+	 * A multisampled texture is the exception: WebGPU forbids CopyDst on one,
+	 * and the engine never samples the multisampled colour/depth directly
+	 * (it resolves to a single-sample texture and samples that), so a
+	 * multisampled target is a render attachment only.
 	 */
-	td.usage = WGPUTextureUsage_RenderAttachment |
-		   WGPUTextureUsage_TextureBinding |
-		   WGPUTextureUsage_CopyDst;
+	if (td.sampleCount > 1)
+		td.usage = WGPUTextureUsage_RenderAttachment;
+	else
+		td.usage = WGPUTextureUsage_RenderAttachment |
+			   WGPUTextureUsage_TextureBinding |
+			   WGPUTextureUsage_CopyDst;
 
 	t->tex = wgpuDeviceCreateTexture(g_device, &td);
 	if (!t->tex) {
@@ -1728,9 +1750,12 @@ static void webgpu_gpu_free(void *ptr)
 static const struct gpu_api webgpu_api = {
 	/* Draws yes; compute is not wired up in this backend. WebGPU clips depth
 	 * to NDC z in [0, 1], so it advertises the clip-z convention the scene
-	 * layer adapts GL-built projections to. */
+	 * layer adapts GL-built projections to, and it resolves a multisampled
+	 * colour target to a single-sample texture in-pass (a render pass's
+	 * resolveTarget), so it advertises MSAA resolve. */
 	.caps                    = GPU_CAP_DRAW_DIRECT | GPU_CAP_DRAW_INDEXED
-				 | GPU_CAP_CLIP_Z_ZERO_TO_ONE,
+				 | GPU_CAP_CLIP_Z_ZERO_TO_ONE
+				 | GPU_CAP_MSAA_RESOLVE,
 	.cmd_buf_begin           = webgpu_cmd_buf_begin,
 	.cmd_buf_submit          = webgpu_cmd_buf_submit,
 	.frame_end               = webgpu_frame_end,

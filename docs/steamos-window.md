@@ -13,6 +13,60 @@ opens a window that clears to an animated colour every frame. That moving pictur
 *is* the deliverable: it means the whole native chain — window → Wayland surface →
 Dawn → swapchain acquire → render pass → present — is live on the hardware.
 
+## One-shot (copy-paste)
+
+SteamOS's root filesystem is immutable, so do this inside an Arch
+[distrobox](https://distrobox.it/) (it shares the Deck's Wayland socket and GPU).
+Create and enter one first — this line is separate because `enter` drops you into
+a new shell:
+
+```sh
+distrobox create -i archlinux:latest krudd && distrobox enter krudd
+```
+
+Then paste the whole block below. It installs the toolchain, builds native Dawn
+once (pinned, with a Wayland/X11 surface — the ~38 MB step, skipped on re-runs),
+clones the engine at this PR's branch, and launches the window. Re-runnable.
+
+```sh
+set -e
+
+# 1. Toolchain + SDL3 + the Vulkan loader.
+sudo pacman -S --needed --noconfirm \
+  base-devel git cmake ninja python sdl3 vulkan-icd-loader
+
+# 2. Native Dawn, pinned to the emsdk port's revision, built WITH a surface.
+DAWN_REV=31e25af254ab572c77054edec4946d2244e184dd
+DAWN=~/dawn-native
+if [ ! -f "$DAWN/install/lib/libwebgpu_dawn.a" ]; then
+  mkdir -p "$DAWN" && cd "$DAWN"
+  [ -d .git ] || git init -q .
+  git remote add origin https://github.com/google/dawn.git 2>/dev/null || true
+  git fetch --depth 1 origin "$DAWN_REV" && git checkout -q FETCH_HEAD
+  cmake -S . -B out/Release -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$DAWN/install" \
+    -DDAWN_FETCH_DEPENDENCIES=ON -DDAWN_ENABLE_VULKAN=ON \
+    -DDAWN_ENABLE_DESKTOP_GL=OFF -DDAWN_ENABLE_OPENGLES=OFF -DDAWN_ENABLE_NULL=OFF \
+    -DDAWN_USE_WAYLAND=ON -DDAWN_USE_X11=ON -DDAWN_USE_GLFW=OFF \
+    -DDAWN_BUILD_SAMPLES=OFF -DDAWN_BUILD_TESTS=OFF -DDAWN_BUILD_BENCHMARKS=OFF \
+    -DDAWN_BUILD_PROTOBUF=OFF -DTINT_BUILD_TESTS=OFF -DTINT_BUILD_CMD_TOOLS=OFF \
+    -DTINT_BUILD_BENCHMARKS=OFF -DDAWN_ENABLE_INSTALL=ON -DTINT_ENABLE_INSTALL=OFF \
+    -DDAWN_BUILD_MONOLITHIC_LIBRARY=STATIC -DBUILD_SHARED_LIBS=OFF
+  ninja -C out/Release webgpu_dawn && cmake --install out/Release
+fi
+
+# 3. The engine — clone at this PR's branch, then build + run the window.
+cd ~
+[ -d engine ] || git clone https://github.com/kruddage/engine.git
+cd engine
+git fetch -q origin claude/steamos-desktop-poc-wyh0yc
+git checkout claude/steamos-desktop-poc-wyh0yc
+KRUDD_DAWN_PREFIX="$DAWN/install" ./krudd.sh editor
+```
+
+Once this PR is merged, drop the two `git fetch`/`git checkout` lines and just
+build `main`. The rest of this doc is the same steps, explained.
+
 ## What this is (and isn't)
 
 The same C engine that ships to the browser as WebAssembly already has a native

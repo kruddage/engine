@@ -1,13 +1,39 @@
 <!-- SPDX-License-Identifier: GPL-2.0-or-later -->
-# krudd in a Qt editor shell (#675)
+# krudd in a Qt editor shell (#675, #676)
 
 A proof of life for the Qt editor shell #675 asks for: the engine's WebGPU
 backend, presenting into a `QWindow` embedded in real Qt chrome — a menu bar,
-a toolbar, Scene/Inspector docks — instead of a bare top-level window. It is
+a toolbar, docks — instead of a bare top-level window. It is
 the Qt sibling of `krudd_window` (see docs/steamos-window.md): same native
 Dawn backend, same `webgpu_platform.h` seam, same animated-clear proof of
 life. What changes is who owns the window and who hands Dawn its native
 surface.
+
+## The authoring surface (#676)
+
+The chrome around the viewport is the authoring surface #676 asks for, **laid
+out but not yet wired**:
+
+- A **File / Edit / View / Help** menu bar like a normal desktop app. File
+  carries New / Open / Save / Save As / Quit; Edit carries the usual
+  Undo/Redo/Cut/Copy/Paste; Help has About. Everything that isn't wired yet
+  reports "— coming soon" in the status bar rather than doing nothing.
+- Four docks around the viewport — **Scene** (scene tree), **Inspector**
+  (entity properties), **Assets** (asset browser) and **Console** (the live
+  Scheme REPL). Each panel's *contents* are a "coming soon" placeholder;
+  wiring them to the running image (scene graph, inspector edits, live REPL,
+  project open/save) is the rest of #676.
+- The docks are **fully reconfigurable**: movable, floatable, closable,
+  tabbable and nestable in any dock area (`setDockNestingEnabled` +
+  `AllowNestedDocks | AllowTabbedDocks | GroupedDragging`). Drag one out to
+  float it, drop it onto another to tab them, split it into any edge. **View
+  ▸ Reset Layout** restores the default arrangement (captured with
+  `saveState`/`saveGeometry` once the window is shown), and the View menu's
+  dock toggles bring a closed panel back.
+
+Still **moc-free**: every action and dock toggle is a lambda or a Qt-supplied
+`QAction`, so the `(qt)` kruddmake clause stays a plain compile-and-link with
+no moc rule.
 
 ```sh
 KRUDD_DAWN_PREFIX=/path/to/dawn-native/install \
@@ -16,8 +42,9 @@ KRUDD_QT_LIBS="$(pkg-config --libs Qt6Widgets Qt6Gui Qt6Core)" \
 ./krudd.sh editor-qt
 ```
 
-opens a `QMainWindow` — menu bar, toolbar, Scene/Inspector docks — with the
-same animated clear as `krudd_window` running inside the embedded viewport.
+opens a `QMainWindow` — the File/Edit/View/Help menu bar, a toolbar, and the
+Scene / Inspector / Assets / Console docks — with the same animated clear as
+`krudd_window` running inside the embedded viewport.
 
 ## What this is (and isn't)
 

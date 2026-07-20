@@ -132,6 +132,52 @@ static int cmd_editor(void)
 	return run(path);
 }
 
+/*
+ * `krudd editor-qt` — build the Qt-hosted windowed harness and run it. The
+ * Qt sibling of `krudd editor`: same native Dawn backend, presenting into a
+ * QWindow embedded in real Qt chrome instead of a bare SDL3 window. Proof of
+ * life for #675 (the Qt editor shell). See docs/qt-editor-shell.md.
+ *
+ * Needs native Dawn (KRUDD_DAWN_PREFIX, same as `editor`) plus Qt, which —
+ * unlike SDL — has no default include path worth guessing at: KRUDD_QT_CFLAGS
+ * must already be set (normally from pkg-config) before this runs.
+ */
+static int cmd_editor_qt(void)
+{
+	char path[1024];
+
+	if (!getenv("KRUDD_DAWN_PREFIX")) {
+		fprintf(stderr,
+			"krudd: editor-qt needs a native Dawn build — set "
+			"KRUDD_DAWN_PREFIX to your Dawn install dir.\n"
+			"krudd: see docs/qt-editor-shell.md (and "
+			"tools/dawn-smoke/README.md) for the recipe.\n");
+		return -1;
+	}
+	if (!getenv("KRUDD_QT_CFLAGS")) {
+		fprintf(stderr,
+			"krudd: editor-qt needs Qt6 — set KRUDD_QT_CFLAGS "
+			"(and usually KRUDD_QT_LIBS), e.g.:\n"
+			"krudd:   KRUDD_QT_CFLAGS=\"$(pkg-config --cflags "
+			"Qt6Widgets Qt6Gui Qt6Core)\"\n"
+			"krudd:   KRUDD_QT_LIBS=\"$(pkg-config --libs "
+			"Qt6Widgets Qt6Gui Qt6Core)\"\n"
+			"krudd: see docs/qt-editor-shell.md for the recipe.\n");
+		return -1;
+	}
+
+	/* Pull the (qt) window target into the native graph for this build.
+	 * Do not clobber an explicit value. */
+	setenv("KRUDD_QT", "1", 0);
+
+	if (cmd_build() != 0)
+		return -1;
+
+	snprintf(path, sizeof path, "%s/build/bin/krudd_qt",
+		 getenv_or("KRUDD_ROOT", "."));
+	return run(path);
+}
+
 /* Serve the built site. Blocks until Ctrl-C — the interactive "run" tail. */
 static int cmd_serve(void)
 {
@@ -255,6 +301,8 @@ static void usage(void)
 		"  run           build, then serve the site\n"
 		"  editor        build + run the native window (needs "
 		"KRUDD_DAWN_PREFIX)\n"
+		"  editor-qt     build + run the Qt editor shell (needs "
+		"KRUDD_DAWN_PREFIX, KRUDD_QT_CFLAGS)\n"
 		"  new-project   scaffold a <name>.krudd-project\n");
 }
 
@@ -269,6 +317,8 @@ int main(int argc, char **argv)
 		return (cmd_build() == 0 && cmd_serve() == 0) ? 0 : 1;
 	if (strcmp(argv[1], "editor") == 0)
 		return cmd_editor() == 0 ? 0 : 1;
+	if (strcmp(argv[1], "editor-qt") == 0)
+		return cmd_editor_qt() == 0 ? 0 : 1;
 	if (strcmp(argv[1], "new-project") == 0)
 		return scaffold_project() == 0 ? 0 : 1;
 

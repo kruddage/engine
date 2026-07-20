@@ -51,6 +51,25 @@
               (link "subsystem" "subsystem_manager" "log" "memory" "script"
                     "renderer_webgpu"))
 
+  ;;! The Qt-hosted WebGPU harness — the same backend as krudd_native and
+  ;;! krudd_window, presenting into a QWindow embedded in real Qt chrome
+  ;;! (menu bar, toolbar, docks) instead of a bare SDL3 top-level window. Part
+  ;;! of #675 (the Qt editor shell). Carries (dawn) and (qt), so it is skipped
+  ;;! unless BOTH native Dawn (KRUDD_DAWN_PREFIX) and Qt (KRUDD_QT) are
+  ;;! configured — `./krudd.sh editor-qt` sets the latter. Needs
+  ;;! render/webgpu on the include path for the platform host seam
+  ;;! (webgpu_platform.h), same as krudd_window. No (test ...) edge: it opens
+  ;;! a window and needs a real GPU adapter, so it is a deliverable, not a CI
+  ;;! test.
+  (executable "krudd_qt"
+              (sources "krudd_qt.cpp")
+              (private "include" (raw "${generated}")
+                       (root "render/webgpu"))
+              (dawn)
+              (qt)
+              (link "subsystem" "subsystem_manager" "log" "memory" "script"
+                    "renderer_webgpu"))
+
   (executable "subsystem_test"
               (sources "subsystem_test.c")
               (link "subsystem"))

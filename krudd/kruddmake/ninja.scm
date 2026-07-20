@@ -121,6 +121,30 @@
       (string-append base " $sdlcflags")
       base))
 
+;;! Qt is the native windowing toolkit for the `(qt)` clause — a system
+;;! dependency (headers + libQt6Widgets/Gui/Core), never a target, so like
+;;! `(sdl)` it rides preamble variables rather than the `(link)` list
+;;! resolve.scm validates. Unlike SDL, Qt is never on a default include path
+;;! (its headers live in framework-style per-module directories), so there is
+;;! no usable cflags default the way `-lSDL3` is for SDL — KRUDD_QT_CFLAGS
+;;! must be set, normally from `pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core`.
+;;! Like `(dawn)` and `(sdl)`, it is OPT-IN: a `(qt)` target is left out of the
+;;! native graph unless KRUDD_QT is set, so a plain build — and a
+;;! KRUDD_DAWN_PREFIX build that only wants krudd_native or krudd_window — is
+;;! byte-for-byte unchanged and needs no Qt installed. `./krudd.sh editor-qt`
+;;! sets KRUDD_QT for you.
+(define (qt-configured?) (getenv "KRUDD_QT"))
+
+(define (ninja-qt? clauses) (if (rz-clause 'qt clauses) #t #f))
+
+(define (ninja-qt-skip? clauses)
+  (and (ninja-qt? clauses) (not (qt-configured?))))
+
+(define (ninja-qt-includes clauses base)
+  (if (ninja-qt? clauses)
+      (string-append base " $qtcflags")
+      base))
+
 (define (ninja-emit-library table dir form)
   (let* ((name (cadr form))
          (clauses (cddr form)))
@@ -142,15 +166,19 @@
 (define (ninja-emit-executable table dir form)
   (let* ((name (cadr form))
          (clauses (cddr form)))
-    (if (or (ninja-dawn-skip? clauses) (ninja-sdl-skip? clauses))
+    (if (or (ninja-dawn-skip? clauses) (ninja-sdl-skip? clauses)
+            (ninja-qt-skip? clauses))
         #t
         (let* ((dawn (ninja-dawn? clauses))
                (sdl (ninja-sdl? clauses))
-               (includes (ninja-sdl-includes
+               (qt (ninja-qt? clauses))
+               (includes (ninja-qt-includes
                           clauses
-                          (ninja-dawn-includes clauses
-                                               (ninja-include-flags
-                                                (resolve-includes table name)))))
+                          (ninja-sdl-includes
+                           clauses
+                           (ninja-dawn-includes clauses
+                                                (ninja-include-flags
+                                                 (resolve-includes table name))))))
                (objs (map (lambda (s)
                             (ninja-emit-compile name dir includes s))
                           (ninja-sources clauses)))
@@ -160,21 +188,22 @@
                (ldlibs (append (map (lambda (l) (string-append "-l" l))
                                     syslibs)
                                (if dawn (list "$dawnlibs") '())
-                               (if sdl (list "$sdllibs") '())))
+                               (if sdl (list "$sdllibs") '())
+                               (if qt (list "$qtlibs") '())))
                (bin (string-append "bin/" name)))
           (ninja-emit (string-append "build " bin ": "
-                                     (if dawn "link_cxx" "link") " "
+                                     (if (or dawn qt) "link_cxx" "link") " "
                                      (ninja-join " " (append objs libs))))
           (if (pair? ldlibs)
               (ninja-emit (string-append "  ldlibs = "
                                          (ninja-join " " ldlibs))))
           (ninja-emit "")
           ;;! Ordinary executables are pulled into the `native` target by the
-          ;;! (test ...) edge that runs them. A `(dawn)` binary has none — it
-          ;;! needs a real GPU adapter, so it must not become a CI test — and
-          ;;! it is itself the deliverable, so name it directly or nothing
-          ;;! would ever build it.
-          (if dawn (ninja-native! bin))))))
+          ;;! (test ...) edge that runs them. A `(dawn)` or `(qt)` binary has
+          ;;! none — it needs a real GPU adapter and/or a window to open, so it
+          ;;! must not become a CI test — and it is itself the deliverable, so
+          ;;! name it directly or nothing would ever build it.
+          (if (or dawn qt) (ninja-native! bin))))))
 
 (define (ninja-emit-test form)
   (let* ((name (cadr form))
@@ -246,8 +275,29 @@
      ;;! only happens when KRUDD_SDL is set (see ninja-sdl-skip?).
      (string-append "sdlcflags = " (or (getenv "KRUDD_SDL_CFLAGS") ""))
      (string-append "sdllibs = " (or (getenv "KRUDD_SDL_LIBS") "-lSDL3"))
+     ;;! Qt (the `(qt)` clause, the editor shell's windowing toolkit). Qt has
+     ;;! no default include/link path worth guessing at, unlike SDL's
+     ;;! `-lSDL3` — KRUDD_QT_CFLAGS is required, not optional, normally from
+     ;;!   KRUDD_QT_CFLAGS="$(pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core)"
+     ;;!   KRUDD_QT_LIBS="$(pkg-config --libs Qt6Widgets Qt6Gui Qt6Core)"
+     ;;! The libs default guesses the common `-lQt6Foo` shape so a system with
+     ;;! Qt on its default library search path only needs KRUDD_QT_CFLAGS.
+     ;;! Empty of consequence unless a `(qt)` target is in the graph, which
+     ;;! only happens when KRUDD_QT is set (see ninja-qt-skip?).
+     (string-append "qtcflags = " (or (getenv "KRUDD_QT_CFLAGS") ""))
+     (string-append "qtlibs = " (or (getenv "KRUDD_QT_LIBS")
+                                    "-lQt6Widgets -lQt6Gui -lQt6Core"))
      "cflags = -std=gnu11 -Wall -Werror -Wpedantic"
-     "cxxflags = -std=gnu11 -Wall -Werror -Wpedantic"
+     ;;! C++20 (not gnu11 — that was a stale copy of $cflags from before any
+     ;;! native .cpp source existed to compile with it) so a `(qt)` source can
+     ;;! use Qt6 (which requires C++17) and designated initializers (which,
+     ;;! in standard C++ rather than as a GNU extension, need C++20) — the
+     ;;! same `.field = value` struct init the engine's C sources use, kept
+     ;;! for krudd_qt.cpp so it reads as the same table as krudd_window.c's,
+     ;;! not a differently-shaped one. -Wpedantic is unforgiving of Qt's own
+     ;;! headers on some toolchains; if a Qt roll ever trips it, narrow the
+     ;;! flag to the qt-only compile rule rather than loosening it globally.
+     "cxxflags = -std=c++20 -Wall -Werror -Wpedantic"
      ;;! --use-port=emdawnwebgpu enables the WebGPU (Dawn) headers + JS glue;
      ;;! emscripten requires it at both compile and link, so it rides on the
      ;;! wasm C compile flags here and the main-module link flags below.

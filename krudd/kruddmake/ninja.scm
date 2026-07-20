@@ -149,8 +149,8 @@
                (includes (ninja-sdl-includes
                           clauses
                           (ninja-dawn-includes clauses
-                                              (ninja-include-flags
-                                               (resolve-includes table name)))))
+                                               (ninja-include-flags
+                                                (resolve-includes table name)))))
                (objs (map (lambda (s)
                             (ninja-emit-compile name dir includes s))
                           (ninja-sources clauses)))

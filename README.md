@@ -151,6 +151,12 @@ what you should see on screen — lives in:
 - [`docs/steamos-window.md`](docs/steamos-window.md) — the SDL3 window (`editor`)
 - [`docs/qt-editor-shell.md`](docs/qt-editor-shell.md) — the Qt editor shell (`editor-qt`)
 
+A `flatpak-builder` manifest and a build-only CI job for `editor-qt` live in
+[`packaging/flatpak/`](packaging/flatpak/README.md), tracking
+[#686](https://github.com/kruddage/engine/issues/686) (self-hosted Flatpak
+registry). It's packaging-pipeline validation only today — no signing, no
+publish — see that README for scope and what's still missing.
+
 ## CI
 
 `ci.yml` runs on every pull request and on push to `main`, alongside two release workflows:

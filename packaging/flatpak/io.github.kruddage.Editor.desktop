@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=KRUDD Editor
+Comment=Native KRUDD engine editor (proof of life — renders an animated clear, not a scene yet)
+Exec=krudd-editor-qt
+Categories=Development;
+Terminal=false

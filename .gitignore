@@ -10,5 +10,12 @@ public/
 /tools/render-diff/out/
 /tools/dawn-smoke/out/
 
+# CI-staged Flatpak build context / output — see
+# packaging/flatpak/README.md and .github/workflows/flatpak-build.yml
+/packaging/flatpak/dist/
+/packaging/flatpak/build-dir/
+/packaging/flatpak/export-repo/
+*.flatpak
+
 # agent worktrees (isolated subagent checkouts)
 .claude/worktrees/

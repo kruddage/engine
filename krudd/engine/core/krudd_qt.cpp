@@ -2,13 +2,12 @@
 /*
  * krudd_qt — the WebGPU backend, presenting into a Qt-hosted native window.
  *
- * The Qt sibling of krudd_window.c (see docs/steamos-window.md and #675):
- * same backend, same pinned Dawn, same webgpu_platform.h seam, same
- * animated-clear proof of life. What changes is who owns the window and who
- * hands Dawn its native surface — here it is a QMainWindow with real editor
- * chrome around a QWindow embedded via QWidget::createWindowContainer,
- * instead of a bare SDL3 top-level window. That embedded QWindow is the
- * "canvas is a window" viewport #675 asks for.
+ * The native editor (see docs/qt-editor-shell.md and #675): the engine's
+ * WebGPU backend on pinned native Dawn, through the webgpu_platform.h seam,
+ * with an animated-clear proof of life in the viewport. A QMainWindow with
+ * real editor chrome owns the window and hands Dawn its native surface, with
+ * the viewport a QWindow embedded via QWidget::createWindowContainer. That
+ * embedded QWindow is the "canvas is a window" viewport #675 asks for.
  *
  * The chrome is the authoring surface #676 asks for, laid out but not yet
  * wired: a File/Edit/View/Help menu bar like a normal desktop app, and the
@@ -19,7 +18,7 @@
  * the running image (scene graph, inspector edits, live REPL, project
  * open/save) is the rest of #676, not this pass.
  *
- * Scope for the viewport is deliberately the same as krudd_window.c's: this
+ * Scope for the viewport is deliberately narrow: this
  * does NOT run engine.c's full (Emscripten-only) boot. It drives the backend
  * directly through the gpu_api vtable — an animated clear, redrawn every
  * frame — the same exercise of surface configuration, per-frame acquire, a
@@ -45,7 +44,7 @@
  * qt6-base-private-dev's versioned, ABI-unstable include path. Rather than
  * link the shipped harness against a private header, the Wayland path below
  * requires Qt >= 6.5 and fails the build with an actionable #error otherwise.
- * SteamOS's Arch-based toolchain (docs/steamos-window.md) tracks current Qt,
+ * SteamOS's Arch-based toolchain (docs/qt-editor-shell.md) tracks current Qt,
  * so this is not expected to bite on the actual target hardware — but it is
  * the real, unresolved trade-off #675 asks this work to make explicitly.
  *
@@ -105,9 +104,9 @@ void renderer_webgpu_plugin_entry(struct subsystem_manager *mgr);
 int  renderer_webgpu_device_ready(void);
 }
 
-/* Mirrors engine.c's core service table — the same pair krudd_window.c and
- * engine_native.c stand up, static to each Emscripten-only-adjacent TU
- * because it cannot be shared across them. */
+/* Mirrors engine.c's core service table — the same pair engine_native.c
+ * stands up, static to each Emscripten-only-adjacent TU because it cannot be
+ * shared across them. */
 static const struct log_api g_log_api = {
 	.write       = log_write,
 	.get_history = log_get_history,
@@ -137,8 +136,7 @@ static struct subsystem_manager manager;
  * The embedded native surface. A plain QWindow subclass — no Q_OBJECT, see
  * the file comment — set to VulkanSurface so QPA does not install its own
  * GL-backed backing store over a window an external API (Dawn) presents
- * into. That hint is what SDL_WINDOW_VULKAN communicates on the SDL side of
- * krudd_window.c; Qt has no enumerator for "an external native API owns
+ * into. Qt has no enumerator for "an external native API owns
  * this," so VulkanSurface is the closest honest answer on every platform
  * Dawn's native backend actually uses (Vulkan on Linux/the Deck; Dawn can
  * also run Vulkan on Windows, which is what this assumes — see the surface
@@ -151,12 +149,11 @@ public:
 
 /*
  * Build the WGPUSurface for the embedded viewport window. Called by the
- * backend through the webgpu_platform host, once, at device bring-up — the
- * Qt sibling of window_create_surface in krudd_window.c, same struct types,
- * same NOTE ON DAWN TYPE NAMES caveat: the WGPUSurfaceSource* structs and
+ * backend through the webgpu_platform host, once, at device bring-up. NOTE ON
+ * DAWN TYPE NAMES: the WGPUSurfaceSource* structs and
  * their WGPUSType_* tags track Dawn's webgpu.h at the pin
- * (tools/dawn-smoke/README.md). If a Dawn roll renames them, this function
- * and its SDL counterpart are the only two things to adjust.
+ * (tools/dawn-smoke/README.md). If a Dawn roll renames them, this function is
+ * the only place to adjust (its X11/Windows/Wayland branches).
  */
 static WGPUSurface window_create_surface(WGPUInstance instance, void *user)
 {
@@ -230,8 +227,8 @@ static WGPUSurface window_create_surface(WGPUInstance instance, void *user)
 	return nullptr;
 }
 
-/* Physical (device) pixels, matching window_drawable_size's SDL counterpart:
- * QWindow::size() is in device-independent pixels, so scale by the window's
+/* Physical (device) pixels: the backend configures the surface in physical
+ * pixels, and QWindow::size() is in device-independent pixels, so scale by the window's
  * own devicePixelRatio rather than the application-wide default — right on
  * a mixed-DPI multi-monitor setup where the window has actually landed. */
 static void window_drawable_size(uint32_t *w, uint32_t *h, void *user)
@@ -248,10 +245,9 @@ static void window_drawable_size(uint32_t *w, uint32_t *h, void *user)
 /* ------------------------------------------------------------- the frame */
 
 /*
- * One frame: clear the backbuffer to an animated colour and present it.
- * Byte-for-byte the same clear krudd_window.c's draw_frame draws — same
- * three sines 120 degrees apart — so the two harnesses are directly
- * comparable proof-of-life artifacts, not just similarly named ones.
+ * One frame: clear the backbuffer to an animated colour and present it — the
+ * animated clear (three sines 120 degrees apart) that is this harness's
+ * proof-of-life artifact.
  */
 static void draw_frame(const struct gpu_api *gpu, uint32_t frame)
 {
@@ -510,8 +506,7 @@ int main(int argc, char **argv)
 	/*
 	 * Register the window host BEFORE the backend boots: renderer_webgpu_init
 	 * asks the platform seam for a surface during bring-up, and the host is
-	 * what turns that from "offscreen" into "this window" — same ordering
-	 * krudd_window.c uses.
+	 * what turns that from "offscreen" into "this window".
 	 */
 	struct webgpu_platform_host host;
 
@@ -526,9 +521,8 @@ int main(int argc, char **argv)
 	renderer_webgpu_plugin_entry(&manager);
 
 	/* The adapter/device handshake is async even natively; keep the UI
-	 * responsive during the wait (unlike krudd_window.c's tight loop —
-	 * Qt already owns an event loop, so there is no reason not to pump
-	 * it here too). */
+	 * responsive during the wait: Qt already owns an event loop, so
+	 * there is no reason not to pump it here too. */
 	bool ready = false;
 	for (int i = 0; i < 1000 && !ready; i++) {
 		subsystem_manager_tick(&manager);
@@ -582,7 +576,7 @@ int main(int argc, char **argv)
 
 	QObject::connect(&app, &QApplication::aboutToQuit, [&]() {
 		/* Clear the host before the backend releases the surface it
-		 * created — same ordering krudd_window.c uses at shutdown. */
+		 * created, so the surface it created outlives the host. */
 		webgpu_platform_set_host(nullptr);
 		subsystem_manager_shutdown(&manager);
 	});

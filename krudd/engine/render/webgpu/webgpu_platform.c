@@ -143,7 +143,7 @@ void webgpu_platform_set_host(const struct webgpu_platform_host *host)
  * a different Dawn backend from the canvas path — so a window could not
  * reproduce a canvas presentation bug even were one available, and returning
  * NULL is how the backend is told to configure an offscreen target. With a host
- * (krudd_window), its window's real WGPUSurface is what the frame presents into.
+ * (krudd_qt), its window's real WGPUSurface is what the frame presents into.
  */
 WGPUSurface webgpu_platform_create_surface(WGPUInstance instance)
 {

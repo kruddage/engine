@@ -102,37 +102,17 @@
       (string-append base " $dawnincludes")
       base))
 
-;;! SDL is the native windowing library for the `(sdl)` clause — a system
-;;! dependency (headers + libSDL3), never a target, so like `(dawn)` it rides
-;;! preamble variables rather than the `(link)` list resolve.scm validates. And
-;;! like `(dawn)` it is OPT-IN: an `(sdl)` target is left out of the native graph
-;;! unless KRUDD_SDL is set, so a plain build — and a KRUDD_DAWN_PREFIX build that
-;;! only wants the offscreen harness — is byte-for-byte unchanged and needs no
-;;! SDL installed. `./krudd.sh editor` sets KRUDD_SDL for you.
-(define (sdl-configured?) (getenv "KRUDD_SDL"))
-
-(define (ninja-sdl? clauses) (if (rz-clause 'sdl clauses) #t #f))
-
-(define (ninja-sdl-skip? clauses)
-  (and (ninja-sdl? clauses) (not (sdl-configured?))))
-
-(define (ninja-sdl-includes clauses base)
-  (if (ninja-sdl? clauses)
-      (string-append base " $sdlcflags")
-      base))
-
 ;;! Qt is the native windowing toolkit for the `(qt)` clause — a system
 ;;! dependency (headers + libQt6Widgets/Gui/Core), never a target, so like
-;;! `(sdl)` it rides preamble variables rather than the `(link)` list
-;;! resolve.scm validates. Unlike SDL, Qt is never on a default include path
-;;! (its headers live in framework-style per-module directories), so there is
-;;! no usable cflags default the way `-lSDL3` is for SDL — KRUDD_QT_CFLAGS
-;;! must be set, normally from `pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core`.
-;;! Like `(dawn)` and `(sdl)`, it is OPT-IN: a `(qt)` target is left out of the
-;;! native graph unless KRUDD_QT is set, so a plain build — and a
-;;! KRUDD_DAWN_PREFIX build that only wants krudd_native or krudd_window — is
-;;! byte-for-byte unchanged and needs no Qt installed. `./krudd.sh editor-qt`
-;;! sets KRUDD_QT for you.
+;;! `(dawn)` it rides preamble variables rather than the `(link)` list
+;;! resolve.scm validates. Qt is never on a default include path (its headers
+;;! live in framework-style per-module directories), so there is no usable
+;;! cflags default — KRUDD_QT_CFLAGS must be set, normally from
+;;! `pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core`. Like `(dawn)`, it is
+;;! OPT-IN: a `(qt)` target is left out of the native graph unless KRUDD_QT is
+;;! set, so a plain build — and a KRUDD_DAWN_PREFIX build that only wants the
+;;! offscreen krudd_native — is byte-for-byte unchanged and needs no Qt
+;;! installed. `./krudd.sh editor` sets KRUDD_QT for you.
 (define (qt-configured?) (getenv "KRUDD_QT"))
 
 (define (ninja-qt? clauses) (if (rz-clause 'qt clauses) #t #f))
@@ -166,19 +146,15 @@
 (define (ninja-emit-executable table dir form)
   (let* ((name (cadr form))
          (clauses (cddr form)))
-    (if (or (ninja-dawn-skip? clauses) (ninja-sdl-skip? clauses)
-            (ninja-qt-skip? clauses))
+    (if (or (ninja-dawn-skip? clauses) (ninja-qt-skip? clauses))
         #t
         (let* ((dawn (ninja-dawn? clauses))
-               (sdl (ninja-sdl? clauses))
                (qt (ninja-qt? clauses))
                (includes (ninja-qt-includes
                           clauses
-                          (ninja-sdl-includes
-                           clauses
-                           (ninja-dawn-includes clauses
-                                                (ninja-include-flags
-                                                 (resolve-includes table name))))))
+                          (ninja-dawn-includes clauses
+                                               (ninja-include-flags
+                                                (resolve-includes table name)))))
                (objs (map (lambda (s)
                             (ninja-emit-compile name dir includes s))
                           (ninja-sources clauses)))
@@ -188,7 +164,6 @@
                (ldlibs (append (map (lambda (l) (string-append "-l" l))
                                     syslibs)
                                (if dawn (list "$dawnlibs") '())
-                               (if sdl (list "$sdllibs") '())
                                (if qt (list "$qtlibs") '())))
                (bin (string-append "bin/" name)))
           (ninja-emit (string-append "build " bin ": "
@@ -266,18 +241,9 @@
      ;;! linking requires.
      (string-append "dawnlibs = $dawnprefix/lib/libwebgpu_dawn.a "
                     "-lz -ldl -lpthread -lm")
-     ;;! SDL (the `(sdl)` clause, native windowing). Both default to the common
-     ;;! system install: no extra include path, and -lSDL3 on the link. Override
-     ;;! either when SDL lives off the default paths — e.g. from pkg-config:
-     ;;!   KRUDD_SDL_CFLAGS="$(pkg-config --cflags sdl3)"
-     ;;!   KRUDD_SDL_LIBS="$(pkg-config --libs sdl3)"
-     ;;! Empty of consequence unless an `(sdl)` target is in the graph, which
-     ;;! only happens when KRUDD_SDL is set (see ninja-sdl-skip?).
-     (string-append "sdlcflags = " (or (getenv "KRUDD_SDL_CFLAGS") ""))
-     (string-append "sdllibs = " (or (getenv "KRUDD_SDL_LIBS") "-lSDL3"))
      ;;! Qt (the `(qt)` clause, the editor shell's windowing toolkit). Qt has
-     ;;! no default include/link path worth guessing at, unlike SDL's
-     ;;! `-lSDL3` — KRUDD_QT_CFLAGS is required, not optional, normally from
+     ;;! no default include/link path worth guessing at —
+     ;;! KRUDD_QT_CFLAGS is required, not optional, normally from
      ;;!   KRUDD_QT_CFLAGS="$(pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core)"
      ;;!   KRUDD_QT_LIBS="$(pkg-config --libs Qt6Widgets Qt6Gui Qt6Core)"
      ;;! The libs default guesses the common `-lQt6Foo` shape so a system with
@@ -293,9 +259,9 @@
      ;;! use Qt6 (which requires C++17) and designated initializers (which,
      ;;! in standard C++ rather than as a GNU extension, need C++20) — the
      ;;! same `.field = value` struct init the engine's C sources use, kept
-     ;;! for krudd_qt.cpp so it reads as the same table as krudd_window.c's,
-     ;;! not a differently-shaped one. -Wpedantic is unforgiving of Qt's own
-     ;;! headers on some toolchains; if a Qt roll ever trips it, narrow the
+     ;;! for krudd_qt.cpp so it reads as the same table as the engine's C
+     ;;! sources, not a differently-shaped one. -Wpedantic is unforgiving of
+     ;;! Qt's own headers on some toolchains; if a Qt roll ever trips it, narrow the
      ;;! flag to the qt-only compile rule rather than loosening it globally.
      "cxxflags = -std=c++20 -Wall -Werror -Wpedantic"
      ;;! --use-port=emdawnwebgpu enables the WebGPU (Dawn) headers + JS glue;

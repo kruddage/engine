@@ -23,7 +23,7 @@ modules:
   # third-party deps via gclient, which doesn't fit flatpak-builder's
   # declarative `sources:` model without vendoring every one of them
   # individually. So it's built once on the CI runner (./setup.sh, the same
-  # pinned recipe docs/steamos-window.md uses) and vendored in as a prebuilt
+  # pinned recipe docs/qt-editor-shell.md uses) and vendored in as a prebuilt
   # static lib — the one deliberate exception to "build everything in the
   # sandbox". The pin must stay in lockstep with setup.sh's DAWN_REV.
   - name: dawn

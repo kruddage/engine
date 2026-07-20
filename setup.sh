@@ -7,17 +7,17 @@
 # you "can't even get clang", but works on any Linux dev box. It does the three
 # things `./krudd.sh editor` can't do for itself:
 #
-#   1. installs the native toolchain (compiler, cmake, ninja, SDL3, Vulkan loader)
+#   1. installs the native toolchain (compiler, cmake, ninja, Qt6, Vulkan loader)
 #   2. builds pinned native Dawn once, out-of-tree, WITH a Wayland/X11 surface
-#   3. writes .krudd-env so `./krudd.sh editor` picks up KRUDD_DAWN_PREFIX (and,
-#      if Qt6 is present, the editor-qt vars) automatically — no manual exports
+#   3. writes .krudd-env so `./krudd.sh editor` picks up KRUDD_DAWN_PREFIX and
+#      the Qt cflags/libs automatically — no manual exports
 #
 # Re-runnable: every step is skipped if its result is already there, so a second
 # run is cheap and only repairs what's missing.
 #
 #   ./setup.sh              bootstrap, then tells you to run ./krudd.sh editor
 #
-# See docs/steamos-window.md for the long-form explanation of each step.
+# See docs/qt-editor-shell.md for the long-form explanation of each step.
 set -e
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -56,25 +56,25 @@ have_toolchain() {
 		command -v ninja >/dev/null 2>&1 &&
 		command -v git >/dev/null 2>&1 &&
 		command -v python3 >/dev/null 2>&1 &&
-		pkg-config --exists sdl3 2>/dev/null
+		pkg-config --exists Qt6Widgets Qt6Gui Qt6Core 2>/dev/null
 }
 
 install_toolchain() {
 	if command -v pacman >/dev/null 2>&1; then
 		sudo pacman -S --needed --noconfirm \
-			base-devel git cmake ninja python sdl3 vulkan-icd-loader
+			base-devel git cmake ninja python qt6-base vulkan-icd-loader
 	elif command -v apt-get >/dev/null 2>&1; then
 		sudo apt-get update
 		sudo apt-get install -y \
 			build-essential git cmake ninja-build python3 \
-			pkg-config libsdl3-dev libvulkan-dev
+			pkg-config qt6-base-dev libvulkan-dev
 	elif command -v dnf >/dev/null 2>&1; then
 		sudo dnf install -y \
 			@development-tools git cmake ninja-build python3 \
-			pkgconf-pkg-config SDL3-devel vulkan-loader-devel
+			pkgconf-pkg-config qt6-qtbase-devel vulkan-loader-devel
 	else
 		say "no supported package manager (pacman/apt/dnf) found."
-		say "install a C compiler, cmake, ninja, git, python3, SDL3 and a"
+		say "install a C compiler, cmake, ninja, git, python3, Qt6 and a"
 		say "Vulkan loader by hand, then re-run ./setup.sh."
 		return 1
 	fi
@@ -97,7 +97,7 @@ elif [ "$os_id" = steamos ] && ! in_container; then
 	setup.sh:     distrobox create -i archlinux:latest krudd && distrobox enter krudd
 	setup.sh:     cd $root && ./setup.sh
 	setup.sh:
-	setup.sh: See docs/steamos-window.md for the full walkthrough.
+	setup.sh: See docs/qt-editor-shell.md for the full walkthrough.
 	EOF
 	exit 1
 else
@@ -154,7 +154,10 @@ env_file="$root/.krudd-env"
 	echo "export KRUDD_DAWN_PREFIX"
 } > "$env_file"
 
-# Qt6 is optional; if it's discoverable, wire up `./krudd.sh editor-qt` too.
+# Qt6 is the editor's windowing toolkit; wire up its cflags/libs so
+# `./krudd.sh editor` needs no manual exports. install_toolchain pulls it in,
+# so this normally succeeds — warn (don't fail) if it somehow isn't found, so
+# the Dawn build above is still recorded.
 if pkg-config --exists Qt6Widgets Qt6Gui Qt6Core 2>/dev/null; then
 	{
 		echo ": \"\${KRUDD_QT_CFLAGS:=\$(pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core)}\""
@@ -162,7 +165,10 @@ if pkg-config --exists Qt6Widgets Qt6Gui Qt6Core 2>/dev/null; then
 		echo ": \"\${KRUDD_QT_LIBS:=\$(pkg-config --libs Qt6Widgets Qt6Gui Qt6Core)}\""
 		echo "export KRUDD_QT_LIBS"
 	} >> "$env_file"
-	say "Qt6 found — editor-qt is wired up too."
+	say "Qt6 found — the editor is wired up."
+else
+	say "warning: Qt6 not found via pkg-config — install it (see"
+	say "docs/qt-editor-shell.md) and set KRUDD_QT_CFLAGS before ./krudd.sh editor."
 fi
 
 say "done. Wrote $env_file."

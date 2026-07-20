@@ -4,6 +4,9 @@
 *.o
 krudd/krudd
 public/
+
+# local env written by setup.sh (machine-specific paths)
+.krudd-env
 /tools/render-diff/out/
 /tools/dawn-smoke/out/
 

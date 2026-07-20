@@ -9,6 +9,14 @@ set -e
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
+# Pick up the environment setup.sh wrote (KRUDD_DAWN_PREFIX, and the Qt vars if
+# Qt6 was found), so `./krudd.sh editor` works after a one-time `./setup.sh`
+# with no manual exports. It uses `:=` assignment, so anything already set in
+# the caller's shell still wins.
+if [ -f "$root/.krudd-env" ]; then
+	. "$root/.krudd-env"
+fi
+
 # System default compiler — CC if set, else the first of cc/gcc/clang found.
 cc=${CC:-}
 if [ -z "$cc" ]; then

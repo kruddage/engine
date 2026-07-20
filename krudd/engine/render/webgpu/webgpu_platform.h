@@ -31,6 +31,40 @@
  */
 WGPUSurface webgpu_platform_create_surface(WGPUInstance instance);
 
+#ifndef __EMSCRIPTEN__
+/*
+ * Native windowing, injected from the outside.
+ *
+ * The native seam above answers "offscreen" by default — NULL surface, a fixed
+ * backbuffer size, a persistent readable texture — because that is what the CI
+ * harness (krudd_native) and every headless render-diff need, and it must build
+ * with no window library in the picture at all.
+ *
+ * A windowed binary (krudd_window) supplies the missing half at runtime instead
+ * of by a second #ifdef: it owns the window and the swapchain, and registers a
+ * host here before the backend boots. With a host set, create_surface returns
+ * that window's WGPUSurface, backbuffer_size reports the window's size, and the
+ * offscreen backbuffer/readback path stays dark (there is a real swapchain now,
+ * and the compositor owns those textures). With no host set — the default, and
+ * the only state CI ever sees — the seam is byte-for-byte the offscreen one.
+ *
+ * Kept out here rather than compiled into the renderer_webgpu library so the
+ * window library (SDL, and its X11/Wayland surface types) links only into the
+ * one executable that wants it, never into the shared backend or the offscreen
+ * harness.
+ */
+struct webgpu_platform_host {
+	/* Create the presentation surface for the host's window. */
+	WGPUSurface (*create_surface)(WGPUInstance instance, void *user);
+	/* The window's current drawable size, in physical pixels. */
+	void        (*drawable_size)(uint32_t *w, uint32_t *h, void *user);
+	void        *user;
+};
+
+/* Register (or, with NULL, clear) the windowing host. Call before boot. */
+void webgpu_platform_set_host(const struct webgpu_platform_host *host);
+#endif
+
 /*
  * Backbuffer size in physical (device) pixels, never zero — a platform with
  * nothing sensible to report substitutes a default rather than handing back a

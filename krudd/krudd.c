@@ -97,6 +97,41 @@ static int cmd_build(void)
 	return failed ? -1 : 0;
 }
 
+/*
+ * `krudd editor` — build the native windowed harness and run it. A proof of
+ * life for a native editor: the WebGPU backend in a real window on the desktop
+ * (SteamOS / the Steam Deck), no browser in the path. See docs/steamos-window.md.
+ *
+ * It needs native Dawn, which is a large out-of-tree artifact, so — exactly like
+ * the offscreen krudd_native — it is gated on KRUDD_DAWN_PREFIX rather than
+ * assumed. The window target is additionally gated on KRUDD_SDL, which this sets
+ * for the build so the ordinary `krudd build` stays SDL-free.
+ */
+static int cmd_editor(void)
+{
+	char path[1024];
+
+	if (!getenv("KRUDD_DAWN_PREFIX")) {
+		fprintf(stderr,
+			"krudd: editor needs a native Dawn build — set "
+			"KRUDD_DAWN_PREFIX to your Dawn install dir.\n"
+			"krudd: see docs/steamos-window.md (and "
+			"tools/dawn-smoke/README.md) for the recipe.\n");
+		return -1;
+	}
+
+	/* Pull the (sdl) window target into the native graph for this build.
+	 * Do not clobber an explicit value. */
+	setenv("KRUDD_SDL", "1", 0);
+
+	if (cmd_build() != 0)
+		return -1;
+
+	snprintf(path, sizeof path, "%s/build/bin/krudd_window",
+		 getenv_or("KRUDD_ROOT", "."));
+	return run(path);
+}
+
 /* Serve the built site. Blocks until Ctrl-C — the interactive "run" tail. */
 static int cmd_serve(void)
 {
@@ -218,6 +253,8 @@ static void usage(void)
 		"  (no args)     resolve projects here: setup / run / pick\n"
 		"  build         configure + build (no prompts; used by CI)\n"
 		"  run           build, then serve the site\n"
+		"  editor        build + run the native window (needs "
+		"KRUDD_DAWN_PREFIX)\n"
 		"  new-project   scaffold a <name>.krudd-project\n");
 }
 
@@ -230,6 +267,8 @@ int main(int argc, char **argv)
 		return cmd_build() == 0 ? 0 : 1;
 	if (strcmp(argv[1], "run") == 0)
 		return (cmd_build() == 0 && cmd_serve() == 0) ? 0 : 1;
+	if (strcmp(argv[1], "editor") == 0)
+		return cmd_editor() == 0 ? 0 : 1;
 	if (strcmp(argv[1], "new-project") == 0)
 		return scaffold_project() == 0 ? 0 : 1;
 

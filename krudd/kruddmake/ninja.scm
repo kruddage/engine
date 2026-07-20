@@ -102,6 +102,25 @@
       (string-append base " $dawnincludes")
       base))
 
+;;! SDL is the native windowing library for the `(sdl)` clause — a system
+;;! dependency (headers + libSDL3), never a target, so like `(dawn)` it rides
+;;! preamble variables rather than the `(link)` list resolve.scm validates. And
+;;! like `(dawn)` it is OPT-IN: an `(sdl)` target is left out of the native graph
+;;! unless KRUDD_SDL is set, so a plain build — and a KRUDD_DAWN_PREFIX build that
+;;! only wants the offscreen harness — is byte-for-byte unchanged and needs no
+;;! SDL installed. `./krudd.sh editor` sets KRUDD_SDL for you.
+(define (sdl-configured?) (getenv "KRUDD_SDL"))
+
+(define (ninja-sdl? clauses) (if (rz-clause 'sdl clauses) #t #f))
+
+(define (ninja-sdl-skip? clauses)
+  (and (ninja-sdl? clauses) (not (sdl-configured?))))
+
+(define (ninja-sdl-includes clauses base)
+  (if (ninja-sdl? clauses)
+      (string-append base " $sdlcflags")
+      base))
+
 (define (ninja-emit-library table dir form)
   (let* ((name (cadr form))
          (clauses (cddr form)))
@@ -123,12 +142,15 @@
 (define (ninja-emit-executable table dir form)
   (let* ((name (cadr form))
          (clauses (cddr form)))
-    (if (ninja-dawn-skip? clauses)
+    (if (or (ninja-dawn-skip? clauses) (ninja-sdl-skip? clauses))
         #t
         (let* ((dawn (ninja-dawn? clauses))
-               (includes (ninja-dawn-includes clauses
-                                              (ninja-include-flags
-                                               (resolve-includes table name))))
+               (sdl (ninja-sdl? clauses))
+               (includes (ninja-sdl-includes
+                          clauses
+                          (ninja-dawn-includes clauses
+                                               (ninja-include-flags
+                                                (resolve-includes table name)))))
                (objs (map (lambda (s)
                             (ninja-emit-compile name dir includes s))
                           (ninja-sources clauses)))
@@ -137,7 +159,8 @@
                (syslibs (resolve-syslibs table name))
                (ldlibs (append (map (lambda (l) (string-append "-l" l))
                                     syslibs)
-                               (if dawn (list "$dawnlibs") '())))
+                               (if dawn (list "$dawnlibs") '())
+                               (if sdl (list "$sdllibs") '())))
                (bin (string-append "bin/" name)))
           (ninja-emit (string-append "build " bin ": "
                                      (if dawn "link_cxx" "link") " "
@@ -214,6 +237,15 @@
      ;;! linking requires.
      (string-append "dawnlibs = $dawnprefix/lib/libwebgpu_dawn.a "
                     "-lz -ldl -lpthread -lm")
+     ;;! SDL (the `(sdl)` clause, native windowing). Both default to the common
+     ;;! system install: no extra include path, and -lSDL3 on the link. Override
+     ;;! either when SDL lives off the default paths — e.g. from pkg-config:
+     ;;!   KRUDD_SDL_CFLAGS="$(pkg-config --cflags sdl3)"
+     ;;!   KRUDD_SDL_LIBS="$(pkg-config --libs sdl3)"
+     ;;! Empty of consequence unless an `(sdl)` target is in the graph, which
+     ;;! only happens when KRUDD_SDL is set (see ninja-sdl-skip?).
+     (string-append "sdlcflags = " (or (getenv "KRUDD_SDL_CFLAGS") ""))
+     (string-append "sdllibs = " (or (getenv "KRUDD_SDL_LIBS") "-lSDL3"))
      "cflags = -std=gnu11 -Wall -Werror -Wpedantic"
      "cxxflags = -std=gnu11 -Wall -Werror -Wpedantic"
      ;;! --use-port=emdawnwebgpu enables the WebGPU (Dawn) headers + JS glue;

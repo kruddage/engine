@@ -1,0 +1,86 @@
+name: Flatpak build (editor, proof of life)
+
+# Validates the Flatpak packaging pipeline for the native Qt editor
+# (`krudd editor-qt`, #675/#676) described in #686. BUILD-ONLY: produces an
+# unsigned .flatpak bundle as a workflow artifact. No signing, no OSTree
+# export, no publish — see packaging/flatpak/README.md for scope and the
+# remaining gaps before this is a real self-hosted registry.
+#
+# Manual/path-scoped trigger, like every other native-editor target: left out
+# of the default per-PR CI (see the root README's CI table) since it needs a
+# ~38 MB native Dawn build plus a full Flatpak runtime/SDK download.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - packaging/flatpak/**
+      - .github/workflows/flatpak-build.yml
+      - setup.sh
+
+jobs:
+  flatpak-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Everything else (compiler, cmake, ninja, SDL3, Vulkan loader) is
+      # installed by ./setup.sh itself, from the same recipe as the docs.
+      - name: Install Qt6 dev headers + Flatpak tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qt6-base-dev flatpak flatpak-builder
+
+      - name: Read pinned Dawn revision (tracks setup.sh)
+        id: dawn
+        run: echo "rev=$(sed -n 's/^DAWN_REV=//p' setup.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache native Dawn build
+        uses: actions/cache@v4
+        with:
+          path: ~/.krudd/dawn-native
+          key: dawn-native-${{ steps.dawn.outputs.rev }}
+
+      # Installs the native toolchain, builds pinned native Dawn (skipped on
+      # a cache hit above), and writes .krudd-env with KRUDD_DAWN_PREFIX
+      # (and the Qt vars, since qt6-base-dev is already on PATH by now).
+      - name: ./setup.sh
+        run: ./setup.sh
+
+      # Build-only: this is the same build ./krudd.sh editor-qt does, minus
+      # the "run it" tail — there's no display in CI to run it against.
+      - name: Build krudd_qt (native)
+        run: |
+          . ./.krudd-env
+          export KRUDD_QT=1
+          ./krudd.sh build
+
+      - name: Stage the Flatpak build context
+        run: |
+          install -Dm755 build/bin/krudd_qt \
+            packaging/flatpak/dist/bin/krudd-editor-qt
+
+      - name: Add Flathub remote (org.kde.Platform/Sdk)
+        run: |
+          flatpak remote-add --if-not-exists --user flathub \
+            https://flathub.org/repo/flathub.flatpakrepo
+
+      - name: flatpak-builder
+        run: |
+          flatpak-builder --user --force-clean --install-deps-from=flathub \
+            packaging/flatpak/build-dir \
+            packaging/flatpak/org.kruddage.Editor.yml
+
+      - name: Export an unsigned bundle
+        run: |
+          flatpak build-export packaging/flatpak/export-repo \
+            packaging/flatpak/build-dir
+          flatpak build-bundle packaging/flatpak/export-repo \
+            krudd-editor.flatpak org.kruddage.Editor
+
+      - name: Upload .flatpak artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: krudd-editor-flatpak
+          path: krudd-editor.flatpak

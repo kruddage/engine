@@ -40,7 +40,7 @@ WGPUSurface webgpu_platform_create_surface(WGPUInstance instance);
  * harness (krudd_native) and every headless render-diff need, and it must build
  * with no window library in the picture at all.
  *
- * A windowed binary (krudd_window) supplies the missing half at runtime instead
+ * A windowed binary (krudd_qt) supplies the missing half at runtime instead
  * of by a second #ifdef: it owns the window and the swapchain, and registers a
  * host here before the backend boots. With a host set, create_surface returns
  * that window's WGPUSurface, backbuffer_size reports the window's size, and the
@@ -49,7 +49,7 @@ WGPUSurface webgpu_platform_create_surface(WGPUInstance instance);
  * the only state CI ever sees — the seam is byte-for-byte the offscreen one.
  *
  * Kept out here rather than compiled into the renderer_webgpu library so the
- * window library (SDL, and its X11/Wayland surface types) links only into the
+ * window library (Qt, and its X11/Wayland surface types) links only into the
  * one executable that wants it, never into the shared backend or the offscreen
  * harness.
  */

@@ -35,10 +35,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Everything else the native build needs (compiler, cmake, ninja, SDL3,
-      # Vulkan loader) is installed by ./setup.sh itself. Qt6 is not needed
-      # here — krudd-editor compiles inside the flatpak-builder sandbox
-      # against org.kde.Sdk's own Qt6, not the runner's.
+      # Everything else the native build needs (compiler, cmake, ninja, Qt6,
+      # Vulkan loader) is installed by ./setup.sh itself. The runner's Qt6 is
+      # only there to satisfy setup.sh — krudd-editor compiles inside the
+      # flatpak-builder sandbox against org.kde.Sdk's own Qt6, not the runner's.
       - name: Install Flatpak tooling
         run: |
           sudo apt-get update

@@ -394,7 +394,7 @@ static void webgpu_frame_end(void)
 #ifndef __EMSCRIPTEN__
 	/*
 	 * Natively a real surface is presented by nobody on our behalf: the
-	 * windowed platform (SDL) owns the swapchain, so a drawn frame has to be
+	 * windowed platform (Qt) owns the swapchain, so a drawn frame has to be
 	 * pushed to it explicitly, while its backbuffer texture is still the
 	 * surface's current one — hence before the release below.
 	 *

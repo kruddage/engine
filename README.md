@@ -122,36 +122,33 @@ the path. Today the window renders an animated clear, which exercises the whole 
 chain (window → Wayland surface → Dawn → swapchain → render pass → present); rendering the
 actual scene natively is the next step, not this one.
 
-Two harnesses, both opt-in and both left out of every default build and CI run:
+The editor is the **Qt editor shell** — a `QMainWindow` with a menu bar, toolbar and
+Scene/Inspector/Assets/Console docks around the viewport. It is opt-in and left out of
+every default build and CI run:
 
 ```sh
-# 1. Bare SDL3 window (SteamOS / Steam Deck):
-KRUDD_DAWN_PREFIX=$HOME/dawn-native/install ./krudd.sh editor
-
-# 2. Qt editor shell — menu bar, toolbar, Scene/Inspector docks:
 KRUDD_DAWN_PREFIX=$HOME/dawn-native/install \
 KRUDD_QT_CFLAGS="$(pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core)" \
-./krudd.sh editor-qt
+./krudd.sh editor
 ```
 
-Both need **native Dawn built with surface support** (pinned to the emsdk port's revision),
-a **Vulkan loader**, and either **SDL3** or **Qt6**. On the Deck, SteamOS's root filesystem
-is immutable, so build and run inside an Arch [distrobox](https://distrobox.it/) (it shares
-the Deck's Wayland socket and GPU). To get going from a clean checkout:
+It needs **native Dawn built with surface support** (pinned to the emsdk port's revision),
+a **Vulkan loader**, and **Qt6**. On the Deck, SteamOS's root filesystem is immutable, so
+build and run inside an Arch [distrobox](https://distrobox.it/) (it shares the Deck's
+Wayland socket and GPU). To get going from a clean checkout:
 
 ```sh
 git clone https://github.com/kruddage/engine.git
 cd engine
-# build native Dawn once (~38 MB), then launch — full recipe in the docs below
+./setup.sh          # toolchain + pinned Dawn (~38 MB) + .krudd-env
+./krudd.sh editor   # build and run the Qt editor shell
 ```
 
 The complete copy-paste setup — building Dawn with a Wayland/X11 surface, the exact pin, and
-what you should see on screen — lives in:
+what you should see on screen — lives in
+[`docs/qt-editor-shell.md`](docs/qt-editor-shell.md).
 
-- [`docs/steamos-window.md`](docs/steamos-window.md) — the SDL3 window (`editor`)
-- [`docs/qt-editor-shell.md`](docs/qt-editor-shell.md) — the Qt editor shell (`editor-qt`)
-
-`editor-qt` also ships as a self-hosted, GPG-signed Flatpak registry —
+The editor also ships as a self-hosted, GPG-signed Flatpak registry —
 `flatpak remote-add` a `.flatpakrepo` URL and get updates the normal Flatpak
 way, no Flathub submission. See
 [`packaging/flatpak/`](packaging/flatpak/README.md) for install instructions

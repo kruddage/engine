@@ -1,5 +1,18 @@
 # Changelog
 
+## [18.3.0](https://github.com/kruddage/engine/compare/v18.2.1...v18.3.0) (2026-07-20)
+
+
+### Features
+
+* **editor:** Qt-hosted WebGPU-native viewport proof of life ([#675](https://github.com/kruddage/engine/issues/675)) ([#683](https://github.com/kruddage/engine/issues/683)) ([e9404bc](https://github.com/kruddage/engine/commit/e9404bc4115b0a445d71f439409f0888a6abfed2))
+* **render:** native windowed WebGPU harness for SteamOS proof of life ([#679](https://github.com/kruddage/engine/issues/679)) ([d4b14af](https://github.com/kruddage/engine/commit/d4b14af36325348b46458c552a0f6f99f42e791e))
+
+
+### CI
+
+* add a tracked pre-commit hook for the .scm lint checks ([#681](https://github.com/kruddage/engine/issues/681)) ([2299e76](https://github.com/kruddage/engine/commit/2299e7636feedf337868985754f30f32f4bd5850)), closes [#680](https://github.com/kruddage/engine/issues/680)
+
 ## [18.2.1](https://github.com/kruddage/engine/compare/v18.2.0...v18.2.1) (2026-07-19)
 
 

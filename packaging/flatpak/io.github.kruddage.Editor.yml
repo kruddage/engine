@@ -11,21 +11,56 @@ finish-args:
   - --socket=fallback-x11
   - --device=dri
 
+# Dev headers/static libs from the dawn module below are only needed to link
+# krudd-editor; nothing under /app should still reference them afterward.
+cleanup:
+  - /include
+  - /lib/*.a
+  - /lib/pkgconfig
+
 modules:
+  # Native Dawn can't be built inside this sandbox: its own build fetches
+  # third-party deps via gclient, which doesn't fit flatpak-builder's
+  # declarative `sources:` model without vendoring every one of them
+  # individually. So it's built once on the CI runner (./setup.sh, the same
+  # pinned recipe docs/steamos-window.md uses) and vendored in as a prebuilt
+  # static lib — the one deliberate exception to "build everything in the
+  # sandbox". The pin must stay in lockstep with setup.sh's DAWN_REV.
+  - name: dawn
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/include /app/lib
+      - cp -r include/* /app/include/
+      - cp lib/libwebgpu_dawn.a /app/lib/
+    sources:
+      - type: dir
+        path: dawn-native
+        dest: dawn-native
+
+  # Everything else — krudd_qt.cpp, the rest of the engine, kruddmake itself
+  # — compiles fresh in here against org.kde.Sdk's own Qt6 (matching the
+  # org.kde.Platform runtime's Qt6 at run time, unlike a binary built against
+  # the CI runner's system Qt) and the vendored Dawn above.
   - name: krudd-editor
     buildsystem: simple
-    # dist/bin/krudd-editor-qt is staged by CI (see
-    # .github/workflows/flatpak-build.yml) from a build done on the runner,
-    # not inside this sandbox — see packaging/flatpak/README.md for why, and
-    # what "real" packaging (building against org.kde.Sdk's Qt6 + Dawn as a
-    # module) still needs to look like.
     build-commands:
-      - install -Dm755 dist/bin/krudd-editor-qt /app/bin/krudd-editor-qt
-      - install -Dm644 io.github.kruddage.Editor.desktop
+      - >-
+        cd krudd-src &&
+        KRUDD_DAWN_PREFIX=/app KRUDD_QT=1
+        KRUDD_QT_CFLAGS="$(pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core)"
+        KRUDD_QT_LIBS="$(pkg-config --libs Qt6Widgets Qt6Gui Qt6Core)"
+        ./krudd.sh build
+      - install -Dm755 krudd-src/build/bin/krudd_qt /app/bin/krudd-editor-qt
+      - install -Dm644 krudd-src/packaging/flatpak/io.github.kruddage.Editor.desktop
         /app/share/applications/io.github.kruddage.Editor.desktop
     sources:
       - type: dir
-        path: dist
-        dest: dist
-      - type: file
-        path: io.github.kruddage.Editor.desktop
+        path: ../..
+        dest: krudd-src
+        skip:
+          - .git
+          - build
+          - build-*
+          - packaging/flatpak/dawn-native
+          - packaging/flatpak/build-dir
+          - packaging/flatpak/export-repo

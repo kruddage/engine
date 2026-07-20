@@ -151,11 +151,14 @@ what you should see on screen — lives in:
 - [`docs/steamos-window.md`](docs/steamos-window.md) — the SDL3 window (`editor`)
 - [`docs/qt-editor-shell.md`](docs/qt-editor-shell.md) — the Qt editor shell (`editor-qt`)
 
-A `flatpak-builder` manifest and a build-only CI job for `editor-qt` live in
-[`packaging/flatpak/`](packaging/flatpak/README.md), tracking
-[#686](https://github.com/kruddage/engine/issues/686) (self-hosted Flatpak
-registry). It's packaging-pipeline validation only today — no signing, no
-publish — see that README for scope and what's still missing.
+`editor-qt` also ships as a self-hosted, GPG-signed Flatpak registry —
+`flatpak remote-add` a `.flatpakrepo` URL and get updates the normal Flatpak
+way, no Flathub submission. See
+[`packaging/flatpak/`](packaging/flatpak/README.md) for install instructions
+and how to stand up your own signed registry on a fork; it's the same
+`gh-pages` deploy the WASM site already uses, just published to a `/flatpak/`
+subpath. The editor itself is still a proof of life (an animated clear, not a
+real scene), tracked separately.
 
 ## CI
 

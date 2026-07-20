@@ -6,17 +6,25 @@
  * same backend, same pinned Dawn, same webgpu_platform.h seam, same
  * animated-clear proof of life. What changes is who owns the window and who
  * hands Dawn its native surface — here it is a QMainWindow with real editor
- * chrome (menu bar, toolbar, Scene/Inspector docks) around a QWindow
- * embedded via QWidget::createWindowContainer, instead of a bare SDL3
- * top-level window. That embedded QWindow is the "canvas is a window"
- * viewport #675 asks for.
+ * chrome around a QWindow embedded via QWidget::createWindowContainer,
+ * instead of a bare SDL3 top-level window. That embedded QWindow is the
+ * "canvas is a window" viewport #675 asks for.
  *
- * Scope is deliberately the same as krudd_window.c's: this does NOT run
- * engine.c's full (Emscripten-only) boot. It drives the backend directly
- * through the gpu_api vtable — an animated clear, redrawn every frame — the
- * same exercise of surface configuration, per-frame acquire, a render pass,
- * submit and present. Rendering the actual scene through this shell is the
- * next step, not this one.
+ * The chrome is the authoring surface #676 asks for, laid out but not yet
+ * wired: a File/Edit/View/Help menu bar like a normal desktop app, and the
+ * Scene / Inspector / Assets / Console (Scheme REPL) docks around the
+ * viewport. The docks are freely movable, floatable, tabbable and nestable
+ * (View > Reset Layout restores the default), so the layout is the user's to
+ * rearrange. Panel *contents* are "coming soon" placeholders — wiring each to
+ * the running image (scene graph, inspector edits, live REPL, project
+ * open/save) is the rest of #676, not this pass.
+ *
+ * Scope for the viewport is deliberately the same as krudd_window.c's: this
+ * does NOT run engine.c's full (Emscripten-only) boot. It drives the backend
+ * directly through the gpu_api vtable — an animated clear, redrawn every
+ * frame — the same exercise of surface configuration, per-frame acquire, a
+ * render pass, submit and present. Rendering the actual scene through this
+ * shell is the next step, not this one.
  *
  * DELIBERATELY MOC-FREE. Nothing here declares Q_OBJECT, a signal, or a
  * slot — every connection is to a Qt-supplied QObject (qApp, a QTimer, a
@@ -63,9 +71,12 @@ extern "C" {
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 
+#include <QtCore/QByteArray>
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QTimer>
+#include <QtGui/QAction>
 #include <QtGui/QCloseEvent>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QShortcut>
@@ -79,7 +90,6 @@ extern "C" {
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QStatusBar>
 #include <QtWidgets/QToolBar>
-#include <QtWidgets/QTreeWidget>
 #include <QtWidgets/QWidget>
 
 #if defined(Q_OS_WIN)
@@ -269,36 +279,45 @@ static void draw_frame(const struct gpu_api *gpu, uint32_t frame)
 /* ------------------------------------------------------------- the shell */
 
 /*
- * Real editor chrome, not just a bare window: a menu bar, a toolbar carrying
- * the renderer badge, and Scene/Inspector docks either side of the embedded
- * viewport. Content is static placeholder — this harness does not run the
- * scene graph (see the file comment) — the point is proving Qt chrome and
- * the native viewport can share one QMainWindow's layout.
+ * The authoring surface #676 asks for: real editor chrome — a File/Edit/
+ * View/Help menu bar, a toolbar, and Scene / Inspector / Assets / Console
+ * docks around the embedded viewport. Panel contents are "coming soon"
+ * placeholders (see the file comment); the point of this pass is the shell —
+ * a normal desktop menu bar and docks the user can freely rearrange.
  */
-static QTreeWidget *build_scene_dock_contents(void)
-{
-	QTreeWidget *tree = new QTreeWidget();
-	QTreeWidgetItem *world;
-	QTreeWidgetItem *props;
 
-	tree->setHeaderHidden(true);
-	world = new QTreeWidgetItem(tree, QStringList("World"));
-	new QTreeWidgetItem(world, QStringList("Camera_Main"));
-	props = new QTreeWidgetItem(world, QStringList("Props"));
-	new QTreeWidgetItem(props, QStringList("crate_01"));
-	tree->expandAll();
-	return tree;
-}
-
-static QWidget *build_inspector_dock_contents(void)
+/* A centred "coming soon" placeholder body for a not-yet-wired panel: the
+ * panel's real name, a "Coming soon" line, and one sentence on what it will
+ * become, so the empty layout still explains itself. */
+static QWidget *make_placeholder(const QString &title, const QString &blurb)
 {
 	QLabel *label = new QLabel(
-		QStringLiteral("(no live scene — this harness drives the\n"
-			       "gpu_api vtable directly, see the file\n"
-			       "comment in krudd_qt.cpp)"));
-	label->setMargin(8);
+		QStringLiteral("<div align='center'>"
+			       "<p style='font-size:15px'><b>%1</b></p>"
+			       "<p style='color:gray'>Coming soon</p>"
+			       "<p style='color:gray'>%2</p></div>")
+			.arg(title.toHtmlEscaped(), blurb.toHtmlEscaped()));
+	label->setAlignment(Qt::AlignCenter);
 	label->setWordWrap(true);
+	label->setMargin(12);
 	return label;
+}
+
+/* Wrap a panel body in a QDockWidget with a stable objectName (so
+ * saveState/restoreState round-trips it — that is what View > Reset Layout
+ * relies on) and full move/float/close freedom in every dock area. */
+static QDockWidget *make_dock(const QString &title, const QString &object_name,
+			      QWidget *body, QMainWindow *win)
+{
+	QDockWidget *dock = new QDockWidget(title, win);
+
+	dock->setObjectName(object_name);
+	dock->setWidget(body);
+	dock->setAllowedAreas(Qt::AllDockWidgetAreas);
+	dock->setFeatures(QDockWidget::DockWidgetMovable |
+			  QDockWidget::DockWidgetFloatable |
+			  QDockWidget::DockWidgetClosable);
+	return dock;
 }
 
 int main(int argc, char **argv)
@@ -307,39 +326,159 @@ int main(int argc, char **argv)
 	app.setApplicationName(QStringLiteral("krudd"));
 
 	QMainWindow win;
-	win.setWindowTitle(QStringLiteral("krudd — Qt editor shell (proof of life)"));
+	win.setObjectName(QStringLiteral("KruddEditorWindow"));
+	win.setWindowTitle(QStringLiteral("krudd — editor"));
 
+	/* Docks the user can nest, tab and grouped-drag into any arrangement —
+	 * the "fully reconfigurable" authoring surface #676 asks for. */
+	win.setDockNestingEnabled(true);
+	win.setDockOptions(QMainWindow::AnimatedDocks |
+			   QMainWindow::AllowNestedDocks |
+			   QMainWindow::AllowTabbedDocks |
+			   QMainWindow::GroupedDragging);
+
+	/* Panels are placeholders for now (#676), so every menu action that is
+	 * not wired yet says so in the status bar rather than doing nothing —
+	 * the honest desktop-app hint, without a modal on every click. */
+	auto coming_soon = [&win](const QString &what) {
+		win.statusBar()->showMessage(
+			what + QStringLiteral(" — coming soon"), 4000);
+	};
+
+	/* A menu action with a shortcut + lambda, spelled out the version-safe
+	 * way (build the QAction, set the shortcut, connect) so no Qt 6.3+-only
+	 * addAction overload is required. */
+	auto add_action = [](QMenu *menu, const QString &text,
+			     const QKeySequence &shortcut,
+			     std::function<void()> fn) {
+		QAction *a = menu->addAction(text);
+
+		if (!shortcut.isEmpty())
+			a->setShortcut(shortcut);
+		QObject::connect(a, &QAction::triggered, fn);
+		return a;
+	};
+
+	/* ---- File ------------------------------------------------------- */
 	QMenu *file_menu = win.menuBar()->addMenu(QStringLiteral("&File"));
+	add_action(file_menu, QStringLiteral("&New Project"), QKeySequence::New,
+		   [=]() { coming_soon(QStringLiteral("New Project")); });
+	add_action(file_menu, QStringLiteral("&Open Project…"),
+		   QKeySequence::Open,
+		   [=]() { coming_soon(QStringLiteral("Open Project")); });
+	file_menu->addSeparator();
+	add_action(file_menu, QStringLiteral("&Save"), QKeySequence::Save,
+		   [=]() { coming_soon(QStringLiteral("Save")); });
+	add_action(file_menu, QStringLiteral("Save &As…"), QKeySequence::SaveAs,
+		   [=]() { coming_soon(QStringLiteral("Save As")); });
+	file_menu->addSeparator();
 	file_menu->addAction(QStringLiteral("&Quit"), QKeySequence::Quit,
 			     &app, &QApplication::quit);
 
-	QMenu *view_menu = win.menuBar()->addMenu(QStringLiteral("&View"));
+	/* ---- Edit ------------------------------------------------------- */
+	QMenu *edit_menu = win.menuBar()->addMenu(QStringLiteral("&Edit"));
+	add_action(edit_menu, QStringLiteral("&Undo"), QKeySequence::Undo,
+		   [=]() { coming_soon(QStringLiteral("Undo")); });
+	add_action(edit_menu, QStringLiteral("&Redo"), QKeySequence::Redo,
+		   [=]() { coming_soon(QStringLiteral("Redo")); });
+	edit_menu->addSeparator();
+	add_action(edit_menu, QStringLiteral("Cu&t"), QKeySequence::Cut,
+		   [=]() { coming_soon(QStringLiteral("Cut")); });
+	add_action(edit_menu, QStringLiteral("&Copy"), QKeySequence::Copy,
+		   [=]() { coming_soon(QStringLiteral("Copy")); });
+	add_action(edit_menu, QStringLiteral("&Paste"), QKeySequence::Paste,
+		   [=]() { coming_soon(QStringLiteral("Paste")); });
 
+	/* ---- the authoring docks (real layout, placeholder contents) ---- */
+	QDockWidget *scene_dock = make_dock(
+		QStringLiteral("Scene"), QStringLiteral("dock.scene"),
+		make_placeholder(QStringLiteral("Scene Tree"),
+			QStringLiteral("The entity hierarchy of the open "
+				"project — pick a node to edit it in the "
+				"Inspector.")),
+		&win);
+	win.addDockWidget(Qt::LeftDockWidgetArea, scene_dock);
+
+	QDockWidget *inspector_dock = make_dock(
+		QStringLiteral("Inspector"), QStringLiteral("dock.inspector"),
+		make_placeholder(QStringLiteral("Inspector"),
+			QStringLiteral("Components and properties of the "
+				"selected entity, written back to the project "
+				"files.")),
+		&win);
+	win.addDockWidget(Qt::RightDockWidgetArea, inspector_dock);
+
+	QDockWidget *assets_dock = make_dock(
+		QStringLiteral("Assets"), QStringLiteral("dock.assets"),
+		make_placeholder(QStringLiteral("Asset Browser"),
+			QStringLiteral("Meshes, textures, sounds and scenes in "
+				"the project, ready to drag into the scene.")),
+		&win);
+	win.addDockWidget(Qt::BottomDockWidgetArea, assets_dock);
+
+	QDockWidget *console_dock = make_dock(
+		QStringLiteral("Console"), QStringLiteral("dock.console"),
+		make_placeholder(QStringLiteral("Scheme REPL"),
+			QStringLiteral("A live S7 Scheme console into the "
+				"running engine image — evaluate against the "
+				"game as it plays.")),
+		&win);
+	win.addDockWidget(Qt::BottomDockWidgetArea, console_dock);
+	win.tabifyDockWidget(assets_dock, console_dock);
+	assets_dock->raise();
+
+	/* ---- View (dock toggles + reset) -------------------------------- */
+	QMenu *view_menu = win.menuBar()->addMenu(QStringLiteral("&View"));
+	view_menu->addAction(scene_dock->toggleViewAction());
+	view_menu->addAction(inspector_dock->toggleViewAction());
+	view_menu->addAction(assets_dock->toggleViewAction());
+	view_menu->addAction(console_dock->toggleViewAction());
+	view_menu->addSeparator();
+
+	/* Filled in once the window is shown (below). The reset action restores
+	 * that snapshot, so the user can always get the default layout back
+	 * after dragging the docks around. */
+	QByteArray default_geometry;
+	QByteArray default_state;
+	QAction *reset_layout =
+		view_menu->addAction(QStringLiteral("Reset &Layout"));
+	QObject::connect(reset_layout, &QAction::triggered, [&]() {
+		if (!default_geometry.isEmpty())
+			win.restoreGeometry(default_geometry);
+		if (!default_state.isEmpty())
+			win.restoreState(default_state);
+	});
+
+	/* ---- Help ------------------------------------------------------- */
+	QMenu *help_menu = win.menuBar()->addMenu(QStringLiteral("&Help"));
+	help_menu->addAction(QStringLiteral("&About krudd"), [&win]() {
+		QMessageBox::about(&win, QStringLiteral("About krudd"),
+			QStringLiteral(
+				"<b>krudd — editor</b><br><br>"
+				"The Qt authoring surface (#676) around the "
+				"live WebGPU-native viewport (#675).<br><br>"
+				"The centre panel is a native Dawn/WebGPU "
+				"surface embedded via "
+				"QWidget::createWindowContainer. The docks "
+				"around it — Scene, Inspector, Assets and "
+				"Console — are the authoring surface: drag, "
+				"float or tab them into any layout, and use "
+				"View &gt; Reset Layout to restore the "
+				"default."));
+	});
+
+	/* ---- toolbar ---------------------------------------------------- */
 	QToolBar *toolbar = win.addToolBar(QStringLiteral("main"));
+	toolbar->setObjectName(QStringLiteral("toolbar.main"));
+	QAction *play_action = toolbar->addAction(QStringLiteral("▶ Play"));
+	QObject::connect(play_action, &QAction::triggered,
+			 [=]() { coming_soon(QStringLiteral("Play")); });
+	QAction *stop_action = toolbar->addAction(QStringLiteral("■ Stop"));
+	QObject::connect(stop_action, &QAction::triggered,
+			 [=]() { coming_soon(QStringLiteral("Stop")); });
+	toolbar->addSeparator();
 	QLabel *renderer_badge = new QLabel(QStringLiteral("WebGPU — booting…"));
 	toolbar->addWidget(renderer_badge);
-
-	QDockWidget *scene_dock = new QDockWidget(QStringLiteral("Scene"), &win);
-	scene_dock->setWidget(build_scene_dock_contents());
-	win.addDockWidget(Qt::LeftDockWidgetArea, scene_dock);
-	view_menu->addAction(scene_dock->toggleViewAction());
-
-	QDockWidget *inspector_dock =
-		new QDockWidget(QStringLiteral("Inspector"), &win);
-	inspector_dock->setWidget(build_inspector_dock_contents());
-	win.addDockWidget(Qt::RightDockWidgetArea, inspector_dock);
-	view_menu->addAction(inspector_dock->toggleViewAction());
-
-	QMenu *help_menu = win.menuBar()->addMenu(QStringLiteral("&Help"));
-	help_menu->addAction(QStringLiteral("&About"), [&win]() {
-		QMessageBox::information(&win, QStringLiteral("krudd_qt"),
-			QStringLiteral(
-				"krudd_qt — proof of life for #675.\n\n"
-				"The centre panel is a QWindow embedded via "
-				"createWindowContainer, presenting into "
-				"native Dawn through the same webgpu_platform "
-				"seam krudd_window.c uses."));
-	});
 
 	KruddViewportWindow *viewport = new KruddViewportWindow();
 	QWidget *viewport_container =
@@ -362,6 +501,11 @@ int main(int argc, char **argv)
 	 * shown, and window_create_surface below needs a real native handle. */
 	win.resize(1280, 800);
 	win.show();
+
+	/* Now the docks are laid out and realised, snapshot the default
+	 * arrangement so View > Reset Layout can return to it. */
+	default_geometry = win.saveGeometry();
+	default_state    = win.saveState();
 
 	/*
 	 * Register the window host BEFORE the backend boots: renderer_webgpu_init

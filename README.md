@@ -167,3 +167,7 @@ details.
 Code follows the [Linux kernel coding style](https://kernel.org/doc/html/latest/process/coding-style.html).
 See [`CODING_STANDARD.md`](CODING_STANDARD.md) for the project-specific digest before writing or
 reviewing any C.
+
+Run `git config core.hooksPath .githooks` once to enable the tracked pre-commit hook, which mirrors
+`ci·lint`'s `.scm` comment and indentation checks against your staged files so a violation is caught
+locally instead of after a push.

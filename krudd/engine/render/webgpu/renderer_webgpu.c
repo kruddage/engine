@@ -2099,14 +2099,21 @@ static void renderer_webgpu_shutdown(void)
 	 * before the device that created it. */
 	webgpu_platform_teardown();
 
+	/*
+	 * The surface goes before the device. A windowed surface still owns a
+	 * swapchain, and ~Surface detaches it — which reaches into the device's
+	 * FencedDeleter to retire the swapchain's fences. Release the device
+	 * first and that deleter is already gone, so the detach faults. The
+	 * offscreen path never sees this: g_surface is NULL there.
+	 */
+	if (g_surface)
+		wgpuSurfaceRelease(g_surface);
 	if (g_queue)
 		wgpuQueueRelease(g_queue);
 	if (g_device)
 		wgpuDeviceRelease(g_device);
 	if (g_adapter)
 		wgpuAdapterRelease(g_adapter);
-	if (g_surface)
-		wgpuSurfaceRelease(g_surface);
 	if (g_instance)
 		wgpuInstanceRelease(g_instance);
 	g_queue    = NULL;

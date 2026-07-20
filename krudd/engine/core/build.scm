@@ -35,6 +35,20 @@
               (link "subsystem" "subsystem_manager" "log" "memory" "script"
                     "renderer_webgpu"))
 
+  ;;! The render cluster boots a non-empty scene against the recording null
+  ;;! backend — the GPU-free proof of editor_boot_cluster() (and thus the whole
+  ;;! windowed scene path up to the backend boundary). No Dawn, no GPU, so it
+  ;;! runs in ordinary CI, unlike krudd_native/krudd_qt.
+  (executable "editor_boot_test"
+              (sources "editor_boot_test.c" "editor_boot.c")
+              (private "include" (raw "${generated}")
+                       (root "render/null") (root "abi"))
+              (link "renderer_null" "scene_renderer"
+                    "frame_graph" "entity_plugin" "asset_plugin" "edit_plugin"
+                    "mesh_script" "texture_script" "particles"
+                    "subsystem" "subsystem_manager" "log" "memory" "script" "m"))
+  (test "editor_boot" "editor_boot_test")
+
   ;;! The Qt-hosted WebGPU harness — the native editor. The same backend as
   ;;! krudd_native, presenting into a QWindow embedded in real Qt chrome
   ;;! (menu bar, toolbar, docks) instead of reading a frame back offscreen.
@@ -45,13 +59,15 @@
   ;;! (test ...) edge: it opens a window and needs a real GPU adapter, so it is
   ;;! a deliverable, not a CI test.
   (executable "krudd_qt"
-              (sources "krudd_qt.cpp")
+              (sources "krudd_qt.cpp" "editor_boot.c")
               (private "include" (raw "${generated}")
-                       (root "render/webgpu"))
+                       (root "render/webgpu") (root "abi"))
               (dawn)
               (qt)
-              (link "subsystem" "subsystem_manager" "log" "memory" "script"
-                    "renderer_webgpu"))
+              (link "renderer_webgpu" "scene_renderer"
+                    "frame_graph" "entity_plugin" "asset_plugin" "edit_plugin"
+                    "mesh_script" "texture_script" "particles"
+                    "subsystem" "subsystem_manager" "log" "memory" "script" "m"))
 
   (executable "subsystem_test"
               (sources "subsystem_test.c")

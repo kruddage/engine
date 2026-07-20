@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: GPL-2.0-or-later -->
 # krudd's native editor — a Qt editor shell (#675, #676)
 
-A proof of life for the native editor: the engine's WebGPU backend booting
-against **native Dawn** (Vulkan on the Deck's RDNA2) and presenting into a
+The native editor: the engine's WebGPU backend booting against **native Dawn**
+(Vulkan on the Deck's RDNA2) and rendering a **live engine scene** into a
 `QWindow` embedded in real Qt chrome — a menu bar, a toolbar, docks — on the
 desktop (SteamOS / the Steam Deck), no browser, no Emscripten, nothing web in
 the path.
@@ -14,10 +14,13 @@ KRUDD_QT_CFLAGS="$(pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core)" \
 ```
 
 opens a `QMainWindow` — the File/Edit/View/Help menu bar, a toolbar, and the
-Scene / Inspector / Assets / Console docks — with an animated clear running
-inside the embedded viewport. That moving picture *is* the deliverable: it means
-the whole native chain — window → Wayland surface → Dawn → swapchain acquire →
-render pass → present — is live on the hardware.
+Scene / Inspector / Assets / Console docks — with the engine's built-in demo
+scene (a floor, box, sphere, pyramid and rook under a sun, framed by an orbit
+camera — the same content the web canvas shows on load) rendering inside the
+embedded viewport. That live scene *is* the deliverable (#675): it means the
+whole native chain — window → Wayland surface → Dawn → the real forward pass →
+present — is live on the hardware, running the actual scene renderer rather
+than a placeholder clear.
 
 ## The authoring surface (#676)
 
@@ -97,14 +100,32 @@ byte the offscreen one. The only new surface area is Qt: a `QMainWindow` chrome
 around a `QWindow` embedded via `QWidget::createWindowContainer`, and a
 `webgpu_platform_host` that hands Dawn that `QWindow`'s native handle.
 
-**Scope is deliberately narrow.** This does *not* run the full site. `engine.c`'s
-boot is Emscripten-only and pulls in the whole plugin table (the IndexedDB-backed
-asset store, the canvas UI, `fetch`). Porting that off the browser is the editor
-work this is a proof of life *for*. So the viewport drives the backend directly
-through the `gpu_api` vtable — an animated clear — which exercises surface
-configuration, per-frame acquire, a render pass, submit and present, and nothing
-that still assumes a browser. Rendering the actual scene through this shell is
-the next step, not this one.
+**What renders, and what is left out.** Once the device lands, `krudd_qt` boots
+the engine's render cluster natively — `editor_boot_cluster()`
+(`krudd/engine/core/editor_boot.c`) registers `asset → entity → frame_graph →
+scene_renderer` in the same dependency order `engine.c`'s `finish_plugin_boot`
+uses on the web. `scene_renderer` then seeds and draws its built-in demo scene
+through the real forward pass, so the viewport shows an actual scene, not a
+clear. The camera-aspect sync the wasm viewport bridge does off the kruddgui
+pointer is done here directly (the `camera` api's `set_viewport`, once per
+frame with the window size), since native has no kruddgui pointer.
+
+What is *not* booted is the browser-bound / interactive layer: the IndexedDB
+`fetch` asset origins (the native `asset_plugin` serves the compiled-in
+`builtin://` catalog instead — no browser store), the `kruddgui` canvas
+overlay, the `viewport` click-to-pick, the games and the live REPL. Wiring the
+docks to the running image (scene tree, inspector, REPL, project open/save) is
+#676's authoring surface — see the follow-up issues filed off #675. The
+offscreen `krudd_native` PNG harness is untouched: it still boots only the
+backend and reads the target back, so CI keeps trusting it with no GPU.
+
+**Verified without a GPU.** The whole boot-and-render path up to the Dawn
+boundary is exercised in ordinary CI by `editor_boot_test` (native-only, no
+Dawn): it runs the exact same `editor_boot_cluster()` against the recording
+**null** backend and asserts the seeded demo scene emits one draw per live
+mesh+material entity. So the scene assembly, the built-in catalog, the s7 mesh
+generation and the forward pass are all covered by a test; only the Dawn/Qt
+present glue itself needs real hardware to see.
 
 ## Prerequisites
 
@@ -197,9 +218,10 @@ Qt shell.)
 krudd_qt: presenting on 'wayland' — close the window or press Esc to quit
 ```
 
-and a window cycling through colours in the embedded viewport. If the platform
-line says `xcb` you are on XWayland — that path works too, via the X11 fallback
-surface.
+and the demo scene rendering in the embedded viewport — the floor, box, sphere,
+pyramid and rook animating under the sun (the box spins, the sphere bounces),
+with the orbit camera circling. If the platform line says `xcb` you are on
+XWayland — that path works too, via the X11 fallback surface.
 
 ## Wayland: the hard case, and what is actually true about it today
 

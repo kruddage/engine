@@ -113,6 +113,44 @@ engine loop; the test stamps run the suite, so a green build is a green test run
 ./krudd.sh build
 ```
 
+### Native editor (SteamOS / Steam Deck)
+
+A **proof of life** for a future native editor: the same C engine that ships to the
+browser as WebAssembly also boots its WebGPU backend against **native Dawn** (Vulkan on
+the Deck's RDNA2) and presents into a real desktop window — no browser, no Emscripten in
+the path. Today the window renders an animated clear, which exercises the whole native
+chain (window → Wayland surface → Dawn → swapchain → render pass → present); rendering the
+actual scene natively is the next step, not this one.
+
+Two harnesses, both opt-in and both left out of every default build and CI run:
+
+```sh
+# 1. Bare SDL3 window (SteamOS / Steam Deck):
+KRUDD_DAWN_PREFIX=$HOME/dawn-native/install ./krudd.sh editor
+
+# 2. Qt editor shell — menu bar, toolbar, Scene/Inspector docks:
+KRUDD_DAWN_PREFIX=$HOME/dawn-native/install \
+KRUDD_QT_CFLAGS="$(pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core)" \
+./krudd.sh editor-qt
+```
+
+Both need **native Dawn built with surface support** (pinned to the emsdk port's revision),
+a **Vulkan loader**, and either **SDL3** or **Qt6**. On the Deck, SteamOS's root filesystem
+is immutable, so build and run inside an Arch [distrobox](https://distrobox.it/) (it shares
+the Deck's Wayland socket and GPU). To get going from a clean checkout:
+
+```sh
+git clone https://github.com/kruddage/engine.git
+cd engine
+# build native Dawn once (~38 MB), then launch — full recipe in the docs below
+```
+
+The complete copy-paste setup — building Dawn with a Wayland/X11 surface, the exact pin, and
+what you should see on screen — lives in:
+
+- [`docs/steamos-window.md`](docs/steamos-window.md) — the SDL3 window (`editor`)
+- [`docs/qt-editor-shell.md`](docs/qt-editor-shell.md) — the Qt editor shell (`editor-qt`)
+
 ## CI
 
 `ci.yml` runs on every pull request and on push to `main`, alongside two release workflows:

@@ -70,14 +70,14 @@ jobs:
         run: |
           flatpak-builder --user --force-clean --install-deps-from=flathub \
             packaging/flatpak/build-dir \
-            packaging/flatpak/org.kruddage.Editor.yml
+            packaging/flatpak/io.github.kruddage.Editor.yml
 
       - name: Export an unsigned bundle
         run: |
           flatpak build-export packaging/flatpak/export-repo \
             packaging/flatpak/build-dir
           flatpak build-bundle packaging/flatpak/export-repo \
-            krudd-editor.flatpak org.kruddage.Editor
+            krudd-editor.flatpak io.github.kruddage.Editor
 
       - name: Upload .flatpak artifact
         uses: actions/upload-artifact@v7

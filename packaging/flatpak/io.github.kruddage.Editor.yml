@@ -1,4 +1,4 @@
-id: org.kruddage.Editor
+id: io.github.kruddage.Editor
 runtime: org.kde.Platform
 runtime-version: '6.7'
 sdk: org.kde.Sdk
@@ -21,11 +21,11 @@ modules:
     # module) still needs to look like.
     build-commands:
       - install -Dm755 dist/bin/krudd-editor-qt /app/bin/krudd-editor-qt
-      - install -Dm644 org.kruddage.Editor.desktop
-        /app/share/applications/org.kruddage.Editor.desktop
+      - install -Dm644 io.github.kruddage.Editor.desktop
+        /app/share/applications/io.github.kruddage.Editor.desktop
     sources:
       - type: dir
         path: dist
         dest: dist
       - type: file
-        path: org.kruddage.Editor.desktop
+        path: io.github.kruddage.Editor.desktop

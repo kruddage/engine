@@ -48,11 +48,11 @@ install -Dm755 build/bin/krudd_qt packaging/flatpak/dist/bin/krudd-editor-qt
 flatpak remote-add --if-not-exists --user flathub \
   https://flathub.org/repo/flathub.flatpakrepo
 flatpak-builder --user --force-clean --install-deps-from=flathub \
-  packaging/flatpak/build-dir packaging/flatpak/org.kruddage.Editor.yml
+  packaging/flatpak/build-dir packaging/flatpak/io.github.kruddage.Editor.yml
 
 # optional: produce an installable .flatpak bundle
 flatpak build-export packaging/flatpak/export-repo packaging/flatpak/build-dir
-flatpak build-bundle packaging/flatpak/export-repo krudd-editor.flatpak org.kruddage.Editor
+flatpak build-bundle packaging/flatpak/export-repo krudd-editor.flatpak io.github.kruddage.Editor
 ```
 
 ## What's still needed for #686's actual ask (a self-hosted registry)

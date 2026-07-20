@@ -1,5 +1,12 @@
 # Changelog
 
+## [18.3.1](https://github.com/kruddage/engine/compare/v18.3.0...v18.3.1) (2026-07-20)
+
+
+### Documentation
+
+* add native editor (SteamOS / Steam Deck) setup to README ([#684](https://github.com/kruddage/engine/issues/684)) ([92d935b](https://github.com/kruddage/engine/commit/92d935b5c9115c047cb66d88ba47f9b5f9a102ff))
+
 ## [18.3.0](https://github.com/kruddage/engine/compare/v18.2.1...v18.3.0) (2026-07-20)
 
 

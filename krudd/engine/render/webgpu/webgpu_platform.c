@@ -126,14 +126,29 @@ void webgpu_platform_teardown(void)
 #include <stdlib.h>
 
 /*
- * Offscreen by design: a native swapchain is a different Dawn backend from the
- * canvas path, so a window could not reproduce a canvas presentation bug even
- * if one were available. Returning NULL is how the backend is told to configure
- * itself for an offscreen target.
+ * The windowing host, or NULL. NULL is the default and the only state the
+ * offscreen harness and CI ever see; a windowed binary sets it before boot (see
+ * webgpu_platform.h). Every branch below that changes behaviour keys off this
+ * one pointer, so "no host" is provably the original offscreen seam.
+ */
+static const struct webgpu_platform_host *g_host;
+
+void webgpu_platform_set_host(const struct webgpu_platform_host *host)
+{
+	g_host = host;
+}
+
+/*
+ * Offscreen unless a window is hosting us. Without a host a native swapchain is
+ * a different Dawn backend from the canvas path — so a window could not
+ * reproduce a canvas presentation bug even were one available, and returning
+ * NULL is how the backend is told to configure an offscreen target. With a host
+ * (krudd_window), its window's real WGPUSurface is what the frame presents into.
  */
 WGPUSurface webgpu_platform_create_surface(WGPUInstance instance)
 {
-	(void)instance;
+	if (g_host && g_host->create_surface)
+		return g_host->create_surface(instance, g_host->user);
 	return NULL;
 }
 
@@ -156,6 +171,14 @@ static uint32_t size_from_env(const char *name, uint32_t fallback)
 
 void webgpu_platform_backbuffer_size(uint32_t *w, uint32_t *h)
 {
+	if (g_host && g_host->drawable_size) {
+		g_host->drawable_size(w, h, g_host->user);
+		if (*w < 1u)
+			*w = 1u;
+		if (*h < 1u)
+			*h = 1u;
+		return;
+	}
 	*w = size_from_env("KRUDD_WEBGPU_WIDTH", 800u);
 	*h = size_from_env("KRUDD_WEBGPU_HEIGHT", 600u);
 }
@@ -172,6 +195,15 @@ static uint32_t    g_backbuffer_h;
 WGPUTextureView webgpu_platform_backbuffer_view(WGPUDevice device)
 {
 	if (!device)
+		return NULL;
+
+	/*
+	 * Hosted (windowed): there is a real surface, so the backend acquires the
+	 * swapchain texture itself — same as the browser. Returning NULL here is
+	 * exactly how the web seam answers, and it keeps the offscreen backbuffer
+	 * below from ever being created when a window owns the frame.
+	 */
+	if (g_host)
 		return NULL;
 
 	if (!g_backbuffer) {
@@ -238,7 +270,10 @@ int webgpu_platform_read_backbuffer(WGPUInstance instance, WGPUDevice device,
 	uint32_t y;
 	int spins;
 
-	if (!g_backbuffer || !device || !queue || !rgba)
+	/* Hosted (windowed): the swapchain's textures belong to the compositor,
+	 * not us — the same answer the web seam gives. Only the offscreen path,
+	 * which owns g_backbuffer, can read a frame back. */
+	if (g_host || !g_backbuffer || !device || !queue || !rgba)
 		return 0;
 
 	/*

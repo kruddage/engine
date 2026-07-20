@@ -35,6 +35,22 @@
               (link "subsystem" "subsystem_manager" "log" "memory" "script"
                     "renderer_webgpu"))
 
+  ;;! The windowed WebGPU harness — the same backend as krudd_native, but
+  ;;! presenting into an SDL3 window instead of reading a frame back offscreen.
+  ;;! It carries both (dawn) and (sdl), so it is skipped unless BOTH native Dawn
+  ;;! (KRUDD_DAWN_PREFIX) and SDL (KRUDD_SDL) are configured — `./krudd.sh editor`
+  ;;! sets the latter. Needs render/webgpu on the include path for the platform
+  ;;! host seam (webgpu_platform.h). No (test ...) edge: it opens a window and
+  ;;! needs a real GPU adapter, so it is a deliverable, not a CI test.
+  (executable "krudd_window"
+              (sources "krudd_window.c")
+              (private "include" (raw "${generated}")
+                       (root "render/webgpu"))
+              (dawn)
+              (sdl)
+              (link "subsystem" "subsystem_manager" "log" "memory" "script"
+                    "renderer_webgpu"))
+
   (executable "subsystem_test"
               (sources "subsystem_test.c")
               (link "subsystem"))

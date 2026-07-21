@@ -1,0 +1,7 @@
+[Flatpak Repo]
+Title=KRUDD Editor (self-hosted)
+Url=https://kruddage.github.io/engine/flatpak/
+Comment=KRUDD native editor builds, self-hosted — no Flathub submission.
+Description=Self-hosted Flatpak registry for the KRUDD engine's native editor (proof of life — see the editor's own docs for what it does and doesn't render yet).
+Homepage=https://github.com/kruddage/engine
+GPGKey=mDMEal8CeBYJKwYBBAHaRw8BAQdAg7rFMU+fSMtbbuJvPaXXbbOw/iA2udwRdLyjXF6C1oy0HmtydWRkYWdlIDxqb3NoY295bmVAZ21haWwuY29tPoiQBBMWCgA4FiEE8ZnIr1fQQAxJJz+Gev9Du65kd94FAmpfAngCGwMFCwkIBwIGFQoJCAsCBBYCAwECHgECF4AACgkQev9Du65kd96+mQEAhkXOXwULPEv6thaDvHObB7jOhow+Cg2GWjA5u6k51K8BAJJpeEE3UojFGZQZtMLT9aBAwulVKtyKQGbeSAFF6CIIuDgEal8CeBIKKwYBBAGXVQEFAQEHQKxR45PueEQbmUKzVHqpDDL+xs2eJneLE5FFbkxHf1BQAwEIB4h4BBgWCgAgFiEE8ZnIr1fQQAxJJz+Gev9Du65kd94FAmpfAngCGwwACgkQev9Du65kd94KIAEAttvpqAWR22wCKEgI+C8wjS4ONMrKxpdSououcAlEd2UBALGXEOSAqV/59l9RarEkZ+VpyLf9oZcK7DdvTZiyQI8O

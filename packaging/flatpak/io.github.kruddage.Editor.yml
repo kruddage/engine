@@ -25,10 +25,16 @@ modules:
       # Generate build.ninja with the Vulkan + Qt targets configured, then build
       # only the editor binary (compile + link) rather than the whole native
       # suite. KRUDD_GENERATE_ONLY stops krudd.sh short of driving ninja itself.
+      #
+      # krudd_qt.cpp needs one QPA private header for the Wayland surface
+      # lookup, which pkg-config does not report. org.kde.Sdk ships the private
+      # headers under <includedir>/QtGui/<ver>; derive that from pkg-config so
+      # this keeps working across runtime-version bumps.
       - >-
         cd krudd-src &&
         KRUDD_VULKAN=1 KRUDD_QT=1 KRUDD_GENERATE_ONLY=1
-        KRUDD_QT_CFLAGS="$(pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core)"
+        KRUDD_QT_CFLAGS="$(pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core)
+        -I$(pkg-config --variable=includedir Qt6Gui)/QtGui/$(pkg-config --modversion Qt6Gui)"
         KRUDD_QT_LIBS="$(pkg-config --libs Qt6Widgets Qt6Gui Qt6Core)"
         ./krudd.sh build
       - ninja -C krudd-src/build -f build.ninja bin/krudd_qt

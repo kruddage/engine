@@ -55,6 +55,9 @@ have_toolchain() {
 		pkg-config --exists Qt6Widgets Qt6Gui Qt6Core 2>/dev/null
 }
 
+# The editor needs Qt's QPA *private* headers as well as the public ones (one
+# header, for the Wayland surface lookup — see krudd_qt.cpp). Arch ships them
+# inside qt6-base; Debian and Fedora split them into a separate -private package.
 install_toolchain() {
 	if command -v pacman >/dev/null 2>&1; then
 		sudo pacman -S --needed --noconfirm \
@@ -65,12 +68,13 @@ install_toolchain() {
 		sudo apt-get update
 		sudo apt-get install -y \
 			build-essential git ninja-build pkg-config \
-			qt6-base-dev libvulkan-dev \
+			qt6-base-dev qt6-base-private-dev libvulkan-dev \
 			vulkan-validationlayers glslang-tools
 	elif command -v dnf >/dev/null 2>&1; then
 		sudo dnf install -y \
 			@development-tools git ninja-build \
 			pkgconf-pkg-config qt6-qtbase-devel \
+			qt6-qtbase-private-devel \
 			vulkan-loader-devel vulkan-validation-layers glslang
 	else
 		say "no supported package manager (pacman/apt/dnf) found."
@@ -129,8 +133,17 @@ env_file="$root/.krudd-env"
 # `./krudd.sh editor` needs no manual exports. install_toolchain pulls it in,
 # so this normally succeeds — warn (don't fail) if it somehow isn't found.
 if pkg-config --exists Qt6Widgets Qt6Gui Qt6Core 2>/dev/null; then
+	# pkg-config only reports the public include dirs, but krudd_qt.cpp needs
+	# one QPA private header too. Qt keeps those under <includedir>/QtGui/<ver>,
+	# so derive the path from pkg-config rather than hardcoding a Qt version.
+	qt_private="$(pkg-config --variable=includedir Qt6Gui)/QtGui/$(pkg-config --modversion Qt6Gui)"
+	if [ ! -f "$qt_private/QtGui/qpa/qplatformnativeinterface.h" ]; then
+		say "warning: Qt6 QPA private headers not found under $qt_private —"
+		say "install them (Debian: qt6-base-private-dev, Fedora:"
+		say "qt6-qtbase-private-devel; Arch ships them in qt6-base)."
+	fi
 	{
-		echo ": \"\${KRUDD_QT_CFLAGS:=\$(pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core)}\""
+		echo ": \"\${KRUDD_QT_CFLAGS:=\$(pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core) -I$qt_private}\""
 		echo "export KRUDD_QT_CFLAGS"
 		echo ": \"\${KRUDD_QT_LIBS:=\$(pkg-config --libs Qt6Widgets Qt6Gui Qt6Core)}\""
 		echo "export KRUDD_QT_LIBS"

@@ -211,16 +211,27 @@ window XID (or, on Windows, the HWND) directly, and
 the `xcb_connection_t*` — exactly what `vkCreateXcbSurfaceKHR` /
 `vkCreateWin32SurfaceKHR` want.
 
-**Wayland needs Qt >= 6.5.** Getting a `QWindow`'s `wl_surface`/`wl_display`
-through *stable public* API is `QNativeInterface::QWaylandWindow` /
-`QNativeInterface::QWaylandApplication`, added in Qt 6.5. Checked directly
-against Ubuntu 24.04's system Qt (6.4.2): that API is not there. `krudd_qt.cpp`'s
-Wayland path requires Qt >= 6.5 and fails the build with an actionable `#error`
-on anything older, rather than reach into a private, ABI-unstable header by
-default. SteamOS's Arch-based toolchain (the distrobox recipe above) tracks
-current Qt — Plasma 6 on the Deck runs Qt 6.6+ — so this is not expected to bite
-on the actual target hardware. It is why the editor-linux CI job below installs
-Qt 6.8 rather than the runner's system Qt.
+**Wayland needs one private header.** The `wl_display` half is public and easy:
+`QNativeInterface::QWaylandApplication` (Qt 6.5+) hands it over. The per-window
+`wl_surface` half has **no public API at all** — `QNativeInterface` has no
+`QWaylandWindow` in any Qt 6 release, contrary to what an earlier draft of this
+document claimed. Verified against Qt 6.8.2 (Debian 13) by grepping the full
+install, `qt6-wayland-dev` included: the symbol does not exist.
+
+The only route is the QPA native-resource lookup —
+`QGuiApplication::platformNativeInterface()->nativeResourceForWindow("surface",
+window)` — which lives in `QtGui/qpa/qplatformnativeinterface.h`, a *private*,
+ABI-unstable header. `krudd_qt.cpp` uses it deliberately and keeps the blast
+radius to one call whose result is null-checked like any other handle. Because
+it is ABI-unstable, the Qt the editor links against must be the same Qt it was
+built against — which is already true of every build path here (setup.sh uses
+the system Qt, the flatpak builds against `org.kde.Sdk`'s own Qt, CI pins 6.8).
+
+The practical cost is a build dependency: the private headers ship separately on
+Debian (`qt6-base-private-dev`) and Fedora (`qt6-qtbase-private-devel`), and
+inside `qt6-base` on Arch. `setup.sh` installs them and warns if they are
+missing; CI and the flatpak add the `-I` explicitly, since `pkg-config` reports
+only the public include dirs.
 
 **No heavy native headers.** The per-platform Vulkan structs take pointers to
 incomplete types (`wl_display`, `wl_surface`, `xcb_connection_t`) plus a single
@@ -243,8 +254,8 @@ The `editor-linux` job in `.github/workflows/ci.yml` builds `krudd_qt`
 (Vulkan + Qt) on every PR — **compile + link only**, never run, since it opens a
 window and needs a real GPU. It installs the Vulkan loader/headers/validation
 layers and glslang from apt, and Qt 6.8 via `install-qt-action` (the runner's
-system Qt is 6.4, below the 6.5 the Wayland path needs), then builds just the
-`bin/krudd_qt` target. The web build (WebGL + WebGPU) is covered by the separate
+system Qt is 6.4, older than the 6.5 `QWaylandApplication` needs), then builds
+just the `bin/krudd_qt` target. The web build (WebGL + WebGPU) is covered by the separate
 `build` job and is untouched — Vulkan is native only.
 
 ## How it stays out of everyone else's way

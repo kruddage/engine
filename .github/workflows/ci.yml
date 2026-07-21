@@ -300,7 +300,7 @@ jobs:
             clang ninja-build curl \
             libvulkan-dev vulkan-validationlayers glslang-tools
 
-      - name: Install Qt 6.8 (>= 6.5, for the Wayland native interface)
+      - name: Install Qt 6.8
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.1'
@@ -320,7 +320,19 @@ jobs:
           # install-qt-action lays Qt out under $QT_ROOT_DIR in the standard
           # shape; build the editor's Qt flags from it directly rather than rely
           # on .pc files, which the aqt packages do not always ship.
-          export KRUDD_QT_CFLAGS="-fPIC -I$QT_ROOT_DIR/include -I$QT_ROOT_DIR/include/QtCore -I$QT_ROOT_DIR/include/QtGui -I$QT_ROOT_DIR/include/QtWidgets"
+          #
+          # The Wayland surface lookup needs one QPA private header
+          # (QtGui/qpa/qplatformnativeinterface.h — see krudd_qt.cpp). Qt keeps
+          # those under a version-stamped directory beside the public ones;
+          # glob it rather than repeat the version pinned above, and fail loudly
+          # if this Qt has no private headers instead of falling through to a
+          # confusing "file not found" a minute later.
+          qtgui_private=$(echo "$QT_ROOT_DIR"/include/QtGui/[0-9]*)
+          if [ ! -f "$qtgui_private/QtGui/qpa/qplatformnativeinterface.h" ]; then
+            echo "no QtGui QPA private headers under $QT_ROOT_DIR/include/QtGui" >&2
+            exit 1
+          fi
+          export KRUDD_QT_CFLAGS="-fPIC -I$QT_ROOT_DIR/include -I$QT_ROOT_DIR/include/QtCore -I$QT_ROOT_DIR/include/QtGui -I$QT_ROOT_DIR/include/QtWidgets -I$qtgui_private"
           export KRUDD_QT_LIBS="-L$QT_ROOT_DIR/lib -lQt6Widgets -lQt6Gui -lQt6Core"
           ./krudd.sh build
           ninja -C build -f build.ninja bin/krudd_qt

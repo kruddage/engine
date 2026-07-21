@@ -155,8 +155,8 @@
         (let* ((includes (ninja-vulkan-includes
                           clauses
                           (ninja-dawn-includes clauses
-                                              (ninja-include-flags
-                                               (resolve-includes table name)))))
+                                               (ninja-include-flags
+                                                (resolve-includes table name)))))
                (objs (ninja-with-s7 name "cc_s7" "obj/s7/s7.c.o"
                                     (map (lambda (s)
                                            (ninja-emit-compile name dir includes s))

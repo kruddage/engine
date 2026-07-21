@@ -36,13 +36,13 @@
  * compile this .cpp with a C++ compiler" — the same shape as every other
  * native target, with no moc rule to add to ninja.scm.
  *
- * SURFACE CREATION, PER PLATFORM. The window handles come from Qt's stable
- * public native-interface API, and become a VkSurfaceKHR through the matching
- * VK_KHR_*_surface entry point:
- *   - Wayland (the Deck's primary path): QNativeInterface::QWaylandWindow /
- *     QWaylandApplication give the wl_surface / wl_display —
- *     vkCreateWaylandSurfaceKHR. This needs Qt >= 6.5 (that native interface was
- *     added then; pre-6.5 has no stable public route and the build #errors).
+ * SURFACE CREATION, PER PLATFORM. The window handles become a VkSurfaceKHR
+ * through the matching VK_KHR_*_surface entry point:
+ *   - Wayland (the Deck's primary path): QNativeInterface::QWaylandApplication
+ *     (public, Qt >= 6.5) gives the wl_display. The per-window wl_surface has
+ *     NO public API — QNativeInterface has no QWaylandWindow in any Qt 6
+ *     release — so it comes from the QPA native-resource lookup, the one
+ *     private header this file leans on. See docs/qt-editor-shell.md.
  *   - X11/XWayland: QNativeInterface::QX11Application::connection() gives the
  *     xcb_connection_t*, QWindow::winId() the window — vkCreateXcbSurfaceKHR.
  *   - Windows: QWindow::winId() is the HWND — vkCreateWin32SurfaceKHR.
@@ -99,6 +99,13 @@ extern "C" {
 #include <QtGui/QShortcut>
 #include <QtGui/QWindow>
 #include <QtGui/qguiapplication_platform.h>
+/* The wl_surface behind a QWindow. Qt exposes the *application*-level Wayland
+ * handles publicly (QNativeInterface::QWaylandApplication, above) but has no
+ * public per-window equivalent — QNativeInterface has no QWaylandWindow, in any
+ * Qt 6 release. The QPA native-resource lookup is the only route to it, so this
+ * is a deliberate, contained use of one private header: a single "surface"
+ * query, whose result is null-checked below like any other handle. */
+#include <QtGui/qpa/qplatformnativeinterface.h>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QDockWidget>
 #include <QtWidgets/QLabel>
@@ -215,32 +222,27 @@ static VkSurfaceKHR window_create_surface(VkInstance instance, void *user)
 
 #if defined(VK_USE_PLATFORM_WAYLAND_KHR)
 	if (platform == QLatin1String("wayland")) {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
-		auto *wlwin =
-			win->nativeInterface<QNativeInterface::QWaylandWindow>();
 		auto *wlapp =
 			qGuiApp->nativeInterface<QNativeInterface::QWaylandApplication>();
+		QPlatformNativeInterface *pni = qGuiApp->platformNativeInterface();
 		VkWaylandSurfaceCreateInfoKHR ci;
+		struct wl_surface *wlsurf = nullptr;
 
-		if (!wlwin || !wlapp || !wlwin->surface() || !wlapp->display()) {
+		if (pni)
+			wlsurf = static_cast<struct wl_surface *>(
+				pni->nativeResourceForWindow("surface", win));
+		if (!wlapp || !wlsurf || !wlapp->display()) {
 			fprintf(stderr, "krudd_qt: no Wayland handles\n");
 			return VK_NULL_HANDLE;
 		}
 		memset(&ci, 0, sizeof(ci));
 		ci.sType   = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR;
 		ci.display = wlapp->display();
-		ci.surface = wlwin->surface();
+		ci.surface = wlsurf;
 		if (vkCreateWaylandSurfaceKHR(instance, &ci, nullptr, &surface)
 		    != VK_SUCCESS)
 			return VK_NULL_HANDLE;
 		return surface;
-#else
-#error "krudd_qt: Wayland needs QNativeInterface::QWaylandWindow, added in " \
-       "Qt 6.5. Pre-6.5 Qt has no stable public way to reach a QWindow's " \
-       "wl_surface (see the file comment) — build with Qt >= 6.5, or add " \
-       "and own a private-header fallback deliberately rather than by " \
-       "accident here."
-#endif
 	}
 #endif
 

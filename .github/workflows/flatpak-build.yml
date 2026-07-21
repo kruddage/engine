@@ -30,8 +30,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    # Shared with ci.yml's deploy job: both push to gh-pages, and a main push
+    # fires both at once. One serial group across both workflows keeps their
+    # gh-pages pushes from racing (the loser is rejected non-fast-forward).
     concurrency:
-      group: flatpak-registry-publish
+      group: gh-pages-deploy
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
@@ -39,10 +42,14 @@ jobs:
       # The editor compiles entirely inside the flatpak-builder sandbox against
       # org.kde.Sdk's own Qt6 and Vulkan loader/headers, so the runner needs
       # nothing but the Flatpak tooling — no toolchain, no prebuilt GPU library.
+      # elfutils provides eu-strip, which flatpak-builder invokes to split debug
+      # info off the built binary. Without it the build fails at the strip step
+      # ("Failed to execute child process eu-strip") after a clean compile, so
+      # nothing is ever exported or published.
       - name: Install Flatpak tooling
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder elfutils
 
       - name: Add Flathub remote (org.kde.Platform/Sdk)
         run: |
@@ -109,7 +116,6 @@ jobs:
       # URL — nothing here is kruddage-specific.
       - name: Publish the signed registry to gh-pages
         if: steps.signing.outputs.enabled == 'true' && github.ref == 'refs/heads/main'
-        continue-on-error: true
         run: |
           repo_url="https://${{ github.repository_owner }}.github.io/${GITHUB_REPOSITORY#*/}/flatpak/"
           mkdir -p packaging/flatpak/pages-out
@@ -120,7 +126,6 @@ jobs:
 
       - name: Deploy to gh-pages
         if: steps.signing.outputs.enabled == 'true' && github.ref == 'refs/heads/main'
-        continue-on-error: true
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}

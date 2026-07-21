@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
+<component type="desktop-application">
+  <id>io.github.kruddage.Editor</id>
+  <metadata_license>FSFAP</metadata_license>
+  <project_license>GPL-2.0-or-later</project_license>
+
+  <name>KRUDD Editor</name>
+  <summary>Native editor for the KRUDD game engine</summary>
+
+  <description>
+    <p>
+      KRUDD Editor is the native desktop shell for the KRUDD game engine — the
+      same C engine that ships to the browser as WebAssembly, running natively
+      on a Vulkan backend and presenting into a real desktop window.
+    </p>
+    <p>
+      This is an early proof-of-life build: the editor boots the engine's render
+      cluster (asset, entity, frame graph, scene renderer) and brings up a
+      validated Vulkan 1.3 device, but it presents an animated clear rather than
+      a full scene. Translating the engine's draw stream to Vulkan so the demo
+      scene renders is the next step.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">io.github.kruddage.Editor.desktop</launchable>
+
+  <categories>
+    <category>Development</category>
+  </categories>
+
+  <url type="homepage">https://github.com/kruddage/engine</url>
+  <url type="bugtracker">https://github.com/kruddage/engine/issues</url>
+  <url type="vcs-browser">https://github.com/kruddage/engine</url>
+
+  <developer id="io.github.kruddage">
+    <name>kruddage</name>
+  </developer>
+
+  <!--
+    No interactive/user-generated content, network, or media — an all-"none"
+    OARS rating (an empty content_rating element) is correct for the current
+    proof-of-life editor.
+  -->
+  <content_rating type="oars-1.1"/>
+
+  <releases>
+    <release version="18.3.1" date="2026-07-21">
+      <description>
+        <p>
+          First packaged Flatpak of the native Qt editor shell: QMainWindow with
+          Scene/Inspector/Assets/Console docks around a Vulkan viewport.
+        </p>
+      </description>
+    </release>
+  </releases>
+</component>

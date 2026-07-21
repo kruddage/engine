@@ -1,6 +1,6 @@
 id: io.github.kruddage.Editor
 runtime: org.kde.Platform
-runtime-version: '6.7'
+runtime-version: '6.9'
 sdk: org.kde.Sdk
 command: krudd-editor-qt
 
@@ -41,6 +41,14 @@ modules:
       - install -Dm755 krudd-src/build/bin/krudd_qt /app/bin/krudd-editor-qt
       - install -Dm644 krudd-src/packaging/flatpak/io.github.kruddage.Editor.desktop
         /app/share/applications/io.github.kruddage.Editor.desktop
+      # AppStream metainfo + a 512x512 icon named for the app id. Without these
+      # Plasma Discover (the SteamOS Desktop store) won't list or tile the app,
+      # even from a configured remote. The icon is the engine's existing PWA
+      # icon, reused straight from source — no duplicate binary in packaging/.
+      - install -Dm644 krudd-src/packaging/flatpak/io.github.kruddage.Editor.metainfo.xml
+        /app/share/metainfo/io.github.kruddage.Editor.metainfo.xml
+      - install -Dm644 krudd-src/krudd/engine/core/icon-512.png
+        /app/share/icons/hicolor/512x512/apps/io.github.kruddage.Editor.png
     sources:
       - type: dir
         path: ../..

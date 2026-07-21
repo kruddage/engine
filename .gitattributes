@@ -1,0 +1,21 @@
+# Keep LF in the working tree on every platform. The build runs POSIX shell
+# scripts (krudd.sh, krudd/third_party/sync.sh) under MSYS2 on Windows and
+# verifies the vendored s7.c/s7.h by sha256 — a CRLF conversion on a Windows
+# checkout (autocrlf) would break the shebang lines and change those checksums
+# (see krudd/third_party/sync.sh, which would then re-download pristine upstream
+# and still mismatch, because s7.c's pin is the checksum of a locally-patched
+# file — see krudd/third_party/s7.artifact). Normalizing to LF everywhere keeps
+# a Windows checkout byte-identical to Linux and the Deck. No-op on those, which
+# are already LF.
+* text=auto eol=lf
+
+# The vendored s7 amalgamation: never touch its bytes at all. Its sha256 is
+# pinned and s7.c additionally carries a local patch, so it must round-trip a
+# checkout unchanged on every platform.
+krudd/third_party/s7.c -text
+krudd/third_party/s7.h -text
+
+# Binary assets — leave untouched (git's binary detection already spares these,
+# but be explicit so no future text rule can reach them).
+*.png binary
+*.ico binary

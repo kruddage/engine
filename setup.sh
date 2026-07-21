@@ -8,7 +8,7 @@
 # things `./krudd.sh editor` can't do for itself:
 #
 #   1. installs the native toolchain (compiler, ninja, Qt6, and the Vulkan
-#      loader + headers + validation layers + glslang)
+#      loader + headers + validation layers + driver + glslang)
 #   2. writes .krudd-env so `./krudd.sh editor` picks up the Qt cflags/libs
 #      automatically — no manual exports
 #
@@ -43,44 +43,69 @@ os_id=$( . /etc/os-release 2>/dev/null && printf '%s' "$ID" )
 # 1. Toolchain (compiler + ninja + Qt6 + Vulkan loader/headers/validation).
 # ---------------------------------------------------------------------------
 
-# Everything the editor build needs is present already? The validation-layer
-# manifest is the marker that the Vulkan *validation* layers (not just the
-# loader) are installed — that is the whole point of this backend's bring-up.
+# Is at least one Vulkan *driver* (ICD) installed? The loader is only a
+# dispatch shim: with no ICD manifest to point it at a driver .so it enumerates
+# zero devices, and the editor fails at "no adapter" having linked and started
+# perfectly. The loader searches both of these directories.
+have_vulkan_icd() {
+	for d in /usr/share/vulkan/icd.d /etc/vulkan/icd.d; do
+		for f in "$d"/*.json; do
+			[ -f "$f" ] && return 0
+		done
+	done
+	return 1
+}
+
+# Everything the editor build needs is present already? Two markers matter
+# beyond the compilers: the validation-layer manifest (the Vulkan *validation*
+# layers, not just the loader — that is the whole point of this backend's
+# bring-up) and an ICD, without which the loader has nothing to load.
 have_toolchain() {
 	command -v cc >/dev/null 2>&1 &&
 		command -v ninja >/dev/null 2>&1 &&
 		command -v git >/dev/null 2>&1 &&
 		[ -e /usr/include/vulkan/vulkan.h ] &&
 		[ -f /usr/share/vulkan/explicit_layer.d/VkLayer_khronos_validation.json ] &&
+		have_vulkan_icd &&
 		pkg-config --exists Qt6Widgets Qt6Gui Qt6Core 2>/dev/null
 }
 
 # The editor needs Qt's QPA *private* headers as well as the public ones (one
 # header, for the Wayland surface lookup — see krudd_qt.cpp). Arch ships them
 # inside qt6-base; Debian and Fedora split them into a separate -private package.
+#
+# Each branch installs a Vulkan *driver* alongside the loader. Debian and Fedora
+# ship every Mesa driver — including the lavapipe software rasteriser, which is
+# what a GPU-less CI box falls back to — in one `mesa-vulkan-drivers`. Arch
+# splits them per-GPU, so the Deck's RDNA2 needs `vulkan-radeon` by name, and
+# `vulkan-swrast` is the separate lavapipe package that gives the Arch branch
+# the same software fallback the other two get for free.
 install_toolchain() {
 	if command -v pacman >/dev/null 2>&1; then
 		sudo pacman -S --needed --noconfirm \
 			base-devel git ninja qt6-base \
 			vulkan-icd-loader vulkan-headers \
+			vulkan-radeon vulkan-swrast \
 			vulkan-validation-layers glslang
 	elif command -v apt-get >/dev/null 2>&1; then
 		sudo apt-get update
 		sudo apt-get install -y \
 			build-essential git ninja-build pkg-config \
 			qt6-base-dev qt6-base-private-dev libvulkan-dev \
+			mesa-vulkan-drivers \
 			vulkan-validationlayers glslang-tools
 	elif command -v dnf >/dev/null 2>&1; then
 		sudo dnf install -y \
 			@development-tools git ninja-build \
 			pkgconf-pkg-config qt6-qtbase-devel \
 			qt6-qtbase-private-devel \
-			vulkan-loader-devel vulkan-validation-layers glslang
+			vulkan-loader-devel mesa-vulkan-drivers \
+			vulkan-validation-layers glslang
 	else
 		say "no supported package manager (pacman/apt/dnf) found."
 		say "install a C compiler, ninja, git, Qt6, and the Vulkan"
-		say "loader + headers + validation layers + glslang by hand,"
-		say "then re-run ./setup.sh."
+		say "loader + headers + validation layers + a driver (ICD) for"
+		say "your GPU + glslang by hand, then re-run ./setup.sh."
 		return 1
 	fi
 }

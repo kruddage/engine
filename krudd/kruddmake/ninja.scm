@@ -48,6 +48,14 @@
 (define (ninja-obj name treepath)
   (string-append "obj/" name "/" treepath ".o"))
 
+;;! Host executable suffix. Empty on every Unix host (so a Linux/macOS build is
+;;! byte-for-byte unchanged), ".exe" on Windows — where a mingw `gcc -o bin/foo`
+;;! actually writes `bin/foo.exe`, so the ninja edge output has to carry the
+;;! suffix too or ninja never sees the file it just built. Set KRUDD_EXE_SUFFIX
+;;! (the Windows editor CI does) rather than hard-coding a platform check here,
+;;! keeping this the same env-driven shape as KRUDD_CC / KRUDD_EXTRA_* above.
+(define (ninja-exe-suffix) (or (getenv "KRUDD_EXE_SUFFIX") ""))
+
 (define ninja-lines '())
 (define ninja-native '())
 (define ninja-wasm '())
@@ -194,7 +202,7 @@
                                (if dawn (list "$dawnlibs") '())
                                (if vulkan (list "$vulkanlibs") '())
                                (if qt (list "$qtlibs") '())))
-               (bin (string-append "bin/" name)))
+               (bin (string-append "bin/" name (ninja-exe-suffix))))
           (ninja-emit (string-append "build " bin ": "
                                      (if (or dawn qt) "link_cxx" "link") " "
                                      (ninja-join " " (append objs libs))))
@@ -213,7 +221,8 @@
   (let* ((name (cadr form))
          (cmd (caddr form))
          (stamp (string-append "test/" name ".stamp")))
-    (ninja-emit (string-append "build " stamp ": run_test bin/" cmd))
+    (ninja-emit (string-append "build " stamp ": run_test bin/" cmd
+                               (ninja-exe-suffix)))
     (ninja-emit "")
     (ninja-native! stamp)))
 

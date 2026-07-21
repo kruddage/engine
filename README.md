@@ -151,6 +151,16 @@ flatpak install --user krudd io.github.kruddage.Editor
 See [`packaging/flatpak/`](packaging/flatpak/README.md) for the full Discover
 walkthrough and how to stand up your own signed registry on a fork.
 
+#### Install the prebuilt installer (Windows)
+
+The Windows counterpart is a plain double-click installer — download
+`krudd-editor-setup.exe` from the
+[`editor-windows-nightly`](https://github.com/kruddage/engine/releases/tag/editor-windows-nightly)
+release, run it, and launch **KRUDD Editor** from the Start Menu. It's
+currently unsigned, so SmartScreen warns on first run (*More info* → *Run
+anyway*). See [`packaging/nsis/`](packaging/nsis/README.md) for how it's built
+(MSYS2 mingw-w64 + `windeployqt` + NSIS) and how to build it locally.
+
 #### Build from source
 
 It needs the **Vulkan loader + headers + validation layers**, **glslang**, and **Qt6** —

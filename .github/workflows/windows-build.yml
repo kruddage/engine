@@ -1,0 +1,201 @@
+name: Windows build (editor, NSIS installer)
+
+# Builds the native Qt/Vulkan editor (`krudd editor-qt`, #675/#705) on Windows
+# and packages it into a single `krudd-editor-setup.exe` with NSIS — the
+# Windows equivalent of the Flatpak editor distribution (packaging/flatpak/,
+# #686). This is the packaging half of #694; the editor's own proof-of-life
+# caveat carries over unchanged (it renders an animated clear, not a real
+# scene — #667/#675/#676).
+#
+# The whole thing builds with the MSYS2 mingw-w64 toolchain, because kruddmake
+# emits an ordinary GNU-flag ninja build (gcc/ar/-o), which mingw's gcc accepts
+# verbatim — so no build-system fork, just the KRUDD_EXE_SUFFIX=.exe hook that
+# makes ninja's target names match what `gcc -o bin/foo` actually writes on
+# Windows (`bin/foo.exe`). Qt, the Vulkan loader, and ninja all come from one
+# pacman transaction, keeping the runner setup to a single action.
+#
+# Like the Flatpak workflow this is manual/path-scoped, not part of per-PR CI:
+# it pulls a full mingw Qt + Vulkan toolchain. It always builds and uploads the
+# installer as a workflow artifact; publishing a GitHub Release is gated to
+# pushes on main (the authoritative build), mirroring the Flatpak job's
+# publish-only-on-main stance.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - packaging/nsis/**
+      - .github/workflows/windows-build.yml
+      - krudd/engine/core/krudd_qt.cpp
+      - krudd/kruddmake/**
+  pull_request:
+    paths:
+      - packaging/nsis/**
+      - .github/workflows/windows-build.yml
+      - krudd/engine/core/krudd_qt.cpp
+      - krudd/kruddmake/**
+
+jobs:
+  windows-build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      # One pacman transaction supplies the entire toolchain: the mingw gcc/g++
+      # kruddmake's GNU-flag build wants, Qt6 (headers + DLLs + windeployqt6),
+      # the Vulkan loader/headers, ninja, and pkgconf. base-devel/coreutils put
+      # rm/touch/ar on PATH for the ninja `ar` rule.
+      - name: Set up MSYS2 (mingw-w64) toolchain
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            base-devel
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-qt6-base
+            mingw-w64-x86_64-qt6-tools
+            mingw-w64-x86_64-vulkan-headers
+            mingw-w64-x86_64-vulkan-loader
+
+      # Build only bin/krudd_qt.exe, the same generate-then-target-a-single-
+      # binary flow the Linux editor job uses — the full `native` target would
+      # drag in the whole test suite, which isn't the deliverable here.
+      #
+      # Qt has no default include/link path, so its flags come from pkg-config,
+      # plus one QPA private-header dir (krudd_qt.cpp reaches
+      # QtGui/qpa/qplatformnativeinterface.h — see its file comment). Qt keeps
+      # those private headers under a version-stamped directory beside the
+      # public ones; glob it rather than pin the version, and fail loudly if
+      # this Qt shipped none. The Vulkan loader's import library is `vulkan-1`
+      # on Windows (not `vulkan`), so override the default $vulkanlibs.
+      - name: Build krudd_qt.exe
+        id: build
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+
+          qt_inc=$(pkg-config --variable=includedir Qt6Gui)
+          qtgui_private=$(echo "$qt_inc"/QtGui/[0-9]*)
+          if [ ! -f "$qtgui_private/QtGui/qpa/qplatformnativeinterface.h" ]; then
+            echo "no QtGui QPA private headers under $qt_inc/QtGui" >&2
+            exit 1
+          fi
+          echo "Qt private headers: $qtgui_private"
+
+          export CC=gcc KRUDD_CC=gcc KRUDD_CXX=g++
+          export KRUDD_QT=1 KRUDD_VULKAN=1
+          export KRUDD_EXE_SUFFIX=.exe
+          export KRUDD_GENERATE_ONLY=1
+          export KRUDD_QT_CFLAGS="$(pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core) -I$qtgui_private"
+          export KRUDD_QT_LIBS="$(pkg-config --libs Qt6Widgets Qt6Gui Qt6Core)"
+          export KRUDD_VULKAN_LIBS="-lvulkan-1"
+
+          ./krudd.sh build
+          ninja -C build -f build.ninja bin/krudd_qt.exe
+          test -f build/bin/krudd_qt.exe
+
+          # Version string: version.txt verbatim on main, +pr<N>+<sha> on a PR,
+          # mirroring ci.yml so a preview installer can never be mistaken for a
+          # release. Exposed for the NSIS + release steps below.
+          base=$(cat version.txt)
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            short=$(printf '%.7s' "${{ github.event.pull_request.head.sha }}")
+            version="${base}-pr${{ github.event.pull_request.number }}+${short}"
+          else
+            version="${base}"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "Editor version: ${version}"
+
+      # Assemble the install payload beside the exe: windeployqt gathers the Qt
+      # DLLs + the platforms/qwindows.dll plugin, then we add the Vulkan loader
+      # and the mingw runtime DLLs the editor links against so it runs on a
+      # clean box with no MSYS2 present.
+      - name: Stage the runtime payload (windeployqt + loaders)
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          rm -rf stage
+          mkdir -p stage
+          cp build/bin/krudd_qt.exe stage/
+
+          windeployqt6 --release --no-translations --compiler-runtime stage/krudd_qt.exe
+
+          # The Vulkan loader is not a Qt dependency, so windeployqt won't copy
+          # it — the editor loads it at runtime, so it must ship alongside.
+          cp /mingw64/bin/vulkan-1.dll stage/
+
+          # Belt-and-suspenders for the mingw C/C++ runtime: --compiler-runtime
+          # above should place these, but copy them explicitly so a launch on a
+          # bare Windows install never fails on a missing libstdc++/libgcc.
+          for dll in libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll; do
+            [ -f "/mingw64/bin/$dll" ] && cp "/mingw64/bin/$dll" stage/ || true
+          done
+
+          echo "Staged payload:"
+          ls -R stage
+
+      # A .ico for the installer/shortcuts, generated from the app's 512px PNG.
+      # ImageMagick is preinstalled on windows-latest. Non-fatal: if conversion
+      # ever fails, the NSIS step just omits KRUDD_ICON and uses the default.
+      - name: Generate installer icon
+        shell: pwsh
+        run: |
+          try {
+            magick krudd/engine/core/icon-512.png `
+              -define icon:auto-resize=256,128,64,48,32,16 `
+              packaging/nsis/krudd.ico
+            "icon=packaging/nsis/krudd.ico" >> $env:GITHUB_OUTPUT
+          } catch {
+            Write-Host "icon conversion failed, building without a custom icon"
+          }
+        id: icon
+
+      - name: Install NSIS
+        shell: pwsh
+        run: choco install nsis --no-progress -y
+
+      - name: Build the NSIS installer
+        shell: pwsh
+        run: |
+          $makensis = "$env:ProgramFiles(x86)\NSIS\makensis.exe"
+          $iconArg = @()
+          if (Test-Path "packaging/nsis/krudd.ico") {
+            $iconArg = @("/DKRUDD_ICON=$(Resolve-Path packaging/nsis/krudd.ico)")
+          }
+          & $makensis `
+            "/DKRUDD_VERSION=${{ steps.build.outputs.version }}" `
+            "/DKRUDD_STAGE_DIR=$(Resolve-Path stage)" `
+            "/DKRUDD_OUTFILE=$(Join-Path (Get-Location) 'krudd-editor-setup.exe')" `
+            @iconArg `
+            packaging/nsis/krudd-editor.nsi
+          if (-not (Test-Path krudd-editor-setup.exe)) {
+            throw "makensis did not produce krudd-editor-setup.exe"
+          }
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: krudd-editor-setup
+          path: krudd-editor-setup.exe
+
+      # Publish only the authoritative build: a push on main. The moving
+      # `editor-windows-nightly` prerelease always points at the latest main
+      # installer, the Windows analogue of the Flatpak job's publish-on-main.
+      - name: Publish the installer to a GitHub Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: editor-windows-nightly
+          name: "KRUDD Editor (Windows, nightly)"
+          body: >-
+            Latest Windows build of the native KRUDD editor from `main`
+            (version ${{ steps.build.outputs.version }}). Proof of life — the
+            editor renders an animated clear, not a scene yet (#667/#675/#676).
+          prerelease: true
+          files: krudd-editor-setup.exe

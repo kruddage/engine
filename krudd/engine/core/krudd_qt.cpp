@@ -60,7 +60,18 @@
 #include <stdint.h>
 #if defined(_WIN32)
 /* vulkan_win32.h (pulled in below with the macro set) needs the Win32 types, so
- * windows.h must precede it. */
+ * windows.h must precede it. Tame it first: NOMINMAX drops the min()/max()
+ * function-like macros that would otherwise shadow std::min/std::max and Qt's
+ * own uses, and WIN32_LEAN_AND_MEAN trims the rarely-needed sub-headers
+ * (winsock, OLE, …) whose macros (near, far, interface) fight Qt's headers
+ * included just below. Both are the standard hygiene for pulling windows.h into
+ * a C++/Qt translation unit. */
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
 #  include <windows.h>
 #  define VK_USE_PLATFORM_WIN32_KHR
 #else

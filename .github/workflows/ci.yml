@@ -244,9 +244,14 @@ jobs:
       - name: Install the native toolchain (Qt comes from aqt, not apt)
         run: |
           sudo apt-get update
+          # The libx*/libwayland/libxkb dev packages are what Dawn's X11 +
+          # Wayland surface build (DAWN_USE_X11/WAYLAND=ON in setup.sh) needs.
+          # On a normal box qt6-base-dev drags these in transitively; we skip
+          # apt Qt to avoid its masking 6.4, so we must name them explicitly.
           sudo apt-get install -y --no-install-recommends \
             build-essential git cmake ninja-build python3 pkg-config \
-            libvulkan-dev clang
+            libvulkan-dev clang \
+            libx11-xcb-dev libxcb1-dev libx11-dev libwayland-dev libxkbcommon-dev
           # Let setup.sh's `pkg-config --exists Qt6*` find the aqt Qt (if it
           # ships .pc files) so it skips the apt-Qt fallback entirely.
           echo "PKG_CONFIG_PATH=$QT_ROOT_DIR/lib/pkgconfig" >> "$GITHUB_ENV"

@@ -67,9 +67,14 @@ install_toolchain() {
 			base-devel git cmake ninja python qt6-base vulkan-icd-loader
 	elif command -v apt-get >/dev/null 2>&1; then
 		sudo apt-get update
+		# The libx11-xcb/xcb/x11/wayland/xkb dev packages are what the native
+		# Dawn build's X11 + Wayland surface (DAWN_USE_X11/WAYLAND=ON below)
+		# needs. qt6-base-dev happens to pull most in transitively, but name
+		# them so the Dawn build doesn't depend on that incidentally.
 		sudo apt-get install -y \
 			build-essential git cmake ninja-build python3 \
-			pkg-config qt6-base-dev libvulkan-dev
+			pkg-config qt6-base-dev libvulkan-dev \
+			libx11-xcb-dev libxcb1-dev libx11-dev libwayland-dev libxkbcommon-dev
 	elif command -v dnf >/dev/null 2>&1; then
 		sudo dnf install -y \
 			@development-tools git cmake ninja-build python3 \

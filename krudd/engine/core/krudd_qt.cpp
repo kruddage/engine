@@ -106,10 +106,6 @@ extern "C" {
 #include <windows.h>
 #endif
 
-#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
-#include <QtGui/qnativeinterface.h>
-#endif
-
 extern "C" {
 void renderer_webgpu_plugin_entry(struct subsystem_manager *mgr);
 int  renderer_webgpu_device_ready(void);

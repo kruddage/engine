@@ -99,6 +99,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    # Serialize every gh-pages writer under one group. The flatpak-build
+    # workflow shares this exact group name so a main push (which triggers both
+    # this deploy and the flatpak publish) never pushes to gh-pages from two
+    # jobs at once — a concurrent push is rejected non-fast-forward and, with
+    # keep_files, order between the two doesn't matter.
+    concurrency:
+      group: gh-pages-deploy
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
 

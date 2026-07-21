@@ -292,7 +292,19 @@
      (string-append "vulkanincludes = " (or (getenv "KRUDD_VULKAN_CFLAGS") ""))
      (string-append "vulkanlibs = " (or (getenv "KRUDD_VULKAN_LIBS")
                                         "-lvulkan"))
-     "cflags = -std=gnu11 -Wall -Werror -Wpedantic"
+     ;;! -fPIC on every object, because the SDK toolchain links executables as
+     ;;! PIE by default. A non-PIC object that references an exported *data*
+     ;;! symbol from a shared library (e.g. QCoreApplication::self, or libc's
+     ;;! stdout/stderr) forces the linker to emit a COPY relocation: the symbol
+     ;;! is duplicated into the executable's .bss, and the shared library's own
+     ;;! internal reference no longer sees writes to the executable's copy. For
+     ;;! Qt that desyncs QCoreApplication::self — QApplication's ctor sets one
+     ;;! copy while screen setup reads the other (still null), a null-deref at
+     ;;! offset 8 deep in libQt6Core during construction (issue #715). -fPIC
+     ;;! routes the access through the GOT instead, so there is a single shared
+     ;;! copy and no crash. Cheap insurance for the C sources; mandatory once a
+     ;;! `(qt)` executable is in the graph.
+     "cflags = -std=gnu11 -fPIC -Wall -Werror -Wpedantic"
      ;;! C++20 (not gnu11 — that was a stale copy of $cflags from before any
      ;;! native .cpp source existed to compile with it) so a `(qt)` source can
      ;;! use Qt6 (which requires C++17) and designated initializers (which,
@@ -302,7 +314,7 @@
      ;;! sources, not a differently-shaped one. -Wpedantic is unforgiving of
      ;;! Qt's own headers on some toolchains; if a Qt roll ever trips it, narrow the
      ;;! flag to the qt-only compile rule rather than loosening it globally.
-     "cxxflags = -std=c++20 -Wall -Werror -Wpedantic"
+     "cxxflags = -std=c++20 -fPIC -Wall -Werror -Wpedantic"
      ;;! --use-port=emdawnwebgpu enables the WebGPU (Dawn) headers + JS glue;
      ;;! emscripten requires it at both compile and link, so it rides on the
      ;;! wasm C compile flags here and the main-module link flags below.

@@ -17,21 +17,47 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#include <process.h> /* _spawnlp, _P_WAIT — route shell-outs through sh below */
+#endif
+
 #include "s7.h"
 
 #define PROJECT_SUFFIX ".krudd-project"
 #define MAX_PROJECTS   64
 #define NAME_MAX_LEN   256
 
+/*
+ * Run a command through a POSIX shell and return its exit status (0 / -1).
+ *
+ * On POSIX this is plain system(). On Windows the CRT's system() shells out to
+ * cmd.exe, whose builtins (mkdir, date) and redirection syntax don't match the
+ * POSIX one-liners the build specs emit — `mkdir -p`, `date -u +…`,
+ * `2>/dev/null` (see build.scm, ninja.scm, introspect.scm). The build always
+ * runs under MSYS2 (see the Windows editor CI), so sh is on PATH: route through
+ * it. Passing cmd as a single spawn argument — not embedded in another quoted
+ * string — lets the MSYS2 runtime de-quote it the way sh expects, so nothing
+ * here has to re-quote cmd's own quotes.
+ */
+static int shell_run(const char *cmd)
+{
+#ifdef _WIN32
+	intptr_t rc = _spawnlp(_P_WAIT, "sh", "sh", "-c", cmd, (char *)NULL);
+
+	return (rc == 0) ? 0 : -1;
+#else
+	int rc = system(cmd);
+
+	return (rc == 0) ? 0 : -1;
+#endif
+}
+
 /* Echo then run a shell command; return 0 on success, -1 otherwise. */
 static int run(const char *cmd)
 {
-	int rc;
-
 	printf("krudd: $ %s\n", cmd);
 	fflush(stdout);
-	rc = system(cmd);
-	return (rc == 0) ? 0 : -1;
+	return shell_run(cmd);
 }
 
 static const char *getenv_or(const char *key, const char *dflt)
@@ -66,6 +92,87 @@ static s7_pointer krudd_run(s7_scheme *sc, s7_pointer args)
 	return s7_make_integer(sc, run(s7_string(cmd)));
 }
 
+#ifdef _WIN32
+/*
+ * (system cmd [capture]) — override s7's built-in on Windows so Scheme's
+ * `system` calls go through sh too, the same as `run`. Without this, the
+ * build's `(system "mkdir -p …")` (ninja.scm) and `(system … #t)` metadata
+ * probes (introspect.scm's git/date) would hit cmd.exe and fail. Matches s7's
+ * contract: a true second argument captures stdout and returns it as a string;
+ * otherwise return the exit status. Left as s7's own primitive on POSIX so
+ * those builds are byte-for-byte unchanged.
+ *
+ * Capture redirects the child's stdout to a temp file (paths slash-normalized
+ * so MSYS2 sh opens them) rather than _popen, which would itself relaunch
+ * cmd.exe — the whole point is to avoid it.
+ */
+static s7_pointer krudd_system(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer  cmd = s7_car(args);
+	const char *c;
+
+	if (!s7_is_string(cmd))
+		return s7_make_integer(sc, -1);
+	c = s7_string(cmd);
+
+	/* Capture requested when a second, non-#f argument is present. */
+	if (s7_is_pair(s7_cdr(args)) && s7_boolean(sc, s7_cadr(args))) {
+		char   *tmp = _tempnam(NULL, "kruddsys");
+		char   *redir, *out;
+		size_t  need, cap = 0, len = 0;
+		FILE   *f;
+		int     ch;
+		s7_pointer result;
+
+		if (!tmp)
+			return s7_make_string(sc, "");
+		for (char *p = tmp; *p; p++)
+			if (*p == '\\')
+				*p = '/';
+
+		need  = strlen(c) + strlen(tmp) + 8;
+		redir = (char *)malloc(need);
+		if (!redir) {
+			free(tmp);
+			return s7_make_string(sc, "");
+		}
+		snprintf(redir, need, "%s > \"%s\"", c, tmp);
+		shell_run(redir);
+		free(redir);
+
+		f = fopen(tmp, "rb");
+		if (!f) {
+			free(tmp);
+			return s7_make_string(sc, "");
+		}
+		out = NULL;
+		while ((ch = fgetc(f)) != EOF) {
+			if (len + 1 >= cap) {
+				size_t ncap = cap ? cap * 2 : 128;
+				char  *n    = (char *)realloc(out, ncap);
+
+				if (!n)
+					break;
+				out = n;
+				cap = ncap;
+			}
+			out[len++] = (char)ch;
+		}
+		fclose(f);
+		remove(tmp);
+		free(tmp);
+		if (!out)
+			return s7_make_string(sc, "");
+		out[len] = '\0';
+		result = s7_make_string(sc, out);
+		free(out);
+		return result;
+	}
+
+	return s7_make_integer(sc, shell_run(c));
+}
+#endif
+
 /*
  * `krudd build` loads build.scm and lets s7 drive. C provides the `run`
  * primitive; Scheme orchestrates. build.scm is part of the checkout, so a
@@ -97,6 +204,13 @@ static int cmd_build(void)
 
 	s7_define_function(s7, "run", krudd_run, 1, 0, false,
 			   "(run cmd) run a shell command, return its exit status");
+
+#ifdef _WIN32
+	/* Override s7's built-in `system` so the build's Scheme-level shell-outs
+	 * (mkdir, git, date — see krudd_system) go through sh rather than cmd.exe. */
+	s7_define_function(s7, "system", krudd_system, 1, 1, false,
+			   "(system cmd [capture]) run a shell command via sh");
+#endif
 
 	/* Capture Scheme errors instead of letting them scribble on stderr. */
 	port  = s7_open_output_string(s7);

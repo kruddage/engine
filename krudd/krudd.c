@@ -42,8 +42,33 @@
 static int shell_run(const char *cmd)
 {
 #ifdef _WIN32
-	intptr_t rc = _spawnlp(_P_WAIT, "sh", "sh", "-c", cmd, (char *)NULL);
+	/* Hand cmd to sh through a temp script file rather than `sh -c cmd`. The
+	 * mingw CRT does not reliably quote spawn arguments, so `sh -c cmd` can
+	 * arrive word-split at sh (e.g. `mkdir -p <path>` loses its path). With a
+	 * script file, sh's only argument is the script's own (space-free) temp
+	 * path, so there is nothing for the quoting mismatch to mangle — and cmd's
+	 * own quotes (introspect.scm's `cd "…" && git …`) pass through untouched. */
+	char    *path = _tempnam(NULL, "kruddsh");
+	FILE    *f;
+	intptr_t rc;
+	char    *p;
 
+	if (!path)
+		return -1;
+	for (p = path; *p; p++)
+		if (*p == '\\')
+			*p = '/';
+	f = fopen(path, "wb");
+	if (!f) {
+		free(path);
+		return -1;
+	}
+	fputs(cmd, f);
+	fputc('\n', f);
+	fclose(f);
+	rc = _spawnlp(_P_WAIT, "sh", "sh", path, (char *)NULL);
+	remove(path);
+	free(path);
 	return (rc == 0) ? 0 : -1;
 #else
 	int rc = system(cmd);

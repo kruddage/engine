@@ -56,6 +56,17 @@
 ;;! keeping this the same env-driven shape as KRUDD_CC / KRUDD_EXTRA_* above.
 (define (ninja-exe-suffix) (or (getenv "KRUDD_EXE_SUFFIX") ""))
 
+;;! Escape a literal path for a ninja *path position* (an edge's in/out list).
+;;! Ninja reads ':' and ' ' there as syntax, so a Windows drive-letter path
+;;! (D:/…) in a build edge is a parse error ("expected newline, got ':'") unless
+;;! the colon is written $: — escape both it and spaces. A no-op on POSIX paths,
+;;! which carry neither, so Linux/the Deck output stays byte-for-byte unchanged.
+;;! Only the few literal absolute paths emitted into edges need it (the regen
+;;! inputs, the copied static assets); paths that ride a $srcroot variable expand
+;;! after parsing and never carry a literal colon.
+(define (ninja-escape-path p)
+  (krudd-replace (krudd-replace p ":" "$:") " " "$ "))
+
 (define ninja-lines '())
 (define ninja-native '())
 (define ninja-wasm '())
@@ -495,7 +506,8 @@
   (for-each
    (lambda (name)
      (ninja-emit (string-append "build " name ": copy "
-                                (string-append srcroot "/core/" name)))
+                                (ninja-escape-path
+                                 (string-append srcroot "/core/" name))))
      (ninja-wasm! name))
    (list "manifest.webmanifest" "sw.js" "icon-192.png" "icon-512.png"))
   (ninja-emit ""))
@@ -605,7 +617,8 @@
         (ninja-emit (string-append
                      "build build.ninja: regen "
                      (ninja-join " "
-                                 (ninja-generator-inputs manifest srcroot))))
+                                 (map ninja-escape-path
+                                      (ninja-generator-inputs manifest srcroot)))))
         (ninja-emit (string-append "  regen_cmd = " regen-cmd))
         (ninja-emit ""))))
 

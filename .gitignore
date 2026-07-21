@@ -5,6 +5,14 @@
 krudd/krudd
 public/
 
+# s7 artifacts fetched from the kruddage/s7 release by
+# krudd/third_party/sync.sh (see krudd/third_party/VENDOR.md) — pinned in
+# s7.artifact and checksum-verified, not committed.
+/krudd/third_party/s7.h
+/krudd/third_party/libs7-linux-x86_64.a
+/krudd/third_party/libs7-wasm32.a
+/krudd/third_party/krudds7-linux-x86_64
+
 # local env written by setup.sh (machine-specific paths)
 .krudd-env
 /tools/render-diff/out/

@@ -39,10 +39,14 @@ jobs:
       # The editor compiles entirely inside the flatpak-builder sandbox against
       # org.kde.Sdk's own Qt6 and Vulkan loader/headers, so the runner needs
       # nothing but the Flatpak tooling — no toolchain, no prebuilt GPU library.
+      # elfutils provides eu-strip, which flatpak-builder invokes to split debug
+      # info off the built binary. Without it the build fails at the strip step
+      # ("Failed to execute child process eu-strip") after a clean compile, so
+      # nothing is ever exported or published.
       - name: Install Flatpak tooling
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder elfutils
 
       - name: Add Flathub remote (org.kde.Platform/Sdk)
         run: |

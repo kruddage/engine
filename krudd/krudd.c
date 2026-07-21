@@ -41,6 +41,21 @@ static const char *getenv_or(const char *key, const char *dflt)
 	return (v && *v) ? v : dflt;
 }
 
+/* setenv is POSIX; mingw/Windows only ships _putenv_s. Wrap the platform call
+ * behind one helper that keeps setenv's (name, value, overwrite) contract —
+ * overwrite == 0 leaves an existing value untouched — so cmd_editor reads the
+ * same on every host (the native editor targets Windows too, see krudd_qt.cpp). */
+static int krudd_setenv(const char *name, const char *value, int overwrite)
+{
+#ifdef _WIN32
+	if (!overwrite && getenv(name))
+		return 0;
+	return _putenv_s(name, value);
+#else
+	return setenv(name, value, overwrite);
+#endif
+}
+
 /* (run "cmd") from Scheme -> run the shell command, return its exit status. */
 static s7_pointer krudd_run(s7_scheme *sc, s7_pointer args)
 {
@@ -131,8 +146,8 @@ static int cmd_editor(void)
 
 	/* Pull the (vulkan) backend and (qt) window targets into the native
 	 * graph for this build. Do not clobber an explicit value. */
-	setenv("KRUDD_VULKAN", "1", 0);
-	setenv("KRUDD_QT", "1", 0);
+	krudd_setenv("KRUDD_VULKAN", "1", 0);
+	krudd_setenv("KRUDD_QT", "1", 0);
 
 	if (cmd_build() != 0)
 		return -1;

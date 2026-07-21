@@ -65,7 +65,7 @@
               (qt)
               (link "renderer_vulkan" "scene_renderer"
                     "frame_graph" "entity_plugin" "asset_plugin" "edit_plugin"
-                    "mesh_script" "texture_script" "particles"
+                    "mesh_script" "texture_script" "particles" "viewport_pick"
                     "subsystem" "subsystem_manager" "log" "memory" "script" "m"))
 
   (executable "subsystem_test"

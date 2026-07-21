@@ -81,7 +81,9 @@ extern "C" {
 #include "renderer.h"        /* struct gpu_api — the backend's vtable */
 #include "camera_api.h"      /* set the projection aspect to the viewport */
 #include "entity_api.h"      /* the "scene" api: clear/build the world (Open) */
+#include "asset_api.h"       /* the "asset" api: mesh source for click-to-pick */
 #include "editor_boot.h"     /* the native render-cluster boot */
+#include "viewport_pick.h"   /* the shared click-to-pick raycast (#697) */
 #include "vulkan_platform.h" /* the native windowing host seam (VkSurfaceKHR) */
 }
 
@@ -99,7 +101,10 @@ extern "C" {
 #include <QtGui/QAction>
 #include <QtGui/QCloseEvent>
 #include <QtGui/QGuiApplication>
+#include <QtGui/QKeyEvent>
+#include <QtGui/QMouseEvent>
 #include <QtGui/QShortcut>
+#include <QtGui/QWheelEvent>
 #include <QtGui/QWindow>
 #include <QtGui/qguiapplication_platform.h>
 /* The wl_surface behind a QWindow. Qt exposes the *application*-level Wayland
@@ -173,6 +178,139 @@ static struct subsystem_manager manager;
 class KruddViewportWindow : public QWindow {
 public:
 	KruddViewportWindow() { setSurfaceType(QSurface::VulkanSurface); }
+
+	/*
+	 * The engine apis the viewport drives (#697): the scene for the pick
+	 * selection, the camera for orbit/pan/dolly, and asset + memory for the
+	 * click-to-pick mesh gen. All null until the render cluster boots (set in
+	 * main after editor_boot_cluster), so every handler guards them — a press
+	 * before the device is up is simply ignored.
+	 */
+	const struct entity_api *scene  = nullptr;
+	const struct camera_api *camera = nullptr;
+	const struct asset_api  *asset  = nullptr;
+	const struct memory_api *mem    = nullptr;
+
+protected:
+	/*
+	 * Route the embedded window's pointer + keyboard into the engine. These
+	 * are plain virtual overrides — no Q_OBJECT, no slots — so they need no
+	 * moc, keeping the (qt) build clause a bare compile of this .cpp (see the
+	 * file's MOC-FREE note).
+	 *
+	 * Left drag orbits, middle/right drag pans, the wheel dollies; a left
+	 * click that never turned into a drag picks the entity under the cursor.
+	 * Arrow keys nudge the orbit and Home reframes with the scene camera.
+	 */
+	void mousePressEvent(QMouseEvent *e) override
+	{
+		m_drag      = e->button();
+		m_press_pos = e->position();
+		m_last_pos  = e->position();
+		m_moved     = false;
+		requestActivate(); /* take keyboard focus for the key nav below */
+	}
+
+	void mouseMoveEvent(QMouseEvent *e) override
+	{
+		if (m_drag == Qt::NoButton || !camera)
+			return;
+
+		QPointF p = e->position();
+		QPointF d = p - m_last_pos;
+		float   w = width()  > 0 ? (float)width()  : 1.0f;
+		float   h = height() > 0 ? (float)height() : 1.0f;
+
+		m_last_pos = p;
+		if ((p - m_press_pos).manhattanLength() > 3)
+			m_moved = true; /* past this it's a drag, not a click */
+
+		if (m_drag == Qt::LeftButton) {
+			/* A full-window drag sweeps about a half turn each axis. */
+			if (camera->orbit)
+				camera->orbit(-(float)d.x() / w * 3.14159265f,
+					      -(float)d.y() / h * 3.14159265f);
+		} else if (m_drag == Qt::MiddleButton ||
+			   m_drag == Qt::RightButton) {
+			if (camera->pan)
+				camera->pan((float)d.x() / w, (float)d.y() / h);
+		}
+	}
+
+	void mouseReleaseEvent(QMouseEvent *e) override
+	{
+		/* A left press that never became a drag is a pick; a drag was a
+		 * camera move and selects nothing. */
+		if (m_drag == Qt::LeftButton && !m_moved &&
+		    scene && scene->set_selected)
+			scene->set_selected(pick_at(e->position()));
+		m_drag  = Qt::NoButton;
+		m_moved = false;
+	}
+
+	void wheelEvent(QWheelEvent *e) override
+	{
+		if (camera && camera->dolly) {
+			/* angleDelta is in eighths of a degree; a notch is 120. */
+			float steps = (float)e->angleDelta().y() / 120.0f;
+
+			camera->dolly(steps * 0.1f);
+			e->accept();
+		}
+	}
+
+	void keyPressEvent(QKeyEvent *e) override
+	{
+		if (!camera) {
+			QWindow::keyPressEvent(e);
+			return;
+		}
+		switch (e->key()) {
+		case Qt::Key_Left:
+			if (camera->orbit) camera->orbit(-0.1f, 0.0f);
+			break;
+		case Qt::Key_Right:
+			if (camera->orbit) camera->orbit(0.1f, 0.0f);
+			break;
+		case Qt::Key_Up:
+			if (camera->orbit) camera->orbit(0.0f, 0.1f);
+			break;
+		case Qt::Key_Down:
+			if (camera->orbit) camera->orbit(0.0f, -0.1f);
+			break;
+		case Qt::Key_Home:
+			if (camera->reset_view) camera->reset_view();
+			break;
+		default:
+			QWindow::keyPressEvent(e);
+		}
+	}
+
+private:
+	/* Pick the entity under a window-relative pixel, in the same logical-pixel
+	 * space as the per-frame aspect sync, so the ray matches what was drawn. */
+	int32_t pick_at(const QPointF &pos)
+	{
+		struct mat4 vp;
+		const struct world *w;
+
+		if (!scene || !camera || !asset || !mem)
+			return -1;
+		w = scene->get_world();
+		if (!w)
+			return -1;
+		camera->get_view_proj(&vp);
+		return viewport_pick_entity(w, &vp, (float)pos.x(),
+					    (float)pos.y(),
+					    width() > 0 ? (float)width() : 1.0f,
+					    height() > 0 ? (float)height() : 1.0f,
+					    asset, mem);
+	}
+
+	QPointF         m_press_pos;
+	QPointF         m_last_pos;
+	Qt::MouseButton m_drag  = Qt::NoButton;
+	bool            m_moved = false;
 };
 
 /*
@@ -648,6 +786,19 @@ int main(int argc, char **argv)
 		subsystem_manager_get_api(&manager, "camera"));
 	scene = static_cast<const struct entity_api *>(
 		subsystem_manager_get_api(&manager, "scene"));
+
+	/*
+	 * Hand the viewport its apis so its pointer/key handlers can pick and
+	 * navigate (#697): the scene for the selection, the camera for orbit/pan/
+	 * dolly, and asset + memory for the click-to-pick mesh gen. Set after the
+	 * cluster so they are live before the first event; the memory api is the
+	 * file's own static table, the same one the subsystems run on.
+	 */
+	viewport->scene  = scene;
+	viewport->camera = camera;
+	viewport->asset  = static_cast<const struct asset_api *>(
+		subsystem_manager_get_api(&manager, "asset"));
+	viewport->mem    = &g_mem_api;
 
 	renderer_badge->setText(QStringLiteral("Vulkan · native · ") +
 				QGuiApplication::platformName());

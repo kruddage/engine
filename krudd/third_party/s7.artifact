@@ -4,25 +4,32 @@
 # place the s7 pin lives — see VENDOR.md for the fetch mechanism and license
 # rationale.
 #
-# Re-vendoring: bump S7_VERSION/S7_DATE/S7_COMMIT to the new upstream commit,
-# update S7_C_SHA256/S7_H_SHA256, then delete the committed s7.c/s7.h and
-# re-run sync.sh (or krudd.sh) — it downloads the new pin, fails loudly if
-# these checksums weren't updated to match, and the result should be
-# committed back to the repo.
+# s7 is no longer tracked against upstream here: the org's kruddage/s7 repo
+# (https://github.com/kruddage/s7) re-cuts upstream S7 Scheme releases as our
+# own GitHub Releases and owns the wasm KRUDD-LOCAL PATCH. The engine pins one
+# of those releases below; the committed s7.c/s7.h are a checksum-verified
+# cache of that release's source assets.
 #
-# WARNING: s7.c carries a LOCAL PATCH (search KRUDD-LOCAL PATCH in it; rationale
-# in VENDOR.md "Local patches"), so S7_C_SHA256 below is the checksum of the
-# PATCHED file, NOT of the upstream download. Re-vendoring must re-apply the
-# patch before recomputing it — otherwise sync.sh silently overwrites s7.c with
-# pristine upstream and reintroduces a wasm-only crash the native suite cannot
-# see. Verify in a browser after any bump.
+# Re-vendoring: bump S7_RELEASE to a newer kruddage/s7 release and update
+# S7_C_SHA256/S7_H_SHA256 to that release's assets, then delete the committed
+# s7.c/s7.h and re-run sync.sh (or krudd.sh) — it downloads the pinned release
+# assets, fails loudly if these checksums weren't updated to match, and the
+# result should be committed back to the repo.
+#
+# NOTE: the wasm-only KRUDD-LOCAL PATCH (search it in s7.c; rationale in
+# VENDOR.md "Local patches") now lives in kruddage/s7, so the release assets
+# ship pre-patched and S7_C_SHA256 below is the checksum of the release's
+# (already-patched) s7.c. There is no separate re-apply step in this repo
+# anymore — picking a kruddage/s7 release that carries the patch is the whole
+# job. Verify in a browser after any bump; the native suite cannot see a
+# wasm-only signature mismatch. S7_VERSION/S7_DATE are upstream provenance.
 
 S7_VERSION="10.8"
 S7_DATE="17-Apr-2024"
-S7_COMMIT="85bf12688518a5b4f40ef6f4b45338f770abc03c"
+S7_RELEASE="v10.8-krudd.1"
 
-S7_C_URL="https://raw.githubusercontent.com/aboalang/s7/$S7_COMMIT/s7.c"
-S7_H_URL="https://raw.githubusercontent.com/aboalang/s7/$S7_COMMIT/s7.h"
+S7_C_URL="https://github.com/kruddage/s7/releases/download/$S7_RELEASE/s7.c"
+S7_H_URL="https://github.com/kruddage/s7/releases/download/$S7_RELEASE/s7.h"
 
 S7_C_SHA256="2a7f4438a2f82d3d2e05f9dd55ad345034fcb53ae2a34eaa287e75868e04f531"
 S7_H_SHA256="4054fd2b3dfd2416a87312e8ae78f5dbb4ec9c02031b10030634d555b27bc826"

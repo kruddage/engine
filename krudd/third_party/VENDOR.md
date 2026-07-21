@@ -1,10 +1,13 @@
 # s7 Scheme (krudd's build interpreter) — vendored
 
-`s7.c` / `s7.h` are third-party source, **not** engine-authored code, and are
-committed to this repo at the pinned commit in `s7.artifact`. `sync.sh` checks
-the sha256 of the committed files before any build compiles them, so every
-build compiles the exact same bytes; it can also (re-)download them from the
-pinned commit when re-vendoring (see Pin below). They keep their upstream
+`s7.c` / `s7.h` are third-party source, **not** engine-authored code. They come
+from the org's own **[kruddage/s7](https://github.com/kruddage/s7)** repo, which
+re-cuts upstream S7 Scheme releases as our GitHub Releases; the engine pins one
+of those releases in `s7.artifact` and commits its `s7.c`/`s7.h` as a
+checksum-verified cache. `sync.sh` checks the sha256 of the committed files
+before any build compiles them, so every build compiles the exact same bytes;
+it can also (re-)download them from the pinned release when re-vendoring (see
+Pin below). They keep their upstream
 `SPDX-License-Identifier: 0BSD` header and are **not** stamped with the
 project's `GPL-2.0-or-later` line — that line marks our own files; s7 keeps
 its own notice (see `LICENSE.s7`).
@@ -28,39 +31,37 @@ or a re-vendor bumped the pin.
 
 | Field    | Value |
 |----------|-------|
-| Version  | s7 **10.8** |
-| Date     | 17-Apr-2024 (upstream `S7_DATE`) |
+| Version  | s7 **10.8** (17-Apr-2024, upstream `S7_DATE`) |
+| Release  | **kruddage/s7 `v10.8-krudd.1`** (see `S7_RELEASE` in `s7.artifact`) |
 | License  | 0BSD (Zero-Clause BSD) — permissive, zero conditions |
 | Upstream | https://ccrma.stanford.edu/software/snd/snd/s7.html |
-| Mirror   | https://raw.githubusercontent.com/aboalang/s7, pinned by commit (see `s7.artifact`) |
+| Source   | https://github.com/kruddage/s7/releases — the org's re-cut of upstream |
 
 s7 is a single-file, rolling release identified by version + date rather than a
-git tag, so the pin is a mirror commit whose `s7.c`/`s7.h` match that
-version+date exactly. Re-vendoring means bumping `s7.artifact` (version, date,
-commit, checksums) — see the comment at the top of that file.
+git tag upstream, so kruddage/s7 wraps each version+date it re-cuts in a tagged
+GitHub Release (source drop + prebuilt libs). The engine pins one such release
+and fetches its `s7.c`/`s7.h` assets. Re-vendoring means pointing `s7.artifact`
+at a newer kruddage/s7 release (release tag + checksums) — see the comment at
+the top of that file.
 
 ## Local patches
 
-`s7.c` is **no longer byte-identical to the pinned upstream commit.** We carry
-one local patch; `S7_C_SHA256` in `s7.artifact` is therefore the checksum of the
-*patched* file, not of the upstream download.
+`s7.c` is **not byte-identical to upstream**: it carries one patch (search
+`KRUDD-LOCAL PATCH` in `s7.c`). That patch now lives in **kruddage/s7**, which
+ships it pre-applied in the release assets — so `S7_C_SHA256` in `s7.artifact`
+is the checksum of kruddage/s7's (already-patched) release `s7.c`, and there is
+no separate re-apply step in this repo anymore.
 
 | Patch | Where | Why |
 |---|---|---|
 | Drop the `(string-ref var 0)` → `string_ref_p_p0` swap in the `p_pi` branch of the fx optimizer | `s7.c`, search `KRUDD-LOCAL PATCH` | Upstream stores an `s7_p_pp_t` and then calls it through `s7_p_pi_t`. Benign UB on a register ABI; a hard `indirect call signature mismatch` trap on wasm, which killed the frame loop on any `(string-ref name 0)`. |
 
-**Re-vendoring now has an extra step, and getting it wrong fails silently.**
-`sync.sh` re-downloads whenever the committed file doesn't match `S7_C_SHA256`,
-so a bump that only updates the checksums will quietly replace the patched
-`s7.c` with pristine upstream and reintroduce the trap — with a green native
-suite, because nothing native can see it. To re-vendor:
-
-1. Check whether upstream fixed it (the `p_pi` branch near `fx_c_si_direct`). If
-   so, drop the patch and this section, and take the plain upstream file.
-2. If not, download upstream, re-apply the patch, *then* set `S7_C_SHA256` from
-   the patched file.
-3. Either way, verify in a **browser** — load a game and tap the board. The
-   native suite cannot catch a wasm-only signature mismatch.
+Re-vendoring here is just repinning: point `s7.artifact` at a kruddage/s7
+release that carries the patch and set the checksums from its assets. The
+patch's own upstreaming (checking whether upstream fixed the `p_pi` branch near
+`fx_c_si_direct`, dropping it if so) is now kruddage/s7's job. Either way,
+verify a bump in a **browser** — load a game and tap the board; the native
+suite cannot catch a wasm-only signature mismatch.
 
 ## License compatibility
 

@@ -4,10 +4,18 @@
  *
  * The native editor (see docs/qt-editor-shell.md and #675): the engine's
  * WebGPU backend on pinned native Dawn, through the webgpu_platform.h seam,
- * with an animated-clear proof of life in the viewport. A QMainWindow with
- * real editor chrome owns the window and hands Dawn its native surface, with
- * the viewport a QWindow embedded via QWidget::createWindowContainer. That
- * embedded QWindow is the "canvas is a window" viewport #675 asks for.
+ * rendering a live engine scene in the viewport. A QMainWindow with real
+ * editor chrome owns the window and hands Dawn its native surface, with the
+ * viewport a QWindow embedded via QWidget::createWindowContainer. That embedded
+ * QWindow is the "canvas is a window" viewport #675 asks for.
+ *
+ * The viewport shows a real scene, not a clear: after the device lands this
+ * boots the engine's render cluster natively (editor_boot_cluster — asset,
+ * entity, frame_graph, scene_renderer), and scene_renderer seeds and draws the
+ * same built-in demo scene the web canvas shows on load (a floor, box, sphere,
+ * pyramid and rook under a sun, framed by an orbit camera). The whole native
+ * chain — window -> surface -> Dawn -> the real forward pass -> present — is
+ * what proves #675's "a scene renders inside the editor window".
  *
  * The chrome is the authoring surface #676 asks for, laid out but not yet
  * wired: a File/Edit/View/Help menu bar like a normal desktop app, and the
@@ -18,12 +26,12 @@
  * the running image (scene graph, inspector edits, live REPL, project
  * open/save) is the rest of #676, not this pass.
  *
- * Scope for the viewport is deliberately narrow: this
- * does NOT run engine.c's full (Emscripten-only) boot. It drives the backend
- * directly through the gpu_api vtable — an animated clear, redrawn every
- * frame — the same exercise of surface configuration, per-frame acquire, a
- * render pass, submit and present. Rendering the actual scene through this
- * shell is the next step, not this one.
+ * Scope: this boots the render cluster, not engine.c's full (Emscripten-only)
+ * boot. The browser-bound / interactive layer — the kruddgui canvas overlay,
+ * the IndexedDB/fetch asset origins, the games and the live REPL — is left out
+ * (editor_boot.c lists exactly what and why); wiring the docks to the running
+ * image (scene tree, inspector, REPL, project open/save) is #676's authoring
+ * surface, not this pass.
  *
  * DELIBERATELY MOC-FREE. Nothing here declares Q_OBJECT, a signal, or a
  * slot — every connection is to a Qt-supplied QObject (qApp, a QTimer, a
@@ -61,8 +69,11 @@ extern "C" {
 #include "log_api.h"
 #include "memory.h"
 #include "memory_api.h"
+#include "stats_api.h"       /* entity reads the frame delta off "stats" */
 #include "script.h"
 #include "renderer.h"        /* struct gpu_api — the backend's vtable */
+#include "camera_api.h"      /* set the projection aspect to the viewport */
+#include "editor_boot.h"     /* the native render-cluster boot */
 #include "webgpu_platform.h" /* the native windowing host seam */
 }
 
@@ -122,9 +133,18 @@ static const struct memory_api g_mem_api = {
 	.pool_destroy = mem_pool_destroy,
 };
 
+/*
+ * Mutable, updated each frame with the real inter-frame delta: the entity
+ * subsystem reads last_frame_ms off "stats" to advance the seeded scene's
+ * scripts (the spinner, the orbit camera), the same way the browser feeds it
+ * the rAF delta. Zero here would freeze the scene on its rest pose.
+ */
+static struct stats_api g_stats_api;
+
 static const struct subsystem subsystems[] = {
 	{ .name = "log",    .api = &g_log_api, .init = log_init, .shutdown = log_shutdown },
 	{ .name = "memory", .api = &g_mem_api, .init = mem_init, .shutdown = mem_shutdown },
+	{ .name = "stats",  .api = &g_stats_api                                           },
 	{ }
 };
 
@@ -240,36 +260,6 @@ static void window_drawable_size(uint32_t *w, uint32_t *h, void *user)
 
 	*w = (pw > 0) ? static_cast<uint32_t>(pw) : 1u;
 	*h = (ph > 0) ? static_cast<uint32_t>(ph) : 1u;
-}
-
-/* ------------------------------------------------------------- the frame */
-
-/*
- * One frame: clear the backbuffer to an animated colour and present it — the
- * animated clear (three sines 120 degrees apart) that is this harness's
- * proof-of-life artifact.
- */
-static void draw_frame(const struct gpu_api *gpu, uint32_t frame)
-{
-	struct gpu_render_pass_desc rp;
-	gpu_cmd_buf_t cmd;
-	float t = static_cast<float>(frame) * 0.02f;
-
-	memset(&rp, 0, sizeof(rp));
-	rp.color_count        = 1;
-	rp.color[0].texture   = nullptr; /* the backbuffer */
-	rp.color[0].load_op   = GPU_LOAD_OP_CLEAR;
-	rp.color[0].store_op  = GPU_STORE_OP_STORE;
-	rp.color[0].clear[0]  = 0.5f + 0.5f * sinf(t);
-	rp.color[0].clear[1]  = 0.5f + 0.5f * sinf(t + 2.094f);
-	rp.color[0].clear[2]  = 0.5f + 0.5f * sinf(t + 4.188f);
-	rp.color[0].clear[3]  = 1.0f;
-
-	cmd = gpu->cmd_buf_begin();
-	gpu->cmd_begin_render_pass(cmd, &rp);
-	gpu->cmd_end_render_pass(cmd);
-	gpu->cmd_buf_submit(cmd);
-	gpu->frame_end(); /* releases the frame's surface texture and presents */
 }
 
 /* ------------------------------------------------------------- the shell */
@@ -545,18 +535,54 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+	/*
+	 * The device is live: boot the render cluster. scene_renderer's init
+	 * builds its pipelines against the device (hence after the wait above)
+	 * and seeds the built-in demo scene, so from here a tick draws a real
+	 * scene into the viewport. See editor_boot.c for the exact registration
+	 * order and what is deliberately left out.
+	 */
+	editor_boot_cluster(&manager);
+
+	/*
+	 * The camera-aspect half of the wasm viewport bridge, done here since
+	 * native has no kruddgui pointer: keep the projection matched to the
+	 * viewport's pixel ratio each frame (below), or the scene stretches on
+	 * any non-default aspect. Resolved after the cluster, which publishes it.
+	 */
+	const struct camera_api *camera = static_cast<const struct camera_api *>(
+		subsystem_manager_get_api(&manager, "camera"));
+
 	renderer_badge->setText(QStringLiteral("WebGPU · Dawn/Vulkan · native · ") +
 				QGuiApplication::platformName());
 
-	uint32_t frame = 0;
 	QElapsedTimer fps_clock;
 	fps_clock.start();
 	int frames_this_second = 0;
+	/* Real inter-frame delta feeding the "stats" api, so the scene animates. */
+	QElapsedTimer dt_clock;
+	dt_clock.start();
 
 	QTimer frame_timer;
 	QObject::connect(&frame_timer, &QTimer::timeout, [&]() {
-		subsystem_manager_tick(&manager); /* pump instance events */
-		draw_frame(gpu, frame++);
+		/* The delta the scene's scripts advance on (ms since last frame). */
+		g_stats_api.last_frame_ms = static_cast<float>(dt_clock.restart());
+
+		/* Match the projection to the live viewport so the scene never
+		 * stretches; aspect is a ratio, so logical size is enough. */
+		if (camera && camera->set_viewport && viewport->height() > 0)
+			camera->set_viewport(
+				static_cast<float>(viewport->width()),
+				static_cast<float>(viewport->height()));
+
+		/*
+		 * One frame: the backend pumps its instance, the scene subsystem
+		 * runs the entity scripts, and scene_renderer records and executes
+		 * the forward pass into the window's backbuffer — the registration
+		 * order (renderer, scene, scene_renderer) makes that the tick order.
+		 */
+		subsystem_manager_tick(&manager);
+		gpu->frame_end(); /* release the frame's surface texture and present */
 
 		res_readout->setText(QStringLiteral("%1×%2")
 			.arg(viewport->width())

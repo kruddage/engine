@@ -115,12 +115,14 @@ engine loop; the test stamps run the suite, so a green build is a green test run
 
 ### Native editor (SteamOS / Steam Deck)
 
-A **proof of life** for a future native editor: the same C engine that ships to the
-browser as WebAssembly also boots its WebGPU backend against **native Dawn** (Vulkan on
-the Deck's RDNA2) and presents into a real desktop window — no browser, no Emscripten in
-the path. Today the window renders an animated clear, which exercises the whole native
-chain (window → Wayland surface → Dawn → swapchain → render pass → present); rendering the
-actual scene natively is the next step, not this one.
+A native editor: the same C engine that ships to the browser as WebAssembly also boots
+its WebGPU backend against **native Dawn** (Vulkan on the Deck's RDNA2) and renders a
+**live engine scene** into a real desktop window — no browser, no Emscripten in the path.
+Once the device lands it boots the engine's render cluster natively (asset → entity →
+frame graph → scene renderer) and draws the built-in demo scene — the same floor, box,
+sphere, pyramid and rook the web canvas shows on load — through the real forward pass.
+The browser-bound authoring layer (the canvas UI, click-to-pick, the games, the live
+REPL) is the next step, tracked as follow-ups.
 
 The editor is the **Qt editor shell** — a `QMainWindow` with a menu bar, toolbar and
 Scene/Inspector/Assets/Console docks around the viewport. It is opt-in and left out of
@@ -154,8 +156,8 @@ way, no Flathub submission. See
 [`packaging/flatpak/`](packaging/flatpak/README.md) for install instructions
 and how to stand up your own signed registry on a fork; it's the same
 `gh-pages` deploy the WASM site already uses, just published to a `/flatpak/`
-subpath. The editor itself is still a proof of life (an animated clear, not a
-real scene), tracked separately.
+subpath. Wiring the editor's docks to the running scene (scene tree, inspector,
+REPL, project open/save) is tracked separately as the authoring surface.
 
 ## CI
 

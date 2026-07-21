@@ -1,21 +1,24 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
- * krudd_qt — the WebGPU backend, presenting into a Qt-hosted native window.
+ * krudd_qt — the native Vulkan backend, presenting into a Qt-hosted window.
  *
- * The native editor (see docs/qt-editor-shell.md and #675): the engine's
- * WebGPU backend on pinned native Dawn, through the webgpu_platform.h seam,
- * rendering a live engine scene in the viewport. A QMainWindow with real
- * editor chrome owns the window and hands Dawn its native surface, with the
- * viewport a QWindow embedded via QWidget::createWindowContainer. That embedded
- * QWindow is the "canvas is a window" viewport #675 asks for.
+ * The native editor (see docs/qt-editor-shell.md and #675/#705): the engine's
+ * Vulkan backend, through the vulkan_platform.h seam, driving a QWindow
+ * embedded in real editor chrome. A QMainWindow owns the window and hands the
+ * backend its VkSurfaceKHR; the viewport is a QWindow embedded via
+ * QWidget::createWindowContainer. That embedded QWindow is the "canvas is a
+ * window" viewport #675 asks for.
  *
- * The viewport shows a real scene, not a clear: after the device lands this
- * boots the engine's render cluster natively (editor_boot_cluster — asset,
- * entity, frame_graph, scene_renderer), and scene_renderer seeds and draws the
- * same built-in demo scene the web canvas shows on load (a floor, box, sphere,
- * pyramid and rook under a sun, framed by an orbit camera). The whole native
- * chain — window -> surface -> Dawn -> the real forward pass -> present — is
- * what proves #675's "a scene renders inside the editor window".
+ * WHAT RENDERS (see #705 and renderer_vulkan.c's SCOPE note): after the device
+ * lands this boots the engine's render cluster natively (editor_boot_cluster —
+ * asset, entity, frame_graph, scene_renderer) exactly as the web boot does, so
+ * the scene renderer records its built-in demo scene into the gpu_api. The
+ * Vulkan backend does not yet translate that draw stream — pipelines, buffers
+ * and draws are stubbed — so the viewport currently shows the backend's
+ * animated clear rather than the scene. The point of this pass is the
+ * *validated Vulkan base*: window -> VkSurfaceKHR -> a modern Vulkan 1.3 device
+ * with the Khronos validation layers on -> swapchain -> present, so the real
+ * forward pass is built and debugged against a loader that already talks back.
  *
  * The chrome is the authoring surface #676 asks for, laid out but not yet
  * wired: a File/Edit/View/Help menu bar like a normal desktop app, and the
@@ -26,42 +29,46 @@
  * the running image (scene graph, inspector edits, live REPL, project
  * open/save) is the rest of #676, not this pass.
  *
- * Scope: this boots the render cluster, not engine.c's full (Emscripten-only)
- * boot. The browser-bound / interactive layer — the kruddgui canvas overlay,
- * the IndexedDB/fetch asset origins, the games and the live REPL — is left out
- * (editor_boot.c lists exactly what and why); wiring the docks to the running
- * image (scene tree, inspector, REPL, project open/save) is #676's authoring
- * surface, not this pass.
- *
  * DELIBERATELY MOC-FREE. Nothing here declares Q_OBJECT, a signal, or a
  * slot — every connection is to a Qt-supplied QObject (qApp, a QTimer, a
  * QShortcut) through a lambda, which Qt6 allows without a generated moc
  * file. That keeps the kruddmake (qt) clause's job to "add -I/-l flags and
  * compile this .cpp with a C++ compiler" — the same shape as every other
- * native target, with no moc rule to add to ninja.scm. If a future pass
- * needs its own signals, that trade-off is worth revisiting; it is not
- * needed for a proof of life.
+ * native target, with no moc rule to add to ninja.scm.
  *
- * WAYLAND, THE HARD CASE (see the mockup discussed on #675): getting a
- * QWindow's wl_surface/wl_display out of Qt through *stable public* API
- * needs Qt >= 6.5 (QNativeInterface::QWaylandWindow /
- * QNativeInterface::QWaylandApplication). Verified against a real Qt 6.4.2
- * install (Ubuntu 24.04's system Qt) while writing this: that API is not
- * there, and the only pre-6.5 route is QGuiApplication::platformNativeInterface()
- * reaching into QPlatformNativeInterface, which ships only under
- * qt6-base-private-dev's versioned, ABI-unstable include path. Rather than
- * link the shipped harness against a private header, the Wayland path below
- * requires Qt >= 6.5 and fails the build with an actionable #error otherwise.
- * SteamOS's Arch-based toolchain (docs/qt-editor-shell.md) tracks current Qt,
- * so this is not expected to bite on the actual target hardware — but it is
- * the real, unresolved trade-off #675 asks this work to make explicitly.
- *
- * X11 and Windows do not have that problem: QWindow::winId() is the X11
- * window XID / the Win32 HWND directly, and QNativeInterface::QX11Application
- * (public since Qt 6.0) supplies the X11 Display*. The X11 path below was
- * exercised against a real (Xvfb) X server while writing this file; the
- * Windows path could not be, for lack of the hardware.
+ * SURFACE CREATION, PER PLATFORM. The window handles become a VkSurfaceKHR
+ * through the matching VK_KHR_*_surface entry point:
+ *   - Wayland (the Deck's primary path): QNativeInterface::QWaylandApplication
+ *     (public, Qt >= 6.5) gives the wl_display. The per-window wl_surface has
+ *     NO public API — QNativeInterface has no QWaylandWindow in any Qt 6
+ *     release — so it comes from the QPA native-resource lookup, the one
+ *     private header this file leans on. See docs/qt-editor-shell.md.
+ *   - X11/XWayland: QNativeInterface::QX11Application::connection() gives the
+ *     xcb_connection_t*, QWindow::winId() the window — vkCreateXcbSurfaceKHR.
+ *   - Windows: QWindow::winId() is the HWND — vkCreateWin32SurfaceKHR.
+ * The VK_USE_PLATFORM_* selection below deliberately avoids pulling the heavy
+ * native headers (Xlib.h, wayland-client.h): the Wayland/XCB Vulkan structs
+ * take pointers to incomplete types plus the one xcb_window_t alias, so this
+ * TU stays free of X11/Wayland macro pollution that would fight Qt's headers.
  */
+
+/* Select the WSI platform(s) before <vulkan/vulkan.h> is first pulled in
+ * (through vulkan_platform.h), so the matching VkCreate*SurfaceKHR entry points
+ * and structs are declared. xcb_window_t is the only native typedef needed —
+ * the xcb/wayland structs otherwise take pointers to incomplete types — so we
+ * alias it here rather than include <xcb/xcb.h> and its macro baggage. */
+#include <stdint.h>
+#if defined(_WIN32)
+/* vulkan_win32.h (pulled in below with the macro set) needs the Win32 types, so
+ * windows.h must precede it. */
+#  include <windows.h>
+#  define VK_USE_PLATFORM_WIN32_KHR
+#else
+#  define VK_USE_PLATFORM_WAYLAND_KHR
+#  define VK_USE_PLATFORM_XCB_KHR
+typedef uint32_t xcb_window_t;
+#endif
+
 extern "C" {
 #include "subsystem.h"
 #include "subsystem_manager.h"
@@ -74,7 +81,7 @@ extern "C" {
 #include "renderer.h"        /* struct gpu_api — the backend's vtable */
 #include "camera_api.h"      /* set the projection aspect to the viewport */
 #include "editor_boot.h"     /* the native render-cluster boot */
-#include "webgpu_platform.h" /* the native windowing host seam */
+#include "vulkan_platform.h" /* the native windowing host seam (VkSurfaceKHR) */
 }
 
 #include <cmath>
@@ -92,6 +99,13 @@ extern "C" {
 #include <QtGui/QShortcut>
 #include <QtGui/QWindow>
 #include <QtGui/qguiapplication_platform.h>
+/* The wl_surface behind a QWindow. Qt exposes the *application*-level Wayland
+ * handles publicly (QNativeInterface::QWaylandApplication, above) but has no
+ * public per-window equivalent — QNativeInterface has no QWaylandWindow, in any
+ * Qt 6 release. The QPA native-resource lookup is the only route to it, so this
+ * is a deliberate, contained use of one private header: a single "surface"
+ * query, whose result is null-checked below like any other handle. */
+#include <QtGui/qpa/qplatformnativeinterface.h>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QDockWidget>
 #include <QtWidgets/QLabel>
@@ -102,13 +116,9 @@ extern "C" {
 #include <QtWidgets/QToolBar>
 #include <QtWidgets/QWidget>
 
-#if defined(Q_OS_WIN)
-#include <windows.h>
-#endif
-
 extern "C" {
-void renderer_webgpu_plugin_entry(struct subsystem_manager *mgr);
-int  renderer_webgpu_device_ready(void);
+void renderer_vulkan_plugin_entry(struct subsystem_manager *mgr);
+int  renderer_vulkan_device_ready(void);
 }
 
 /* Mirrors engine.c's core service table — the same pair engine_native.c
@@ -151,12 +161,10 @@ static struct subsystem_manager manager;
 /*
  * The embedded native surface. A plain QWindow subclass — no Q_OBJECT, see
  * the file comment — set to VulkanSurface so QPA does not install its own
- * GL-backed backing store over a window an external API (Dawn) presents
- * into. Qt has no enumerator for "an external native API owns
- * this," so VulkanSurface is the closest honest answer on every platform
- * Dawn's native backend actually uses (Vulkan on Linux/the Deck; Dawn can
- * also run Vulkan on Windows, which is what this assumes — see the surface
- * note in window_create_surface if that ever needs to become D3D12-aware).
+ * GL-backed backing store over a window the Vulkan backend presents into. This
+ * is the honest enumerator now that the native backend is Vulkan directly:
+ * VulkanSurface on every platform it targets (Vulkan on Linux/the Deck, and
+ * Vulkan on Windows).
  */
 class KruddViewportWindow : public QWindow {
 public:
@@ -164,83 +172,85 @@ public:
 };
 
 /*
- * Build the WGPUSurface for the embedded viewport window. Called by the
- * backend through the webgpu_platform host, once, at device bring-up. NOTE ON
- * DAWN TYPE NAMES: the WGPUSurfaceSource* structs and
- * their WGPUSType_* tags track Dawn's webgpu.h at the pin
- * (tools/dawn-smoke/README.md). If a Dawn roll renames them, this function is
- * the only place to adjust (its X11/Windows/Wayland branches).
+ * Build the VkSurfaceKHR for the embedded viewport window. Called by the
+ * backend through the vulkan_platform host, once, at device bring-up. The
+ * per-platform branches mirror the VK_USE_PLATFORM_* selection at the top of
+ * the file; if a future platform is added, this function and that selection are
+ * the two places to touch.
  */
-static WGPUSurface window_create_surface(WGPUInstance instance, void *user)
+static VkSurfaceKHR window_create_surface(VkInstance instance, void *user)
 {
 	KruddViewportWindow *win = static_cast<KruddViewportWindow *>(user);
 	const QString platform = QGuiApplication::platformName();
-	WGPUSurfaceDescriptor sd;
+	VkSurfaceKHR surface = VK_NULL_HANDLE;
 
-	memset(&sd, 0, sizeof(sd));
-
-#if defined(Q_OS_WIN)
+#if defined(VK_USE_PLATFORM_WIN32_KHR)
 	if (platform == QLatin1String("windows")) {
-		WGPUSurfaceSourceWindowsHWND src;
+		VkWin32SurfaceCreateInfoKHR ci;
 
-		memset(&src, 0, sizeof(src));
-		src.chain.sType = WGPUSType_SurfaceSourceWindowsHWND;
-		src.hinstance   = GetModuleHandle(nullptr);
-		src.hwnd        = reinterpret_cast<HWND>(win->winId());
-		sd.nextInChain  = &src.chain;
-		return wgpuInstanceCreateSurface(instance, &sd);
+		memset(&ci, 0, sizeof(ci));
+		ci.sType     = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+		ci.hinstance = GetModuleHandle(nullptr);
+		ci.hwnd      = reinterpret_cast<HWND>(win->winId());
+		if (vkCreateWin32SurfaceKHR(instance, &ci, nullptr, &surface)
+		    != VK_SUCCESS)
+			return VK_NULL_HANDLE;
+		return surface;
 	}
 #endif
 
+#if defined(VK_USE_PLATFORM_XCB_KHR)
 	if (platform == QLatin1String("xcb")) {
 		auto *x11app =
 			qGuiApp->nativeInterface<QNativeInterface::QX11Application>();
-		WGPUSurfaceSourceXlibWindow src;
+		VkXcbSurfaceCreateInfoKHR ci;
 
-		if (!x11app || !x11app->display()) {
-			fprintf(stderr, "krudd_qt: no X11 display handle\n");
-			return nullptr;
+		if (!x11app || !x11app->connection()) {
+			fprintf(stderr, "krudd_qt: no X11/xcb connection\n");
+			return VK_NULL_HANDLE;
 		}
-		memset(&src, 0, sizeof(src));
-		src.chain.sType = WGPUSType_SurfaceSourceXlibWindow;
-		src.display     = x11app->display();
-		src.window      = static_cast<uint64_t>(win->winId());
-		sd.nextInChain  = &src.chain;
-		return wgpuInstanceCreateSurface(instance, &sd);
+		memset(&ci, 0, sizeof(ci));
+		ci.sType      = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
+		ci.connection = x11app->connection();
+		ci.window     = static_cast<xcb_window_t>(win->winId());
+		if (vkCreateXcbSurfaceKHR(instance, &ci, nullptr, &surface)
+		    != VK_SUCCESS)
+			return VK_NULL_HANDLE;
+		return surface;
 	}
+#endif
 
+#if defined(VK_USE_PLATFORM_WAYLAND_KHR)
 	if (platform == QLatin1String("wayland")) {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
-		auto *wlwin =
-			win->nativeInterface<QNativeInterface::QWaylandWindow>();
 		auto *wlapp =
 			qGuiApp->nativeInterface<QNativeInterface::QWaylandApplication>();
-		WGPUSurfaceSourceWaylandSurface src;
+		QPlatformNativeInterface *pni = qGuiApp->platformNativeInterface();
+		VkWaylandSurfaceCreateInfoKHR ci;
+		struct wl_surface *wlsurf = nullptr;
 
-		if (!wlwin || !wlapp || !wlwin->surface() || !wlapp->display()) {
+		if (pni)
+			wlsurf = static_cast<struct wl_surface *>(
+				pni->nativeResourceForWindow("surface", win));
+		if (!wlapp || !wlsurf || !wlapp->display()) {
 			fprintf(stderr, "krudd_qt: no Wayland handles\n");
-			return nullptr;
+			return VK_NULL_HANDLE;
 		}
-		memset(&src, 0, sizeof(src));
-		src.chain.sType = WGPUSType_SurfaceSourceWaylandSurface;
-		src.display     = wlapp->display();
-		src.surface     = wlwin->surface();
-		sd.nextInChain  = &src.chain;
-		return wgpuInstanceCreateSurface(instance, &sd);
-#else
-#error "krudd_qt: Wayland needs QNativeInterface::QWaylandWindow, added in " \
-       "Qt 6.5. Pre-6.5 Qt has no stable public way to reach a QWindow's " \
-       "wl_surface (see the file comment) — build with Qt >= 6.5, or add " \
-       "and own a private-header fallback deliberately rather than by " \
-       "accident here."
-#endif
+		memset(&ci, 0, sizeof(ci));
+		ci.sType   = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR;
+		ci.display = wlapp->display();
+		ci.surface = wlsurf;
+		if (vkCreateWaylandSurfaceKHR(instance, &ci, nullptr, &surface)
+		    != VK_SUCCESS)
+			return VK_NULL_HANDLE;
+		return surface;
 	}
+#endif
 
 	fprintf(stderr,
 		"krudd_qt: unsupported Qt platform plugin '%s' "
 		"(want windows, xcb or wayland)\n",
 		qPrintable(platform));
-	return nullptr;
+	return VK_NULL_HANDLE;
 }
 
 /* Physical (device) pixels: the backend configures the surface in physical
@@ -438,8 +448,8 @@ int main(int argc, char **argv)
 			QStringLiteral(
 				"<b>krudd — editor</b><br><br>"
 				"The Qt authoring surface (#676) around the "
-				"live WebGPU-native viewport (#675).<br><br>"
-				"The centre panel is a native Dawn/WebGPU "
+				"native Vulkan viewport (#675/#705).<br><br>"
+				"The centre panel is a native Vulkan "
 				"surface embedded via "
 				"QWidget::createWindowContainer. The docks "
 				"around it — Scene, Inspector, Assets and "
@@ -459,7 +469,7 @@ int main(int argc, char **argv)
 	QObject::connect(stop_action, &QAction::triggered,
 			 [=]() { coming_soon(QStringLiteral("Stop")); });
 	toolbar->addSeparator();
-	QLabel *renderer_badge = new QLabel(QStringLiteral("WebGPU — booting…"));
+	QLabel *renderer_badge = new QLabel(QStringLiteral("Vulkan — booting…"));
 	toolbar->addWidget(renderer_badge);
 
 	KruddViewportWindow *viewport = new KruddViewportWindow();
@@ -490,34 +500,34 @@ int main(int argc, char **argv)
 	default_state    = win.saveState();
 
 	/*
-	 * Register the window host BEFORE the backend boots: renderer_webgpu_init
+	 * Register the window host BEFORE the backend boots: renderer_vulkan_init
 	 * asks the platform seam for a surface during bring-up, and the host is
-	 * what turns that from "offscreen" into "this window".
+	 * what turns that from "headless" into "this window".
 	 */
-	struct webgpu_platform_host host;
+	struct vulkan_platform_host host;
 
 	memset(&host, 0, sizeof(host));
 	host.create_surface = window_create_surface;
 	host.drawable_size  = window_drawable_size;
 	host.user           = viewport;
-	webgpu_platform_set_host(&host);
+	vulkan_platform_set_host(&host);
 
 	subsystem_manager_init(&manager, subsystems);
 	script_init();
-	renderer_webgpu_plugin_entry(&manager);
+	renderer_vulkan_plugin_entry(&manager);
 
-	/* The adapter/device handshake is async even natively; keep the UI
-	 * responsive during the wait: Qt already owns an event loop, so
-	 * there is no reason not to pump it here too. */
+	/* Vulkan device bring-up is synchronous, but keep the loop (and the UI
+	 * pumping) so a backend that ever needs a few ticks to settle still
+	 * lands, and the window is responsive meanwhile. */
 	bool ready = false;
 	for (int i = 0; i < 1000 && !ready; i++) {
 		subsystem_manager_tick(&manager);
 		QApplication::processEvents();
-		ready = renderer_webgpu_device_ready();
+		ready = renderer_vulkan_device_ready();
 	}
 	if (!ready) {
 		fprintf(stderr, "krudd_qt: device never became ready\n");
-		webgpu_platform_set_host(nullptr);
+		vulkan_platform_set_host(nullptr);
 		subsystem_manager_shutdown(&manager);
 		return 1;
 	}
@@ -526,17 +536,19 @@ int main(int argc, char **argv)
 		subsystem_manager_get_api(&manager, "renderer"));
 	if (!gpu) {
 		fprintf(stderr, "krudd_qt: no renderer api\n");
-		webgpu_platform_set_host(nullptr);
+		vulkan_platform_set_host(nullptr);
 		subsystem_manager_shutdown(&manager);
 		return 1;
 	}
 
 	/*
-	 * The device is live: boot the render cluster. scene_renderer's init
-	 * builds its pipelines against the device (hence after the wait above)
-	 * and seeds the built-in demo scene, so from here a tick draws a real
-	 * scene into the viewport. See editor_boot.c for the exact registration
-	 * order and what is deliberately left out.
+	 * The device is live: boot the render cluster. scene_renderer seeds the
+	 * built-in demo scene and records it into the gpu_api each tick. The
+	 * Vulkan backend does not yet translate that draw stream (see
+	 * renderer_vulkan.c's SCOPE note), so the viewport shows the backend's
+	 * animated clear rather than the scene for now; the cluster still boots
+	 * so the whole path up to the backend runs. See editor_boot.c for the
+	 * registration order and what is deliberately left out.
 	 */
 	editor_boot_cluster(&manager);
 
@@ -549,7 +561,7 @@ int main(int argc, char **argv)
 	const struct camera_api *camera = static_cast<const struct camera_api *>(
 		subsystem_manager_get_api(&manager, "camera"));
 
-	renderer_badge->setText(QStringLiteral("WebGPU · Dawn/Vulkan · native · ") +
+	renderer_badge->setText(QStringLiteral("Vulkan · native · ") +
 				QGuiApplication::platformName());
 
 	QElapsedTimer fps_clock;
@@ -578,7 +590,7 @@ int main(int argc, char **argv)
 		 * order (renderer, scene, scene_renderer) makes that the tick order.
 		 */
 		subsystem_manager_tick(&manager);
-		gpu->frame_end(); /* release the frame's surface texture and present */
+		gpu->frame_end(); /* acquire, clear and present this frame */
 
 		res_readout->setText(QStringLiteral("%1×%2")
 			.arg(viewport->width())
@@ -594,13 +606,14 @@ int main(int argc, char **argv)
 			fps_clock.restart();
 		}
 	});
-	frame_timer.start(16); /* ~60Hz; Dawn/the compositor set the real pace */
+	frame_timer.start(16); /* ~60Hz; FIFO present / the compositor set the pace */
 
 	QObject::connect(&app, &QApplication::aboutToQuit, [&]() {
-		/* Clear the host before the backend releases the surface it
-		 * created, so the surface it created outlives the host. */
-		webgpu_platform_set_host(nullptr);
+		/* Shut the backend down first (it waits the device idle and
+		 * destroys the swapchain and surface), then clear the host — the
+		 * host outlives the surface it handed over. */
 		subsystem_manager_shutdown(&manager);
+		vulkan_platform_set_host(nullptr);
 	});
 
 	printf("krudd_qt: presenting on '%s' — close the window or press Esc "

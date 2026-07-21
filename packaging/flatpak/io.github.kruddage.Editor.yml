@@ -4,52 +4,40 @@ runtime-version: '6.7'
 sdk: org.kde.Sdk
 command: krudd-editor-qt
 
-# Vulkan for the native Dawn/WebGPU backend, plus a display socket. No
-# filesystem/network access requested — the editor doesn't need it yet.
+# Vulkan for the native backend, plus a display socket. No filesystem/network
+# access requested — the editor doesn't need it yet.
 finish-args:
   - --socket=wayland
   - --socket=fallback-x11
   - --device=dri
 
-# Dev headers/static libs from the dawn module below are only needed to link
-# krudd-editor; nothing under /app should still reference them afterward.
-cleanup:
-  - /include
-  - /lib/*.a
-  - /lib/pkgconfig
-
 modules:
-  # Native Dawn can't be built inside this sandbox: its own build fetches
-  # third-party deps via gclient, which doesn't fit flatpak-builder's
-  # declarative `sources:` model without vendoring every one of them
-  # individually. So it's built once on the CI runner (./setup.sh, the same
-  # pinned recipe docs/qt-editor-shell.md uses) and vendored in as a prebuilt
-  # static lib — the one deliberate exception to "build everything in the
-  # sandbox". The pin must stay in lockstep with setup.sh's DAWN_REV.
-  - name: dawn
-    buildsystem: simple
-    build-commands:
-      - mkdir -p /app/include /app/lib
-      - cp -r include/* /app/include/
-      - cp lib/libwebgpu_dawn.a /app/lib/
-    sources:
-      - type: dir
-        path: dawn-native
-        dest: dawn-native
-
-  # Everything else — krudd_qt.cpp, the rest of the engine, kruddmake itself
-  # — compiles fresh in here against org.kde.Sdk's own Qt6 (matching the
+  # The whole editor — krudd_qt.cpp, the rest of the engine, kruddmake itself —
+  # compiles fresh in here against org.kde.Sdk's own Qt6 (matching the
   # org.kde.Platform runtime's Qt6 at run time, unlike a binary built against
-  # the CI runner's system Qt) and the vendored Dawn above.
+  # the CI runner's system Qt) and the SDK's Vulkan loader + headers. Nothing is
+  # vendored: the native GPU path is Vulkan now, an ordinary system dependency
+  # the SDK already provides, so there is no prebuilt library to stage in (the
+  # old native-Dawn module is gone).
   - name: krudd-editor
     buildsystem: simple
     build-commands:
+      # Generate build.ninja with the Vulkan + Qt targets configured, then build
+      # only the editor binary (compile + link) rather than the whole native
+      # suite. KRUDD_GENERATE_ONLY stops krudd.sh short of driving ninja itself.
+      #
+      # krudd_qt.cpp needs one QPA private header for the Wayland surface
+      # lookup, which pkg-config does not report. org.kde.Sdk ships the private
+      # headers under <includedir>/QtGui/<ver>; derive that from pkg-config so
+      # this keeps working across runtime-version bumps.
       - >-
         cd krudd-src &&
-        KRUDD_DAWN_PREFIX=/app KRUDD_QT=1
-        KRUDD_QT_CFLAGS="$(pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core)"
+        KRUDD_VULKAN=1 KRUDD_QT=1 KRUDD_GENERATE_ONLY=1
+        KRUDD_QT_CFLAGS="$(pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core)
+        -I$(pkg-config --variable=includedir Qt6Gui)/QtGui/$(pkg-config --modversion Qt6Gui)"
         KRUDD_QT_LIBS="$(pkg-config --libs Qt6Widgets Qt6Gui Qt6Core)"
         ./krudd.sh build
+      - ninja -C krudd-src/build -f build.ninja bin/krudd_qt
       - install -Dm755 krudd-src/build/bin/krudd_qt /app/bin/krudd-editor-qt
       - install -Dm644 krudd-src/packaging/flatpak/io.github.kruddage.Editor.desktop
         /app/share/applications/io.github.kruddage.Editor.desktop
@@ -61,6 +49,5 @@ modules:
           - .git
           - build
           - build-*
-          - packaging/flatpak/dawn-native
           - packaging/flatpak/build-dir
           - packaging/flatpak/export-repo

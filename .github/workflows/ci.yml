@@ -274,3 +274,65 @@ jobs:
               await github.rest.issues.createComment(
                 { owner, repo, issue_number, body });
             }
+
+  # Build the native editor (krudd_qt) — the Qt shell on the native Vulkan
+  # backend (#705). COMPILE + LINK ONLY: it opens a window and needs a real GPU
+  # to run, so CI proves it builds, not that it renders. This is the gate that
+  # keeps the Vulkan backend and the Qt surface glue compiling as the tree
+  # moves. The web build (WebGL + WebGPU) is covered by the `build` job above and
+  # is untouched by this one — Vulkan is native only.
+  #
+  # Qt >= 6.5 is required: krudd_qt.cpp reaches a QWindow's wl_surface through
+  # QNativeInterface::QWaylandWindow, added in Qt 6.5, and #errors on older Qt
+  # (see krudd_qt.cpp and docs/qt-editor-shell.md). ubuntu-latest ships Qt 6.4,
+  # so the Qt here comes from install-qt-action rather than apt; the Vulkan
+  # loader, headers, validation layers and glslang are ordinary apt packages.
+  editor-linux:
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the Vulkan toolchain (loader, headers, validation, glslang)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang ninja-build curl \
+            libvulkan-dev vulkan-validationlayers glslang-tools
+
+      - name: Install Qt 6.8
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.1'
+          cache: true
+
+      - name: Build krudd_qt (compile + link, no run)
+        env:
+          CC: clang
+          KRUDD_CC: clang
+          KRUDD_CXX: clang++
+          KRUDD_VULKAN: '1'
+          KRUDD_QT: '1'
+          # Generate build.ninja without driving ninja, so the next step can
+          # build only the editor binary rather than the whole native suite.
+          KRUDD_GENERATE_ONLY: '1'
+        run: |
+          # install-qt-action lays Qt out under $QT_ROOT_DIR in the standard
+          # shape; build the editor's Qt flags from it directly rather than rely
+          # on .pc files, which the aqt packages do not always ship.
+          #
+          # The Wayland surface lookup needs one QPA private header
+          # (QtGui/qpa/qplatformnativeinterface.h — see krudd_qt.cpp). Qt keeps
+          # those under a version-stamped directory beside the public ones;
+          # glob it rather than repeat the version pinned above, and fail loudly
+          # if this Qt has no private headers instead of falling through to a
+          # confusing "file not found" a minute later.
+          qtgui_private=$(echo "$QT_ROOT_DIR"/include/QtGui/[0-9]*)
+          if [ ! -f "$qtgui_private/QtGui/qpa/qplatformnativeinterface.h" ]; then
+            echo "no QtGui QPA private headers under $QT_ROOT_DIR/include/QtGui" >&2
+            exit 1
+          fi
+          export KRUDD_QT_CFLAGS="-fPIC -I$QT_ROOT_DIR/include -I$QT_ROOT_DIR/include/QtCore -I$QT_ROOT_DIR/include/QtGui -I$QT_ROOT_DIR/include/QtWidgets -I$qtgui_private"
+          export KRUDD_QT_LIBS="-L$QT_ROOT_DIR/lib -lQt6Widgets -lQt6Gui -lQt6Core"
+          ./krudd.sh build
+          ninja -C build -f build.ninja bin/krudd_qt

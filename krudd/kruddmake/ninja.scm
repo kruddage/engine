@@ -125,14 +125,38 @@
       (string-append base " $qtcflags")
       base))
 
+;;! Vulkan is the native editor's GPU backend (SteamOS / the Deck / Windows).
+;;! Its loader and headers (<vulkan/vulkan.h>, -lvulkan) are a system
+;;! dependency, so — like `(dawn)` and `(qt)` — a `(vulkan)` target is OPT-IN:
+;;! without KRUDD_VULKAN in the environment it is left out of the native graph
+;;! entirely, so a plain `krudd build` is byte-for-byte unchanged and CI (which
+;;! installs no Vulkan) stays green. The WASM/web target never references a
+;;! `(vulkan)` library, so the browser keeps WebGL and WebGPU untouched.
+;;! `./krudd.sh editor` sets KRUDD_VULKAN for you. Vulkan headers are normally on
+;;! the default include path, so $vulkanincludes is empty unless
+;;! KRUDD_VULKAN_CFLAGS overrides it; $vulkanlibs defaults to -lvulkan.
+(define (vulkan-configured?) (getenv "KRUDD_VULKAN"))
+
+(define (ninja-vulkan? clauses) (if (rz-clause 'vulkan clauses) #t #f))
+
+(define (ninja-vulkan-skip? clauses)
+  (and (ninja-vulkan? clauses) (not (vulkan-configured?))))
+
+(define (ninja-vulkan-includes clauses base)
+  (if (ninja-vulkan? clauses)
+      (string-append base " $vulkanincludes")
+      base))
+
 (define (ninja-emit-library table dir form)
   (let* ((name (cadr form))
          (clauses (cddr form)))
-    (if (ninja-dawn-skip? clauses)
+    (if (or (ninja-dawn-skip? clauses) (ninja-vulkan-skip? clauses))
         #t
-        (let* ((includes (ninja-dawn-includes clauses
-                                              (ninja-include-flags
-                                               (resolve-includes table name))))
+        (let* ((includes (ninja-vulkan-includes
+                          clauses
+                          (ninja-dawn-includes clauses
+                                               (ninja-include-flags
+                                                (resolve-includes table name)))))
                (objs (ninja-with-s7 name "cc_s7" "obj/s7/s7.c.o"
                                     (map (lambda (s)
                                            (ninja-emit-compile name dir includes s))
@@ -146,15 +170,19 @@
 (define (ninja-emit-executable table dir form)
   (let* ((name (cadr form))
          (clauses (cddr form)))
-    (if (or (ninja-dawn-skip? clauses) (ninja-qt-skip? clauses))
+    (if (or (ninja-dawn-skip? clauses) (ninja-qt-skip? clauses)
+            (ninja-vulkan-skip? clauses))
         #t
         (let* ((dawn (ninja-dawn? clauses))
                (qt (ninja-qt? clauses))
-               (includes (ninja-qt-includes
+               (vulkan (ninja-vulkan? clauses))
+               (includes (ninja-vulkan-includes
                           clauses
-                          (ninja-dawn-includes clauses
-                                               (ninja-include-flags
-                                                (resolve-includes table name)))))
+                          (ninja-qt-includes
+                           clauses
+                           (ninja-dawn-includes clauses
+                                                (ninja-include-flags
+                                                 (resolve-includes table name))))))
                (objs (map (lambda (s)
                             (ninja-emit-compile name dir includes s))
                           (ninja-sources clauses)))
@@ -164,6 +192,7 @@
                (ldlibs (append (map (lambda (l) (string-append "-l" l))
                                     syslibs)
                                (if dawn (list "$dawnlibs") '())
+                               (if vulkan (list "$vulkanlibs") '())
                                (if qt (list "$qtlibs") '())))
                (bin (string-append "bin/" name)))
           (ninja-emit (string-append "build " bin ": "
@@ -174,11 +203,11 @@
                                          (ninja-join " " ldlibs))))
           (ninja-emit "")
           ;;! Ordinary executables are pulled into the `native` target by the
-          ;;! (test ...) edge that runs them. A `(dawn)` or `(qt)` binary has
-          ;;! none — it needs a real GPU adapter and/or a window to open, so it
-          ;;! must not become a CI test — and it is itself the deliverable, so
-          ;;! name it directly or nothing would ever build it.
-          (if (or dawn qt) (ninja-native! bin))))))
+          ;;! (test ...) edge that runs them. A `(dawn)`, `(vulkan)` or `(qt)`
+          ;;! binary has none — it needs a real GPU adapter and/or a window to
+          ;;! open, so it must not become a CI test — and it is itself the
+          ;;! deliverable, so name it directly or nothing would ever build it.
+          (if (or dawn qt vulkan) (ninja-native! bin))))))
 
 (define (ninja-emit-test form)
   (let* ((name (cadr form))
@@ -253,6 +282,16 @@
      (string-append "qtcflags = " (or (getenv "KRUDD_QT_CFLAGS") ""))
      (string-append "qtlibs = " (or (getenv "KRUDD_QT_LIBS")
                                     "-lQt6Widgets -lQt6Gui -lQt6Core"))
+     ;;! Vulkan (the `(vulkan)` clause, the native editor's GPU backend). The
+     ;;! loader and headers are an ordinary system dependency: the headers are
+     ;;! on the default include path (so $vulkanincludes is empty unless
+     ;;! KRUDD_VULKAN_CFLAGS overrides it, e.g. for an SDK in a non-standard
+     ;;! prefix), and $vulkanlibs defaults to the loader, -lvulkan. Empty of
+     ;;! consequence unless a `(vulkan)` target is in the graph, which only
+     ;;! happens when KRUDD_VULKAN is set (see ninja-vulkan-skip?).
+     (string-append "vulkanincludes = " (or (getenv "KRUDD_VULKAN_CFLAGS") ""))
+     (string-append "vulkanlibs = " (or (getenv "KRUDD_VULKAN_LIBS")
+                                        "-lvulkan"))
      "cflags = -std=gnu11 -Wall -Werror -Wpedantic"
      ;;! C++20 (not gnu11 — that was a stale copy of $cflags from before any
      ;;! native .cpp source existed to compile with it) so a `(qt)` source can

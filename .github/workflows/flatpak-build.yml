@@ -8,7 +8,9 @@ name: Flatpak build (editor, proof of life)
 #
 # Manual/path-scoped trigger, like every other native-editor target: left out
 # of the default per-PR CI (see the root README's CI table) since it needs a
-# ~38 MB native Dawn build plus a full Flatpak SDK download.
+# full Flatpak SDK download. The editor itself compiles inside the sandbox
+# against org.kde.Sdk's Qt6 and Vulkan loader — nothing is prebuilt on the
+# runner any more (the native GPU path is Vulkan, not vendored Dawn).
 #
 # Signing + publish are opt-in per fork/checkout: they run only when
 # FLATPAK_GPG_PRIVATE_KEY is set as a repo secret (see the "signing" step and
@@ -22,7 +24,6 @@ on:
     paths:
       - packaging/flatpak/**
       - .github/workflows/flatpak-build.yml
-      - setup.sh
 
 jobs:
   flatpak-build:
@@ -35,37 +36,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Everything else the native build needs (compiler, cmake, ninja, Qt6,
-      # Vulkan loader) is installed by ./setup.sh itself. The runner's Qt6 is
-      # only there to satisfy setup.sh — krudd-editor compiles inside the
-      # flatpak-builder sandbox against org.kde.Sdk's own Qt6, not the runner's.
+      # The editor compiles entirely inside the flatpak-builder sandbox against
+      # org.kde.Sdk's own Qt6 and Vulkan loader/headers, so the runner needs
+      # nothing but the Flatpak tooling — no toolchain, no prebuilt GPU library.
       - name: Install Flatpak tooling
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends flatpak flatpak-builder
-
-      - name: Read pinned Dawn revision (tracks setup.sh)
-        id: dawn
-        run: echo "rev=$(sed -n 's/^DAWN_REV=//p' setup.sh)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache native Dawn build
-        uses: actions/cache@v4
-        with:
-          path: ~/.krudd/dawn-native
-          key: dawn-native-${{ steps.dawn.outputs.rev }}
-
-      # Installs the native toolchain, builds pinned native Dawn (skipped on
-      # a cache hit above), and writes .krudd-env with KRUDD_DAWN_PREFIX.
-      - name: ./setup.sh
-        run: ./setup.sh
-
-      # Native Dawn is the one module the sandbox can't build itself (see the
-      # manifest's comments) — vendor the install dir in as a local source.
-      - name: Stage native Dawn for the sandbox
-        run: |
-          . ./.krudd-env
-          mkdir -p packaging/flatpak/dawn-native
-          cp -r "$KRUDD_DAWN_PREFIX"/. packaging/flatpak/dawn-native/
 
       - name: Add Flathub remote (org.kde.Platform/Sdk)
         run: |

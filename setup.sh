@@ -28,8 +28,10 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 # the port is ever rolled, re-pin here AND in tools/dawn-smoke/README.md.
 DAWN_REV=31e25af254ab572c77054edec4946d2244e184dd
 
-# Out-of-tree, so the ~38 MB build survives worktrees and is never churned by a
-# repo build. Honour an existing KRUDD_DAWN_PREFIX so a shared Dawn is reused.
+# Out-of-tree, so the build survives worktrees and is never churned by a repo
+# build. It is not small: ~1.6 GB of source and objects for a ~38 MB installed
+# libwebgpu_dawn.a. Honour an existing KRUDD_DAWN_PREFIX so a shared Dawn is
+# reused.
 dawn_src="$HOME/.krudd/dawn-native"
 dawn_prefix="${KRUDD_DAWN_PREFIX:-$dawn_src/install}"
 
@@ -113,7 +115,7 @@ fi
 if [ -f "$dawn_prefix/lib/libwebgpu_dawn.a" ]; then
 	say "native Dawn already built at $dawn_prefix — skipping."
 else
-	say "building native Dawn ($DAWN_REV) — the one-time ~38 MB step."
+	say "building native Dawn ($DAWN_REV) — one-time, needs ~1.6 GB and a while."
 	mkdir -p "$dawn_src"
 	cd "$dawn_src"
 	[ -d .git ] || git init -q .

@@ -126,7 +126,9 @@ REPL) is the next step, tracked as follow-ups.
 
 The editor is the **Qt editor shell** — a `QMainWindow` with a menu bar, toolbar and
 Scene/Inspector/Assets/Console docks around the viewport. It is opt-in and left out of
-every default build and CI run:
+every default build (the `(qt)` target is gated on `KRUDD_QT`), but CI does *compile* it —
+the **ci · editor-compile** job builds `krudd_qt` against Qt >= 6.5 on every PR so a
+change that stops it compiling can't merge (issue #702). To build and run it locally:
 
 ```sh
 KRUDD_DAWN_PREFIX=$HOME/dawn-native/install \
@@ -180,6 +182,7 @@ REPL, project open/save) is tracked separately as the authoring surface.
 | **ci · deploy** | On push to `main`, publishes the staged site to GitHub Pages |
 | **ci · preview** | Deploys each PR's build to a `pr-preview/pr-<N>/` URL and tears it down on close |
 | **ci · sanitizers** | Builds + runs the native suite under ASan + UBSan + LeakSanitizer; fails on any leak, out-of-bounds, or UB |
+| **ci · editor-compile** | Compiles the Qt native editor (`krudd_qt`) against Qt >= 6.5 with cached native Dawn; a compile-only gate (never runs it), so a broken editor TU can't merge (#702) |
 | **ci · coverage** | Measures native gcov coverage and posts it as a sticky PR comment (report-only, no floor gate) |
 | **pr-title** | Checks the PR title is a valid Conventional Commit (it becomes the squashed commit) |
 | **release-please** | On push to `main`, maintains the release PR that versions, tags, and releases |

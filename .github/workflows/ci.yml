@@ -200,6 +200,90 @@ jobs:
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: sh krudd/kruddmake/run-tests.sh
 
+  # Compile the Qt native editor (`krudd_qt`). This is the gate issue #702 asks
+  # for: the `(qt)` target is opt-in (KRUDD_QT), so nothing else in CI or a
+  # default `./krudd.sh build` ever runs the compiler over krudd_qt.cpp — which
+  # is how a call to a nonexistent Qt type (#700) and an include of the wrong
+  # Qt module (#699) both merged. Simply compiling the translation unit catches
+  # both. No GPU, display, or Dawn device is needed: `ninja native` builds the
+  # (dawn)/(qt) binaries but only *runs* the tests that carry a (test ...) edge,
+  # and krudd_qt carries none — so it is compiled and linked here, never run.
+  #
+  # Two things this job needs that a naive setup would get wrong:
+  #   * Qt >= 6.5. #700's Wayland branch is guarded by QT_VERSION_CHECK(6,5,0),
+  #     and Ubuntu apt ships only 6.4 — a 6.4 build would go green while the
+  #     Deck's real toolchain stays broken. aqt gives us a current stable Qt;
+  #     QT_VERSION below only has to stay >= 6.5, bump it freely.
+  #   * Dawn's headers (krudd_qt.cpp -> webgpu_platform.h -> <webgpu/webgpu.h>).
+  #     setup.sh builds pinned native Dawn once; the cache keyed on DAWN_REV
+  #     (same pattern as flatpak-build.yml) makes the per-PR cost a few seconds
+  #     after the one-time cold build, so this can be a per-PR gate.
+  editor-compile:
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
+    runs-on: ubuntu-latest
+    env:
+      # Only has to be >= 6.5 (see above). Pinned in this one place; a wildcard
+      # so any patch release of the line resolves.
+      QT_VERSION: '6.11.*'
+    steps:
+      - uses: actions/checkout@v7
+
+      # A real Qt >= 6.5, NOT Ubuntu's apt 6.4. install-qt-action exports
+      # QT_ROOT_DIR for the compile step below.
+      - name: Install Qt (>= 6.5, via aqt)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: linux
+          target: desktop
+          cache: true
+
+      # setup.sh installs a toolchain if one is missing; give it the non-Qt
+      # pieces up front so it doesn't apt-install Ubuntu's masking Qt 6.4 to
+      # satisfy its own check. Qt for the compile comes from aqt above.
+      - name: Install the native toolchain (Qt comes from aqt, not apt)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git cmake ninja-build python3 pkg-config \
+            libvulkan-dev clang
+          # Let setup.sh's `pkg-config --exists Qt6*` find the aqt Qt (if it
+          # ships .pc files) so it skips the apt-Qt fallback entirely.
+          echo "PKG_CONFIG_PATH=$QT_ROOT_DIR/lib/pkgconfig" >> "$GITHUB_ENV"
+
+      - name: Read pinned Dawn revision (tracks setup.sh)
+        id: dawn
+        run: echo "rev=$(sed -n 's/^DAWN_REV=//p' setup.sh)" >> "$GITHUB_OUTPUT"
+
+      # Cold-build once per Dawn pin, restore in seconds after — same cache the
+      # Flatpak job uses. DAWN_REV changes rarely, so a typical PR is a hit.
+      - name: Cache native Dawn build
+        uses: actions/cache@v4
+        with:
+          path: ~/.krudd/dawn-native
+          key: dawn-native-${{ steps.dawn.outputs.rev }}
+
+      # Builds pinned native Dawn (skipped on a cache hit) and writes .krudd-env.
+      # Reusing setup.sh here means the same script the Deck runs is exercised
+      # by CI, not a drifting copy of its Dawn recipe.
+      - name: Build native Dawn (cached by DAWN_REV)
+        run: ./setup.sh
+
+      # Point the (qt) clause at the aqt Qt explicitly, overriding whatever
+      # setup.sh wrote (krudd.sh's .krudd-env uses := so a value set here wins,
+      # and this can't accidentally pick up an apt 6.4 .pc). Qt's includes are
+      # module-prefixed (<QtWidgets/…>), so one -I<qt>/include resolves them.
+      # KRUDD_QT pulls krudd_qt into the native graph; `build` targets native
+      # (not wasm), compiling + linking it without running it.
+      - name: Compile-only build of the Qt editor (krudd_qt)
+        env:
+          KRUDD_QT: '1'
+        run: |
+          export KRUDD_QT_CFLAGS="-fPIC -I$QT_ROOT_DIR/include"
+          export KRUDD_QT_LIBS="-L$QT_ROOT_DIR/lib -lQt6Widgets -lQt6Gui -lQt6Core"
+          ./krudd.sh build
+          test -x build/bin/krudd_qt
+
   # Measure native line/function/branch coverage with gcov and post it as a
   # sticky comment on the PR. This is REPORT-ONLY — it never fails the build;
   # the floor gate is intentionally deferred until the baseline has been

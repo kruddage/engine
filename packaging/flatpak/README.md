@@ -20,6 +20,11 @@ separately in #667/#675/#676 and isn't gated on this.
   this repo's `gh-pages` branch under `/flatpak/`.
 - `make-flatpakrepo.sh` — writes the `.flatpakrepo` file users add as a
   remote, with the signing key's public half embedded.
+- `io.github.kruddage.Editor.metainfo.xml` — AppStream metadata (name, summary,
+  description, release). Plasma Discover (the SteamOS Desktop store) needs this
+  to list and tile the app; without it a configured remote installs only from
+  the command line. Installed to `/app/share/metainfo/` by the manifest, which
+  also installs a `512x512` icon named for the app id so the tile isn't blank.
 
 ## Installing from the published registry
 
@@ -31,6 +36,25 @@ flatpak run io.github.kruddage.Editor
 
 Updates land the normal Flatpak way — `flatpak update` — whenever a signed
 build is published (currently: any push to `main`).
+
+## On a Steam Deck (Discover)
+
+The SteamOS Desktop store, **Discover**, browses Flathub by default; this
+editor is a *self-hosted* remote, not a Flathub app, so you add the remote once
+and Discover then treats it like any other store app. In Desktop Mode:
+
+```sh
+flatpak remote-add --user krudd https://kruddage.github.io/engine/flatpak/krudd.flatpakrepo
+```
+
+After that, "KRUDD Editor" shows up in Discover's search — install, launch, and
+update it from the GUI, no further terminal use. (Discover only lists it once
+the app ships the AppStream metainfo above; that's what this packaging adds.)
+
+Getting into Discover's built-in **Flathub** storefront — where no
+`remote-add` is needed — is a separate, larger effort: a submission to the
+`flathub/flathub` repo, which won't pass review while the editor only presents
+an animated clear (see the caveat below).
 
 ## Hosting your own registry
 

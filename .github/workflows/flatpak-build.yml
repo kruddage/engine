@@ -30,8 +30,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    # Shared with ci.yml's deploy job: both push to gh-pages, and a main push
+    # fires both at once. One serial group across both workflows keeps their
+    # gh-pages pushes from racing (the loser is rejected non-fast-forward).
     concurrency:
-      group: flatpak-registry-publish
+      group: gh-pages-deploy
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
@@ -113,7 +116,6 @@ jobs:
       # URL — nothing here is kruddage-specific.
       - name: Publish the signed registry to gh-pages
         if: steps.signing.outputs.enabled == 'true' && github.ref == 'refs/heads/main'
-        continue-on-error: true
         run: |
           repo_url="https://${{ github.repository_owner }}.github.io/${GITHUB_REPOSITORY#*/}/flatpak/"
           mkdir -p packaging/flatpak/pages-out
@@ -124,7 +126,6 @@ jobs:
 
       - name: Deploy to gh-pages
         if: steps.signing.outputs.enabled == 'true' && github.ref == 'refs/heads/main'
-        continue-on-error: true
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}

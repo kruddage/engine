@@ -49,22 +49,21 @@
                     "subsystem" "subsystem_manager" "log" "memory" "script" "m"))
   (test "editor_boot" "editor_boot_test")
 
-  ;;! The Qt-hosted WebGPU harness — the native editor. The same backend as
-  ;;! krudd_native, presenting into a QWindow embedded in real Qt chrome
-  ;;! (menu bar, toolbar, docks) instead of reading a frame back offscreen.
-  ;;! Part of #675/#676 (the Qt editor shell). Carries (dawn) and (qt), so it is
-  ;;! skipped unless BOTH native Dawn (KRUDD_DAWN_PREFIX) and Qt (KRUDD_QT) are
-  ;;! configured — `./krudd.sh editor` sets the latter. Needs render/webgpu on
-  ;;! the include path for the platform host seam (webgpu_platform.h). No
-  ;;! (test ...) edge: it opens a window and needs a real GPU adapter, so it is
-  ;;! a deliverable, not a CI test.
+  ;;! The Qt-hosted native editor. The engine's Vulkan backend presenting into a
+  ;;! QWindow embedded in real Qt chrome (menu bar, toolbar, docks). Part of
+  ;;! #675/#676 (the Qt editor shell), on native Vulkan (#705) rather than native
+  ;;! Dawn. Carries (vulkan) and (qt), so it is skipped unless BOTH the Vulkan
+  ;;! loader (KRUDD_VULKAN) and Qt (KRUDD_QT) are configured — `./krudd.sh
+  ;;! editor` sets both. Needs render/vulkan on the include path for the platform
+  ;;! host seam (vulkan_platform.h). No (test ...) edge: it opens a window and
+  ;;! needs a real GPU, so it is a deliverable, not a CI test.
   (executable "krudd_qt"
               (sources "krudd_qt.cpp" "editor_boot.c")
               (private "include" (raw "${generated}")
-                       (root "render/webgpu") (root "abi"))
-              (dawn)
+                       (root "render/vulkan") (root "abi"))
+              (vulkan)
               (qt)
-              (link "renderer_webgpu" "scene_renderer"
+              (link "renderer_vulkan" "scene_renderer"
                     "frame_graph" "entity_plugin" "asset_plugin" "edit_plugin"
                     "mesh_script" "texture_script" "particles"
                     "subsystem" "subsystem_manager" "log" "memory" "script" "m"))

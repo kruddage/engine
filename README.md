@@ -115,50 +115,46 @@ engine loop; the test stamps run the suite, so a green build is a green test run
 
 ### Native editor (SteamOS / Steam Deck)
 
-A native editor: the same C engine that ships to the browser as WebAssembly also boots
-its WebGPU backend against **native Dawn** (Vulkan on the Deck's RDNA2) and renders a
-**live engine scene** into a real desktop window — no browser, no Emscripten in the path.
-Once the device lands it boots the engine's render cluster natively (asset → entity →
-frame graph → scene renderer) and draws the built-in demo scene — the same floor, box,
-sphere, pyramid and rook the web canvas shows on load — through the real forward pass.
-The browser-bound authoring layer (the canvas UI, click-to-pick, the games, the live
-REPL) is the next step, tracked as follow-ups.
+A native editor: the same C engine that ships to the browser as WebAssembly also runs
+natively on a **Vulkan** backend (Vulkan on the Deck's RDNA2, on Windows too) presenting
+into a real desktop window — no browser, no Emscripten in the path. The web build keeps
+its WebGL and WebGPU backends untouched; Vulkan is the native desktop GPU path.
+
+The Vulkan backend brings up a **modern Vulkan 1.3 device with the Khronos validation
+layers on** and presents an animated clear into the window, and the editor still boots the
+engine's render cluster (asset → entity → frame graph → scene renderer) so the whole path
+up to the backend runs. Translating that draw stream to Vulkan — shaders to SPIR-V,
+pipelines, buffers and draws, so the demo scene renders in Vulkan — is the next step; the
+point of this stage is a validated Vulkan base you can diagnose against on real hardware
+(see [#705](https://github.com/kruddage/engine/issues/705)).
 
 The editor is the **Qt editor shell** — a `QMainWindow` with a menu bar, toolbar and
 Scene/Inspector/Assets/Console docks around the viewport. It is opt-in and left out of
 every default build and CI run:
 
 ```sh
-KRUDD_DAWN_PREFIX=$HOME/dawn-native/install \
 KRUDD_QT_CFLAGS="$(pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core)" \
 ./krudd.sh editor
 ```
 
-It needs **native Dawn built with surface support** (pinned to the emsdk port's revision),
-a **Vulkan loader**, and **Qt6**. On the Deck, SteamOS's root filesystem is immutable, so
-build and run inside an Arch [distrobox](https://distrobox.it/) (it shares the Deck's
-Wayland socket and GPU). To get going from a clean checkout:
+It needs the **Vulkan loader + headers + validation layers**, **glslang**, and **Qt6** —
+all ordinary system packages, no multi-gigabyte out-of-tree library to build. On the Deck,
+SteamOS's root filesystem is immutable, so build and run inside an Arch
+[distrobox](https://distrobox.it/) (it shares the Deck's Wayland socket and GPU). To get
+going from a clean checkout:
 
 ```sh
 git clone https://github.com/kruddage/engine.git
 cd engine
-./setup.sh          # toolchain + pinned Dawn + .krudd-env (see the disk note below)
+./setup.sh          # toolchain + Vulkan validation layers + Qt6 + .krudd-env
 ./krudd.sh editor   # build and run the Qt editor shell
 ```
 
-Budget disk for the Dawn step: the installed `libwebgpu_dawn.a` is ~38 MB, but building it
-needs roughly **1.6 GB** of out-of-tree source and objects (`$HOME/.krudd/dawn-native`) and a
-long first compile. Both are one-time — re-runs skip the step — but the working set is worth
-knowing about on a 64 GB Deck.
+`setup.sh` records the Qt flags in `.krudd-env`, which `krudd.sh` sources automatically — so
+after `./setup.sh` you do not even need the manual `KRUDD_QT_CFLAGS` export shown above.
 
-Note that `setup.sh` installs Dawn to `$HOME/.krudd/dawn-native/install` and records it in
-`.krudd-env`, which `krudd.sh` sources automatically — so after `./setup.sh` you do not need
-the manual `KRUDD_DAWN_PREFIX` export shown above. That export is for a hand-built Dawn
-following the long-form doc, whose recipe installs to a different prefix.
-
-The complete copy-paste setup — building Dawn with a Wayland/X11 surface, the exact pin, and
-what you should see on screen — lives in
-[`docs/qt-editor-shell.md`](docs/qt-editor-shell.md).
+The complete setup — the Vulkan prerequisites, Wayland vs X11, and what you should see on
+screen — lives in [`docs/qt-editor-shell.md`](docs/qt-editor-shell.md).
 
 The editor also ships as a self-hosted, GPG-signed Flatpak registry —
 `flatpak remote-add` a `.flatpakrepo` URL and get updates the normal Flatpak

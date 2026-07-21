@@ -12,13 +12,12 @@ separately in #667/#675/#676 and isn't gated on this.
 - `io.github.kruddage.Editor.yml` — the `flatpak-builder` manifest for the Qt
   editor shell (`krudd editor-qt`, see
   [`docs/qt-editor-shell.md`](../../docs/qt-editor-shell.md)). Builds
-  `krudd_qt` **inside the sandbox**, against `org.kde.Sdk`'s own Qt6 — the
-  one exception is native Dawn (see the manifest's comments for why it's
-  vendored in prebuilt rather than built from source in-sandbox).
-- `.github/workflows/flatpak-build.yml` — builds pinned Dawn (cached, same
-  recipe as `setup.sh`), runs `flatpak-builder`, and — when a signing key is
-  configured — exports and publishes a signed OSTree repo to this repo's
-  `gh-pages` branch under `/flatpak/`.
+  `krudd_qt` **entirely inside the sandbox**, against `org.kde.Sdk`'s own Qt6
+  and Vulkan loader/headers — nothing is vendored (the native GPU path is
+  Vulkan, an ordinary SDK dependency, not a prebuilt library).
+- `.github/workflows/flatpak-build.yml` — runs `flatpak-builder` and — when a
+  signing key is configured — exports and publishes a signed OSTree repo to
+  this repo's `gh-pages` branch under `/flatpak/`.
 - `make-flatpakrepo.sh` — writes the `.flatpakrepo` file users add as a
   remote, with the signing key's public half embedded.
 
@@ -56,17 +55,11 @@ build to anyone's registry.
 
 ## Building it locally
 
-Same prerequisites as
-[`docs/qt-editor-shell.md`](../../docs/qt-editor-shell.md) (native Dawn) plus
-`flatpak` and `flatpak-builder` — Qt6 itself comes from `org.kde.Sdk`, not a
-local install:
+You only need `flatpak` and `flatpak-builder` — Qt6 and the Vulkan loader both
+come from `org.kde.Sdk` inside the sandbox, so there is no local toolchain or
+prebuilt library to stage first:
 
 ```sh
-./setup.sh
-. ./.krudd-env
-mkdir -p packaging/flatpak/dawn-native
-cp -r "$KRUDD_DAWN_PREFIX"/. packaging/flatpak/dawn-native/
-
 flatpak remote-add --if-not-exists --user flathub \
   https://flathub.org/repo/flathub.flatpakrepo
 flatpak-builder --user --force-clean --install-deps-from=flathub \

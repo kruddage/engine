@@ -1,26 +1,46 @@
 <!-- SPDX-License-Identifier: GPL-2.0-or-later -->
-# krudd's native editor — a Qt editor shell (#675, #676)
+# krudd's native editor — a Qt editor shell on Vulkan (#675, #676, #705)
 
-The native editor: the engine's WebGPU backend booting against **native Dawn**
-(Vulkan on the Deck's RDNA2) and rendering a **live engine scene** into a
+The native editor: the engine's **native Vulkan** backend presenting into a
 `QWindow` embedded in real Qt chrome — a menu bar, a toolbar, docks — on the
-desktop (SteamOS / the Steam Deck), no browser, no Emscripten, nothing web in
-the path.
+desktop (SteamOS / the Steam Deck / Windows), no browser, no Emscripten, nothing
+web in the path. The web build keeps its WebGL and WebGPU backends untouched;
+Vulkan is the native desktop GPU path.
 
 ```sh
-KRUDD_DAWN_PREFIX=/path/to/dawn-native/install \
 KRUDD_QT_CFLAGS="$(pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core)" \
 ./krudd.sh editor
 ```
 
 opens a `QMainWindow` — the File/Edit/View/Help menu bar, a toolbar, and the
-Scene / Inspector / Assets / Console docks — with the engine's built-in demo
-scene (a floor, box, sphere, pyramid and rook under a sun, framed by an orbit
-camera — the same content the web canvas shows on load) rendering inside the
-embedded viewport. That live scene *is* the deliverable (#675): it means the
-whole native chain — window → Wayland surface → Dawn → the real forward pass →
-present — is live on the hardware, running the actual scene renderer rather
-than a placeholder clear.
+Scene / Inspector / Assets / Console docks — with the Vulkan viewport rendering
+inside the embedded window.
+
+## What renders today (and what's next) — #705
+
+This stage stands up a **modern, validated Vulkan base** and presents into the
+window, but it does not yet translate the engine's draw stream:
+
+- **Real:** a Vulkan 1.3 instance with the **Khronos validation layer** and a
+  `VK_EXT_debug_utils` messenger wired straight into the engine log, a
+  physical/logical device and queue, a `VkSurfaceKHR` + swapchain from the
+  window, and a genuine per-frame **acquire → clear → present** through command
+  buffers, semaphores and fences (dynamic rendering — no render-pass objects).
+  Everything a validation layer has an opinion about actually runs, so when you
+  launch it on real hardware the layer's diagnostics are live and point at real
+  calls. That is the whole point of landing it in this shape — get the engine
+  onto a current Vulkan device with the layers on, so the real renderer is built
+  and debugged against a loader that already talks back.
+- **Stubbed:** the `gpu_api` draw path — pipeline creation, the `cmd_*`
+  recording verbs, buffer/texture creation — are honest no-ops. The editor still
+  boots the engine's render cluster (`editor_boot_cluster()`: asset → entity →
+  frame_graph → scene_renderer), so scene_renderer seeds and records its
+  built-in demo scene, but the backend does not consume those calls yet. The
+  viewport therefore shows an **animated clear**, not the scene.
+
+Turning that clear into a real forward pass — GLSL/krudd-DSL shaders lowered to
+SPIR-V (glslang is installed for exactly this), pipelines, vertex/index/uniform
+buffers, textures and draws — is the follow-up #705 scopes out of this pass.
 
 ## The authoring surface (#676)
 
@@ -51,15 +71,14 @@ no moc rule.
 ## One-shot (`setup.sh`)
 
 There is a committed bootstrap at the repo root that does everything the editor
-build needs — installs the toolchain (compiler, cmake, ninja, Qt6, a Vulkan
-loader), builds pinned native Dawn once (with a Wayland/X11 surface — the big
-step, skipped on re-runs), and writes `.krudd-env` so `./krudd.sh editor` finds
-Dawn and Qt with no manual exports. It is re-runnable: each step is skipped when
-its result is already there.
+build needs — installs the toolchain (compiler, ninja, Qt6, and the Vulkan
+loader + headers + validation layers + glslang), and writes `.krudd-env` so
+`./krudd.sh editor` finds Qt with no manual exports. It is re-runnable: each step
+is skipped when its result is already there.
 
-The Dawn step installs a ~38 MB `libwebgpu_dawn.a`, but getting there needs about
-**1.6 GB** of out-of-tree source and build objects under `$HOME/.krudd/dawn-native`,
-plus a long first compile. One-time, but budget the disk — particularly on a Deck.
+Unlike the previous native-Dawn setup, there is **no multi-gigabyte out-of-tree
+GPU library to build** any more: the Vulkan loader and validation layers are
+ordinary system packages, so the whole bootstrap is a single package install.
 
 SteamOS's root filesystem is immutable, so the toolchain lives in an Arch
 [distrobox](https://distrobox.it/) (it shares the Deck's Wayland socket and GPU).
@@ -75,7 +94,7 @@ Then, inside the container:
 ```sh
 git clone https://github.com/kruddage/engine.git
 cd engine
-./setup.sh          # toolchain + pinned Dawn + .krudd-env  (the big, one-time step)
+./setup.sh          # toolchain + Vulkan validation layers + Qt6 + .krudd-env
 ./krudd.sh editor   # builds and runs the Qt editor shell
 ```
 
@@ -89,53 +108,37 @@ to understand or tweak what `setup.sh` automates.
 
 ## What this is (and isn't)
 
-The same C engine that ships to the browser as WebAssembly already has a native
-seam: `renderer_webgpu.c` compiles against Dawn's own `libwebgpu_dawn.a` at the
-exact revision the emsdk port ships (`tools/dawn-smoke/README.md`), and
-`krudd_native` renders it **offscreen** to a PNG so CI can trust it with no GPU.
+The same C engine that ships to the browser as WebAssembly gains a fourth
+`gpu_api` backend beside WebGL, WebGPU and the recording null renderer:
+`krudd/engine/render/vulkan/renderer_vulkan.c`, registered as the `"renderer"`
+subsystem exactly like the others. `krudd_qt` is the Qt host that drives it into
+a live window.
 
-`krudd_qt` is that same backend with the offscreen target swapped for a live
-window. All the windowing lives behind the existing platform seam
-(`webgpu_platform.h`): the harness registers a host that hands the backend the
-window's `WGPUSurface`, and the backend's normal surface path — the one the
-browser canvas uses — does the rest. The offscreen path is untouched: with no
-host registered (every CI build, every `krudd_native` run) the seam is byte-for-
-byte the offscreen one. The only new surface area is Qt: a `QMainWindow` chrome
-around a `QWindow` embedded via `QWidget::createWindowContainer`, and a
-`webgpu_platform_host` that hands Dawn that `QWindow`'s native handle.
+All the windowing lives behind a platform seam (`vulkan_platform.h`), the direct
+analogue of the WebGPU backend's `webgpu_platform.h`: the harness registers a
+host that turns the `QWindow`'s native handle into a `VkSurfaceKHR`, and the
+backend's swapchain path does the rest. With no host registered (a headless
+build) the backend still stands up an instance and device — so validation
+bring-up is exercised — it just has no swapchain to present into.
 
-**What renders, and what is left out.** Once the device lands, `krudd_qt` boots
-the engine's render cluster natively — `editor_boot_cluster()`
-(`krudd/engine/core/editor_boot.c`) registers `asset → entity → frame_graph →
-scene_renderer` in the same dependency order `engine.c`'s `finish_plugin_boot`
-uses on the web. `scene_renderer` then seeds and draws its built-in demo scene
-through the real forward pass, so the viewport shows an actual scene, not a
-clear. The camera-aspect sync the wasm viewport bridge does off the kruddgui
-pointer is done here directly (the `camera` api's `set_viewport`, once per
-frame with the window size), since native has no kruddgui pointer.
+The only new surface area is Qt: a `QMainWindow` chrome around a `QWindow`
+embedded via `QWidget::createWindowContainer`, and a `vulkan_platform_host` that
+hands the backend that `QWindow`'s native Wayland/X11/Win32 handle.
 
-What is *not* booted is the browser-bound / interactive layer: the IndexedDB
-`fetch` asset origins (the native `asset_plugin` serves the compiled-in
-`builtin://` catalog instead — no browser store), the `kruddgui` canvas
-overlay, the `viewport` click-to-pick, the games and the live REPL. Wiring the
-docks to the running image (scene tree, inspector, REPL, project open/save) is
-#676's authoring surface — see the follow-up issues filed off #675. The
-offscreen `krudd_native` PNG harness is untouched: it still boots only the
-backend and reads the target back, so CI keeps trusting it with no GPU.
-
-**Verified without a GPU.** The whole boot-and-render path up to the Dawn
-boundary is exercised in ordinary CI by `editor_boot_test` (native-only, no
-Dawn): it runs the exact same `editor_boot_cluster()` against the recording
-**null** backend and asserts the seeded demo scene emits one draw per live
-mesh+material entity. So the scene assembly, the built-in catalog, the s7 mesh
-generation and the forward pass are all covered by a test; only the Dawn/Qt
-present glue itself needs real hardware to see.
+**Verified without a GPU.** The whole boot-and-record path up to the backend is
+exercised in ordinary CI by `editor_boot_test` (native-only, no GPU): it runs
+the exact same `editor_boot_cluster()` against the recording **null** backend
+and asserts the seeded demo scene emits one draw per live mesh+material entity.
+So the scene assembly, the built-in catalog, the s7 mesh generation and the
+forward pass are all covered by a test; and the editor-linux CI job compiles and
+links `krudd_qt` itself (see [CI](#ci) below). Only the Vulkan present glue needs
+real hardware to *see*.
 
 ## Prerequisites
 
-You need three things on the machine: **native Dawn built with surface support**,
-**Qt6**, and a **Vulkan loader**. SteamOS's root filesystem is immutable, so the
-path of least resistance is a [distrobox](https://distrobox.it/) /
+You need three things on the machine: the **Vulkan loader + headers + validation
+layers**, **glslang**, and **Qt6**. SteamOS's root filesystem is immutable, so
+the path of least resistance is a [distrobox](https://distrobox.it/) /
 [toolbox](https://containertoolbx.org/) Arch container for the build tools — build
 inside it, and run from inside it too (it shares the Deck's Wayland socket and
 GPU).
@@ -143,11 +146,13 @@ GPU).
 In Desktop Mode, in an Arch-based container (or any Arch/Linux dev box):
 
 ```sh
-sudo pacman -S --needed base-devel git cmake ninja python vulkan-icd-loader qt6-base
+sudo pacman -S --needed base-devel git ninja qt6-base \
+  vulkan-icd-loader vulkan-headers vulkan-validation-layers glslang
 ```
 
-Game Mode (gamescope) and Desktop Mode (KDE Plasma) are both Wayland, so Wayland
-is the primary target; X11/XWayland is kept as a fallback.
+You also need a **Vulkan driver** for your GPU (the Deck already has one:
+`vulkan-radeon`). Game Mode (gamescope) and Desktop Mode (KDE Plasma) are both
+Wayland, so Wayland is the primary target; X11/XWayland is kept as a fallback.
 
 Qt has no default include path worth guessing at the way a system library on the
 default search path does, so `KRUDD_QT_CFLAGS` (and usually `KRUDD_QT_LIBS`) must
@@ -156,62 +161,22 @@ recipe `pkg-config --cflags/--libs Qt6Widgets Qt6Gui Qt6Core` is normally
 enough; override `KRUDD_QT_LIBS` only if your Qt install needs more than
 `-lQt6Widgets -lQt6Gui -lQt6Core` to link.
 
-## Building Dawn *with a surface*
-
-This differs from the `tools/dawn-smoke` recipe in one respect: that one is
-offscreen-only and explicitly turns Wayland/X11 **off**. For a window you turn
-them **on**. Everything else — the pin, the monolithic-static packaging — is the
-same, and the pin **must** stay the one `tools/dawn-smoke/README.md` records (the
-native build is only a faithful debugger of the shipped web build if the Dawn
-revision matches the emsdk port's).
-
-Build it outside the repo so it survives worktrees and is never churned by a
-build:
-
-```sh
-mkdir -p ~/dawn-native && cd ~/dawn-native
-git init .
-git remote add origin https://github.com/google/dawn.git
-# The pinned revision — keep in lockstep with tools/dawn-smoke/README.md.
-git fetch --depth 1 origin 31e25af254ab572c77054edec4946d2244e184dd
-git checkout FETCH_HEAD
-
-cmake -S . -B out/Release -G Ninja \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_INSTALL_PREFIX=$HOME/dawn-native/install \
-  -DDAWN_FETCH_DEPENDENCIES=ON \
-  -DDAWN_ENABLE_VULKAN=ON \
-  -DDAWN_ENABLE_DESKTOP_GL=OFF -DDAWN_ENABLE_OPENGLES=OFF -DDAWN_ENABLE_NULL=OFF \
-  -DDAWN_USE_WAYLAND=ON -DDAWN_USE_X11=ON \
-  -DDAWN_USE_GLFW=OFF \
-  -DDAWN_BUILD_SAMPLES=OFF -DDAWN_BUILD_TESTS=OFF -DDAWN_BUILD_BENCHMARKS=OFF \
-  -DDAWN_BUILD_PROTOBUF=OFF \
-  -DTINT_BUILD_TESTS=OFF -DTINT_BUILD_CMD_TOOLS=OFF -DTINT_BUILD_BENCHMARKS=OFF \
-  -DDAWN_ENABLE_INSTALL=ON -DTINT_ENABLE_INSTALL=OFF \
-  -DDAWN_BUILD_MONOLITHIC_LIBRARY=STATIC -DBUILD_SHARED_LIBS=OFF
-
-ninja -C out/Release webgpu_dawn
-cmake --install out/Release
-```
-
-The only changes from the offscreen recipe: `-DDAWN_USE_WAYLAND=ON
--DDAWN_USE_X11=ON` (were `OFF`), and `-DDAWN_USE_GLFW=OFF` stays off — Qt owns
-the window and hands Dawn its native surface, so Dawn needs no windowing library
-of its own. `DAWN_BUILD_MONOLITHIC_LIBRARY=STATIC` still bundles Dawn + Tint +
-SPIRV-Tools + Abseil into one `libwebgpu_dawn.a`, so there is no runtime Dawn
-dependency to ship — the binary only dynamically needs Qt6 and the Vulkan loader.
+The Vulkan loader (`-lvulkan`) and its headers are on the default library and
+include paths, so nothing has to be exported for them — the build just links
+`-lvulkan`. If your loader lives in a non-standard prefix (a hand-built Vulkan
+SDK), set `KRUDD_VULKAN_CFLAGS` / `KRUDD_VULKAN_LIBS` to point at it.
 
 ## Build and run
 
 ```sh
-KRUDD_DAWN_PREFIX=$HOME/dawn-native/install \
 KRUDD_QT_CFLAGS="$(pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core)" \
 ./krudd.sh editor
 ```
 
-`editor` sets `KRUDD_QT=1` for the build (so the `(qt)` target joins the native
-graph), compiles through kruddmake, and runs `build/bin/krudd_qt`. Close the
-window, or press **Esc**, to quit.
+`editor` sets `KRUDD_VULKAN=1` and `KRUDD_QT=1` for the build (so the `(vulkan)`
+backend and `(qt)` window targets join the native graph), compiles through
+kruddmake, and runs `build/bin/krudd_qt`. Close the window, or press **Esc**, to
+quit.
 
 (`editor-qt` is kept as a back-compat alias for `editor`; both build and run the
 Qt shell.)
@@ -222,73 +187,85 @@ Qt shell.)
 krudd_qt: presenting on 'wayland' — close the window or press Esc to quit
 ```
 
-and the demo scene rendering in the embedded viewport — the floor, box, sphere,
-pyramid and rook animating under the sun (the box spins, the sphere bounces),
-with the orbit camera circling. If the platform line says `xcb` you are on
-XWayland — that path works too, via the X11 fallback surface.
+and an **animated clear** — a slow blue↔teal pulse — filling the embedded
+viewport (see [What renders today](#what-renders-today-and-whats-next--705)).
+The toolbar badge reads `Vulkan · native · wayland`. If the platform line says
+`xcb` you are on XWayland — that path works too, via the X11/xcb fallback
+surface.
+
+If the Vulkan **validation layers** are installed, their diagnostics stream into
+the engine log with a `vulkan(validation):` prefix — that is the whole reason
+this stage exists, so anything the layer flags shows up plainly. If the layer
+package is missing the backend logs a one-line warning and runs without it.
 
 ## Wayland: the hard case, and what is actually true about it today
 
-#675 calls out Wayland/the Deck as the hard case, and asks for that
-behaviour to be documented rather than assumed. Here is what is actually
-verified, not guessed, as of writing this:
+#675 calls out Wayland/the Deck as the hard case, and asks for that behaviour to
+be documented rather than assumed. The surface handles are the same Qt native
+interfaces the previous native backend used; only the Vulkan call they feed is
+new:
 
 **X11 and Windows are straightforward.** `QWindow::winId()` returns the X11
-window XID (or, on Windows, the HWND) directly — the exact same surface
-handle Dawn's `WGPUSurfaceSourceXlibWindow`/`WGPUSurfaceSourceWindowsHWND`
-want. `QNativeInterface::QX11Application::display()` (public since Qt 6.0)
-supplies the X11 `Display*`. Both of these were exercised against a real
-(Xvfb) X server while writing `krudd_qt.cpp`, not just read about.
+window XID (or, on Windows, the HWND) directly, and
+`QNativeInterface::QX11Application::connection()` (public since Qt 6.0) supplies
+the `xcb_connection_t*` — exactly what `vkCreateXcbSurfaceKHR` /
+`vkCreateWin32SurfaceKHR` want.
 
-**Wayland needs Qt >= 6.5, verified against a real install.** Getting a
-`QWindow`'s `wl_surface`/`wl_display` through *stable public* API is
-`QNativeInterface::QWaylandWindow` / `QNativeInterface::QWaylandApplication`,
-added in Qt 6.5. Checked directly against Ubuntu 24.04's system Qt
-(6.4.2, via `qt6-wayland-dev`): that API is not there. The only route on
-6.4 is `QGuiApplication::platformNativeInterface()` reaching into
-`QPlatformNativeInterface::nativeResourceForWindow()` — and that class ships
-*only* under `qt6-base-private-dev`'s versioned, explicitly-unstable include
-path (`.../qt6/QtGui/6.4.2/QtGui/qpa/qplatformnativeinterface.h`), not a
-regular public header. `krudd_qt.cpp`'s Wayland path requires Qt >= 6.5 and
-fails the build with an actionable `#error` on anything older, rather than
-link the shipped harness against a private, ABI-unstable header by default.
+**Wayland needs Qt >= 6.5.** Getting a `QWindow`'s `wl_surface`/`wl_display`
+through *stable public* API is `QNativeInterface::QWaylandWindow` /
+`QNativeInterface::QWaylandApplication`, added in Qt 6.5. Checked directly
+against Ubuntu 24.04's system Qt (6.4.2): that API is not there. `krudd_qt.cpp`'s
+Wayland path requires Qt >= 6.5 and fails the build with an actionable `#error`
+on anything older, rather than reach into a private, ABI-unstable header by
+default. SteamOS's Arch-based toolchain (the distrobox recipe above) tracks
+current Qt — Plasma 6 on the Deck runs Qt 6.6+ — so this is not expected to bite
+on the actual target hardware. It is why the editor-linux CI job below installs
+Qt 6.8 rather than the runner's system Qt.
 
-SteamOS's Arch-based toolchain (the distrobox recipe above) tracks current Qt —
-Plasma 6 on the Deck runs Qt 6.6+ — so this is not expected to bite on the actual
-target hardware. It is, however, a real constraint worth keeping in mind if this
-is ever built against an older distro's system Qt.
+**No heavy native headers.** The per-platform Vulkan structs take pointers to
+incomplete types (`wl_display`, `wl_surface`, `xcb_connection_t`) plus a single
+`xcb_window_t` (a `uint32_t`) alias, so `krudd_qt.cpp` selects
+`VK_USE_PLATFORM_WAYLAND_KHR` / `VK_USE_PLATFORM_XCB_KHR` without pulling
+`<X11/Xlib.h>` or `<wayland-client.h>` into a translation unit that also includes
+Qt — no macro collisions to fight.
 
 **Embedding is the part still genuinely open.** `QWidget::createWindowContainer`
-— what puts the viewport *inside* the `QMainWindow`'s layout instead of as
-its own top-level window — is built around X11-style window reparenting.
-Whether it behaves acceptably on Wayland (where there is no equivalent
-client-side reparenting mechanism) has not been exercised on real Wayland
-hardware from here; this repo's sandbox has no GPU and no running
-compositor to test against. If it does not, the fallback is to let the
-viewport be its own top-level `QWindow` positioned under the chrome window
-rather than a child of it — a real design decision, not a bug fix, and the
-next thing to resolve on real Deck hardware.
+— what puts the viewport *inside* the `QMainWindow`'s layout — is built around
+X11-style window reparenting; whether it behaves acceptably on Wayland has not
+been exercised on real Deck hardware from here (this repo's sandbox has no GPU
+and no compositor). If it does not, the fallback is to let the viewport be its
+own top-level `QWindow` positioned under the chrome window — a real design
+decision to resolve on real hardware, not a bug fix.
+
+## CI
+
+The `editor-linux` job in `.github/workflows/ci.yml` builds `krudd_qt`
+(Vulkan + Qt) on every PR — **compile + link only**, never run, since it opens a
+window and needs a real GPU. It installs the Vulkan loader/headers/validation
+layers and glslang from apt, and Qt 6.8 via `install-qt-action` (the runner's
+system Qt is 6.4, below the 6.5 the Wayland path needs), then builds just the
+`bin/krudd_qt` target. The web build (WebGL + WebGPU) is covered by the separate
+`build` job and is untouched — Vulkan is native only.
 
 ## How it stays out of everyone else's way
 
-Two independent opt-in gates, mirroring how `(dawn)` already worked:
+Two independent opt-in gates, mirroring how `(dawn)`/`(qt)` already worked:
 
-- **No `KRUDD_DAWN_PREFIX`** (every CI run, every default checkout): the whole
-  `(dawn)` graph — including this editor target — is left out. `./krudd.sh build`
-  is byte-for-byte unchanged.
-- **`KRUDD_DAWN_PREFIX` but no `KRUDD_QT`** (someone who only wants the offscreen
-  `krudd_native`): the `(qt)` editor target is skipped, so no Qt install is
-  required and `krudd_native` builds exactly as before.
+- **No `KRUDD_VULKAN`** (every default checkout, every default CI run): the whole
+  `(vulkan)` graph — the backend library and this editor target — is left out.
+  `./krudd.sh build` is byte-for-byte unchanged, and no Vulkan headers are
+  needed to build the engine or the web target.
+- **`KRUDD_VULKAN` but no `KRUDD_QT`**: the `(qt)` editor target is skipped, so
+  no Qt install is required to build the backend library on its own.
 
-Only `./krudd.sh editor` (or setting `KRUDD_QT` yourself) pulls the editor into
-the build.
+Only `./krudd.sh editor` (or setting `KRUDD_VULKAN`/`KRUDD_QT` yourself) pulls
+the editor into the build.
 
-## If a Dawn or Qt roll breaks something
+## If a Qt roll breaks something
 
-- Dawn surface type renames: the `WGPUSurfaceSource*` structs and their
-  `WGPUSType_*` tags track Dawn's `webgpu.h` at the pinned revision. If the pin
-  is ever rolled and these are renamed, the only code to touch is
-  `window_create_surface` in `krudd/engine/core/krudd_qt.cpp`; check the new
-  names against `$KRUDD_DAWN_PREFIX/include/webgpu/webgpu.h`.
-- Qt native-interface renames: `window_create_surface`'s Wayland branch in
-  `krudd_qt.cpp`, guarded by `QT_VERSION_CHECK(6, 5, 0)`.
+- Qt native-interface renames: `window_create_surface` in
+  `krudd/engine/core/krudd_qt.cpp` is the one place the Qt→Vulkan surface glue
+  lives (its Wayland branch is guarded by `QT_VERSION_CHECK(6, 5, 0)`).
+- A new target platform: add its `VK_USE_PLATFORM_*` selection at the top of
+  `krudd_qt.cpp` and a matching branch in `window_create_surface` — those two
+  are the only places that know about a specific windowing system.

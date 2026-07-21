@@ -4,13 +4,18 @@
 # setup.sh — one-time environment bootstrap for building krudd from source.
 #
 # Aimed at SteamOS / the Steam Deck, where the root filesystem is immutable and
-# you "can't even get clang", but works on any Linux dev box. It does the three
+# you "can't even get clang", but works on any Linux dev box. It does the two
 # things `./krudd.sh editor` can't do for itself:
 #
-#   1. installs the native toolchain (compiler, cmake, ninja, Qt6, Vulkan loader)
-#   2. builds pinned native Dawn once, out-of-tree, WITH a Wayland/X11 surface
-#   3. writes .krudd-env so `./krudd.sh editor` picks up KRUDD_DAWN_PREFIX and
-#      the Qt cflags/libs automatically — no manual exports
+#   1. installs the native toolchain (compiler, ninja, Qt6, and the Vulkan
+#      loader + headers + validation layers + glslang)
+#   2. writes .krudd-env so `./krudd.sh editor` picks up the Qt cflags/libs
+#      automatically — no manual exports
+#
+# The native editor renders on Vulkan directly (see docs/qt-editor-shell.md),
+# so there is no multi-gigabyte out-of-tree GPU library to build any more: the
+# Vulkan loader and validation layers are ordinary system packages, and the
+# whole bootstrap is a single package install.
 #
 # Re-runnable: every step is skipped if its result is already there, so a second
 # run is cheap and only repairs what's missing.
@@ -21,19 +26,6 @@
 set -e
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-
-# The pinned Dawn revision. This MUST match tools/dawn-smoke/README.md and the
-# emsdk emdawnwebgpu port the web build uses — the native build is only a
-# faithful debugger of the shipped web build when the two are in lockstep. If
-# the port is ever rolled, re-pin here AND in tools/dawn-smoke/README.md.
-DAWN_REV=31e25af254ab572c77054edec4946d2244e184dd
-
-# Out-of-tree, so the build survives worktrees and is never churned by a repo
-# build. It is not small: ~1.6 GB of source and objects for a ~38 MB installed
-# libwebgpu_dawn.a. Honour an existing KRUDD_DAWN_PREFIX so a shared Dawn is
-# reused.
-dawn_src="$HOME/.krudd/dawn-native"
-dawn_prefix="${KRUDD_DAWN_PREFIX:-$dawn_src/install}"
 
 say() { printf 'setup.sh: %s\n' "$1"; }
 
@@ -48,36 +40,43 @@ in_container() {
 os_id=$( . /etc/os-release 2>/dev/null && printf '%s' "$ID" )
 
 # ---------------------------------------------------------------------------
-# 1. Toolchain.
+# 1. Toolchain (compiler + ninja + Qt6 + Vulkan loader/headers/validation).
 # ---------------------------------------------------------------------------
 
-# Everything the editor build needs is present already?
+# Everything the editor build needs is present already? The validation-layer
+# manifest is the marker that the Vulkan *validation* layers (not just the
+# loader) are installed — that is the whole point of this backend's bring-up.
 have_toolchain() {
 	command -v cc >/dev/null 2>&1 &&
-		command -v cmake >/dev/null 2>&1 &&
 		command -v ninja >/dev/null 2>&1 &&
 		command -v git >/dev/null 2>&1 &&
-		command -v python3 >/dev/null 2>&1 &&
+		[ -e /usr/include/vulkan/vulkan.h ] &&
+		[ -f /usr/share/vulkan/explicit_layer.d/VkLayer_khronos_validation.json ] &&
 		pkg-config --exists Qt6Widgets Qt6Gui Qt6Core 2>/dev/null
 }
 
 install_toolchain() {
 	if command -v pacman >/dev/null 2>&1; then
 		sudo pacman -S --needed --noconfirm \
-			base-devel git cmake ninja python qt6-base vulkan-icd-loader
+			base-devel git ninja qt6-base \
+			vulkan-icd-loader vulkan-headers \
+			vulkan-validation-layers glslang
 	elif command -v apt-get >/dev/null 2>&1; then
 		sudo apt-get update
 		sudo apt-get install -y \
-			build-essential git cmake ninja-build python3 \
-			pkg-config qt6-base-dev libvulkan-dev
+			build-essential git ninja-build pkg-config \
+			qt6-base-dev libvulkan-dev \
+			vulkan-validationlayers glslang-tools
 	elif command -v dnf >/dev/null 2>&1; then
 		sudo dnf install -y \
-			@development-tools git cmake ninja-build python3 \
-			pkgconf-pkg-config qt6-qtbase-devel vulkan-loader-devel
+			@development-tools git ninja-build \
+			pkgconf-pkg-config qt6-qtbase-devel \
+			vulkan-loader-devel vulkan-validation-layers glslang
 	else
 		say "no supported package manager (pacman/apt/dnf) found."
-		say "install a C compiler, cmake, ninja, git, python3, Qt6 and a"
-		say "Vulkan loader by hand, then re-run ./setup.sh."
+		say "install a C compiler, ninja, git, Qt6, and the Vulkan"
+		say "loader + headers + validation layers + glslang by hand,"
+		say "then re-run ./setup.sh."
 		return 1
 	fi
 }
@@ -108,58 +107,27 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 2. Native Dawn (pinned, WITH a surface — the editor recipe, not the
-#    offscreen dawn-smoke one).
-# ---------------------------------------------------------------------------
-
-if [ -f "$dawn_prefix/lib/libwebgpu_dawn.a" ]; then
-	say "native Dawn already built at $dawn_prefix — skipping."
-else
-	say "building native Dawn ($DAWN_REV) — one-time, needs ~1.6 GB and a while."
-	mkdir -p "$dawn_src"
-	cd "$dawn_src"
-	[ -d .git ] || git init -q .
-	git remote add origin https://github.com/google/dawn.git 2>/dev/null || true
-	git fetch --depth 1 origin "$DAWN_REV"
-	git checkout -q FETCH_HEAD
-	cmake -S . -B out/Release -G Ninja \
-		-DCMAKE_BUILD_TYPE=Release \
-		-DCMAKE_INSTALL_PREFIX="$dawn_prefix" \
-		-DDAWN_FETCH_DEPENDENCIES=ON \
-		-DDAWN_ENABLE_VULKAN=ON \
-		-DDAWN_ENABLE_DESKTOP_GL=OFF -DDAWN_ENABLE_OPENGLES=OFF \
-		-DDAWN_ENABLE_NULL=OFF \
-		-DDAWN_USE_WAYLAND=ON -DDAWN_USE_X11=ON -DDAWN_USE_GLFW=OFF \
-		-DDAWN_BUILD_SAMPLES=OFF -DDAWN_BUILD_TESTS=OFF \
-		-DDAWN_BUILD_BENCHMARKS=OFF -DDAWN_BUILD_PROTOBUF=OFF \
-		-DTINT_BUILD_TESTS=OFF -DTINT_BUILD_CMD_TOOLS=OFF \
-		-DTINT_BUILD_BENCHMARKS=OFF \
-		-DDAWN_ENABLE_INSTALL=ON -DTINT_ENABLE_INSTALL=OFF \
-		-DDAWN_BUILD_MONOLITHIC_LIBRARY=STATIC -DBUILD_SHARED_LIBS=OFF
-	ninja -C out/Release webgpu_dawn
-	cmake --install out/Release
-	cd "$root"
-fi
-
-# ---------------------------------------------------------------------------
-# 3. .krudd-env — sourced automatically by krudd.sh.
+# 2. .krudd-env — sourced automatically by krudd.sh.
 # ---------------------------------------------------------------------------
 #
 # Written with `:=` conditional assignment so an explicit value in the caller's
 # shell always wins over what we discovered here.
+#
+# There is deliberately nothing Vulkan-shaped here: the loader is on the default
+# library search path and its headers on the default include path, so the build
+# just links -lvulkan. KRUDD_VULKAN (which pulls the Vulkan target into the
+# native graph) is set by `./krudd.sh editor` per-invocation, NOT here — writing
+# it into the sourced env would pull Vulkan into every `krudd build` too.
 
 env_file="$root/.krudd-env"
 {
 	echo "# Written by setup.sh — sourced automatically by krudd.sh."
 	echo "# Re-run ./setup.sh to refresh, or delete this file to reset."
-	echo ": \"\${KRUDD_DAWN_PREFIX:=$dawn_prefix}\""
-	echo "export KRUDD_DAWN_PREFIX"
 } > "$env_file"
 
 # Qt6 is the editor's windowing toolkit; wire up its cflags/libs so
 # `./krudd.sh editor` needs no manual exports. install_toolchain pulls it in,
-# so this normally succeeds — warn (don't fail) if it somehow isn't found, so
-# the Dawn build above is still recorded.
+# so this normally succeeds — warn (don't fail) if it somehow isn't found.
 if pkg-config --exists Qt6Widgets Qt6Gui Qt6Core 2>/dev/null; then
 	{
 		echo ": \"\${KRUDD_QT_CFLAGS:=\$(pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core)}\""

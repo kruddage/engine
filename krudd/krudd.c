@@ -99,17 +99,17 @@ static int cmd_build(void)
 
 /*
  * `krudd editor` — build the Qt editor shell and run it. The native editor:
- * the engine's WebGPU backend on native Dawn, presenting into a QWindow
- * embedded in real Qt chrome (menu bar, toolbar, Scene/Inspector/Assets/Console
- * docks) on the desktop (SteamOS / the Steam Deck), no browser in the path.
- * Proof of life for #675/#676. See docs/qt-editor-shell.md.
+ * the engine's Vulkan backend, presenting into a QWindow embedded in real Qt
+ * chrome (menu bar, toolbar, Scene/Inspector/Assets/Console docks) on the
+ * desktop (SteamOS / the Steam Deck / Windows), no browser in the path. See
+ * docs/qt-editor-shell.md.
  *
- * It needs native Dawn, a large out-of-tree artifact, so — exactly like the
- * offscreen krudd_native — it is gated on KRUDD_DAWN_PREFIX rather than assumed.
- * The window target additionally carries (qt); this sets KRUDD_QT for the build
- * so the ordinary `krudd build` stays Qt-free. Qt, unlike a system library on a
- * default include path, needs KRUDD_QT_CFLAGS set (normally from pkg-config)
- * before this runs.
+ * The window target carries (vulkan) and (qt). This sets KRUDD_VULKAN and
+ * KRUDD_QT for the build so the ordinary `krudd build` stays Vulkan- and
+ * Qt-free — both targets are opt-in, like the old (dawn) gate. The Vulkan
+ * loader and headers are an ordinary system package (setup.sh installs them
+ * with the validation layers); Qt, unlike a system library on a default include
+ * path, needs KRUDD_QT_CFLAGS set (normally from pkg-config) before this runs.
  *
  * `editor-qt` is kept as a back-compat alias for this command.
  */
@@ -117,14 +117,6 @@ static int cmd_editor(void)
 {
 	char path[1024];
 
-	if (!getenv("KRUDD_DAWN_PREFIX")) {
-		fprintf(stderr,
-			"krudd: editor needs a native Dawn build — set "
-			"KRUDD_DAWN_PREFIX to your Dawn install dir.\n"
-			"krudd: see docs/qt-editor-shell.md (and "
-			"tools/dawn-smoke/README.md) for the recipe.\n");
-		return -1;
-	}
 	if (!getenv("KRUDD_QT_CFLAGS")) {
 		fprintf(stderr,
 			"krudd: editor needs Qt6 — set KRUDD_QT_CFLAGS "
@@ -137,8 +129,9 @@ static int cmd_editor(void)
 		return -1;
 	}
 
-	/* Pull the (qt) window target into the native graph for this build.
-	 * Do not clobber an explicit value. */
+	/* Pull the (vulkan) backend and (qt) window targets into the native
+	 * graph for this build. Do not clobber an explicit value. */
+	setenv("KRUDD_VULKAN", "1", 0);
 	setenv("KRUDD_QT", "1", 0);
 
 	if (cmd_build() != 0)
@@ -270,8 +263,8 @@ static void usage(void)
 		"  (no args)     resolve projects here: setup / run / pick\n"
 		"  build         configure + build (no prompts; used by CI)\n"
 		"  run           build, then serve the site\n"
-		"  editor        build + run the Qt editor shell (needs "
-		"KRUDD_DAWN_PREFIX, KRUDD_QT_CFLAGS)\n"
+		"  editor        build + run the Qt editor shell (Vulkan; needs "
+		"KRUDD_QT_CFLAGS)\n"
 		"  new-project   scaffold a <name>.krudd-project\n");
 }
 

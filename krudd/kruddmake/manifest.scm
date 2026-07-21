@@ -9,6 +9,7 @@
  "render/null"
  "render/webgl"
  "render/webgpu"
+ "render/vulkan"
  "render/frame_graph"
  "render/particles"
  "render/scene_renderer"

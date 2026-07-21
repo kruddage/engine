@@ -52,10 +52,14 @@ no moc rule.
 
 There is a committed bootstrap at the repo root that does everything the editor
 build needs — installs the toolchain (compiler, cmake, ninja, Qt6, a Vulkan
-loader), builds pinned native Dawn once (with a Wayland/X11 surface — the ~38 MB
+loader), builds pinned native Dawn once (with a Wayland/X11 surface — the big
 step, skipped on re-runs), and writes `.krudd-env` so `./krudd.sh editor` finds
 Dawn and Qt with no manual exports. It is re-runnable: each step is skipped when
 its result is already there.
+
+The Dawn step installs a ~38 MB `libwebgpu_dawn.a`, but getting there needs about
+**1.6 GB** of out-of-tree source and build objects under `$HOME/.krudd/dawn-native`,
+plus a long first compile. One-time, but budget the disk — particularly on a Deck.
 
 SteamOS's root filesystem is immutable, so the toolchain lives in an Arch
 [distrobox](https://distrobox.it/) (it shares the Deck's Wayland socket and GPU).
@@ -71,7 +75,7 @@ Then, inside the container:
 ```sh
 git clone https://github.com/kruddage/engine.git
 cd engine
-./setup.sh          # toolchain + pinned Dawn + .krudd-env  (the ~38 MB step)
+./setup.sh          # toolchain + pinned Dawn + .krudd-env  (the big, one-time step)
 ./krudd.sh editor   # builds and runs the Qt editor shell
 ```
 

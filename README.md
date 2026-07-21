@@ -142,9 +142,19 @@ Wayland socket and GPU). To get going from a clean checkout:
 ```sh
 git clone https://github.com/kruddage/engine.git
 cd engine
-./setup.sh          # toolchain + pinned Dawn (~38 MB) + .krudd-env
+./setup.sh          # toolchain + pinned Dawn + .krudd-env (see the disk note below)
 ./krudd.sh editor   # build and run the Qt editor shell
 ```
+
+Budget disk for the Dawn step: the installed `libwebgpu_dawn.a` is ~38 MB, but building it
+needs roughly **1.6 GB** of out-of-tree source and objects (`$HOME/.krudd/dawn-native`) and a
+long first compile. Both are one-time — re-runs skip the step — but the working set is worth
+knowing about on a 64 GB Deck.
+
+Note that `setup.sh` installs Dawn to `$HOME/.krudd/dawn-native/install` and records it in
+`.krudd-env`, which `krudd.sh` sources automatically — so after `./setup.sh` you do not need
+the manual `KRUDD_DAWN_PREFIX` export shown above. That export is for a hand-built Dawn
+following the long-form doc, whose recipe installs to a different prefix.
 
 The complete copy-paste setup — building Dawn with a Wayland/X11 surface, the exact pin, and
 what you should see on screen — lives in

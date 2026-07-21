@@ -80,6 +80,7 @@ extern "C" {
 #include "script.h"
 #include "renderer.h"        /* struct gpu_api — the backend's vtable */
 #include "camera_api.h"      /* set the projection aspect to the viewport */
+#include "entity_api.h"      /* the "scene" api: clear/build the world (Open) */
 #include "editor_boot.h"     /* the native render-cluster boot */
 #include "vulkan_platform.h" /* the native windowing host seam (VkSurfaceKHR) */
 }
@@ -92,6 +93,8 @@ extern "C" {
 
 #include <QtCore/QByteArray>
 #include <QtCore/QElapsedTimer>
+#include <QtCore/QFile>
+#include <QtCore/QFileInfo>
 #include <QtCore/QTimer>
 #include <QtGui/QAction>
 #include <QtGui/QCloseEvent>
@@ -108,6 +111,7 @@ extern "C" {
 #include <QtGui/qpa/qplatformnativeinterface.h>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QDockWidget>
+#include <QtWidgets/QFileDialog>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QMainWindow>
 #include <QtWidgets/QMenuBar>
@@ -312,6 +316,51 @@ static QDockWidget *make_dock(const QString &title, const QString &object_name,
 	return dock;
 }
 
+/*
+ * Load a .scm scene off disk into the live world (#698) — the native File ▸
+ * Open Project path, the counterpart of the browser's IndexedDB/fetch scene
+ * sources that editor_boot_cluster deliberately leaves out. clear_world drops
+ * the current scene first so Open replaces rather than layers, build_scene_scm
+ * evaluates the authored (scene …) form against the shared s7 image (the same
+ * entry a built-in game boots its world through), and reset_view hands the
+ * camera back to the freshly loaded scene's scripted camera. Returns the
+ * spawned entity count, or -1 with *err set on any failure.
+ */
+static int load_scene_file(const struct entity_api *scene,
+			   const struct camera_api *camera,
+			   const QString &path, QString *err)
+{
+	if (!scene || !scene->build_scene_scm) {
+		*err = QStringLiteral("scene subsystem is not available");
+		return -1;
+	}
+
+	QFile f(path);
+	if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+		*err = QStringLiteral("cannot open %1: %2")
+			       .arg(path, f.errorString());
+		return -1;
+	}
+	QByteArray src = f.readAll();
+	f.close();
+
+	/* Replace, don't layer: empty the world before building the new scene. */
+	if (scene->clear_world)
+		scene->clear_world();
+
+	int n = scene->build_scene_scm(src.constData());
+	if (n < 0) {
+		*err = QStringLiteral("%1 is not a valid (scene …) form")
+			       .arg(QFileInfo(path).fileName());
+		return -1;
+	}
+
+	/* Frame the loaded scene with its own camera, dropping any prior view. */
+	if (camera && camera->reset_view)
+		camera->reset_view();
+	return n;
+}
+
 int main(int argc, char **argv)
 {
 	QApplication app(argc, argv);
@@ -351,13 +400,48 @@ int main(int argc, char **argv)
 		return a;
 	};
 
+	/*
+	 * The scene ("scene") and camera apis the wired menu actions drive. Both
+	 * are published by the render cluster, so they stay null until
+	 * editor_boot_cluster runs (far below); the Open Project handler resolves
+	 * them at click time — long after boot — through these, captured by
+	 * reference. A build that never boots the cluster leaves them null and the
+	 * handlers degrade to a status-bar note rather than dereferencing null.
+	 */
+	const struct entity_api *scene  = nullptr;
+	const struct camera_api *camera = nullptr;
+
 	/* ---- File ------------------------------------------------------- */
 	QMenu *file_menu = win.menuBar()->addMenu(QStringLiteral("&File"));
 	add_action(file_menu, QStringLiteral("&New Project"), QKeySequence::New,
 		   [=]() { coming_soon(QStringLiteral("New Project")); });
 	add_action(file_menu, QStringLiteral("&Open Project…"),
-		   QKeySequence::Open,
-		   [=]() { coming_soon(QStringLiteral("Open Project")); });
+		   QKeySequence::Open, [&]() {
+			const QString path = QFileDialog::getOpenFileName(
+				&win, QStringLiteral("Open Project"), QString(),
+				QStringLiteral("Scene scripts (*.scm);;"
+					       "All files (*)"));
+
+			if (path.isEmpty())
+				return; /* user cancelled the dialog */
+
+			QString err;
+			int n = load_scene_file(scene, camera, path, &err);
+			if (n < 0) {
+				win.statusBar()->showMessage(err, 6000);
+				QMessageBox::warning(
+					&win, QStringLiteral("Open Project"),
+					err);
+				return;
+			}
+			win.statusBar()->showMessage(
+				QStringLiteral("Loaded %1 — %2 entit%3")
+					.arg(QFileInfo(path).fileName())
+					.arg(n)
+					.arg(n == 1 ? QStringLiteral("y")
+						    : QStringLiteral("ies")),
+				6000);
+		   });
 	file_menu->addSeparator();
 	add_action(file_menu, QStringLiteral("&Save"), QKeySequence::Save,
 		   [=]() { coming_soon(QStringLiteral("Save")); });
@@ -553,13 +637,17 @@ int main(int argc, char **argv)
 	editor_boot_cluster(&manager);
 
 	/*
-	 * The camera-aspect half of the wasm viewport bridge, done here since
-	 * native has no kruddgui pointer: keep the projection matched to the
-	 * viewport's pixel ratio each frame (below), or the scene stretches on
-	 * any non-default aspect. Resolved after the cluster, which publishes it.
+	 * Resolve the cluster's apis now it is up: the camera drives the
+	 * per-frame aspect sync (below) and the scene backs File ▸ Open Project.
+	 * The camera-aspect sync is the half of the wasm viewport bridge done
+	 * here, since native has no kruddgui pointer — keep the projection matched
+	 * to the viewport each frame or the scene stretches on any non-default
+	 * aspect. Both fill the pointers the menu handlers captured by reference.
 	 */
-	const struct camera_api *camera = static_cast<const struct camera_api *>(
+	camera = static_cast<const struct camera_api *>(
 		subsystem_manager_get_api(&manager, "camera"));
+	scene = static_cast<const struct entity_api *>(
+		subsystem_manager_get_api(&manager, "scene"));
 
 	renderer_badge->setText(QStringLiteral("Vulkan · native · ") +
 				QGuiApplication::platformName());

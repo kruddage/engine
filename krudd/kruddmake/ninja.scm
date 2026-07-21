@@ -73,15 +73,6 @@
 (define (ninja-sources clauses)
   (let ((c (rz-clause 'sources clauses))) (if c (cdr c) '())))
 
-(define (ninja-emit-s7-obj rule obj)
-  (ninja-emit (string-append "build " obj ": " rule " $s7dir/s7.c"))
-  obj)
-
-(define (ninja-with-s7 name rule obj objs)
-  (if (string=? name "script")
-      (append objs (list (ninja-emit-s7-obj rule obj)))
-      objs))
-
 ;;! Native Dawn is an external artifact (a ~38 MB libwebgpu_dawn.a built out of
 ;;! tree — see tools/dawn-smoke/README.md), so a `(dawn)` target is OPT-IN:
 ;;! without KRUDD_DAWN_PREFIX in the environment it is left out of the native
@@ -157,10 +148,9 @@
                           (ninja-dawn-includes clauses
                                                (ninja-include-flags
                                                 (resolve-includes table name)))))
-               (objs (ninja-with-s7 name "cc_s7" "obj/s7/s7.c.o"
-                                    (map (lambda (s)
-                                           (ninja-emit-compile name dir includes s))
-                                         (ninja-sources clauses))))
+               (objs (map (lambda (s)
+                            (ninja-emit-compile name dir includes s))
+                          (ninja-sources clauses)))
                (lib (string-append "lib" name ".a")))
           (ninja-emit (string-append "build " lib ": ar "
                                      (ninja-join " " objs)))
@@ -195,9 +185,16 @@
                                (if vulkan (list "$vulkanlibs") '())
                                (if qt (list "$qtlibs") '())))
                (bin (string-append "bin/" name)))
+          ;;! s7 is a prebuilt archive (kruddage/s7 release, fetched by
+          ;;! third_party/sync.sh) rather than an object baked into libscript.a.
+          ;;! It rides after the engine archives on every executable link: as a
+          ;;! static archive the linker pulls only the members a target actually
+          ;;! references, so binaries that never call s7 are byte-for-byte
+          ;;! unchanged, and it must come last because libscript.a references it.
           (ninja-emit (string-append "build " bin ": "
                                      (if (or dawn qt) "link_cxx" "link") " "
-                                     (ninja-join " " (append objs libs))))
+                                     (ninja-join " " (append objs libs
+                                                             (list "$s7nativelib")))))
           (if (pair? ldlibs)
               (ninja-emit (string-append "  ldlibs = "
                                          (ninja-join " " ldlibs))))
@@ -236,7 +233,8 @@
 ;;!   KRUDD_EXTRA_LDFLAGS         extra link flags (the same, on the link step)
 ;;! All default to empty / cc / c++, so a plain `krudd build` is byte-for-byte
 ;;! unchanged. Only the native cc/cxx/link rules honor them — the WASM (emcc)
-;;! path and the vendored-s7 rule are deliberately left uninstrumented.
+;;! path is deliberately left uninstrumented, and s7 is a prebuilt archive so it
+;;! is inherently uninstrumented (and, being third-party, excluded from coverage).
 (define (ninja-preamble srcroot)
   (let ((native-cc (or (getenv "KRUDD_CC") "cc"))
         (native-cxx (or (getenv "KRUDD_CXX") "c++"))
@@ -319,8 +317,12 @@
      ;;! emscripten requires it at both compile and link, so it rides on the
      ;;! wasm C compile flags here and the main-module link flags below.
      "emcflags = -std=gnu11 -Wall -Werror -Wpedantic --use-port=emdawnwebgpu"
-     "s7dir = $srcroot/../third_party"
-     "s7flags = -O2 -w -DWITH_C_LOADER=0 -DWITH_MAIN=0 -I$s7dir"
+     ;;! s7 ships as prebuilt static archives from the kruddage/s7 release,
+     ;;! fetched + checksum-verified into ../third_party by sync.sh (see
+     ;;! s7.artifact / VENDOR.md). s7.h lands in the same directory, already on
+     ;;! the include path via each build.scm's (private (raw "../third_party")).
+     "s7nativelib = $srcroot/../third_party/libs7-linux-x86_64.a"
+     "s7wasmlib = $srcroot/../third_party/libs7-wasm32.a"
      (string-append "mainflags = -sENVIRONMENT=web -sALLOW_MEMORY_GROWTH=1 "
                     "-sGROWABLE_ARRAYBUFFERS=0 -sMALLOC=mimalloc "
                     "-sFETCH=1 -sMAX_WEBGL_VERSION=2 --use-port=emdawnwebgpu "
@@ -341,14 +343,6 @@
      "rule ar"
      "  command = rm -f $out && $ar rcs $out $in"
      "  description = AR $out"
-     ""
-     "rule cc_s7"
-     "  command = $cc $s7flags -c $in -o $out"
-     "  description = CC(s7) $out"
-     ""
-     "rule emcc_s7"
-     "  command = $emcc $s7flags -c $in -o $out"
-     "  description = EMCC(s7) $out"
      ""
      "rule link"
      "  command = $cc $extraldflags $in $ldlibs -o $out"
@@ -432,21 +426,20 @@
          (cxxflags (let ((c (rz-clause 'wasm-flags clauses)))
                      (if c (ninja-join " " (cdr c)) "")))
          (includes (ninja-wasm-include-flags (resolve-includes table name)))
-         (objs (ninja-with-s7 name "emcc_s7" "wasm-obj/s7/s7.c.o"
-                              (map (lambda (s)
-                                     (let* ((tp (rz-path dir s))
-                                            (clean (ninja-resolve-var tp))
-                                            (obj (ninja-wasm-obj name
-                                                                 (ninja-obj-clean tp)))
-                                            (rule (ninja-wasm-compile-rule clean)))
-                                       (ninja-emit (string-append "build " obj ": " rule
-                                                                  " " (ninja-wasm-ref tp)))
-                                       (if (string=? rule "emcc_cxx")
-                                           (ninja-emit (string-append "  emcxxflags = "
-                                                                      cxxflags)))
-                                       (ninja-emit (string-append "  includes = " includes))
-                                       obj))
-                                   sources)))
+         (objs (map (lambda (s)
+                      (let* ((tp (rz-path dir s))
+                             (clean (ninja-resolve-var tp))
+                             (obj (ninja-wasm-obj name
+                                                  (ninja-obj-clean tp)))
+                             (rule (ninja-wasm-compile-rule clean)))
+                        (ninja-emit (string-append "build " obj ": " rule
+                                                   " " (ninja-wasm-ref tp)))
+                        (if (string=? rule "emcc_cxx")
+                            (ninja-emit (string-append "  emcxxflags = "
+                                                       cxxflags)))
+                        (ninja-emit (string-append "  includes = " includes))
+                        obj))
+                    sources))
          (lib (string-append "wasm/lib" name ".a")))
     (ninja-emit (string-append "build " lib ": emar "
                                (ninja-join " " objs)))
@@ -468,9 +461,13 @@
                     srcs))
          (libs (map (lambda (l) (ninja-emit-wasm-lib table libmap l))
                     (resolve-wasm-module-libs table "index"))))
+    ;;! The prebuilt wasm s7 archive (kruddage/s7 release, fetched by
+    ;;! third_party/sync.sh) links into the single wasm module here, the same
+    ;;! role $s7nativelib plays for native binaries. It carries the wasm-only
+    ;;! KRUDD-LOCAL PATCH that used to live in this repo's s7.c.
     (ninja-emit (string-append
                  "build index.html | index.js index.wasm: main_module "
-                 (ninja-join " " (append objs libs))))
+                 (ninja-join " " (append objs libs (list "$s7wasmlib")))))
     (ninja-emit (string-append "  extraflags = --extern-pre-js "
                                "$srcroot/core/error_overlay.js "
                                "--shell-file generated/shell.html"))

@@ -34,17 +34,19 @@ fi
 
 echo "krudd.sh: found C compiler $cc"
 
-# s7.c/s7.h are vendored (see krudd/third_party/s7.artifact); sync.sh checks
-# their checksum before we compile the tool that embeds them.
+# s7 is pinned to a kruddage/s7 release (see krudd/third_party/s7.artifact);
+# sync.sh fetches + checksum-verifies the prebuilt header/library before we
+# link the tool that embeds them, and exports S7_HEADER / S7_NATIVE_LIB.
 . "$root/krudd/third_party/sync.sh"
 
 bin="$root/krudd/krudd"
 src="$root/krudd/krudd.c"
-s7="$root/krudd/third_party/s7.c"
-if [ ! -x "$bin" ] || [ "$src" -nt "$bin" ] || [ "$s7" -nt "$bin" ]; then
+# The WITH_* defines keep krudd.c's view of s7.h identical to how the linked
+# library was built (no dlopen C-loader, s7 as a library rather than a REPL).
+if [ ! -x "$bin" ] || [ "$src" -nt "$bin" ] || [ "$S7_NATIVE_LIB" -nt "$bin" ]; then
 	"$cc" -O2 -w -DWITH_C_LOADER=0 -DWITH_MAIN=0 \
 		-I"$root/krudd/third_party" \
-		-o "$bin" "$src" "$s7" -lm
+		-o "$bin" "$src" "$S7_NATIVE_LIB" -lm
 fi
 
 export KRUDD_ROOT="$root"

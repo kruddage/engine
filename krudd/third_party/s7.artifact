@@ -1,28 +1,37 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
-# Pin for s7.c / s7.h, sourced by krudd/third_party/sync.sh. This is the one
-# place the s7 pin lives — see VENDOR.md for the fetch mechanism and license
+# Pin for the s7 artifacts, sourced by krudd/third_party/sync.sh. This is the
+# one place the s7 pin lives — see VENDOR.md for the fetch mechanism and license
 # rationale.
 #
-# Re-vendoring: bump S7_VERSION/S7_DATE/S7_COMMIT to the new upstream commit,
-# update S7_C_SHA256/S7_H_SHA256, then delete the committed s7.c/s7.h and
-# re-run sync.sh (or krudd.sh) — it downloads the new pin, fails loudly if
-# these checksums weren't updated to match, and the result should be
-# committed back to the repo.
+# s7 is no longer vendored as source here. kruddage/s7 re-cuts upstream S7 Scheme
+# as this org's own GitHub Releases and ships prebuilt, linkable artifacts:
 #
-# WARNING: s7.c carries a LOCAL PATCH (search KRUDD-LOCAL PATCH in it; rationale
-# in VENDOR.md "Local patches"), so S7_C_SHA256 below is the checksum of the
-# PATCHED file, NOT of the upstream download. Re-vendoring must re-apply the
-# patch before recomputing it — otherwise sync.sh silently overwrites s7.c with
-# pristine upstream and reintroduces a wasm-only crash the native suite cannot
-# see. Verify in a browser after any bump.
+#   s7.h                    the public header (consumers #include "s7.h")
+#   libs7-linux-x86_64.a    native static library (linux x86_64)
+#   libs7-wasm32.a          wasm static library (built with emcc/emar)
+#   krudds7-linux-x86_64    standalone s7 CLI (the kruddmake bootstrap interpreter)
+#
+# The wasm-only KRUDD-LOCAL PATCH that used to live in this repo's s7.c now lives
+# in kruddage/s7 and is baked into libs7-wasm32.a, so re-pinning here is just a
+# tag bump — there is no source to re-patch.
+#
+# Re-pinning: bump S7_RELEASE to the new kruddage/s7 release tag, then delete the
+# cached artifacts in this directory (libs7-*.a, s7.h, krudds7-linux-x86_64) and
+# re-run sync.sh (or krudd.sh). Each asset is verified against the ".sha256"
+# sidecar published alongside it in the same release, so a corrupted or truncated
+# download fails loudly. S7_VERSION/S7_DATE are kept as upstream provenance.
 
 S7_VERSION="10.8"
 S7_DATE="17-Apr-2024"
-S7_COMMIT="85bf12688518a5b4f40ef6f4b45338f770abc03c"
 
-S7_C_URL="https://raw.githubusercontent.com/aboalang/s7/$S7_COMMIT/s7.c"
-S7_H_URL="https://raw.githubusercontent.com/aboalang/s7/$S7_COMMIT/s7.h"
+# Release tag in kruddage/s7 (release-please semver off Conventional Commits).
+S7_RELEASE="v0.3.0"
+S7_BASE_URL="https://github.com/kruddage/s7/releases/download/$S7_RELEASE"
 
-S7_C_SHA256="2a7f4438a2f82d3d2e05f9dd55ad345034fcb53ae2a34eaa287e75868e04f531"
-S7_H_SHA256="4054fd2b3dfd2416a87312e8ae78f5dbb4ec9c02031b10030634d555b27bc826"
+# Asset filenames within that release. Each is fetched together with its
+# "<asset>.sha256" sidecar for integrity verification.
+S7_HEADER_ASSET="s7.h"
+S7_NATIVE_LIB_ASSET="libs7-linux-x86_64.a"
+S7_WASM_LIB_ASSET="libs7-wasm32.a"
+S7_CLI_ASSET="krudds7-linux-x86_64"

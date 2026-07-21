@@ -6,8 +6,8 @@
 # Stage 0 (always): the s7-only bootstrap checks — introspect_test.scm exercises
 # the codegen/embed helpers with no WASM/Ninja toolchain needed.
 #
-# Stage 1 (always): build a native s7 interpreter and run resolve_test.scm —
-# the resolver + emitter checks. This needs only a C compiler, no WASM/Ninja.
+# Stage 1 (always): run resolve_test.scm through the pinned krudds7 interpreter —
+# the resolver + emitter checks. This needs only the fetched s7 CLI, no compiler.
 #
 # Stage 2 (when ninja + cc are present): render the real manifest to a
 # build.ninja and build the `native` target with ninja(1). Each test links and
@@ -19,17 +19,10 @@ set -e
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 export KRUDD_ROOT="$root"
 
-cc=${CC:-}
-if [ -z "$cc" ]; then
-	for c in cc gcc clang; do
-		if command -v "$c" >/dev/null 2>&1; then
-			cc=$c
-			break
-		fi
-	done
-fi
-[ -n "$cc" ] || { echo "kruddmake: no C compiler (set CC)" >&2; exit 1; }
-
+# Fetches + verifies the pinned s7 artifacts and exports S7_CLI — the standalone
+# s7 interpreter (krudds7) shipped by the kruddage/s7 release. `krudds7 FILE`
+# loads and runs a Scheme file, which is exactly what the bootstrap/oracle
+# stages below need, so we use it directly instead of building our own.
 . "$root/krudd/third_party/sync.sh"
 
 # KRUDD_BUILD_DIR lets a caller (e.g. the sanitizer / coverage CI jobs) point
@@ -39,14 +32,7 @@ fi
 work="${KRUDD_BUILD_DIR:-$root/build-ninja}"
 mkdir -p "$work"
 
-s7bin="$work/s7"
-s7src="$root/krudd/third_party/s7.c"
-if [ ! -x "$s7bin" ] || [ "$s7src" -nt "$s7bin" ]; then
-	echo "kruddmake: building s7 test interpreter"
-	"$cc" -O2 -w -DWITH_MAIN=1 -DWITH_C_LOADER=0 \
-		-I"$root/krudd/third_party" \
-		-o "$s7bin" "$s7src" -lm
-fi
+s7bin="$S7_CLI"
 
 # Stage 0: s7-only bootstrap checks (codegen/embed helpers).
 "$s7bin" "$root/krudd/kruddmake/introspect_test.scm"

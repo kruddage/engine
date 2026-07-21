@@ -1,66 +1,70 @@
-# s7 Scheme (krudd's build interpreter) — vendored
+# s7 Scheme (krudd's build interpreter) — pinned release artifacts
 
-`s7.c` / `s7.h` are third-party source, **not** engine-authored code, and are
-committed to this repo at the pinned commit in `s7.artifact`. `sync.sh` checks
-the sha256 of the committed files before any build compiles them, so every
-build compiles the exact same bytes; it can also (re-)download them from the
-pinned commit when re-vendoring (see Pin below). They keep their upstream
-`SPDX-License-Identifier: 0BSD` header and are **not** stamped with the
-project's `GPL-2.0-or-later` line — that line marks our own files; s7 keeps
-its own notice (see `LICENSE.s7`).
+s7 is third-party, **not** engine-authored code. It is no longer vendored as
+source in this repo. Instead it is pinned to a release of **`kruddage/s7`** — the
+org's own repo that re-cuts upstream [S7 Scheme][upstream] as tagged GitHub
+Releases and ships prebuilt, linkable artifacts. `s7.artifact` pins the release
+tag; `sync.sh` fetches the artifacts below into this directory and verifies each
+against the `.sha256` sidecar published beside it in the release:
 
-s7 is linked into the `krudd` **host tool** (see `../krudd.c`), where it runs the
-Scheme build description `../build.scm`. This is s7 as *build authority* — the
-same interpreter also runs in the browser, compiled straight into the single
-WASM module through the `script` library, but that is a separate deployment.
+| Artifact | Role |
+|---|---|
+| `s7.h` | public header — consumers `#include "s7.h"` (this dir is on their include path) |
+| `libs7-linux-x86_64.a` | native static library, linked into every native binary and the `krudd` host tool |
+| `libs7-wasm32.a` | wasm static library (built with `emcc`/`emar`), linked into the single WASM module |
+| `krudds7-linux-x86_64` | standalone s7 CLI — the `kruddmake` bootstrap/oracle interpreter (`krudds7 FILE`) |
+
+s7 keeps its upstream `0BSD` notice (see `LICENSE.s7`); none of these artifacts
+carry the project's `GPL-2.0-or-later` line — that marks our own files.
+
+s7 is used in two roles: as *build authority* (linked into the `krudd` host tool
+in `../krudd.c`, and the `krudds7` CLI that runs the `kruddmake` `.scm` scripts)
+and as the in-process scripting/scene-description language of the engine runtime
+(the `script` library and its callers), compiled into both the native binary and
+the browser's single WASM module.
 
 ## Fetch
 
-`../krudd.sh` and both `run-tests.sh` harnesses source `sync.sh` before
-compiling anything that touches s7 — including the `krudd.sh` bootstrap
-itself, which needs `s7.c` before the `krudd` host tool exists. `sync.sh`
-is idempotent: since the committed
-`s7.c`/`s7.h` already match their pinned checksum, no network I/O happens in
-the common case — fetching only kicks in if the committed files are missing
-or a re-vendor bumped the pin.
+`../krudd.sh` and `../kruddmake/run-tests.sh` source `sync.sh` before linking
+anything that touches s7 — including the `krudd.sh` bootstrap itself, which needs
+the library before the `krudd` host tool exists. The artifacts are **not
+committed** (see the repo `.gitignore`), so a fresh checkout fetches them on the
+first build; `sync.sh` is idempotent, so once each artifact is present and
+matches its sidecar checksum, no network I/O happens on later runs. The download
+host is `github.com`, reachable from CI and normal dev machines.
+
+The native build wires the prebuilt archives in through `kruddmake/ninja.scm`:
+`$s7nativelib` rides after the engine archives on every native executable link
+(as a static archive the linker pulls only referenced members, so s7-free
+binaries are unchanged), and `$s7wasmlib` links into the WASM main module.
 
 ## Pin
 
 | Field    | Value |
 |----------|-------|
-| Version  | s7 **10.8** |
-| Date     | 17-Apr-2024 (upstream `S7_DATE`) |
+| Version  | s7 **10.8** (upstream `S7_VERSION`/`S7_DATE`, 17-Apr-2024) |
+| Release  | `kruddage/s7` **`v0.3.0`** (see `S7_RELEASE` in `s7.artifact`) |
 | License  | 0BSD (Zero-Clause BSD) — permissive, zero conditions |
-| Upstream | https://ccrma.stanford.edu/software/snd/snd/s7.html |
-| Mirror   | https://raw.githubusercontent.com/aboalang/s7, pinned by commit (see `s7.artifact`) |
+| Upstream | [S7 Scheme][upstream] |
+| Source   | https://github.com/kruddage/s7 (release-please semver off Conventional Commits) |
 
-s7 is a single-file, rolling release identified by version + date rather than a
-git tag, so the pin is a mirror commit whose `s7.c`/`s7.h` match that
-version+date exactly. Re-vendoring means bumping `s7.artifact` (version, date,
-commit, checksums) — see the comment at the top of that file.
+Re-pinning means bumping `S7_RELEASE` in `s7.artifact` to a newer `kruddage/s7`
+tag, deleting the cached artifacts here, and re-running `sync.sh` (or
+`krudd.sh`). Each download is checksum-verified against its published sidecar, so
+a corrupted or truncated fetch fails loudly.
+
+[upstream]: https://ccrma.stanford.edu/software/snd/snd/s7.html
 
 ## Local patches
 
-`s7.c` is **no longer byte-identical to the pinned upstream commit.** We carry
-one local patch; `S7_C_SHA256` in `s7.artifact` is therefore the checksum of the
-*patched* file, not of the upstream download.
-
-| Patch | Where | Why |
-|---|---|---|
-| Drop the `(string-ref var 0)` → `string_ref_p_p0` swap in the `p_pi` branch of the fx optimizer | `s7.c`, search `KRUDD-LOCAL PATCH` | Upstream stores an `s7_p_pp_t` and then calls it through `s7_p_pi_t`. Benign UB on a register ABI; a hard `indirect call signature mismatch` trap on wasm, which killed the frame loop on any `(string-ref name 0)`. |
-
-**Re-vendoring now has an extra step, and getting it wrong fails silently.**
-`sync.sh` re-downloads whenever the committed file doesn't match `S7_C_SHA256`,
-so a bump that only updates the checksums will quietly replace the patched
-`s7.c` with pristine upstream and reintroduce the trap — with a green native
-suite, because nothing native can see it. To re-vendor:
-
-1. Check whether upstream fixed it (the `p_pi` branch near `fx_c_si_direct`). If
-   so, drop the patch and this section, and take the plain upstream file.
-2. If not, download upstream, re-apply the patch, *then* set `S7_C_SHA256` from
-   the patched file.
-3. Either way, verify in a **browser** — load a game and tap the board. The
-   native suite cannot catch a wasm-only signature mismatch.
+None here anymore. s7 used to carry a wasm-only `KRUDD-LOCAL PATCH` in this
+repo's `s7.c` (an `indirect call signature mismatch` trap in the fx optimizer's
+`p_pi` branch on any `(string-ref name 0)`, invisible to the native suite). That
+patch now lives in `kruddage/s7` and is baked into `libs7-wasm32.a`, so the
+silent re-vendoring footgun — a checksum-only bump quietly reverting to pristine
+upstream — is gone. Any patch change is a `kruddage/s7` release and reaches this
+repo as a tag bump. Still verify a wasm behavior change in a **browser**; the
+native suite cannot catch a wasm-only signature mismatch.
 
 ## License compatibility
 
@@ -72,15 +76,12 @@ commercial license offered alongside the GPL build.
 
 ## Build-time feature configuration
 
-Set in `../krudd.sh` when compiling the tool:
-
-| Define            | Value | Rationale |
-|-------------------|-------|-----------|
-| `WITH_C_LOADER=0` | off   | Drops the `dlopen`-based external-C-library loader — unneeded and unwanted surface for a build tool. |
-| `WITH_MAIN=0`     | off   | Keeps s7 a library linked into `krudd`, not a standalone REPL binary. |
-
-s7 is compiled with `-w`: it is upstream code, so the engine's warning flags are
-not enforced against it.
+The `kruddage/s7` release builds the libraries with `WITH_C_LOADER=0` (drops the
+`dlopen`-based external-C-library loader — unneeded, unwanted surface for a build
+tool) and `WITH_MAIN=0` (a library, not a REPL binary). `../krudd.sh` passes the
+same `-DWITH_C_LOADER=0 -DWITH_MAIN=0` when compiling `krudd.c` so its view of
+`s7.h` matches how the linked library was built. s7 is upstream code, so the
+engine's warning flags are not enforced against it.
 
 ---
 

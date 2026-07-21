@@ -137,6 +137,22 @@ KRUDD_QT_CFLAGS="$(pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core)" \
 ./krudd.sh editor
 ```
 
+#### Install the prebuilt Flatpak (Steam Deck)
+
+The fastest way onto a Deck: install the signed Flatpak from the self-hosted
+registry. In **Desktop Mode**, add the remote once and install — after that it
+shows up in Discover and updates the normal Flatpak way (`flatpak update`):
+
+```sh
+flatpak remote-add --user --if-not-exists krudd https://kruddage.github.io/engine/flatpak/krudd.flatpakrepo
+flatpak install --user krudd io.github.kruddage.Editor
+```
+
+See [`packaging/flatpak/`](packaging/flatpak/README.md) for the full Discover
+walkthrough and how to stand up your own signed registry on a fork.
+
+#### Build from source
+
 It needs the **Vulkan loader + headers + validation layers**, **glslang**, and **Qt6** —
 all ordinary system packages, no multi-gigabyte out-of-tree library to build. On the Deck,
 SteamOS's root filesystem is immutable, so build and run inside an Arch

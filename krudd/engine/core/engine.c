@@ -247,7 +247,7 @@ EM_JS(void, krudd_boot_game, (char *out, int cap), {
 	var name = (typeof window.kruddBootGame === 'function')
 		? window.kruddBootGame() : 'chess';
 	if (typeof name !== 'string')
-		name = '';
+		name = "";
 	stringToUTF8(name, out, cap);
 })
 

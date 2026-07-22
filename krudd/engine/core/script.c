@@ -21,8 +21,10 @@
 #include "texture_script_scm.h"
 #include "sound_script_scm.h"
 #include "scene_script_scm.h"
+#include "editor_layout_scm.h"
 
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 
 static s7_scheme *g_s7;
@@ -196,6 +198,182 @@ const char *script_shader_transpile_wgsl(const char *src, const char *stage)
 	memcpy(buf, out, n + 1);
 	slot = (slot + 1) & 1;
 	return buf;
+}
+
+/*
+ * ---- s7 value -> JSON (the s7->JS seam) ---------------------------------
+ *
+ * JS cannot hold an s7 value, so a value produced inside the image crosses to
+ * the browser as a JSON string it can JSON.parse. script_json() is the generic
+ * primitive: it walks any s7 value the same way query_params() below walks a
+ * result list, but emits JSON instead of filling a C struct — pairs become
+ * arrays, strings and symbols become strings, numbers/booleans/() map to their
+ * JSON kinds. script_layout_json() is the one caller today, handing the editor
+ * layout tree (core/editor_layout.scm) to the web chrome renderer.
+ */
+
+/* A fixed-capacity output buffer that flags rather than overruns: once a write
+ * would exceed cap it sets overflow and drops every later write, so a value too
+ * large for the buffer yields NULL from script_json rather than a truncated —
+ * and thus malformed — JSON string. */
+struct jbuf {
+	char  *buf;
+	size_t cap;
+	size_t len;
+	int    overflow;
+};
+
+static void jb_raw(struct jbuf *b, const char *s, size_t n)
+{
+	if (b->overflow)
+		return;
+	if (b->len + n + 1 > b->cap) { /* +1 keeps room for the closing NUL */
+		b->overflow = 1;
+		return;
+	}
+	memcpy(b->buf + b->len, s, n);
+	b->len += n;
+}
+
+static void jb_str(struct jbuf *b, const char *s)
+{
+	jb_raw(b, s, strlen(s));
+}
+
+/*
+ * Write S as a JSON string, quotes included. Only the characters JSON requires
+ * escaping are expanded (the seven short escapes, plus \u00XX for the remaining
+ * C0 controls); every other byte passes through verbatim, so the layout's
+ * multi-byte UTF-8 (— … ▶ ■ ×) survives as the valid UTF-8 JSON already allows.
+ */
+static void jb_quoted(struct jbuf *b, const char *s)
+{
+	static const char hex[] = "0123456789abcdef";
+
+	jb_raw(b, "\"", 1);
+	for (; *s; s++) {
+		unsigned char c = (unsigned char)*s;
+
+		switch (c) {
+		case '"':  jb_str(b, "\\\""); break;
+		case '\\': jb_str(b, "\\\\"); break;
+		case '\b': jb_str(b, "\\b");  break;
+		case '\f': jb_str(b, "\\f");  break;
+		case '\n': jb_str(b, "\\n");  break;
+		case '\r': jb_str(b, "\\r");  break;
+		case '\t': jb_str(b, "\\t");  break;
+		default:
+			if (c < 0x20) {
+				char u[6] = { '\\', 'u', '0', '0',
+					      hex[(c >> 4) & 0xf],
+					      hex[c & 0xf] };
+				jb_raw(b, u, sizeof u);
+			} else {
+				jb_raw(b, (const char *)&c, 1);
+			}
+		}
+	}
+	jb_raw(b, "\"", 1);
+}
+
+/* The authored layout nests ~4 deep; the cap only guards a pathological or
+ * cyclic value handed to the generic serializer against unbounded recursion. */
+enum { JSON_MAX_DEPTH = 32 };
+
+static void json_write(struct jbuf *b, s7_pointer v, int depth)
+{
+	if (b->overflow)
+		return;
+	if (depth > JSON_MAX_DEPTH) {
+		jb_str(b, "null");
+		return;
+	}
+	if (s7_is_pair(v)) {
+		s7_pointer it;
+		int        first = 1;
+
+		jb_raw(b, "[", 1);
+		for (it = v; s7_is_pair(it); it = s7_cdr(it)) {
+			if (!first)
+				jb_raw(b, ",", 1);
+			first = 0;
+			json_write(b, s7_car(it), depth + 1);
+		}
+		jb_raw(b, "]", 1);
+	} else if (v == s7_nil(g_s7)) {
+		jb_str(b, "[]"); /* the empty list is an empty array */
+	} else if (s7_is_string(v)) {
+		jb_quoted(b, s7_string(v));
+	} else if (s7_is_symbol(v)) {
+		/* a symbol serializes as its name */
+		jb_quoted(b, s7_symbol_name(v));
+	} else if (s7_is_integer(v)) {
+		char num[32];
+
+		snprintf(num, sizeof num, "%lld", (long long)s7_integer(v));
+		jb_str(b, num);
+	} else if (s7_is_number(v)) {
+		char num[32];
+
+		snprintf(num, sizeof num, "%.17g", s7_number_to_real(g_s7, v));
+		jb_str(b, num);
+	} else if (v == s7_t(g_s7)) {
+		jb_str(b, "true");
+	} else if (v == s7_f(g_s7)) {
+		jb_str(b, "false");
+	} else {
+		/* A char, procedure or other value the layout never emits: keep
+		 * the output well-formed rather than trap on it. */
+		jb_str(b, "null");
+	}
+}
+
+/*
+ * Serialize any s7 VALUE to a JSON string, returned in a static buffer valid
+ * until the next call (the transpile family's rotating-buffer contract, one
+ * slot). Returns NULL when the interpreter is down, VALUE is NULL, or the JSON
+ * would exceed the buffer — never a truncated string a JSON.parse would reject.
+ */
+const char *script_json(s7_pointer value)
+{
+	static char g_json[16384];
+	struct jbuf b = { g_json, sizeof g_json, 0, 0 };
+
+	if (!g_s7 || !value)
+		return NULL;
+	json_write(&b, value, 0);
+	if (b.overflow)
+		return NULL;
+	g_json[b.len] = '\0';
+	return g_json;
+}
+
+/*
+ * Evaluate the embedded editor layout spec and serialize (editor-layout) to
+ * JSON for the web chrome to consume — the s7->JS half of #706 the native
+ * reader (core/editor_layout.c) is the C-struct half of. Starts the interpreter
+ * on demand, exactly as editor_layout_load does, so no prior script_init() is
+ * required. Returns NULL if the interpreter is down, the spec did not define
+ * editor-layout, the tree is not a list, or the JSON overflows script_json's
+ * buffer.
+ */
+const char *script_layout_json(void)
+{
+	s7_scheme *sc;
+	s7_pointer fn, tree;
+
+	sc = script_s7(); /* starts the interpreter on first use */
+	if (!sc)
+		return NULL;
+	if (script_eval(LAYOUT_SCM) != 0)
+		return NULL;
+	fn = s7_name_to_value(sc, "editor-layout");
+	if (!s7_is_procedure(fn))
+		return NULL;
+	tree = s7_call(sc, fn, s7_nil(sc));
+	if (!s7_is_pair(tree))
+		return NULL;
+	return script_json(tree);
 }
 
 /* Copy a Scheme string field into a fixed C buffer, always NUL-terminated. */

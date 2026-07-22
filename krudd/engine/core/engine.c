@@ -2,6 +2,7 @@
 #include "engine.h"
 #include "subsystem_manager.h"
 
+#include "game.h"
 #include "log.h"
 #include "memory.h"
 #include "memory_api.h"
@@ -234,6 +235,23 @@ EM_JS(void, krudd_build_editor, (const char *json), {
 
 #ifdef __EMSCRIPTEN__
 /*
+ * The scene to open once boot finishes, written into OUT (a C buffer of CAP
+ * bytes). The shell owns the choice — window.kruddBootGame reads ?game= and
+ * defaults to chess — for the same reason the renderer choice lives there
+ * (krudd_wants_webgpu): the overlay and the auto-load can never disagree about
+ * what boots. An empty string, or a name no game registered under, leaves the
+ * launcher up (that is what ?game=none gets you). Truncation past CAP is fine —
+ * an over-long name simply won't match, so the launcher stands.
+ */
+EM_JS(void, krudd_boot_game, (char *out, int cap), {
+	var name = (typeof window.kruddBootGame === 'function')
+		? window.kruddBootGame() : 'chess';
+	if (typeof name !== 'string')
+		name = '';
+	stringToUTF8(name, out, cap);
+})
+
+/*
  * Register the remaining plugins and load the runtime image. Runs inline on the
  * GL path and from the tick on the WebGPU path, once the device exists — the
  * plugins are the same either way, so both paths go through here rather than
@@ -246,6 +264,7 @@ static void finish_plugin_boot(int webgpu)
 {
 	size_t i;
 	double phase;
+	char   boot_game[32];
 
 	/* The frame graph is about to own the backbuffer; the probe must stop
 	 * clearing it. Before the loop, so no tick can land in between. */
@@ -264,6 +283,18 @@ static void finish_plugin_boot(int webgpu)
 	phase = emscripten_get_now();
 	script_eval(RUNTIME_SCM);
 	stats_record_phase("runtime_scm", phase);
+
+	/*
+	 * Open the boot scene now that every game has registered and the scene api
+	 * is live — the same state a launcher click would find, so this is just
+	 * that click made programmatically. game_boot_default clears the demo scene
+	 * seeded in scene_renderer_init and builds the chosen one in its place, then
+	 * hides the launcher; an unset/unknown ?game= leaves the demo scene and the
+	 * "choose a scene" overlay exactly as before.
+	 */
+	boot_game[0] = '\0';
+	krudd_boot_game(boot_game, (int)sizeof(boot_game));
+	game_boot_default(boot_game);
 
 	g_stats_api.init_ms = (float)(emscripten_get_now() - s_boot_ms);
 }

@@ -28,8 +28,25 @@ int  game_register(const char *name, void (*load)(void));
 /* Number of registered games. */
 int  game_count(void);
 
+/*
+ * Index of the registered game whose display name equals NAME, compared
+ * case-insensitively (ASCII), or -1 if none matches or NAME is NULL. Lets a
+ * caller pick a game by name — e.g. a boot-time default read from a URL query —
+ * without depending on registration order.
+ */
+int  game_find(const char *name);
+
 /* Load the game at INDEX (runs its load callback). Out-of-range is a no-op. */
 void game_load(int index);
+
+/*
+ * Open the game named NAME as the boot default, exactly as a launcher click
+ * would: load it and (in the browser) dismiss the launcher overlay. NULL, "",
+ * or an unregistered name is a no-op that leaves the launcher up, so ?game=none
+ * is how a page opts back into the "choose a scene" menu. Returns the loaded
+ * index, or -1.
+ */
+int  game_boot_default(const char *name);
 
 /*
  * Index of the game the last successful game_load landed on, or -1 before any

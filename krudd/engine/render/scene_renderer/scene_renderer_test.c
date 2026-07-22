@@ -12,6 +12,7 @@
 #include "script.h"
 
 #include <assert.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -330,6 +331,64 @@ static void test_camera_follows_named_entity(struct subsystem_manager *mgr)
 	assert(eye[0] == 0.0f && eye[1] == 4.0f && eye[2] == 3.5f);
 }
 
+static float dist_to_origin(const float p[3])
+{
+	return sqrtf(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]);
+}
+
+/*
+ * Interactive camera override (#697): once the editor navigates the view, the
+ * camera detaches from the scripted "Camera" entity and holds the user's pose
+ * until reset_view() hands it back. dolly/orbit/pan each move the eye, and the
+ * per-frame scripted-camera copy must NOT snap it back while the user owns it.
+ */
+static void test_camera_user_navigation(struct subsystem_manager *mgr)
+{
+	const struct camera_api *cam = subsystem_manager_get_api(mgr, "camera");
+	float base[3], dolly[3], orbit[3], pan[3];
+
+	assert(cam && cam->dolly && cam->orbit && cam->pan && cam->reset_view);
+
+	/* A camera entity at a known spot; the tick copies it into the eye. The
+	 * target is the origin, so distances below are measured from there. */
+	memset(&g_world, 0, sizeof(g_world));
+	g_world.count = 1;
+	set_named_entity(0, "Camera", 0.0f, 0.0f, 4.0f);
+	renderer_null_reset_log();
+	subsystem_manager_tick(mgr);
+	cam->get_eye(base);
+	assert(base[0] == 0.0f && base[1] == 0.0f && base[2] == 4.0f);
+
+	/* Dolly toward the target pulls the eye in along the view ray. */
+	cam->dolly(0.25f);
+	cam->get_eye(dolly);
+	assert(dist_to_origin(dolly) < dist_to_origin(base) - 1e-4f);
+
+	/* The next tick must NOT snap the eye back to the scripted camera. */
+	renderer_null_reset_log();
+	subsystem_manager_tick(mgr);
+	cam->get_eye(pan);
+	assert(pan[0] == dolly[0] && pan[1] == dolly[1] && pan[2] == dolly[2]);
+
+	/* Orbit (yaw about world up) swings the eye through the xz-plane. */
+	cam->orbit(0.3f, 0.1f);
+	cam->get_eye(orbit);
+	assert(orbit[0] != dolly[0] || orbit[2] != dolly[2]);
+
+	/* Pan slides the eye across the view plane. */
+	cam->pan(0.2f, 0.0f);
+	cam->get_eye(pan);
+	assert(pan[0] != orbit[0] || pan[1] != orbit[1] || pan[2] != orbit[2]);
+
+	/* reset_view() hands the camera back: the next tick re-pins the eye to
+	 * the "Camera" entity, wherever the user had dragged the view to. */
+	cam->reset_view();
+	renderer_null_reset_log();
+	subsystem_manager_tick(mgr);
+	cam->get_eye(base);
+	assert(base[0] == 0.0f && base[1] == 0.0f && base[2] == 4.0f);
+}
+
 int main(void)
 {
 	static const struct subsystem static_table[] = {
@@ -386,6 +445,7 @@ int main(void)
 	assert(count_draws(NULL) == 2);
 
 	test_camera_follows_named_entity(&mgr);
+	test_camera_user_navigation(&mgr);
 
 	subsystem_manager_shutdown(&mgr);
 	mem_shutdown();

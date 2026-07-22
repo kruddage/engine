@@ -49,11 +49,9 @@ static const struct subsystem_manager *g_mgr;
 #include "entity_api.h"
 #include "asset_api.h"
 #include "memory_api.h"
-#include "mesh.h"
-#include "mesh_script.h"
 #include "math_types.h"
+#include "viewport_pick.h"
 
-#include <float.h>
 #include <stdint.h>
 
 static const struct kruddgui_api *g_kgui;   /* NULL until kruddgui is up */
@@ -66,27 +64,15 @@ static int                        g_registered;
 /*
  * Click-to-pick: cast a ray from the clicked pixel and return the live render
  * entity whose mesh it strikes nearest the camera, or -1 when the ray misses
- * everything. Reuses the exact view*projection the renderer draws with and the
- * kruddgui viewport size, so a click lands on the pixels a mesh was drawn to.
- *
- * Brute force over every triangle of every render entity: the world caps at
- * WORLD_MAX_ENTITIES and the meshes are tiny, so no broad-phase or per-mesh
- * bounds are needed yet. Each entity's geometry is generated on demand through
- * mesh_script_generate with this entity's mesh-param override (world_mesh_params),
- * so a resized box's hit-box matches the box that was drawn, not the default.
- * Generated per click (not per frame), and the param-less path is cached in the
- * image, so the cost is bounded.
+ * everything. The raycast itself is the shared viewport_pick_entity (#697); here
+ * we feed it the exact view·projection the renderer draws with and the kruddgui
+ * viewport size, so a click lands on the pixels a mesh was drawn to.
  */
 static int32_t pick_entity_at(float sx, float sy)
 {
 	const struct world *w;
 	struct mat4         vp;
-	float               origin[3];
-	float               dir[3];
 	float               dw, dh;
-	int32_t             best = -1;
-	float               best_t = FLT_MAX;
-	uint32_t            e;
 
 	if (!g_camera || !g_scene || !g_asset || !g_mem || !g_kgui)
 		return -1;
@@ -96,49 +82,7 @@ static int32_t pick_entity_at(float sx, float sy)
 
 	g_camera->get_view_proj(&vp);
 	g_kgui->viewport(&dw, &dh);
-	if (ray_from_screen(&vp, sx, sy, dw, dh, origin, dir) != 0)
-		return -1;
-
-	for (e = 0; e < w->count; e++) {
-		struct mesh_blob         *blob;
-		const struct mesh_vertex *vtx;
-		const uint16_t           *idx;
-		const char               *src;
-		const uint8_t            *mp;
-		uint32_t                  mplen = 0;
-		struct mat4               model;
-		uint32_t                  i;
-
-		if (!w->alive[e] || !(w->mask[e] & COMPONENT_RENDER))
-			continue;
-		src = (const char *)g_asset->get_data(w->render_ref[e], NULL);
-		if (!src)
-			continue;
-		mp   = world_mesh_params(w, e, &mplen);
-		blob = mesh_script_generate(src, mp, mplen, g_mem, NULL);
-		if (!blob)
-			continue;
-
-		mat4_from_transform(&model, &w->world_xform[e]);
-		vtx = mesh_blob_vertices(blob);
-		idx = mesh_blob_indices(blob);
-
-		for (i = 0; i + 3 <= blob->index_count; i += 3) {
-			float a[3], b[3], c[3];
-			float t;
-
-			mat4_transform_point(a, &model, vtx[idx[i]].position);
-			mat4_transform_point(b, &model, vtx[idx[i + 1]].position);
-			mat4_transform_point(c, &model, vtx[idx[i + 2]].position);
-			if (ray_tri_intersect(origin, dir, a, b, c, &t) &&
-			    t < best_t) {
-				best_t = t;
-				best   = (int32_t)e;
-			}
-		}
-		g_mem->free(blob);
-	}
-	return best;
+	return viewport_pick_entity(w, &vp, sx, sy, dw, dh, g_asset, g_mem);
 }
 
 /*

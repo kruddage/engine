@@ -514,6 +514,26 @@ static struct camera g_cam;
 static int32_t g_camera_entity_id = -1;
 
 /*
+ * User-driven camera override (#697). Clear at boot, so the camera tracks the
+ * scripted "Camera" entity: scene_renderer_tick copies that entity's position
+ * into g_cam.eye every frame. The first interactive orbit/pan/dolly sets this,
+ * and the tick then leaves g_cam alone so the user's pose holds instead of
+ * being snapped back to the script each frame; camera_reset_view() clears it,
+ * handing the camera back to the scene. A build that never navigates never sets
+ * it, so the scripted camera behaves exactly as before.
+ */
+static int g_cam_user_controlled;
+
+/*
+ * The authored framing (target/up) captured at init, so camera_reset_view() can
+ * restore it after a pan moved them. Only the eye is driven per-frame by the
+ * scripted "Camera" entity; target/up are the scene's fixed framing, so a
+ * snapshot at init is the point to return to when handing the camera back.
+ */
+static float g_cam_home_target[3];
+static float g_cam_home_up[3];
+
+/*
  * Camera service (#178) — lets editor overlays project world points with the
  * exact view·projection the forward pass draws with.  get_view_proj recomputes
  * on demand so a freshly set aspect is reflected immediately, without waiting
@@ -569,10 +589,201 @@ static void camera_set_viewport(float width, float height)
 	}
 }
 
+/*
+ * Small vector helpers for the interactive camera (#697). Local to this file:
+ * the shared math library has no float[3] vec ops, and these are only the
+ * handful orbit/pan/dolly need.
+ */
+static float cam_dot3(const float a[3], const float b[3])
+{
+	return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+static void cam_cross3(float out[3], const float a[3], const float b[3])
+{
+	float x = a[1] * b[2] - a[2] * b[1];
+	float y = a[2] * b[0] - a[0] * b[2];
+	float z = a[0] * b[1] - a[1] * b[0];
+
+	out[0] = x;
+	out[1] = y;
+	out[2] = z;
+}
+
+/* Normalize v in place; returns its original length (0 leaves v untouched). */
+static float cam_norm3(float v[3])
+{
+	float len = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+
+	if (len > 1e-6f) {
+		v[0] /= len;
+		v[1] /= len;
+		v[2] /= len;
+	}
+	return len;
+}
+
+/* Rotate v about the unit axis by ang radians (Rodrigues' rotation). */
+static void cam_rotate_axis(float v[3], const float axis[3], float ang)
+{
+	float c  = cosf(ang);
+	float s  = sinf(ang);
+	float d  = cam_dot3(axis, v) * (1.0f - c);
+	float cr[3];
+
+	cam_cross3(cr, axis, v);
+	v[0] = v[0] * c + cr[0] * s + axis[0] * d;
+	v[1] = v[1] * c + cr[1] * s + axis[1] * d;
+	v[2] = v[2] * c + cr[2] * s + axis[2] * d;
+}
+
+/*
+ * Orbit the eye around the fixed target: yaw about world up, pitch about the
+ * camera's right axis. Pitch is clamped short of the poles (±~89°) so the view
+ * never flips over the top. +dpitch raises the eye.
+ */
+static void camera_orbit(float dyaw, float dpitch)
+{
+	static const float PITCH_LIMIT = 1.5533f; /* ~89° */
+	float offset[3];  /* target -> eye */
+	float up[3]    = { g_cam.up[0], g_cam.up[1], g_cam.up[2] };
+	float fwd[3];
+	float right[3];
+
+	offset[0] = g_cam.eye[0] - g_cam.target[0];
+	offset[1] = g_cam.eye[1] - g_cam.target[1];
+	offset[2] = g_cam.eye[2] - g_cam.target[2];
+
+	cam_norm3(up);
+	fwd[0] = -offset[0];
+	fwd[1] = -offset[1];
+	fwd[2] = -offset[2];
+	cam_norm3(fwd);
+	cam_cross3(right, fwd, up);
+	if (cam_norm3(right) < 1e-4f) { /* looking straight up/down: fix a right */
+		right[0] = 1.0f;
+		right[1] = 0.0f;
+		right[2] = 0.0f;
+	}
+
+	/* Clamp the pitch delta against the current elevation, measured from the
+	 * real geometry each call, so repeated drags can never tip past a pole. */
+	{
+		float odir[3] = { offset[0], offset[1], offset[2] };
+		float s, elev;
+
+		cam_norm3(odir);
+		s    = cam_dot3(odir, up);
+		s    = s < -1.0f ? -1.0f : (s > 1.0f ? 1.0f : s);
+		elev = asinf(s);
+		if (elev + dpitch >  PITCH_LIMIT)
+			dpitch =  PITCH_LIMIT - elev;
+		if (elev + dpitch < -PITCH_LIMIT)
+			dpitch = -PITCH_LIMIT - elev;
+	}
+
+	cam_rotate_axis(offset, up, dyaw);        /* yaw about world up */
+	cam_rotate_axis(offset, right, -dpitch);  /* +dpitch raises the eye */
+
+	g_cam.eye[0] = g_cam.target[0] + offset[0];
+	g_cam.eye[1] = g_cam.target[1] + offset[1];
+	g_cam.eye[2] = g_cam.target[2] + offset[2];
+	g_cam_user_controlled = 1;
+	camera_update(&g_cam);
+}
+
+/*
+ * Pan: slide eye and target together across the view plane so the framed point
+ * tracks the pointer. dx/dy are viewport fractions; the world step scales with
+ * the framing distance and the vertical fov, so a full-height drag shifts the
+ * scene by roughly the visible height at the target. +dx moves content right,
+ * +dy moves content down.
+ */
+static void camera_pan(float dx, float dy)
+{
+	float fwd[3];
+	float right[3];
+	float up[3] = { g_cam.up[0], g_cam.up[1], g_cam.up[2] };
+	float dist, k;
+	float mv[3];
+
+	fwd[0] = g_cam.target[0] - g_cam.eye[0];
+	fwd[1] = g_cam.target[1] - g_cam.eye[1];
+	fwd[2] = g_cam.target[2] - g_cam.eye[2];
+	dist = cam_norm3(fwd);
+	cam_cross3(right, fwd, up);
+	if (cam_norm3(right) < 1e-4f) {
+		right[0] = 1.0f;
+		right[1] = 0.0f;
+		right[2] = 0.0f;
+	}
+	cam_cross3(up, right, fwd); /* re-orthogonalize up to right×fwd */
+	cam_norm3(up);
+
+	k = dist * 2.0f * tanf(0.5f * g_cam.fov_y);
+	mv[0] = (-dx * right[0] + dy * up[0]) * k;
+	mv[1] = (-dx * right[1] + dy * up[1]) * k;
+	mv[2] = (-dx * right[2] + dy * up[2]) * k;
+
+	g_cam.eye[0]    += mv[0];
+	g_cam.eye[1]    += mv[1];
+	g_cam.eye[2]    += mv[2];
+	g_cam.target[0] += mv[0];
+	g_cam.target[1] += mv[1];
+	g_cam.target[2] += mv[2];
+	g_cam_user_controlled = 1;
+	camera_update(&g_cam);
+}
+
+/*
+ * Dolly the eye along the view direction. amount is a fraction of the current
+ * eye→target distance: >0 moves toward the target (zoom in), capped at 90% of
+ * the gap so the eye never reaches or crosses it; <0 moves away.
+ */
+static void camera_dolly(float amount)
+{
+	float fwd[3];
+	float dist, t;
+
+	fwd[0] = g_cam.target[0] - g_cam.eye[0];
+	fwd[1] = g_cam.target[1] - g_cam.eye[1];
+	fwd[2] = g_cam.target[2] - g_cam.eye[2];
+	dist = cam_norm3(fwd);
+	if (dist <= 1e-4f)
+		return;
+
+	t = amount * dist;
+	if (t > dist * 0.9f)
+		t = dist * 0.9f;
+	g_cam.eye[0] += fwd[0] * t;
+	g_cam.eye[1] += fwd[1] * t;
+	g_cam.eye[2] += fwd[2] * t;
+	g_cam_user_controlled = 1;
+	camera_update(&g_cam);
+}
+
+/* Hand the camera back to the scripted scene camera (drops the user's pose):
+ * restore the authored framing a pan may have moved, then let the next tick's
+ * entity→eye copy resume. */
+static void camera_reset_view(void)
+{
+	g_cam.target[0] = g_cam_home_target[0];
+	g_cam.target[1] = g_cam_home_target[1];
+	g_cam.target[2] = g_cam_home_target[2];
+	g_cam.up[0]     = g_cam_home_up[0];
+	g_cam.up[1]     = g_cam_home_up[1];
+	g_cam.up[2]     = g_cam_home_up[2];
+	g_cam_user_controlled = 0;
+}
+
 static const struct camera_api g_camera_api = {
 	camera_get_view_proj,
 	camera_get_eye,
 	camera_set_viewport,
+	camera_orbit,
+	camera_pan,
+	camera_dolly,
+	camera_reset_view,
 };
 
 /*
@@ -2260,6 +2471,15 @@ static void scene_renderer_init(void)
 	g_cam.near      = 0.1f;
 	g_cam.far       = 100.0f;
 
+	/* Snapshot the authored framing so camera_reset_view() (#697) can return
+	 * to it after an interactive pan moved target/up. */
+	g_cam_home_target[0] = g_cam.target[0];
+	g_cam_home_target[1] = g_cam.target[1];
+	g_cam_home_target[2] = g_cam.target[2];
+	g_cam_home_up[0]     = g_cam.up[0];
+	g_cam_home_up[1]     = g_cam.up[1];
+	g_cam_home_up[2]     = g_cam.up[2];
+
 	seed_demo_scene();
 
 	g_ready = 1;
@@ -2878,7 +3098,9 @@ static void scene_renderer_tick(void)
 
 	if (w) {
 		g_camera_entity_id = resolve_camera_entity(w);
-		if (g_camera_entity_id >= 0) {
+		/* Skip the scripted-camera copy while the user is driving the view
+		 * (#697): an interactive orbit/pan/dolly owns g_cam until reset. */
+		if (g_camera_entity_id >= 0 && !g_cam_user_controlled) {
 			const struct transform *x =
 				&w->world_xform[g_camera_entity_id];
 

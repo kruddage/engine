@@ -1,5 +1,24 @@
 # Changelog
 
+## [18.5.0](https://github.com/kruddage/engine/compare/v18.4.0...v18.5.0) (2026-07-22)
+
+
+### Features
+
+* **editor:** boot the web editor into the chess scene by default ([#739](https://github.com/kruddage/engine/issues/739)) ([493f6ab](https://github.com/kruddage/engine/commit/493f6ab2c555db693197e0eb456d7aa2deeed9da))
+* **editor:** render the web editor chrome from the serialized layout ([#724](https://github.com/kruddage/engine/issues/724)) ([#733](https://github.com/kruddage/engine/issues/733)) ([cfcc98a](https://github.com/kruddage/engine/commit/cfcc98a7b3c67ee715073feb84935344510f6d65))
+* **editor:** serialize the .scm layout across the s7→JS seam ([#723](https://github.com/kruddage/engine/issues/723)) ([#732](https://github.com/kruddage/engine/issues/732)) ([fa53c1e](https://github.com/kruddage/engine/commit/fa53c1eeadfc801932e414a9508996f78013d4c4))
+
+
+### Bug Fixes
+
+* **vulkan:** let the window host declare its instance extensions ([#728](https://github.com/kruddage/engine/issues/728)) ([#729](https://github.com/kruddage/engine/issues/729)) ([c296d75](https://github.com/kruddage/engine/commit/c296d7590ffd5059659b5cbaf24e35c3fa49ae8a))
+
+
+### Documentation
+
+* **steamos:** surface distrobox requirement before the compiler check fails ([#731](https://github.com/kruddage/engine/issues/731)) ([5dd2d41](https://github.com/kruddage/engine/commit/5dd2d41e4c443b48f95f8627b7f654fc11e35b93))
+
 ## [18.4.0](https://github.com/kruddage/engine/compare/v18.3.1...v18.4.0) (2026-07-22)
 
 

@@ -524,6 +524,9 @@
      (string-append srcroot "/core/scene_script.scm")
      (string-append gen "/scene_script_scm.h") "SCENE_SCRIPT_SCM")
     (krudd-embed-file
+     (string-append srcroot "/core/editor_layout.scm")
+     (string-append gen "/editor_layout_scm.h") "LAYOUT_SCM")
+    (krudd-embed-file
      (string-append srcroot "/games/tictactoe/scene.scm")
      (string-append gen "/tictactoe_scene_scm.h")
      "TICTACTOE_SCENE_SCM")
@@ -570,6 +573,7 @@
               "core/mesh_script.scm"
               "core/texture_script.scm"
               "core/sound_script.scm"
+              "core/editor_layout.scm"
               "ui/kruddgui/kruddgui.scm"
               "ui/kruddboard/md_parse.scm"
               "math/math.scm"

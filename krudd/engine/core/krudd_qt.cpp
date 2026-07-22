@@ -83,6 +83,7 @@ extern "C" {
 #include "entity_api.h"      /* the "scene" api: clear/build the world (Open) */
 #include "asset_api.h"       /* the "asset" api: mesh source for click-to-pick */
 #include "editor_boot.h"     /* the native render-cluster boot */
+#include "editor_layout.h"   /* the .scm-driven chrome spec walked below (#722) */
 #include "viewport_pick.h"   /* the shared click-to-pick raycast (#697) */
 #include "vulkan_platform.h" /* the native windowing host seam (VkSurfaceKHR) */
 }
@@ -96,12 +97,14 @@ extern "C" {
 #include <QtCore/QByteArray>
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QFile>
+#include <QtCore/QMap>
 #include <QtCore/QFileInfo>
 #include <QtCore/QTimer>
 #include <QtGui/QAction>
 #include <QtGui/QCloseEvent>
 #include <QtGui/QGuiApplication>
 #include <QtGui/QKeyEvent>
+#include <QtGui/QKeySequence>
 #include <QtGui/QMouseEvent>
 #include <QtGui/QShortcut>
 #include <QtGui/QWheelEvent>
@@ -119,6 +122,7 @@ extern "C" {
 #include <QtWidgets/QFileDialog>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QMainWindow>
+#include <QtWidgets/QMenu>
 #include <QtWidgets/QMenuBar>
 #include <QtWidgets/QMessageBox>
 #include <QtWidgets/QStatusBar>
@@ -454,6 +458,236 @@ static QDockWidget *make_dock(const QString &title, const QString &object_name,
 	return dock;
 }
 
+/* ----------------------------------------------- the .scm-driven chrome ---- */
+
+/*
+ * The editor chrome is authored as one Scheme data spec (core/editor_layout.scm,
+ * embedded as LAYOUT_SCM) and walked into a plain C `struct editor_layout` by
+ * editor_layout.c (#722). build_editor_chrome below emits the equivalent Qt
+ * widgets from that struct, so nothing here hard-codes a menu, dock, toolbar or
+ * status literal — the spec is the single source of the shell's structure.
+ *
+ * A handful of action ids the spec attaches to entries are wired to real
+ * behavior (Open Project, Quit, About, Reset Layout); every other id falls
+ * through to the "coming soon" status hint. The host passes those behaviors in
+ * as callbacks so this walker stays free of engine specifics.
+ */
+
+/* The spec's standard-key symbol, mapped to the platform's QKeySequence so the
+ * shortcuts stay native (Ctrl+O / ⌘O …) exactly as the hand-written menus did. */
+static QKeySequence shortcut_for(enum editor_shortcut s)
+{
+	switch (s) {
+	case EDITOR_KEY_NEW:     return QKeySequence(QKeySequence::New);
+	case EDITOR_KEY_OPEN:    return QKeySequence(QKeySequence::Open);
+	case EDITOR_KEY_SAVE:    return QKeySequence(QKeySequence::Save);
+	case EDITOR_KEY_SAVE_AS: return QKeySequence(QKeySequence::SaveAs);
+	case EDITOR_KEY_QUIT:    return QKeySequence(QKeySequence::Quit);
+	case EDITOR_KEY_UNDO:    return QKeySequence(QKeySequence::Undo);
+	case EDITOR_KEY_REDO:    return QKeySequence(QKeySequence::Redo);
+	case EDITOR_KEY_CUT:     return QKeySequence(QKeySequence::Cut);
+	case EDITOR_KEY_COPY:    return QKeySequence(QKeySequence::Copy);
+	case EDITOR_KEY_PASTE:   return QKeySequence(QKeySequence::Paste);
+	case EDITOR_KEY_NONE:
+	default:                 return QKeySequence();
+	}
+}
+
+static Qt::DockWidgetArea area_for(enum editor_dock_area a)
+{
+	switch (a) {
+	case EDITOR_AREA_RIGHT:  return Qt::RightDockWidgetArea;
+	case EDITOR_AREA_TOP:    return Qt::TopDockWidgetArea;
+	case EDITOR_AREA_BOTTOM: return Qt::BottomDockWidgetArea;
+	case EDITOR_AREA_LEFT:
+	default:                 return Qt::LeftDockWidgetArea;
+	}
+}
+
+/* The "coming soon" hint text for an unwired entry: the menu/toolbar label with
+ * its accelerator '&', a trailing '…', and any leading glyph ("▶ ", "■ ")
+ * stripped, so "Save &As…" reads "Save As" and "▶ Play" reads "Play" — the same
+ * wording the hand-written status hints used. */
+static QString hint_label(const QString &raw)
+{
+	QString s = raw;
+
+	s.remove(QLatin1Char('&'));
+	s.remove(QChar(0x2026)); /* … */
+	int i = 0;
+	while (i < s.size() && !s.at(i).isLetterOrNumber())
+		i++;
+	return s.mid(i).trimmed();
+}
+
+/* The behaviors the spec's wired action ids resolve to, supplied by the host so
+ * the walker below stays engine-agnostic. Everything else is a coming_soon. */
+struct ChromeActions {
+	std::function<void(const QString &)> coming_soon;
+	std::function<void()>                open_project;
+	std::function<void()>                quit;
+	std::function<void()>                about;
+	std::function<void()>                reset_layout;
+};
+
+/* The live widgets the frame loop and boot path update after the walk: the
+ * status fields (fps / resolution / driver) and toolbar badges (renderer),
+ * keyed by their spec ids. */
+struct EditorChrome {
+	QMap<QString, QLabel *> status;
+	QMap<QString, QLabel *> badges;
+};
+
+/* Wire one menu action's id to its behavior: the few wired ids to their host
+ * callbacks, every other id to the coming_soon hint derived from its label. */
+static void connect_action(QAction *a, const QString &id, const QString &label,
+			   const ChromeActions &act)
+{
+	if (id == QLatin1String("open-project"))
+		QObject::connect(a, &QAction::triggered, act.open_project);
+	else if (id == QLatin1String("quit"))
+		QObject::connect(a, &QAction::triggered, act.quit);
+	else if (id == QLatin1String("about"))
+		QObject::connect(a, &QAction::triggered, act.about);
+	else if (id == QLatin1String("reset-layout"))
+		QObject::connect(a, &QAction::triggered, act.reset_layout);
+	else {
+		auto soon = act.coming_soon;
+		QObject::connect(a, &QAction::triggered,
+				 [soon, label]() { soon(label); });
+	}
+}
+
+/*
+ * Emit the whole editor chrome from the evaluated layout spec. Docks come first
+ * so the View menu's (dock-toggles) can reference their toggle actions; then the
+ * menus, the toolbar and the status bar. Returns the handles the caller updates
+ * live. The QMainWindow objectNames (window, toolbar) and dock objectNames come
+ * from the spec, so saveState/restoreState and View ▸ Reset Layout round-trip.
+ */
+static EditorChrome build_editor_chrome(QMainWindow &win,
+					const struct editor_layout *L,
+					const ChromeActions &act)
+{
+	EditorChrome                    chrome;
+	QMap<QString, QDockWidget *>    docks_by_id;
+	QList<QDockWidget *>            docks_in_order;
+
+	/* ---- docks (build before menus so dock-toggles can resolve) ------ */
+	for (uint32_t i = 0; i < L->dock_count; i++) {
+		const struct editor_dock *d = &L->docks[i];
+		QDockWidget *dock = make_dock(
+			QString::fromUtf8(d->title), QString::fromUtf8(d->id),
+			make_placeholder(QString::fromUtf8(d->panel),
+					 QString::fromUtf8(d->blurb)),
+			&win);
+
+		win.addDockWidget(area_for(d->area), dock);
+		docks_by_id.insert(QString::fromUtf8(d->id), dock);
+		docks_in_order.append(dock);
+	}
+	/* Tab grouping is a second pass: a (tabbed-with id) can name a dock
+	 * declared after it, so every dock must exist before tabifying. */
+	for (uint32_t i = 0; i < L->dock_count; i++) {
+		const struct editor_dock *d = &L->docks[i];
+
+		if (d->tabbed_with[0]) {
+			QDockWidget *self =
+				docks_by_id.value(QString::fromUtf8(d->id));
+			QDockWidget *onto = docks_by_id.value(
+				QString::fromUtf8(d->tabbed_with));
+			if (self && onto)
+				win.tabifyDockWidget(onto, self);
+		}
+	}
+	/* Raise last, so the tab that wins its group is shown on top. */
+	for (uint32_t i = 0; i < L->dock_count; i++) {
+		const struct editor_dock *d = &L->docks[i];
+
+		if (d->raise) {
+			QDockWidget *self =
+				docks_by_id.value(QString::fromUtf8(d->id));
+			if (self)
+				self->raise();
+		}
+	}
+
+	/* ---- menus ------------------------------------------------------- */
+	for (uint32_t i = 0; i < L->menu_count; i++) {
+		const struct editor_menu *m = &L->menus[i];
+		QMenu *menu =
+			win.menuBar()->addMenu(QString::fromUtf8(m->label));
+
+		for (uint32_t j = 0; j < m->item_count; j++) {
+			const struct editor_menu_item *it = &m->items[j];
+
+			switch (it->kind) {
+			case EDITOR_ITEM_SEPARATOR:
+				menu->addSeparator();
+				break;
+			case EDITOR_ITEM_DOCK_TOGGLES:
+				for (QDockWidget *d : docks_in_order)
+					menu->addAction(d->toggleViewAction());
+				break;
+			case EDITOR_ITEM_ACTION: {
+				QAction *a = menu->addAction(
+					QString::fromUtf8(it->label));
+				QKeySequence ks = shortcut_for(it->shortcut);
+
+				if (!ks.isEmpty())
+					a->setShortcut(ks);
+				connect_action(
+					a, QString::fromUtf8(it->action),
+					hint_label(QString::fromUtf8(it->label)),
+					act);
+				break;
+			}
+			}
+		}
+	}
+
+	/* ---- toolbar ----------------------------------------------------- */
+	QToolBar *toolbar = win.addToolBar(QStringLiteral("main"));
+	toolbar->setObjectName(QStringLiteral("toolbar.main"));
+	for (uint32_t i = 0; i < L->tool_count; i++) {
+		const struct editor_tool *t = &L->tools[i];
+
+		switch (t->kind) {
+		case EDITOR_TOOL_SEPARATOR:
+			toolbar->addSeparator();
+			break;
+		case EDITOR_TOOL_ITEM: {
+			QAction *a = toolbar->addAction(
+				QString::fromUtf8(t->label));
+			QString  label = hint_label(QString::fromUtf8(t->label));
+			auto     soon  = act.coming_soon;
+
+			QObject::connect(a, &QAction::triggered,
+					 [soon, label]() { soon(label); });
+			break;
+		}
+		case EDITOR_TOOL_BADGE: {
+			QLabel *badge = new QLabel(QString::fromUtf8(t->label));
+
+			toolbar->addWidget(badge);
+			chrome.badges.insert(QString::fromUtf8(t->id), badge);
+			break;
+		}
+		}
+	}
+
+	/* ---- status bar -------------------------------------------------- */
+	for (uint32_t i = 0; i < L->status_count; i++) {
+		const struct editor_status_field *f = &L->status[i];
+		QLabel *lbl = new QLabel(QString::fromUtf8(f->text));
+
+		win.statusBar()->addPermanentWidget(lbl);
+		chrome.status.insert(QString::fromUtf8(f->id), lbl);
+	}
+
+	return chrome;
+}
+
 /*
  * Load a .scm scene off disk into the live world (#698) — the native File ▸
  * Open Project path, the counterpart of the browser's IndexedDB/fetch scene
@@ -516,26 +750,12 @@ int main(int argc, char **argv)
 			   QMainWindow::AllowTabbedDocks |
 			   QMainWindow::GroupedDragging);
 
-	/* Panels are placeholders for now (#676), so every menu action that is
-	 * not wired yet says so in the status bar rather than doing nothing —
-	 * the honest desktop-app hint, without a modal on every click. */
+	/* Panels are placeholders for now (#676), so every menu/toolbar action
+	 * that is not wired yet says so in the status bar rather than doing
+	 * nothing — the honest desktop-app hint, without a modal on every click. */
 	auto coming_soon = [&win](const QString &what) {
 		win.statusBar()->showMessage(
 			what + QStringLiteral(" — coming soon"), 4000);
-	};
-
-	/* A menu action with a shortcut + lambda, spelled out the version-safe
-	 * way (build the QAction, set the shortcut, connect) so no Qt 6.3+-only
-	 * addAction overload is required. */
-	auto add_action = [](QMenu *menu, const QString &text,
-			     const QKeySequence &shortcut,
-			     std::function<void()> fn) {
-		QAction *a = menu->addAction(text);
-
-		if (!shortcut.isEmpty())
-			a->setShortcut(shortcut);
-		QObject::connect(a, &QAction::triggered, fn);
-		return a;
 	};
 
 	/*
@@ -549,123 +769,44 @@ int main(int argc, char **argv)
 	const struct entity_api *scene  = nullptr;
 	const struct camera_api *camera = nullptr;
 
-	/* ---- File ------------------------------------------------------- */
-	QMenu *file_menu = win.menuBar()->addMenu(QStringLiteral("&File"));
-	add_action(file_menu, QStringLiteral("&New Project"), QKeySequence::New,
-		   [=]() { coming_soon(QStringLiteral("New Project")); });
-	add_action(file_menu, QStringLiteral("&Open Project…"),
-		   QKeySequence::Open, [&]() {
-			const QString path = QFileDialog::getOpenFileName(
-				&win, QStringLiteral("Open Project"), QString(),
-				QStringLiteral("Scene scripts (*.scm);;"
-					       "All files (*)"));
-
-			if (path.isEmpty())
-				return; /* user cancelled the dialog */
-
-			QString err;
-			int n = load_scene_file(scene, camera, path, &err);
-			if (n < 0) {
-				win.statusBar()->showMessage(err, 6000);
-				QMessageBox::warning(
-					&win, QStringLiteral("Open Project"),
-					err);
-				return;
-			}
-			win.statusBar()->showMessage(
-				QStringLiteral("Loaded %1 — %2 entit%3")
-					.arg(QFileInfo(path).fileName())
-					.arg(n)
-					.arg(n == 1 ? QStringLiteral("y")
-						    : QStringLiteral("ies")),
-				6000);
-		   });
-	file_menu->addSeparator();
-	add_action(file_menu, QStringLiteral("&Save"), QKeySequence::Save,
-		   [=]() { coming_soon(QStringLiteral("Save")); });
-	add_action(file_menu, QStringLiteral("Save &As…"), QKeySequence::SaveAs,
-		   [=]() { coming_soon(QStringLiteral("Save As")); });
-	file_menu->addSeparator();
-	file_menu->addAction(QStringLiteral("&Quit"), QKeySequence::Quit,
-			     &app, &QApplication::quit);
-
-	/* ---- Edit ------------------------------------------------------- */
-	QMenu *edit_menu = win.menuBar()->addMenu(QStringLiteral("&Edit"));
-	add_action(edit_menu, QStringLiteral("&Undo"), QKeySequence::Undo,
-		   [=]() { coming_soon(QStringLiteral("Undo")); });
-	add_action(edit_menu, QStringLiteral("&Redo"), QKeySequence::Redo,
-		   [=]() { coming_soon(QStringLiteral("Redo")); });
-	edit_menu->addSeparator();
-	add_action(edit_menu, QStringLiteral("Cu&t"), QKeySequence::Cut,
-		   [=]() { coming_soon(QStringLiteral("Cut")); });
-	add_action(edit_menu, QStringLiteral("&Copy"), QKeySequence::Copy,
-		   [=]() { coming_soon(QStringLiteral("Copy")); });
-	add_action(edit_menu, QStringLiteral("&Paste"), QKeySequence::Paste,
-		   [=]() { coming_soon(QStringLiteral("Paste")); });
-
-	/* ---- the authoring docks (real layout, placeholder contents) ---- */
-	QDockWidget *scene_dock = make_dock(
-		QStringLiteral("Scene"), QStringLiteral("dock.scene"),
-		make_placeholder(QStringLiteral("Scene Tree"),
-			QStringLiteral("The entity hierarchy of the open "
-				"project — pick a node to edit it in the "
-				"Inspector.")),
-		&win);
-	win.addDockWidget(Qt::LeftDockWidgetArea, scene_dock);
-
-	QDockWidget *inspector_dock = make_dock(
-		QStringLiteral("Inspector"), QStringLiteral("dock.inspector"),
-		make_placeholder(QStringLiteral("Inspector"),
-			QStringLiteral("Components and properties of the "
-				"selected entity, written back to the project "
-				"files.")),
-		&win);
-	win.addDockWidget(Qt::RightDockWidgetArea, inspector_dock);
-
-	QDockWidget *assets_dock = make_dock(
-		QStringLiteral("Assets"), QStringLiteral("dock.assets"),
-		make_placeholder(QStringLiteral("Asset Browser"),
-			QStringLiteral("Meshes, textures, sounds and scenes in "
-				"the project, ready to drag into the scene.")),
-		&win);
-	win.addDockWidget(Qt::BottomDockWidgetArea, assets_dock);
-
-	QDockWidget *console_dock = make_dock(
-		QStringLiteral("Console"), QStringLiteral("dock.console"),
-		make_placeholder(QStringLiteral("Scheme REPL"),
-			QStringLiteral("A live S7 Scheme console into the "
-				"running engine image — evaluate against the "
-				"game as it plays.")),
-		&win);
-	win.addDockWidget(Qt::BottomDockWidgetArea, console_dock);
-	win.tabifyDockWidget(assets_dock, console_dock);
-	assets_dock->raise();
-
-	/* ---- View (dock toggles + reset) -------------------------------- */
-	QMenu *view_menu = win.menuBar()->addMenu(QStringLiteral("&View"));
-	view_menu->addAction(scene_dock->toggleViewAction());
-	view_menu->addAction(inspector_dock->toggleViewAction());
-	view_menu->addAction(assets_dock->toggleViewAction());
-	view_menu->addAction(console_dock->toggleViewAction());
-	view_menu->addSeparator();
-
-	/* Filled in once the window is shown (below). The reset action restores
-	 * that snapshot, so the user can always get the default layout back
-	 * after dragging the docks around. */
+	/* The default layout snapshot, filled once the window is shown (below).
+	 * View ▸ Reset Layout restores it, so the reset callback captures it by
+	 * reference — the dock objectNames it round-trips come from the spec. */
 	QByteArray default_geometry;
 	QByteArray default_state;
-	QAction *reset_layout =
-		view_menu->addAction(QStringLiteral("Reset &Layout"));
-	QObject::connect(reset_layout, &QAction::triggered, [&]() {
+
+	/*
+	 * The chrome — menu bar, toolbar, docks, status bar — is authored as one
+	 * Scheme data spec (core/editor_layout.scm) and walked into a C tree by
+	 * editor_layout.c (#722); build_editor_chrome emits the Qt widgets from
+	 * it, so no menu/dock/toolbar literal is hard-coded here. Evaluate the
+	 * spec live through the shared s7 image, the same way script.c loads its
+	 * other DSL images. A spec that fails to evaluate is a build breakage, so
+	 * fail loudly rather than opening an empty shell.
+	 */
+	struct editor_layout layout;
+	if (editor_layout_load(&layout) != 0) {
+		fprintf(stderr,
+			"krudd_qt: could not load the editor layout spec\n");
+		return 1;
+	}
+
+	/*
+	 * The behaviors the spec's wired action ids resolve to. Everything else
+	 * the walker connects to the coming_soon hint. open_project/reset_layout
+	 * capture scene/camera and the layout snapshot by reference, so they act
+	 * on the live values at click time — long after this returns.
+	 */
+	ChromeActions actions;
+	actions.coming_soon  = coming_soon;
+	actions.quit         = [&app]() { app.quit(); };
+	actions.reset_layout = [&]() {
 		if (!default_geometry.isEmpty())
 			win.restoreGeometry(default_geometry);
 		if (!default_state.isEmpty())
 			win.restoreState(default_state);
-	});
-
-	/* ---- Help ------------------------------------------------------- */
-	QMenu *help_menu = win.menuBar()->addMenu(QStringLiteral("&Help"));
-	help_menu->addAction(QStringLiteral("&About krudd"), [&win]() {
+	};
+	actions.about = [&win]() {
 		QMessageBox::about(&win, QStringLiteral("About krudd"),
 			QStringLiteral(
 				"<b>krudd — editor</b><br><br>"
@@ -679,20 +820,34 @@ int main(int argc, char **argv)
 				"float or tab them into any layout, and use "
 				"View &gt; Reset Layout to restore the "
 				"default."));
-	});
+	};
+	actions.open_project = [&]() {
+		const QString path = QFileDialog::getOpenFileName(
+			&win, QStringLiteral("Open Project"), QString(),
+			QStringLiteral("Scene scripts (*.scm);;"
+				       "All files (*)"));
 
-	/* ---- toolbar ---------------------------------------------------- */
-	QToolBar *toolbar = win.addToolBar(QStringLiteral("main"));
-	toolbar->setObjectName(QStringLiteral("toolbar.main"));
-	QAction *play_action = toolbar->addAction(QStringLiteral("▶ Play"));
-	QObject::connect(play_action, &QAction::triggered,
-			 [=]() { coming_soon(QStringLiteral("Play")); });
-	QAction *stop_action = toolbar->addAction(QStringLiteral("■ Stop"));
-	QObject::connect(stop_action, &QAction::triggered,
-			 [=]() { coming_soon(QStringLiteral("Stop")); });
-	toolbar->addSeparator();
-	QLabel *renderer_badge = new QLabel(QStringLiteral("Vulkan — booting…"));
-	toolbar->addWidget(renderer_badge);
+		if (path.isEmpty())
+			return; /* user cancelled the dialog */
+
+		QString err;
+		int n = load_scene_file(scene, camera, path, &err);
+		if (n < 0) {
+			win.statusBar()->showMessage(err, 6000);
+			QMessageBox::warning(
+				&win, QStringLiteral("Open Project"), err);
+			return;
+		}
+		win.statusBar()->showMessage(
+			QStringLiteral("Loaded %1 — %2 entit%3")
+				.arg(QFileInfo(path).fileName())
+				.arg(n)
+				.arg(n == 1 ? QStringLiteral("y")
+					    : QStringLiteral("ies")),
+			6000);
+	};
+
+	EditorChrome chrome = build_editor_chrome(win, &layout, actions);
 
 	KruddViewportWindow *viewport = new KruddViewportWindow();
 	QWidget *viewport_container =
@@ -700,13 +855,16 @@ int main(int argc, char **argv)
 	viewport_container->setMinimumSize(320, 240);
 	win.setCentralWidget(viewport_container);
 
-	QLabel *fps_readout = new QLabel(QStringLiteral("fps —"));
-	QLabel *res_readout = new QLabel(QStringLiteral("—×—"));
-	QLabel *driver_readout =
-		new QLabel(QGuiApplication::platformName().toUpper());
-	win.statusBar()->addPermanentWidget(fps_readout);
-	win.statusBar()->addPermanentWidget(res_readout);
-	win.statusBar()->addPermanentWidget(driver_readout);
+	/* The live widgets the boot path and frame loop update, resolved by their
+	 * spec ids. The driver field shows the Qt platform plugin (xcb/wayland/
+	 * windows), set once here — the spec seeds it empty. */
+	QLabel *renderer_badge = chrome.badges.value(QStringLiteral("renderer"));
+	QLabel *fps_readout    = chrome.status.value(QStringLiteral("fps"));
+	QLabel *res_readout    = chrome.status.value(QStringLiteral("resolution"));
+	if (QLabel *driver_readout =
+		    chrome.status.value(QStringLiteral("driver")))
+		driver_readout->setText(
+			QGuiApplication::platformName().toUpper());
 
 	new QShortcut(QKeySequence(Qt::Key_Escape), &win, &QApplication::quit);
 
@@ -800,8 +958,9 @@ int main(int argc, char **argv)
 		subsystem_manager_get_api(&manager, "asset"));
 	viewport->mem    = &g_mem_api;
 
-	renderer_badge->setText(QStringLiteral("Vulkan · native · ") +
-				QGuiApplication::platformName());
+	if (renderer_badge)
+		renderer_badge->setText(QStringLiteral("Vulkan · native · ") +
+					QGuiApplication::platformName());
 
 	QElapsedTimer fps_clock;
 	fps_clock.start();
@@ -831,16 +990,19 @@ int main(int argc, char **argv)
 		subsystem_manager_tick(&manager);
 		gpu->frame_end(); /* acquire, clear and present this frame */
 
-		res_readout->setText(QStringLiteral("%1×%2")
-			.arg(viewport->width())
-			.arg(viewport->height()));
+		if (res_readout)
+			res_readout->setText(QStringLiteral("%1×%2")
+				.arg(viewport->width())
+				.arg(viewport->height()));
 
 		frames_this_second++;
 		qint64 elapsed = fps_clock.elapsed();
 		if (elapsed >= 500) {
 			double fps = 1000.0 * frames_this_second / elapsed;
-			fps_readout->setText(
-				QStringLiteral("fps %1").arg(fps, 0, 'f', 1));
+			if (fps_readout)
+				fps_readout->setText(
+					QStringLiteral("fps %1")
+						.arg(fps, 0, 'f', 1));
 			frames_this_second = 0;
 			fps_clock.restart();
 		}

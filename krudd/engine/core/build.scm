@@ -49,6 +49,17 @@
                     "subsystem" "subsystem_manager" "log" "memory" "script" "m"))
   (test "editor_boot" "editor_boot_test")
 
+  ;;! The spec -> layout walk (editor_layout.c) that the Qt shell renders from,
+  ;;! exercised GPU- and Qt-free: it evaluates the embedded editor_layout.scm
+  ;;! spec through the shared s7 image and asserts on the C tree krudd_qt.cpp
+  ;;! would emit. No Qt, no window, no GPU, so it runs in ordinary CI (unlike
+  ;;! krudd_qt). Needs ../third_party for s7.h and ${generated} for LAYOUT_SCM.
+  (executable "editor_layout_test"
+              (sources "editor_layout_test.c" "editor_layout.c")
+              (private "include" (raw "${generated}") (raw "../third_party"))
+              (link "script"))
+  (test "editor_layout" "editor_layout_test")
+
   ;;! The Qt-hosted native editor. The engine's Vulkan backend presenting into a
   ;;! QWindow embedded in real Qt chrome (menu bar, toolbar, docks). Part of
   ;;! #675/#676 (the Qt editor shell), on native Vulkan (#705) rather than native
@@ -58,8 +69,8 @@
   ;;! host seam (vulkan_platform.h). No (test ...) edge: it opens a window and
   ;;! needs a real GPU, so it is a deliverable, not a CI test.
   (executable "krudd_qt"
-              (sources "krudd_qt.cpp" "editor_boot.c")
-              (private "include" (raw "${generated}")
+              (sources "krudd_qt.cpp" "editor_boot.c" "editor_layout.c")
+              (private "include" (raw "${generated}") (raw "../third_party")
                        (root "render/vulkan") (root "abi"))
               (vulkan)
               (qt)

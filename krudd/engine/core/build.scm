@@ -97,4 +97,16 @@
   (executable "shader_transpile_test"
               (sources "shader_transpile_test.c")
               (link "script"))
-  (test "shader_transpile" "shader_transpile_test")))
+  (test "shader_transpile" "shader_transpile_test")
+
+  ;;! The s7->JS layout serialization primitive (script_json /
+  ;;! script_layout_json in script.c), exercised browser-, GPU- and Qt-free: it
+  ;;! serializes hand-built s7 values and the embedded editor_layout.scm spec and
+  ;;! asserts on the JSON the web chrome (#706 part C) will JSON.parse. Needs
+  ;;! ../third_party for s7.h to build the test values; the primitive itself
+  ;;! rides in the linked script library. Part B of #706 / #723.
+  (executable "script_layout_json_test"
+              (sources "script_layout_json_test.c")
+              (private "include" (raw "../third_party"))
+              (link "script"))
+  (test "script_layout_json" "script_layout_json_test")))

@@ -8,6 +8,10 @@
 extern "C" {
 #endif
 
+/* An s7 value (s7.h's s7_pointer). Forward-declared so callers that only pass a
+ * value through script_json() need not pull in s7.h. */
+struct s7_cell;
+
 /*
  * script — the s7 Scheme runtime embedded in the engine.
  *
@@ -47,6 +51,26 @@ const char *script_shader_transpile(const char *src, const char *stage);
  * rotating-buffer / NULL-on-miss contract; returns WGSL text for the stage.
  */
 const char *script_shader_transpile_wgsl(const char *src, const char *stage);
+
+/*
+ * Serialize an s7 VALUE to a JSON string so a value produced inside the image
+ * can cross the s7->JS seam (JS cannot hold an s7 value; it JSON.parses this).
+ * Pairs become arrays, strings and symbols become strings, integers/reals
+ * numbers, #t/#f booleans and () an empty array. The result is a static buffer
+ * valid until the next call; NULL when the interpreter is down, VALUE is NULL,
+ * or the JSON would exceed the buffer (never a truncated, unparseable string).
+ */
+const char *script_json(struct s7_cell *value);
+
+/*
+ * Evaluate the embedded editor layout spec (core/editor_layout.scm) and
+ * serialize (editor-layout) to JSON via script_json — the s7->JS transport the
+ * Qt-free web editor renders its chrome from, the browser-side twin of the
+ * native C-struct reader in core/editor_layout.c (#706 part B). The interpreter
+ * starts on demand. Returns NULL if it is down, the spec is missing
+ * editor-layout, the tree is not a list, or the JSON overflows.
+ */
+const char *script_layout_json(void);
 
 /*
  * One editable parameter of a source-declared parameter block — a shader's

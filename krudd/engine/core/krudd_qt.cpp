@@ -338,9 +338,14 @@ static VkSurfaceKHR window_create_surface(VkInstance instance, void *user)
 		ci.sType     = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
 		ci.hinstance = GetModuleHandle(nullptr);
 		ci.hwnd      = reinterpret_cast<HWND>(win->winId());
-		if (vkCreateWin32SurfaceKHR(instance, &ci, nullptr, &surface)
-		    != VK_SUCCESS)
+		VkResult r = vkCreateWin32SurfaceKHR(instance, &ci, nullptr,
+						     &surface);
+		if (r != VK_SUCCESS) {
+			fprintf(stderr,
+				"krudd_qt: vkCreateWin32SurfaceKHR failed (%d)\n",
+				(int)r);
 			return VK_NULL_HANDLE;
+		}
 		return surface;
 	}
 #endif
@@ -359,9 +364,14 @@ static VkSurfaceKHR window_create_surface(VkInstance instance, void *user)
 		ci.sType      = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
 		ci.connection = x11app->connection();
 		ci.window     = static_cast<xcb_window_t>(win->winId());
-		if (vkCreateXcbSurfaceKHR(instance, &ci, nullptr, &surface)
-		    != VK_SUCCESS)
+		VkResult r = vkCreateXcbSurfaceKHR(instance, &ci, nullptr,
+						   &surface);
+		if (r != VK_SUCCESS) {
+			fprintf(stderr,
+				"krudd_qt: vkCreateXcbSurfaceKHR failed (%d)\n",
+				(int)r);
 			return VK_NULL_HANDLE;
+		}
 		return surface;
 	}
 #endif
@@ -385,9 +395,14 @@ static VkSurfaceKHR window_create_surface(VkInstance instance, void *user)
 		ci.sType   = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR;
 		ci.display = wlapp->display();
 		ci.surface = wlsurf;
-		if (vkCreateWaylandSurfaceKHR(instance, &ci, nullptr, &surface)
-		    != VK_SUCCESS)
+		VkResult r = vkCreateWaylandSurfaceKHR(instance, &ci, nullptr,
+						       &surface);
+		if (r != VK_SUCCESS) {
+			fprintf(stderr,
+				"krudd_qt: vkCreateWaylandSurfaceKHR failed (%d)\n",
+				(int)r);
 			return VK_NULL_HANDLE;
+		}
 		return surface;
 	}
 #endif

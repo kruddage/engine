@@ -6,9 +6,16 @@
  * renderer_vulkan.c owns the instance, device and swapchain, but it must not
  * link a window library (Qt, and its Wayland/X11/Win32 surface entry points):
  * it is shared between a future offscreen harness and the editor, and only the
- * editor has a window. So the one genuinely window-specific step — turning a
- * native window handle into a VkSurfaceKHR — is injected from the outside
- * through this host, exactly as the WebGPU backend takes its WGPUSurface.
+ * editor has a window. So the two genuinely window-specific things — which
+ * instance extensions the windowing system needs, and turning a native window
+ * handle into a VkSurfaceKHR — are injected from the outside through this host,
+ * exactly as the WebGPU backend takes its WGPUSurface.
+ *
+ * The extension list has to come through the seam too, not just the surface: a
+ * VkCreate*SurfaceKHR call fails with VK_ERROR_EXTENSION_NOT_PRESENT unless the
+ * matching VK_KHR_*_surface extension was enabled back at vkCreateInstance, and
+ * the backend cannot know which one that is without learning the windowing
+ * system. Hence two injection points, at two different moments of bring-up.
  *
  * With a host set (krudd_qt), create_surface returns the window's VkSurfaceKHR
  * and drawable_size reports the window's size; the backend builds a swapchain
@@ -39,6 +46,16 @@ struct vulkan_platform_host {
 	VkSurfaceKHR (*create_surface)(VkInstance instance, void *user);
 	/* The window's current drawable size, in physical pixels. */
 	void         (*drawable_size)(uint32_t *w, uint32_t *h, void *user);
+	/*
+	 * The instance extensions create_surface will need, enabled before
+	 * vkCreateInstance. Static storage owned by the host — the seam holds
+	 * the pointer, it does not copy. A host may name extensions the loader
+	 * does not report (listing both Wayland and XCB on Linux is normal); the
+	 * backend filters against what is actually available, so the list is a
+	 * request, not an assertion.
+	 */
+	const char *const *instance_extensions;
+	uint32_t           instance_extension_count;
 	void         *user;
 };
 
@@ -51,6 +68,25 @@ void vulkan_platform_set_host(const struct vulkan_platform_host *host);
  * window and the backend configures itself with no swapchain instead.
  */
 VkSurfaceKHR vulkan_platform_create_surface(VkInstance instance);
+
+/*
+ * The host's required instance extensions. Returns the count and points *out at
+ * the host's static list; returns 0 and leaves *out untouched when nothing is
+ * hosting us — the headless case, which needs no surface extension at all.
+ *
+ * Called during instance creation, so a host registered after that point
+ * contributes nothing and its surface call will later fail; the backend warns
+ * when it sees that combination.
+ */
+uint32_t vulkan_platform_instance_extensions(const char *const **out);
+
+/*
+ * Whether a windowing host is registered. The backend uses this to tell the two
+ * reasons for a null surface apart: no host at all (headless — expected, and the
+ * only state a plain build sees) versus a host whose surface creation failed
+ * (a real error worth explaining).
+ */
+int vulkan_platform_hosted(void);
 
 /*
  * Drawable size in physical (device) pixels, never zero. Delegates to the host

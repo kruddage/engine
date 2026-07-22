@@ -21,6 +21,7 @@
 #include "script.h"
 #include "log.h"
 #include "memory.h"
+#include "memory_api.h"
 
 #include <assert.h>
 #include <stdint.h>

@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * game — the launcher registry, host-side. Registration counts up, game_load
- * runs the right callback, and an out-of-range index is inert.
+ * runs the right callback, an out-of-range index is inert, game_find resolves a
+ * name (case-insensitively) to its slot, and game_boot_default loads by name.
  */
 #include "game.h"
 
@@ -45,6 +46,24 @@ int main(void)
 	assert(game_register(NULL, load_a) == -1);
 	assert(game_register("C", NULL) == -1);
 	assert(game_count() == 2);
+
+	/* game_find resolves a name to its slot, case-insensitively; a miss and a
+	 * NULL name both report no slot. */
+	assert(game_find("A") == 0);
+	assert(game_find("b") == 1);
+	assert(game_find("Z") == -1);
+	assert(game_find(NULL) == -1);
+
+	/* game_boot_default loads the named game and hands back its index; an
+	 * unknown or NULL name loads nothing and leaves the active game standing. */
+	assert(game_boot_default("a") == 0);
+	assert(g_loaded == 10);
+	assert(game_active_index() == 0);
+	assert(game_boot_default("nope") == -1);
+	assert(g_loaded == 10);
+	assert(game_active_index() == 0);
+	assert(game_boot_default(NULL) == -1);
+	assert(game_active_index() == 0);
 
 	printf("game_test: ok\n");
 	return 0;

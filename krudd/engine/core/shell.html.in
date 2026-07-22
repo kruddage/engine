@@ -1016,6 +1016,24 @@ canvas {
 	};
 
 	/*
+	 * Which scene the editor opens on boot. The engine reads this once the
+	 * subsystems are up (krudd_boot_game in engine.c) and loads the matching
+	 * game, so the page lands on a real scene — chess by default — instead of
+	 * the "choose a scene" overlay. ?game=<name> picks another registered game
+	 * (matched case-insensitively against its launcher label), and ?game=none
+	 * (or any unknown name) keeps the launcher up. The menu button still
+	 * reopens the launcher to switch scenes after boot.
+	 */
+	window.kruddBootGame = function () {
+		try {
+			var g = new URLSearchParams(location.search).get('game');
+			return g === null ? 'chess' : g;
+		} catch (e) {
+			return 'chess';
+		}
+	};
+
+	/*
 	 * The renderer badge. A backend calls kruddSetRenderer from its init with
 	 * its own name; the badge shows which GPU path went live — WebGPU by
 	 * default, WebGL when ?renderer=webgl opts out (or always, on Firefox).

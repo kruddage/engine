@@ -78,6 +78,40 @@ int game_count(void)
 	return g_count;
 }
 
+/*
+ * ASCII case-insensitive equality. The launcher label is a plain-ASCII string
+ * literal and the boot request comes from a URL query, so a locale-free compare
+ * is enough to let ?game=chess match the "Chess" a game registered under — and
+ * it drags in no ctype/locale dependency the WASM build would otherwise carry.
+ */
+static int name_eq_ci(const char *a, const char *b)
+{
+	for (; *a && *b; a++, b++) {
+		int ca = *a;
+		int cb = *b;
+
+		if (ca >= 'A' && ca <= 'Z')
+			ca += 'a' - 'A';
+		if (cb >= 'A' && cb <= 'Z')
+			cb += 'a' - 'A';
+		if (ca != cb)
+			return 0;
+	}
+	return *a == *b;
+}
+
+int game_find(const char *name)
+{
+	int i;
+
+	if (!name)
+		return -1;
+	for (i = 0; i < g_count; i++)
+		if (g_games[i].name && name_eq_ci(g_games[i].name, name))
+			return i;
+	return -1;
+}
+
 void game_load(int index)
 {
 	if (index >= 0 && index < g_count && g_games[index].load) {
@@ -89,6 +123,24 @@ void game_load(int index)
 int game_active_index(void)
 {
 	return g_active;
+}
+
+int game_boot_default(const char *name)
+{
+	int index = game_find(name);
+
+	if (index < 0)
+		return -1;
+	game_load(index);
+#ifdef __EMSCRIPTEN__
+	/*
+	 * Land on the scene, not the overlay: the same hide the click path runs,
+	 * so a boot default and a launcher pick leave the page in one state. The
+	 * menu button (shell.html.in) still reopens the launcher to pick another.
+	 */
+	game_launcher_hide();
+#endif
+	return index;
 }
 
 #ifdef __EMSCRIPTEN__

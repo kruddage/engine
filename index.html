@@ -834,7 +834,7 @@ canvas {
 	<span class="wordmark">KRUDD</span>
 	<div class="menubar-right">
 		<span class="version" id="version" title="click for build info">18.4.0</span>
-		<span class="version-detail" id="version-detail">commit cfcc98a &middot; built 2026-07-22</span>
+		<span class="version-detail" id="version-detail">commit 493f6ab &middot; built 2026-07-22</span>
 		<button class="menu-btn" id="menu-btn" title="back to the menu">&#9776; menu</button>
 	</div>
 </div>
@@ -1012,6 +1012,24 @@ canvas {
 			return new URLSearchParams(location.search).get('renderer') !== 'webgl';
 		} catch (e) {
 			return true;
+		}
+	};
+
+	/*
+	 * Which scene the editor opens on boot. The engine reads this once the
+	 * subsystems are up (krudd_boot_game in engine.c) and loads the matching
+	 * game, so the page lands on a real scene — chess by default — instead of
+	 * the "choose a scene" overlay. ?game=<name> picks another registered game
+	 * (matched case-insensitively against its launcher label), and ?game=none
+	 * (or any unknown name) keeps the launcher up. The menu button still
+	 * reopens the launcher to switch scenes after boot.
+	 */
+	window.kruddBootGame = function () {
+		try {
+			var g = new URLSearchParams(location.search).get('game');
+			return g === null ? 'chess' : g;
+		} catch (e) {
+			return 'chess';
 		}
 	};
 
@@ -1695,13 +1713,13 @@ canvas {
 var Module = {
 	locateFile: function (path, prefix) {
 		if (path.endsWith('.wasm'))
-			return prefix + path.replace(/\.wasm$/, '.cfcc98a.wasm');
+			return prefix + path.replace(/\.wasm$/, '.493f6ab.wasm');
 		return prefix + path;
 	}
 };
 </script>
 
-<script async type="text/javascript" src="index.cfcc98a.js"></script>
+<script async type="text/javascript" src="index.493f6ab.js"></script>
 
 </body>
 </html>

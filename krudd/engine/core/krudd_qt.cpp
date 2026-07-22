@@ -318,11 +318,37 @@ private:
 };
 
 /*
+ * The instance extensions window_create_surface below needs. Handed to the
+ * backend through the platform host, and enabled at vkCreateInstance — without
+ * them the matching VkCreate*SurfaceKHR fails VK_ERROR_EXTENSION_NOT_PRESENT.
+ * renderer_vulkan.c must not know which windowing system we are on, so this
+ * file — the one that already does — declares it, and every entry here has a
+ * matching branch in window_create_surface.
+ *
+ * Listing both Wayland and XCB on Linux is deliberate: which one is live is a
+ * runtime property of the Qt platform plugin, and the backend already drops
+ * whatever the loader does not report, so naming both costs nothing and keeps
+ * this list a compile-time constant.
+ */
+static const char *const k_instance_extensions[] = {
+#if defined(VK_USE_PLATFORM_WIN32_KHR)
+	VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
+#endif
+#if defined(VK_USE_PLATFORM_XCB_KHR)
+	VK_KHR_XCB_SURFACE_EXTENSION_NAME,
+#endif
+#if defined(VK_USE_PLATFORM_WAYLAND_KHR)
+	VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME,
+#endif
+	VK_KHR_SURFACE_EXTENSION_NAME,
+};
+
+/*
  * Build the VkSurfaceKHR for the embedded viewport window. Called by the
  * backend through the vulkan_platform host, once, at device bring-up. The
  * per-platform branches mirror the VK_USE_PLATFORM_* selection at the top of
- * the file; if a future platform is added, this function and that selection are
- * the two places to touch.
+ * the file; if a future platform is added, that selection, the extension list
+ * above and this function are the three places to touch.
  */
 static VkSurfaceKHR window_create_surface(VkInstance instance, void *user)
 {
@@ -896,15 +922,21 @@ int main(int argc, char **argv)
 
 	/*
 	 * Register the window host BEFORE the backend boots: renderer_vulkan_init
-	 * asks the platform seam for a surface during bring-up, and the host is
-	 * what turns that from "headless" into "this window".
+	 * reads our instance extensions while creating the instance and asks for
+	 * a surface during bring-up, and the host is what turns that from
+	 * "headless" into "this window". Registering it after either point
+	 * silently costs presentation, so this must stay ahead of
+	 * subsystem_manager_init below.
 	 */
 	struct vulkan_platform_host host;
 
 	memset(&host, 0, sizeof(host));
-	host.create_surface = window_create_surface;
-	host.drawable_size  = window_drawable_size;
-	host.user           = viewport;
+	host.create_surface           = window_create_surface;
+	host.drawable_size            = window_drawable_size;
+	host.instance_extensions      = k_instance_extensions;
+	host.instance_extension_count =
+		sizeof(k_instance_extensions) / sizeof(k_instance_extensions[0]);
+	host.user                     = viewport;
 	vulkan_platform_set_host(&host);
 
 	subsystem_manager_init(&manager, subsystems);

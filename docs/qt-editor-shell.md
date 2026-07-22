@@ -115,11 +115,31 @@ subsystem exactly like the others. `krudd_qt` is the Qt host that drives it into
 a live window.
 
 All the windowing lives behind a platform seam (`vulkan_platform.h`), the direct
-analogue of the WebGPU backend's `webgpu_platform.h`: the harness registers a
-host that turns the `QWindow`'s native handle into a `VkSurfaceKHR`, and the
-backend's swapchain path does the rest. With no host registered (a headless
-build) the backend still stands up an instance and device — so validation
-bring-up is exercised — it just has no swapchain to present into.
+analogue of the WebGPU backend's `webgpu_platform.h`. The harness registers a
+host that injects the two things the backend cannot know without learning the
+windowing system:
+
+1. **Which instance extensions to enable** (`VK_KHR_xcb_surface` and friends),
+   read while the instance is being created. Without them the surface call in
+   step 2 fails `VK_ERROR_EXTENSION_NOT_PRESENT`.
+2. **The `VkSurfaceKHR` itself**, built from the `QWindow`'s native handle at
+   device bring-up.
+
+The backend's swapchain path does the rest. With no host registered (a headless
+build) it still stands up an instance and device — so validation bring-up is
+exercised — it just enables no surface extension and has no swapchain to present
+into.
+
+Because the extension list is read *during instance creation*, the host must be
+registered before the backend boots. The instance log line reports how many
+extensions came from the host, so a host that registered too late is visible
+immediately:
+
+```
+renderer_vulkan: instance up (Vulkan 1.3 requested, 4 extensions [2 from window host], validation off)
+```
+
+`0 from window host` with a window open means presentation is already lost.
 
 The only new surface area is Qt: a `QMainWindow` chrome around a `QWindow`
 embedded via `QWidget::createWindowContainer`, and a `vulkan_platform_host` that
@@ -278,5 +298,7 @@ the editor into the build.
   `krudd/engine/core/krudd_qt.cpp` is the one place the Qt→Vulkan surface glue
   lives (its Wayland branch is guarded by `QT_VERSION_CHECK(6, 5, 0)`).
 - A new target platform: add its `VK_USE_PLATFORM_*` selection at the top of
-  `krudd_qt.cpp` and a matching branch in `window_create_surface` — those two
-  are the only places that know about a specific windowing system.
+  `krudd_qt.cpp`, its `VK_KHR_*_surface` entry in `k_instance_extensions`, and a
+  matching branch in `window_create_surface` — those three are the only places
+  that know about a specific windowing system, and all three are in that one
+  file. Miss the extension entry and the surface branch cannot succeed.

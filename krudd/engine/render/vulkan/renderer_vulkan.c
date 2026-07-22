@@ -142,6 +142,20 @@ static int has_ext(const VkExtensionProperties *exts, uint32_t count,
 	return 0;
 }
 
+/* Is `name` already in the list being assembled? has_ext answers the same
+ * question against the loader's VkExtensionProperties; this one works on the
+ * plain string list, so a host that also names VK_KHR_surface cannot get it
+ * enabled twice. */
+static int has_name(const char *const *list, uint32_t count, const char *name)
+{
+	uint32_t i;
+
+	for (i = 0; i < count; i++)
+		if (strcmp(list[i], name) == 0)
+			return 1;
+	return 0;
+}
+
 /* Is the Khronos validation layer installed? Enabling it blindly fails instance
  * creation on a machine without the validation-layer package, so probe first. */
 static int validation_available(void)
@@ -169,29 +183,20 @@ static const char *k_validation_layer = "VK_LAYER_KHRONOS_validation";
 
 static int create_instance(void)
 {
-	/* Every surface-platform extension the editor might hand us a window
-	 * through, plus the debug-utils extension the messenger needs. Only the
-	 * ones the loader actually reports are requested, so a Wayland-only or
-	 * X11-only box (or a headless CI runner with neither) still gets a valid
-	 * instance. */
+	/* What the backend needs on its own account, with no window in play: the
+	 * base surface extension and the debug-utils extension the messenger
+	 * needs. The per-windowing-system extensions are NOT listed here — this
+	 * file must not know whether we are on Wayland, X11 or Win32. They come
+	 * from the platform host below, which is the one thing that does know. */
 	static const char *const wanted[] = {
 		VK_KHR_SURFACE_EXTENSION_NAME,
-#ifdef VK_USE_PLATFORM_WAYLAND_KHR
-		VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME,
-#endif
-#ifdef VK_USE_PLATFORM_XLIB_KHR
-		VK_KHR_XLIB_SURFACE_EXTENSION_NAME,
-#endif
-#ifdef VK_USE_PLATFORM_XCB_KHR
-		VK_KHR_XCB_SURFACE_EXTENSION_NAME,
-#endif
-#ifdef VK_USE_PLATFORM_WIN32_KHR
-		VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
-#endif
 		VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
 	};
 	VkExtensionProperties avail[256];
 	const char *enabled[16];
+	const char *const *host_exts = NULL;
+	uint32_t host_count;
+	uint32_t host_enabled = 0;
 	uint32_t enabled_count = 0;
 	uint32_t avail_count = 0;
 	int want_validation;
@@ -210,6 +215,23 @@ static int create_instance(void)
 		if (has_ext(avail, avail_count, wanted[i]) &&
 		    enabled_count < sizeof(enabled) / sizeof(enabled[0]))
 			enabled[enabled_count++] = wanted[i];
+	}
+
+	/* Then whatever the window host says its VkCreate*SurfaceKHR call needs.
+	 * Nothing when no host is registered — the headless case, which wants no
+	 * surface extension at all. A host may list more than the box actually
+	 * has (both Wayland and XCB on Linux is normal), so the same availability
+	 * filter applies: an extension the loader does not report is dropped
+	 * here rather than taking instance creation down, and the surface call
+	 * that needed it reports its own failure later. */
+	host_count = vulkan_platform_instance_extensions(&host_exts);
+	for (i = 0; i < host_count; i++) {
+		if (has_ext(avail, avail_count, host_exts[i]) &&
+		    !has_name(enabled, enabled_count, host_exts[i]) &&
+		    enabled_count < sizeof(enabled) / sizeof(enabled[0])) {
+			enabled[enabled_count++] = host_exts[i];
+			host_enabled++;
+		}
 	}
 
 	memset(&app, 0, sizeof(app));
@@ -267,10 +289,15 @@ static int create_instance(void)
 			create(g_instance, &dbg, NULL, &g_debug_messenger);
 	}
 
+	/* The extension count is the tell when the editor will not present: the
+	 * window host's extensions are what make VkCreate*SurfaceKHR legal, so
+	 * "0 from window host" with a host registered means a surface failure is
+	 * already guaranteed, several log lines before it happens. */
 	g_log->write(LOG_LEVEL_INFO,
 		     "renderer_vulkan: instance up (Vulkan 1.3 requested, %u "
-		     "extensions, validation %s)",
-		     enabled_count, want_validation ? "on" : "off");
+		     "extensions [%u from window host], validation %s)",
+		     enabled_count, host_enabled,
+		     want_validation ? "on" : "off");
 	return 1;
 }
 
@@ -1013,6 +1040,18 @@ static void renderer_vulkan_init(void)
 		} else {
 			g_have_present = 1;
 		}
+	} else if (vulkan_platform_hosted()) {
+		/* A host means a window was expected, so this is a real error,
+		 * not the supported headless answer. Say the most likely cause
+		 * out loud: the host's extensions are collected during instance
+		 * creation, so a host registered after that point contributes
+		 * none and every VkCreate*SurfaceKHR is then illegal. */
+		g_log->write(LOG_LEVEL_ERROR,
+			     "renderer_vulkan: a window host is registered but "
+			     "gave us no surface — nothing to present into. If "
+			     "the instance line above reads 0 from window host, "
+			     "the host was registered too late (it must be set "
+			     "before the backend boots)");
 	} else {
 		g_log->write(LOG_LEVEL_WARN,
 			     "renderer_vulkan: no window surface — instance and "

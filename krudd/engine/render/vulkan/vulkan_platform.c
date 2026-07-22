@@ -2,8 +2,10 @@
 /*
  * The native half of the Vulkan platform seam (see vulkan_platform.h). Native
  * only — there is no Emscripten Vulkan target — so unlike webgpu_platform.c this
- * file has no #ifdef, just the host registration and its two delegating shims.
+ * file has no #ifdef, just the host registration and its delegating shims.
  */
+#include <stddef.h>
+
 #include "vulkan_platform.h"
 
 /*
@@ -16,6 +18,20 @@ static const struct vulkan_platform_host *g_host;
 void vulkan_platform_set_host(const struct vulkan_platform_host *host)
 {
 	g_host = host;
+}
+
+uint32_t vulkan_platform_instance_extensions(const char *const **out)
+{
+	if (g_host && g_host->instance_extensions) {
+		*out = g_host->instance_extensions;
+		return g_host->instance_extension_count;
+	}
+	return 0;
+}
+
+int vulkan_platform_hosted(void)
+{
+	return g_host != NULL;
 }
 
 VkSurfaceKHR vulkan_platform_create_surface(VkInstance instance)

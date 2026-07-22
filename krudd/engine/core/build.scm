@@ -16,7 +16,7 @@
  (executable "index"
              (sources "engine.c")
              (private "include" (raw "${generated}")
-                      (root "abi"))
+                      (root "abi") (root "game"))
              (link "subsystem" "subsystem_manager" "log" "memory" "script")
              (wasm-modules "asset_plugin" "edit_plugin" "entity_plugin"
                            "renderer_webgl" "renderer_webgpu" "frame_graph" "scene_renderer"

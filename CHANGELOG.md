@@ -1,5 +1,47 @@
 # Changelog
 
+## [18.4.0](https://github.com/kruddage/engine/compare/v18.3.1...v18.4.0) (2026-07-22)
+
+
+### Features
+
+* build-only Flatpak packaging pipeline for editor-qt ([#691](https://github.com/kruddage/engine/issues/691)) ([18d7f62](https://github.com/kruddage/engine/commit/18d7f6294eaba50f6fc9fdeb31ac9f919d0c501e))
+* **editor:** drive the native Qt chrome from a .scm layout spec ([#722](https://github.com/kruddage/engine/issues/722)) ([#726](https://github.com/kruddage/engine/issues/726)) ([f8b633c](https://github.com/kruddage/engine/commit/f8b633c75493f07be58b1bbb079790cd37b9a448))
+* **editor:** lay out the Qt authoring surface with reconfigurable docks ([#676](https://github.com/kruddage/engine/issues/676)) ([#690](https://github.com/kruddage/engine/issues/690)) ([05df362](https://github.com/kruddage/engine/commit/05df3629f8cd244772e72a29e93d0568b96df5ec))
+* **editor:** native viewport interaction + real-scene loading ([#697](https://github.com/kruddage/engine/issues/697), [#698](https://github.com/kruddage/engine/issues/698)) ([#725](https://github.com/kruddage/engine/issues/725)) ([223527b](https://github.com/kruddage/engine/commit/223527bc026e164ed86aedb79aee64eb9e53d742))
+* **editor:** render the live engine scene in the Qt viewport ([#675](https://github.com/kruddage/engine/issues/675)) ([#696](https://github.com/kruddage/engine/issues/696)) ([488b6b6](https://github.com/kruddage/engine/commit/488b6b679e75bae542e274d92c002e9c0d8c6697))
+* **editor:** run the native editor on Vulkan with validation layers ([#708](https://github.com/kruddage/engine/issues/708)) ([6d35d79](https://github.com/kruddage/engine/commit/6d35d7903d40dafc75652281dbc4bd7c8adc4b44))
+* **flatpak:** ship AppStream metainfo + icon so the editor lists in Discover ([#710](https://github.com/kruddage/engine/issues/710)) ([bcf8b8f](https://github.com/kruddage/engine/commit/bcf8b8f7e2034b75d1ac8339be96821f888a7125))
+* **setup:** add setup.sh to bootstrap the native editor build from source ([#688](https://github.com/kruddage/engine/issues/688)) ([732428f](https://github.com/kruddage/engine/commit/732428fb6f23bae3ce56a12e176ba3092dbdcc0e))
+* sign and publish the editor's self-hosted Flatpak registry ([#693](https://github.com/kruddage/engine/issues/693)) ([157d517](https://github.com/kruddage/engine/commit/157d517a5fbfbffda51a21b5b835e00d66debeb8))
+
+
+### Bug Fixes
+
+* **editor:** misplaced Qt include, plus honest Dawn setup costs ([#699](https://github.com/kruddage/engine/issues/699)) ([2d67b55](https://github.com/kruddage/engine/commit/2d67b5540c779719f6de73ca81210534c861f60c))
+* **editor:** report why surface creation failed instead of returning silently ([#727](https://github.com/kruddage/engine/issues/727)) ([f54eff8](https://github.com/kruddage/engine/commit/f54eff8659f6b596e736680acfa95486f463853d))
+* **flatpak:** bump org.kde runtime 6.7 -&gt; 6.9 (6.7 is EOL, gone from Flathub) ([#714](https://github.com/kruddage/engine/issues/714)) ([6e2100f](https://github.com/kruddage/engine/commit/6e2100ff56034e2a7cc47798b6d428deb34bac95))
+* **flatpak:** install elfutils so eu-strip is available in CI ([#711](https://github.com/kruddage/engine/issues/711)) ([adf4f2e](https://github.com/kruddage/engine/commit/adf4f2e5f9c955494884ee477fe5bf5a50e1f6f0))
+* **flatpak:** serialize gh-pages writers so the registry actually publishes ([#712](https://github.com/kruddage/engine/issues/712)) ([4312d1b](https://github.com/kruddage/engine/commit/4312d1bc5252169f46c334d052338eebe3b33718))
+* **kruddmake:** compile with -fPIC so the Qt editor stops segfaulting on launch ([#715](https://github.com/kruddage/engine/issues/715)) ([#717](https://github.com/kruddage/engine/issues/717)) ([6d72b8a](https://github.com/kruddage/engine/commit/6d72b8ad50b22735d7defdd61cce91f860ca1ffc))
+* **setup:** install a Vulkan driver, not just the loader ([#721](https://github.com/kruddage/engine/issues/721)) ([313d048](https://github.com/kruddage/engine/commit/313d0482a56377f773128b267c9191b11ae1a114)), closes [#701](https://github.com/kruddage/engine/issues/701)
+* **webgpu:** release the surface before the device at shutdown ([#692](https://github.com/kruddage/engine/issues/692)) ([a2d8832](https://github.com/kruddage/engine/commit/a2d88320dc408daebe5091472334ccb288de14f1))
+
+
+### CI
+
+* Bump actions/github-script from 7 to 9 ([#687](https://github.com/kruddage/engine/issues/687)) ([97eb281](https://github.com/kruddage/engine/commit/97eb28157edc00c1829f3a59ce8bd2f124007e57))
+
+
+### Documentation
+
+* **readme:** add prebuilt Flatpak install above the from-source Deck steps ([#713](https://github.com/kruddage/engine/issues/713)) ([84919ee](https://github.com/kruddage/engine/commit/84919eef2797949f9d932e83a5706299e0d3c8b3))
+
+
+### Chores
+
+* **s7:** link kruddage/s7 release static libs instead of vendoring s7.c ([#720](https://github.com/kruddage/engine/issues/720)) ([e87708a](https://github.com/kruddage/engine/commit/e87708a8d3d800613f7175ec3e5b497cb332388f)), closes [#707](https://github.com/kruddage/engine/issues/707)
+
 ## [18.3.1](https://github.com/kruddage/engine/compare/v18.3.0...v18.3.1) (2026-07-20)
 
 

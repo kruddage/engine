@@ -154,17 +154,28 @@ walkthrough and how to stand up your own signed registry on a fork.
 #### Build from source
 
 It needs the **Vulkan loader + headers + validation layers**, **glslang**, and **Qt6** —
-all ordinary system packages, no multi-gigabyte out-of-tree library to build. On the Deck,
-SteamOS's root filesystem is immutable, so build and run inside an Arch
-[distrobox](https://distrobox.it/) (it shares the Deck's Wayland socket and GPU). To get
-going from a clean checkout:
+all ordinary system packages, no multi-gigabyte out-of-tree library to build.
+
+**On SteamOS / the Steam Deck** the root filesystem is immutable — no compiler lives there.
+Build and run inside an Arch [distrobox](https://distrobox.it/), which shares the Deck's
+Wayland socket and GPU. Create and enter the container first (this is a host-side step):
 
 ```sh
-git clone https://github.com/kruddage/engine.git
+distrobox create -i archlinux:latest krudd && distrobox enter krudd
+```
+
+Then, inside the container (distrobox mounts your home directory, so an existing clone is
+already visible at the same path):
+
+```sh
+git clone https://github.com/kruddage/engine.git   # skip if you already cloned
 cd engine
 ./setup.sh          # toolchain + Vulkan validation layers + Qt6 + .krudd-env
 ./krudd.sh editor   # build and run the Qt editor shell
 ```
+
+**On any other Linux box** the two container lines are not needed — just clone and run
+`./setup.sh` directly.
 
 `setup.sh` records the Qt flags in `.krudd-env`, which `krudd.sh` sources automatically — so
 after `./setup.sh` you do not even need the manual `KRUDD_QT_CFLAGS` export shown above.

@@ -9,6 +9,14 @@ set -e
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
+# Are we inside a distrobox / toolbox / docker container (mutable FS)?
+in_container() {
+	[ -f /run/.containerenv ] || [ -f /run/.toolboxenv ] ||
+		[ -f /run/.dockerenv ] || [ -n "${container:-}" ]
+}
+
+os_id=$( . /etc/os-release 2>/dev/null && printf '%s' "$ID" )
+
 # Pick up the environment setup.sh wrote (KRUDD_DAWN_PREFIX, and the Qt vars if
 # Qt6 was found), so `./krudd.sh editor` works after a one-time `./setup.sh`
 # with no manual exports. It uses `:=` assignment, so anything already set in
@@ -28,7 +36,22 @@ if [ -z "$cc" ]; then
 	done
 fi
 if [ -z "$cc" ]; then
-	echo "krudd.sh: no C compiler found (set CC, or install cc/gcc/clang)" >&2
+	if [ "$os_id" = steamos ] && ! in_container; then
+		cat >&2 <<-EOF
+		krudd.sh: this looks like the SteamOS host, whose root filesystem is
+		krudd.sh: immutable — no compiler is available here.
+		krudd.sh:
+		krudd.sh: Build inside an Arch distrobox instead (it shares the Deck's
+		krudd.sh: Wayland socket and GPU). Run these two lines:
+		krudd.sh:
+		krudd.sh:     distrobox create -i archlinux:latest krudd && distrobox enter krudd
+		krudd.sh:     cd $root && ./setup.sh && ./krudd.sh editor
+		krudd.sh:
+		krudd.sh: See docs/qt-editor-shell.md for the full walkthrough.
+		EOF
+	else
+		echo "krudd.sh: no C compiler found (set CC, or install cc/gcc/clang)" >&2
+	fi
 	exit 1
 fi
 

@@ -135,15 +135,28 @@ int main(void)
 	/* The placeholder text survives the round-trip through the spec. */
 	assert(!strcmp(console->panel, "Scheme REPL"));
 
-	/* ---- toolbar: Play, Stop, a separator, and one live badge -------- */
-	assert(L.tool_count == 4 && "two items, a separator, a badge");
+	/* ---- toolbar: Play, Stop, separator, badge, spacer, badge ------- */
+	assert(L.tool_count == 6 &&
+	       "two items, a separator, two badges, a spacer");
 	for (i = 0; i < L.tool_count; i++)
 		if (L.tools[i].kind == EDITOR_TOOL_BADGE) {
 			badges++;
-			assert(!strcmp(L.tools[i].id, "renderer") &&
-			       "the toolbar badge is the renderer status");
+			assert((!strcmp(L.tools[i].id, "renderer") ||
+				!strcmp(L.tools[i].id, "version")) &&
+			       "the toolbar badges are renderer and version");
 		}
-	assert(badges == 1 && "exactly one toolbar badge");
+	assert(badges == 2 && "renderer and version badges");
+	/*
+	 * The version badge is right-aligned, which the spec expresses as
+	 * "declared after the spacer" — order is the whole meaning here, so a
+	 * spacer that drifted past it would silently left-align the badge.
+	 */
+	for (i = 0; i < L.tool_count; i++)
+		if (L.tools[i].kind == EDITOR_TOOL_SPACER)
+			break;
+	assert(i < L.tool_count && "the toolbar has an elastic spacer");
+	assert(!strcmp(L.tools[L.tool_count - 1].id, "version") &&
+	       "the version badge is last, so the spacer pushes it right");
 
 	/* ---- status bar: fps / resolution / driver ---------------------- */
 	assert(L.status_count == 3);

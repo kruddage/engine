@@ -130,7 +130,7 @@ static void parse_menus(s7_scheme *sc, s7_pointer section,
 	}
 }
 
-/* (toolbar (item LABEL ID) | (separator) | (badge ID TEXT) ...) */
+/* (toolbar (item LABEL ID) | (separator) | (spacer) | (badge ID TEXT) ...) */
 static void parse_toolbar(s7_scheme *sc, s7_pointer section,
 			  struct editor_layout *out)
 {
@@ -149,6 +149,8 @@ static void parse_toolbar(s7_scheme *sc, s7_pointer section,
 			copy_str(dst->id, sizeof dst->id, nth(sc, item, 2));
 		} else if (!strcmp(tag, "separator")) {
 			dst->kind = EDITOR_TOOL_SEPARATOR;
+		} else if (!strcmp(tag, "spacer")) {
+			dst->kind = EDITOR_TOOL_SPACER;
 		} else if (!strcmp(tag, "badge")) {
 			dst->kind = EDITOR_TOOL_BADGE;
 			copy_str(dst->id, sizeof dst->id, nth(sc, item, 1));

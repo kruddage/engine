@@ -6,11 +6,22 @@ name: Flatpak build (editor, proof of life)
 # for the full picture, including the editor's own proof-of-life caveat
 # (still an animated clear, not a real scene).
 #
-# Manual/path-scoped trigger, like every other native-editor target: left out
-# of the default per-PR CI (see the root README's CI table) since it needs a
-# full Flatpak SDK download. The editor itself compiles inside the sandbox
-# against org.kde.Sdk's Qt6 and Vulkan loader — nothing is prebuilt on the
-# runner any more (the native GPU path is Vulkan, not vendored Dawn).
+# Triggers, like every other native-editor target: left out of the default
+# per-PR CI (see the root README's CI table) since it needs a full Flatpak SDK
+# download. The editor itself compiles inside the sandbox against org.kde.Sdk's
+# Qt6 and Vulkan loader — nothing is prebuilt on the runner any more (the
+# native GPU path is Vulkan, not vendored Dawn). Three ways in:
+#
+#   * release          — release-please cuts a GitHub Release on every version
+#                        tag (see .github/workflows/release-please.yml). This is
+#                        what re-publishes the registry for a normal engine
+#                        release, so `flatpak update` on a Steam Deck actually
+#                        pulls the new editor. The build checks out the tag, so
+#                        it packages exactly the released source.
+#   * push to main     — path-scoped to the packaging files themselves, so a
+#                        change to how the Flatpak is built/packaged republishes
+#                        without waiting for the next release.
+#   * workflow_dispatch — manual re-publish on demand.
 #
 # Signing + publish are opt-in per fork/checkout: they run only when
 # FLATPAK_GPG_PRIVATE_KEY is set as a repo secret (see the "signing" step and
@@ -19,6 +30,8 @@ name: Flatpak build (editor, proof of life)
 # as a workflow artifact) — it just doesn't publish anywhere.
 on:
   workflow_dispatch:
+  release:
+    types: [published]
   push:
     branches: [main]
     paths:
@@ -110,12 +123,15 @@ jobs:
           name: krudd-editor-flatpak
           path: krudd-editor.flatpak
 
-      # Publish only the authoritative build: a signed export, on main. A
-      # fork with its own FLATPAK_GPG_PRIVATE_KEY set gets its own registry
+      # Publish only the authoritative build: a signed export from a release
+      # tag or a packaging change on main. On a `release` event github.ref is
+      # the tag (refs/tags/vX.Y.Z), not refs/heads/main, so both are allowed
+      # explicitly — a workflow_dispatch or PR build signs nothing to gh-pages.
+      # A fork with its own FLATPAK_GPG_PRIVATE_KEY set gets its own registry
       # published to *its own* gh-pages, at its own <owner>.github.io/<repo>/
       # URL — nothing here is kruddage-specific.
       - name: Publish the signed registry to gh-pages
-        if: steps.signing.outputs.enabled == 'true' && github.ref == 'refs/heads/main'
+        if: steps.signing.outputs.enabled == 'true' && (github.event_name == 'release' || github.ref == 'refs/heads/main')
         run: |
           repo_url="https://${{ github.repository_owner }}.github.io/${GITHUB_REPOSITORY#*/}/flatpak/"
           mkdir -p packaging/flatpak/pages-out
@@ -125,7 +141,7 @@ jobs:
             packaging/flatpak/pages-out/krudd.flatpakrepo
 
       - name: Deploy to gh-pages
-        if: steps.signing.outputs.enabled == 'true' && github.ref == 'refs/heads/main'
+        if: steps.signing.outputs.enabled == 'true' && (github.event_name == 'release' || github.ref == 'refs/heads/main')
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}

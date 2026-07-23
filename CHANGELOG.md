@@ -1,5 +1,12 @@
 # Changelog
 
+## [18.8.0](https://github.com/kruddage/engine/compare/v18.7.0...v18.8.0) (2026-07-23)
+
+
+### Features
+
+* **editor:** show the build version at the toolbar's trailing edge ([#751](https://github.com/kruddage/engine/issues/751)) ([6162f0a](https://github.com/kruddage/engine/commit/6162f0ab06eb4834e2e2e5bda31bc16d2e90c57f))
+
 ## [18.7.0](https://github.com/kruddage/engine/compare/v18.6.0...v18.7.0) (2026-07-23)
 
 

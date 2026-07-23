@@ -69,6 +69,39 @@ body {
 	user-select: none;
 }
 
+/*
+ * The menu-group holds the layout's menus (File/Edit/View/…). On a wide bar
+ * it's a plain inline row; below the collapse breakpoint it becomes a drawer
+ * behind the hamburger (see the narrow media query at the end of this block).
+ */
+.menu-group {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+}
+
+/*
+ * The app-menu hamburger. Hidden while the menu row fits inline; the narrow
+ * media query reveals it and folds the whole row behind it. This is purely the
+ * web host's own affordance — the native Qt shell keeps its real menu bar — and
+ * being able to add it here alone is the point of driving both hosts from one
+ * .scm layout rather than one shared widget.
+ */
+.menu-hamburger {
+	display: none;
+	background: none;
+	border: none;
+	color: #bbb;
+	font-family: inherit;
+	font-size: 16px;
+	line-height: 1;
+	padding: 6px 12px;
+	cursor: pointer;
+	user-select: none;
+}
+
+.menu-hamburger:hover { color: #fff; background: #1c1c1c; }
+
 .menu {
 	position: relative;
 }
@@ -183,6 +216,57 @@ body {
 }
 
 .menu-btn:hover { border-color: #555; color: #ccc; }
+
+/*
+ * ── Collapsed menu bar (narrow viewports) ──
+ *
+ * Below this width the File/Edit/View/Help row can't sit beside the wordmark
+ * and the right-hand cluster — it ran clean off the right edge on a phone. Fold
+ * the whole row behind the hamburger: the menu titles drop into a drawer under
+ * the bar, and each menu's items open inline (an accordion) instead of as an
+ * absolutely-positioned flyout that would spill past the screen edge. The
+ * builder and the layout spec are untouched — this is only how the web host
+ * dresses a narrow window, so the native Qt bar is unaffected.
+ */
+@media (max-width: 640px) {
+	.menu-hamburger { display: block; }
+
+	.menu-group {
+		display: none;
+		position: absolute;
+		top: 100%;
+		left: 0;
+		right: 0;
+		flex-direction: column;
+		align-items: stretch;
+		gap: 0;
+		padding: 4px 0;
+		background: #141414;
+		border-bottom: 1px solid #333;
+		box-shadow: 0 6px 24px rgba(0, 0, 0, 0.7);
+		max-height: calc(100dvh - 34px);
+		overflow-y: auto;
+	}
+
+	.menubar.menus-open .menu-group { display: flex; }
+
+	.menu-group .menu-title {
+		padding: 11px 20px;
+		font-size: 13px;
+	}
+
+	/* The dropdown stops floating and stacks under its title. */
+	.menu-group .menu-dropdown {
+		position: static;
+		min-width: 0;
+		padding: 2px 0 6px;
+		border: none;
+		background: #101010;
+		box-shadow: none;
+	}
+
+	.menu-group .menu-item { padding-top: 9px; padding-bottom: 9px; }
+}
 
 /* ── Toolbar ── */
 
@@ -832,6 +916,8 @@ canvas {
 -->
 <div class="menubar" id="menubar">
 	<span class="wordmark">KRUDD</span>
+	<button class="menu-hamburger" id="menu-hamburger" aria-label="menus" aria-haspopup="true" aria-expanded="false">&#9776;</button>
+	<div class="menu-group" id="menu-group"></div>
 	<div class="menubar-right">
 		<span class="version" id="version" title="click for build info">@PROJECT_VERSION@</span>
 		<span class="version-detail" id="version-detail">commit @GIT_COMMIT_HASH@ &middot; built @BUILD_DATE@</span>
@@ -1293,6 +1379,20 @@ canvas {
 			open[i].classList.remove('open');
 	}
 
+	/* Close the open menus and, on a narrow bar, also fold the hamburger drawer
+	 * shut. The single choke point for "put the menu bar away" — an outside
+	 * click, or picking an action. On a wide bar the drawer class is inert, so
+	 * this is just closeMenus there. */
+	function collapseMenuBar() {
+		closeMenus();
+		var bar = document.getElementById('menubar');
+		if (bar)
+			bar.classList.remove('menus-open');
+		var h = document.getElementById('menu-hamburger');
+		if (h)
+			h.setAttribute('aria-expanded', 'false');
+	}
+
 	/*
 	 * An action's behaviour. reset-layout and the dock toggles are real layout
 	 * operations (the View menu's whole job, and in scope for a static default
@@ -1301,7 +1401,7 @@ canvas {
 	 * functional panels deferred to #676.
 	 */
 	function runAction(actionId, label) {
-		closeMenus();
+		collapseMenuBar();
 		if (actionId === 'reset-layout') {
 			g_docks.forEach(function (d) { g_dockVisible[d.id] = true; });
 			g_groups.forEach(function (grp) {
@@ -1362,15 +1462,14 @@ canvas {
 	}
 
 	function buildMenus(section) {
-		var bar = document.getElementById('menubar');
-		if (!bar || !Array.isArray(section))
+		var group = document.getElementById('menu-group');
+		if (!group || !Array.isArray(section))
 			return;
-		/* Drop any menus from a prior build (idempotent rebuild), then insert
-		 * the new ones after the wordmark, before the right cluster. */
-		var stale = bar.querySelectorAll('.menu');
-		for (var s = 0; s < stale.length; s++)
-			stale[s].remove();
-		var right = bar.querySelector('.menubar-right');
+		/* Idempotent rebuild: clear any menus from a prior build. They live in
+		 * the menu-group, which is an inline row on a wide bar and a hamburger
+		 * drawer on a narrow one — the builder doesn't care which, it only fills
+		 * the group. */
+		group.innerHTML = '';
 
 		section.slice(1).forEach(function (menuNode) {
 			if (tagOf(menuNode) !== 'menu')
@@ -1407,7 +1506,7 @@ canvas {
 				}
 			});
 
-			bar.insertBefore(menu, right);
+			group.appendChild(menu);
 		});
 	}
 
@@ -1705,8 +1804,28 @@ canvas {
 		buildStatusbar(sections.statusbar);
 	};
 
-	/* One document-level listener closes any open menu on an outside click. */
-	document.addEventListener('click', closeMenus);
+	/* The hamburger toggles the collapsed menu drawer (narrow bars only; on a
+	 * wide bar the button is display:none and the menus sit inline). stopProp so
+	 * the document listener below doesn't immediately re-collapse it. */
+	(function wireMenuHamburger() {
+		var bar = document.getElementById('menubar');
+		var h = document.getElementById('menu-hamburger');
+		if (!bar || !h)
+			return;
+		h.addEventListener('click', function (e) {
+			e.stopPropagation();
+			var open = !bar.classList.contains('menus-open');
+			bar.classList.toggle('menus-open', open);
+			h.setAttribute('aria-expanded', open ? 'true' : 'false');
+			if (!open)
+				closeMenus();
+		});
+	})();
+
+	/* One document-level listener puts the menu bar away on an outside click —
+	 * any open dropdown, and the hamburger drawer with it. Menu titles and items
+	 * stopPropagation, so a click inside the bar never reaches here. */
+	document.addEventListener('click', collapseMenuBar);
 </script>
 
 <script>

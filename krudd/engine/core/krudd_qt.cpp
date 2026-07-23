@@ -20,14 +20,18 @@
  * with the Khronos validation layers on -> swapchain -> present, so the real
  * forward pass is built and debugged against a loader that already talks back.
  *
- * The chrome is the authoring surface #676 asks for, laid out but not yet
- * wired: a File/Edit/View/Help menu bar like a normal desktop app, and the
- * Scene / Inspector / Assets / Console (Scheme REPL) docks around the
- * viewport. The docks are freely movable, floatable, tabbable and nestable
- * (View > Reset Layout restores the default), so the layout is the user's to
- * rearrange. Panel *contents* are "coming soon" placeholders — wiring each to
- * the running image (scene graph, inspector edits, live REPL, project
- * open/save) is the rest of #676, not this pass.
+ * The chrome is the authoring surface #676 asks for: a File/Edit/View/Help
+ * menu bar like a normal desktop app, and the Scene / Inspector / Assets /
+ * Console (Scheme REPL) docks around the viewport. The docks are freely
+ * movable, floatable, tabbable and nestable (View > Reset Layout restores the
+ * default), so the layout is the user's to rearrange.
+ *
+ * Scene and Inspector are now wired to the running image (SceneTreePanel /
+ * InspectorPanel below), both READ-ONLY: the Scene dock is a live tree of the
+ * entity hierarchy that shares the viewport's selection, and the Inspector
+ * shows the selected entity's name, parent, components and transform. Assets
+ * and Console are still "coming soon" placeholders; write-back editing from the
+ * Inspector, the asset browser and the live REPL are the rest of #676.
  *
  * DELIBERATELY MOC-FREE. Nothing here declares Q_OBJECT, a signal, or a
  * slot — every connection is to a Qt-supplied QObject (qApp, a QTimer, a
@@ -98,8 +102,10 @@ extern "C" {
 #include <QtCore/QByteArray>
 #include <QtCore/QElapsedTimer>
 #include <QtCore/QFile>
+#include <QtCore/QHash>
 #include <QtCore/QMap>
 #include <QtCore/QFileInfo>
+#include <QtCore/QStringList>
 #include <QtCore/QTimer>
 #include <QtGui/QAction>
 #include <QtGui/QCloseEvent>
@@ -129,6 +135,7 @@ extern "C" {
 #include <QtWidgets/QSizePolicy>
 #include <QtWidgets/QStatusBar>
 #include <QtWidgets/QToolBar>
+#include <QtWidgets/QTreeWidget>
 #include <QtWidgets/QWidget>
 
 extern "C" {
@@ -462,9 +469,9 @@ static void window_drawable_size(uint32_t *w, uint32_t *h, void *user)
 /*
  * The authoring surface #676 asks for: real editor chrome — a File/Edit/
  * View/Help menu bar, a toolbar, and Scene / Inspector / Assets / Console
- * docks around the embedded viewport. Panel contents are "coming soon"
- * placeholders (see the file comment); the point of this pass is the shell —
- * a normal desktop menu bar and docks the user can freely rearrange.
+ * docks around the embedded viewport. Scene and Inspector carry live,
+ * read-only bodies wired to the running image (see the live-panels section
+ * above); Assets and Console are still "coming soon" placeholders.
  */
 
 /* A centred "coming soon" placeholder body for a not-yet-wired panel: the
@@ -500,6 +507,315 @@ static QDockWidget *make_dock(const QString &title, const QString &object_name,
 			  QDockWidget::DockWidgetClosable);
 	return dock;
 }
+
+/* ------------------------------------------------------- the live panels ---- */
+
+/*
+ * Two of the docks are wired to the running image (#676): Scene shows the live
+ * entity hierarchy and Inspector shows the selected entity's properties. Both
+ * are READ-ONLY for now — they render the world, they don't yet write it back
+ * (transform/name editing is the follow-up). Assets and Console stay
+ * make_placeholder "coming soon" bodies.
+ *
+ * Both panels are driven by polling the shared "scene" api from the frame loop
+ * (SceneTreePanel::refresh / InspectorPanel::refresh, called each tick) rather
+ * than by any push signal — there is none — so they stay MOC-FREE: neither
+ * declares Q_OBJECT, and the one signal we do use (a QTreeWidget's built-in
+ * itemSelectionChanged) is connected to a lambda, exactly as every QAction here
+ * is. The "scene" api is published only once editor_boot_cluster runs, so the
+ * host calls set_scene() on each panel after boot; until then refresh() is a
+ * guarded no-op.
+ */
+
+/* A cheap change-signature over the world's *structure and naming* — count,
+ * name bytes, and each live slot's alive/parent/mask/name offset. It deliberately
+ * ignores transforms, so an animating scene does not rebuild the tree every
+ * frame; the selection is synced separately and cheaply regardless. */
+static uint64_t scene_tree_signature(const struct world *w)
+{
+	uint64_t h = 1469598103934665603ULL; /* FNV-1a offset basis */
+	auto mix = [&h](uint64_t v) { h ^= v; h *= 1099511628211ULL; };
+
+	mix(w->count);
+	mix(w->name_bytes);
+	for (uint32_t i = 0; i < w->count; i++) {
+		mix(w->alive[i]);
+		mix(static_cast<uint32_t>(w->parent[i]));
+		mix(w->mask[i]);
+		mix(w->name_off[i]);
+	}
+	return h;
+}
+
+/*
+ * The Scene panel: a QTreeWidget mirroring the world's parent[] hierarchy, with
+ * two-way selection sync against the shared "scene" model. Clicking a node
+ * drives set_selected; a viewport pick (or any other selection change) is
+ * reflected back into the tree each frame. Rebuilt only when the structure
+ * signature changes, so it is cheap to poll at 60Hz.
+ */
+class SceneTreePanel {
+public:
+	SceneTreePanel()
+	{
+		m_tree = new QTreeWidget();
+		m_tree->setHeaderHidden(true);
+		m_tree->setColumnCount(1);
+		m_tree->setSelectionMode(QAbstractItemView::SingleSelection);
+
+		/* User picked a node -> drive the shared selection. Guarded so the
+		 * programmatic sync in refresh() below does not loop back here as if
+		 * it were a user edit. */
+		QObject::connect(
+			m_tree, &QTreeWidget::itemSelectionChanged, [this]() {
+				if (m_syncing || !m_scene || !m_scene->set_selected)
+					return;
+				QList<QTreeWidgetItem *> sel =
+					m_tree->selectedItems();
+				int32_t id = sel.isEmpty()
+						? -1
+						: sel.first()->data(0, Qt::UserRole)
+							  .toInt();
+				m_scene->set_selected(id);
+			});
+	}
+
+	QWidget *widget() { return m_tree; }
+	void set_scene(const struct entity_api *s) { m_scene = s; }
+
+	void refresh()
+	{
+		if (!m_scene || !m_scene->get_world)
+			return;
+		const struct world *w = m_scene->get_world();
+		if (!w)
+			return;
+
+		uint64_t sig = scene_tree_signature(w);
+		if (!m_built || sig != m_sig) {
+			rebuild(w);
+			m_sig   = sig;
+			m_built = true;
+		}
+		sync_selection(w);
+	}
+
+private:
+	/* Rebuild the whole tree from the world. Entities are stored parent-
+	 * before-child, so a parent's item always exists by the time its children
+	 * are placed; a live entity never has a tombstoned parent (destroy
+	 * cascades), but we fall back to the root if a parent item is somehow
+	 * missing rather than drop the node. */
+	void rebuild(const struct world *w)
+	{
+		m_syncing = true; /* clear()/addItem churn must not fire set_selected */
+		m_tree->clear();
+		m_items.clear();
+
+		for (uint32_t i = 0; i < w->count; i++) {
+			if (!w->alive[i])
+				continue;
+
+			const char *name  = world_entity_name(w, i);
+			QString     label = (name && *name)
+						    ? QString::fromUtf8(name)
+						    : QStringLiteral("Entity %1").arg(i);
+			QTreeWidgetItem *item = new QTreeWidgetItem();
+			item->setText(0, label);
+			item->setData(0, Qt::UserRole, static_cast<int>(i));
+
+			int32_t          parent = w->parent[i];
+			QTreeWidgetItem *pitem  = (parent >= 0)
+							 ? m_items.value(parent, nullptr)
+							 : nullptr;
+			if (pitem)
+				pitem->addChild(item);
+			else
+				m_tree->addTopLevelItem(item);
+			m_items.insert(static_cast<int32_t>(i), item);
+		}
+		m_tree->expandAll();
+		m_syncing = false;
+	}
+
+	/* Reflect the shared selection into the tree, without re-emitting it. */
+	void sync_selection(const struct world *w)
+	{
+		int32_t sel = m_scene->get_selected ? m_scene->get_selected()
+						    : w->selected;
+		QTreeWidgetItem *want =
+			(sel >= 0) ? m_items.value(sel, nullptr) : nullptr;
+		QList<QTreeWidgetItem *> have = m_tree->selectedItems();
+		QTreeWidgetItem *cur = have.isEmpty() ? nullptr : have.first();
+		if (cur == want)
+			return;
+
+		m_syncing = true;
+		if (want) {
+			m_tree->setCurrentItem(want);
+			m_tree->scrollToItem(want);
+		} else {
+			m_tree->clearSelection();
+			m_tree->setCurrentItem(nullptr);
+		}
+		m_syncing = false;
+	}
+
+	QTreeWidget                      *m_tree  = nullptr;
+	const struct entity_api          *m_scene = nullptr;
+	QHash<int32_t, QTreeWidgetItem *> m_items;
+	uint64_t                          m_sig     = 0;
+	bool                              m_built   = false;
+	bool                              m_syncing = false;
+};
+
+/* The set component bits of an entity, as a readable " · "-joined list. */
+static QString component_summary(uint32_t mask)
+{
+	QStringList c;
+
+	if (mask & COMPONENT_NAME)     c << QStringLiteral("Name");
+	if (mask & COMPONENT_RENDER)   c << QStringLiteral("Render");
+	if (mask & COMPONENT_MATERIAL) c << QStringLiteral("Material");
+	if (mask & COMPONENT_SCRIPT)   c << QStringLiteral("Script");
+	if (mask & COMPONENT_LIGHT)    c << QStringLiteral("Light");
+	return c.isEmpty() ? QStringLiteral("—")
+			   : c.join(QStringLiteral(" · "));
+}
+
+/*
+ * The Inspector panel: a read-only properties view of the selected entity —
+ * name, id, parent, components and the authored (local) transform. A single
+ * rich-text QLabel, refreshed every frame so a scripted entity's transform
+ * animates live; when nothing is selected it shows a short hint. Editing the
+ * fields back through set_transform/set_name is the follow-up pass.
+ */
+class InspectorPanel {
+public:
+	InspectorPanel()
+	{
+		m_label = new QLabel();
+		m_label->setTextFormat(Qt::RichText);
+		m_label->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+		m_label->setWordWrap(true);
+		m_label->setMargin(12);
+		m_label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+		show_empty();
+	}
+
+	QWidget *widget() { return m_label; }
+	void set_scene(const struct entity_api *s) { m_scene = s; }
+
+	void refresh()
+	{
+		const struct world *w = (m_scene && m_scene->get_world)
+						? m_scene->get_world()
+						: nullptr;
+		int32_t sel = -1;
+		if (m_scene && m_scene->get_selected)
+			sel = m_scene->get_selected();
+		else if (w)
+			sel = w->selected;
+
+		if (!w || sel < 0 || static_cast<uint32_t>(sel) >= w->count ||
+		    !w->alive[sel]) {
+			show_empty();
+			return;
+		}
+		/* Repaint every frame: a scripted entity's transform changes under a
+		 * fixed selection, so gating on "selection changed" would freeze the
+		 * numbers. The cost is a handful of setText's — cheap. */
+		m_label->setText(describe(w, static_cast<uint32_t>(sel)));
+		m_shown = sel;
+	}
+
+private:
+	void show_empty()
+	{
+		if (m_shown == -1)
+			return; /* already showing the empty state */
+		m_label->setText(QStringLiteral(
+			"<p style='color:gray'>No entity selected.</p>"
+			"<p style='color:gray'>Pick a node in the Scene panel, "
+			"or click an object in the viewport.</p>"));
+		m_shown = -1;
+	}
+
+	static QString vec3(const float *p)
+	{
+		return QStringLiteral("%1, %2, %3")
+			.arg(p[0], 0, 'f', 3)
+			.arg(p[1], 0, 'f', 3)
+			.arg(p[2], 0, 'f', 3);
+	}
+
+	static QString quat(const float *p)
+	{
+		return QStringLiteral("%1, %2, %3, %4")
+			.arg(p[0], 0, 'f', 3)
+			.arg(p[1], 0, 'f', 3)
+			.arg(p[2], 0, 'f', 3)
+			.arg(p[3], 0, 'f', 3);
+	}
+
+	static QString describe(const struct world *w, uint32_t e)
+	{
+		const char *name = world_entity_name(w, e);
+		QString     nm   = (name && *name)
+					 ? QString::fromUtf8(name).toHtmlEscaped()
+					 : QStringLiteral("<i>(unnamed)</i>");
+		const struct transform *t = &w->local[e];
+
+		QString parent;
+		if (w->parent[e] < 0) {
+			parent = QStringLiteral("— <span style='color:gray'>"
+						"(root)</span>");
+		} else {
+			const char *pn = world_entity_name(
+				w, static_cast<uint32_t>(w->parent[e]));
+			parent = (pn && *pn)
+					 ? QStringLiteral("%1 <span style='color:gray'>"
+							  "(#%2)</span>")
+						   .arg(QString::fromUtf8(pn)
+								.toHtmlEscaped())
+						   .arg(w->parent[e])
+					 : QStringLiteral("#%1").arg(w->parent[e]);
+		}
+
+		auto row = [](const QString &k, const QString &v) {
+			return QStringLiteral(
+				       "<tr><td style='color:gray;"
+				       "padding-right:10px'>%1</td>"
+				       "<td>%2</td></tr>")
+				.arg(k, v);
+		};
+
+		return QStringLiteral("<p style='font-size:14px'><b>%1</b></p>")
+			       .arg(nm) +
+		       QStringLiteral("<table cellspacing='2'>") +
+		       row(QStringLiteral("Id"), QStringLiteral("#%1").arg(e)) +
+		       row(QStringLiteral("Parent"), parent) +
+		       row(QStringLiteral("Components"),
+			   component_summary(w->mask[e])) +
+		       row(QStringLiteral("Position"), vec3(t->position)) +
+		       row(QStringLiteral("Rotation"), quat(t->rotation) +
+				   QStringLiteral(" <span style='color:gray'>"
+						  "(xyzw)</span>")) +
+		       row(QStringLiteral("Scale"), vec3(t->scale)) +
+		       QStringLiteral("</table>");
+	}
+
+	QLabel                  *m_label = nullptr;
+	const struct entity_api *m_scene = nullptr;
+	int32_t                  m_shown = -2; /* -2 forces the first paint */
+};
+
+/* The live panels the boot path hands the "scene" api and the frame loop
+ * refreshes. Null when the spec declares no such dock. */
+struct ChromePanels {
+	SceneTreePanel *scene_tree = nullptr;
+	InspectorPanel *inspector  = nullptr;
+};
 
 /* ----------------------------------------------- the .scm-driven chrome ---- */
 
@@ -610,7 +926,8 @@ static void connect_action(QAction *a, const QString &id, const QString &label,
  */
 static EditorChrome build_editor_chrome(QMainWindow &win,
 					const struct editor_layout *L,
-					const ChromeActions &act)
+					const ChromeActions &act,
+					ChromePanels &panels)
 {
 	EditorChrome                    chrome;
 	QMap<QString, QDockWidget *>    docks_by_id;
@@ -618,15 +935,29 @@ static EditorChrome build_editor_chrome(QMainWindow &win,
 
 	/* ---- docks (build before menus so dock-toggles can resolve) ------ */
 	for (uint32_t i = 0; i < L->dock_count; i++) {
-		const struct editor_dock *d = &L->docks[i];
-		QDockWidget *dock = make_dock(
-			QString::fromUtf8(d->title), QString::fromUtf8(d->id),
-			make_placeholder(QString::fromUtf8(d->panel),
-					 QString::fromUtf8(d->blurb)),
-			&win);
+		const struct editor_dock *d  = &L->docks[i];
+		QString                   id = QString::fromUtf8(d->id);
+
+		/* Two dock ids get a live body wired to the running image; every
+		 * other falls through to the "coming soon" placeholder — the same
+		 * known-id dispatch connect_action uses for menu actions. */
+		QWidget *body;
+		if (id == QLatin1String("dock.scene")) {
+			panels.scene_tree = new SceneTreePanel();
+			body              = panels.scene_tree->widget();
+		} else if (id == QLatin1String("dock.inspector")) {
+			panels.inspector = new InspectorPanel();
+			body             = panels.inspector->widget();
+		} else {
+			body = make_placeholder(QString::fromUtf8(d->panel),
+						QString::fromUtf8(d->blurb));
+		}
+
+		QDockWidget *dock =
+			make_dock(QString::fromUtf8(d->title), id, body, &win);
 
 		win.addDockWidget(area_for(d->area), dock);
-		docks_by_id.insert(QString::fromUtf8(d->id), dock);
+		docks_by_id.insert(id, dock);
 		docks_in_order.append(dock);
 	}
 	/* Tab grouping is a second pass: a (tabbed-with id) can name a dock
@@ -873,7 +1204,12 @@ int main(int argc, char **argv)
 				"Console — are the authoring surface: drag, "
 				"float or tab them into any layout, and use "
 				"View &gt; Reset Layout to restore the "
-				"default."));
+				"default.<br><br>"
+				"Scene and Inspector are live (read-only): "
+				"the Scene tree mirrors the entity hierarchy "
+				"and shares the viewport's selection, and the "
+				"Inspector shows the selected entity's "
+				"properties."));
 	};
 	actions.open_project = [&]() {
 		const QString path = QFileDialog::getOpenFileName(
@@ -901,7 +1237,12 @@ int main(int argc, char **argv)
 			6000);
 	};
 
-	EditorChrome chrome = build_editor_chrome(win, &layout, actions);
+	/* The live panels (Scene tree, Inspector) the walker wires to real
+	 * bodies; handed the "scene" api after the cluster boots, refreshed each
+	 * frame. Null for any dock the spec does not declare. */
+	ChromePanels panels;
+
+	EditorChrome chrome = build_editor_chrome(win, &layout, actions, panels);
 
 	KruddViewportWindow *viewport = new KruddViewportWindow();
 	QWidget *viewport_container =
@@ -1025,6 +1366,14 @@ int main(int argc, char **argv)
 		subsystem_manager_get_api(&manager, "asset"));
 	viewport->mem    = &g_mem_api;
 
+	/* Hand the live panels the same "scene" api so they can read the world
+	 * and share its selection model; until now their refresh() was a guarded
+	 * no-op (the api did not exist before the cluster booted). */
+	if (panels.scene_tree)
+		panels.scene_tree->set_scene(scene);
+	if (panels.inspector)
+		panels.inspector->set_scene(scene);
+
 	if (renderer_badge)
 		renderer_badge->setText(QStringLiteral("Vulkan · native · ") +
 					QGuiApplication::platformName());
@@ -1056,6 +1405,15 @@ int main(int argc, char **argv)
 		 */
 		subsystem_manager_tick(&manager);
 		gpu->frame_end(); /* acquire, clear and present this frame */
+
+		/* Reflect this frame's world into the live docks: the Scene tree
+		 * (structure + selection) and the Inspector (selected entity's
+		 * properties, which animate under a scripted entity). Both poll the
+		 * shared "scene" api and no-op cheaply when nothing changed. */
+		if (panels.scene_tree)
+			panels.scene_tree->refresh();
+		if (panels.inspector)
+			panels.inspector->refresh();
 
 		if (res_readout)
 			res_readout->setText(QStringLiteral("%1×%2")

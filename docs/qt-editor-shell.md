@@ -53,9 +53,15 @@ out but not yet wired**:
   reports "— coming soon" in the status bar rather than doing nothing.
 - Four docks around the viewport — **Scene** (scene tree), **Inspector**
   (entity properties), **Assets** (asset browser) and **Console** (the live
-  Scheme REPL). Each panel's *contents* are a "coming soon" placeholder;
-  wiring them to the running image (scene graph, inspector edits, live REPL,
-  project open/save) is the rest of #676.
+  Scheme REPL). **Scene** and **Inspector** are wired to the running image,
+  both read-only: Scene is a live tree of the entity hierarchy that shares the
+  viewport's selection (click a node to select it; a viewport pick highlights
+  it back), and Inspector shows the selected entity's name, id, parent,
+  components and local transform (updating live as a scripted entity animates).
+  **Assets** and **Console** are still "coming soon" placeholders. The remaining
+  #676 work is write-back — Inspector edits pushed through
+  `set_transform`/`set_name` — plus the asset browser, the live REPL and
+  project save.
 - The docks are **fully reconfigurable**: movable, floatable, closable,
   tabbable and nestable in any dock area (`setDockNestingEnabled` +
   `AllowNestedDocks | AllowTabbedDocks | GroupedDragging`). Drag one out to

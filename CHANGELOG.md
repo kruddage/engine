@@ -1,5 +1,12 @@
 # Changelog
 
+## [18.8.1](https://github.com/kruddage/engine/compare/v18.8.0...v18.8.1) (2026-07-23)
+
+
+### Build System
+
+* always fetch the latest kruddage/s7 release, not a pinned tag ([#753](https://github.com/kruddage/engine/issues/753)) ([a1672d9](https://github.com/kruddage/engine/commit/a1672d980c27fd20b3a6d69061cab2a95e2bfc5e))
+
 ## [18.8.0](https://github.com/kruddage/engine/compare/v18.7.0...v18.8.0) (2026-07-23)
 
 

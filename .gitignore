@@ -12,6 +12,8 @@ public/
 /krudd/third_party/libs7-linux-x86_64.a
 /krudd/third_party/libs7-wasm32.a
 /krudd/third_party/krudds7-linux-x86_64
+/krudd/third_party/libs7-windows-x86_64.a
+/krudd/third_party/krudds7-windows-x86_64.exe
 
 # local env written by setup.sh (machine-specific paths)
 .krudd-env

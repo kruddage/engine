@@ -10,9 +10,15 @@ against the `.sha256` sidecar published beside it in the release:
 | Artifact | Role |
 |---|---|
 | `s7.h` | public header — consumers `#include "s7.h"` (this dir is on their include path) |
-| `libs7-linux-x86_64.a` | native static library, linked into every native binary and the `krudd` host tool |
+| `libs7-linux-x86_64.a` / `libs7-windows-x86_64.a` | native static library, linked into every native binary and the `krudd` host tool |
 | `libs7-wasm32.a` | wasm static library (built with `emcc`/`emar`), linked into the single WASM module |
-| `krudds7-linux-x86_64` | standalone s7 CLI — the `kruddmake` bootstrap/oracle interpreter (`krudds7 FILE`) |
+| `krudds7-linux-x86_64` / `krudds7-windows-x86_64.exe` | standalone s7 CLI — the `kruddmake` bootstrap/oracle interpreter (`krudds7 FILE`) |
+
+`s7.h` and `libs7-wasm32.a` are target-independent and shared by every host.
+The native library and CLI are host-specific: `sync.sh` fetches the Linux pair
+by default and switches to the Windows (MinGW-w64) pair on a MINGW*/MSYS*
+`uname -s` (see `S7_NATIVE_LIB_ASSET_WINDOWS` / `S7_CLI_ASSET_WINDOWS` in
+`s7.artifact`).
 
 s7 keeps its upstream `0BSD` notice (see `LICENSE.s7`); none of these artifacts
 carry the project's `GPL-2.0-or-later` line — that marks our own files.
@@ -43,7 +49,7 @@ binaries are unchanged), and `$s7wasmlib` links into the WASM main module.
 | Field    | Value |
 |----------|-------|
 | Version  | s7 **10.8** (upstream `S7_VERSION`/`S7_DATE`, 17-Apr-2024) |
-| Release  | `kruddage/s7` **`v0.3.0`** (see `S7_RELEASE` in `s7.artifact`) |
+| Release  | `kruddage/s7` **`v0.4.1`** (see `S7_RELEASE` in `s7.artifact`) |
 | License  | 0BSD (Zero-Clause BSD) — permissive, zero conditions |
 | Upstream | [S7 Scheme][upstream] |
 | Source   | https://github.com/kruddage/s7 (release-please semver off Conventional Commits) |

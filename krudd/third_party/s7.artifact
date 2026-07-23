@@ -7,31 +7,46 @@
 # s7 is no longer vendored as source here. kruddage/s7 re-cuts upstream S7 Scheme
 # as this org's own GitHub Releases and ships prebuilt, linkable artifacts:
 #
-#   s7.h                    the public header (consumers #include "s7.h")
-#   libs7-linux-x86_64.a    native static library (linux x86_64)
-#   libs7-wasm32.a          wasm static library (built with emcc/emar)
-#   krudds7-linux-x86_64    standalone s7 CLI (the kruddmake bootstrap interpreter)
+#   s7.h                       the public header (consumers #include "s7.h")
+#   libs7-linux-x86_64.a       native static library (linux x86_64)
+#   libs7-windows-x86_64.a     native static library (windows x86_64, MinGW-w64)
+#   libs7-wasm32.a             wasm static library (built with emcc/emar)
+#   krudds7-linux-x86_64       standalone s7 CLI (the kruddmake bootstrap interpreter)
+#   krudds7-windows-x86_64.exe standalone s7 CLI, windows build
 #
 # The wasm-only KRUDD-LOCAL PATCH that used to live in this repo's s7.c now lives
 # in kruddage/s7 and is baked into libs7-wasm32.a, so re-pinning here is just a
 # tag bump — there is no source to re-patch.
 #
 # Re-pinning: bump S7_RELEASE to the new kruddage/s7 release tag, then delete the
-# cached artifacts in this directory (libs7-*.a, s7.h, krudds7-linux-x86_64) and
-# re-run sync.sh (or krudd.sh). Each asset is verified against the ".sha256"
-# sidecar published alongside it in the same release, so a corrupted or truncated
-# download fails loudly. S7_VERSION/S7_DATE are kept as upstream provenance.
+# cached artifacts in this directory (libs7-*.a, s7.h, krudds7-linux-x86_64,
+# krudds7-windows-x86_64.exe) and re-run sync.sh (or krudd.sh). Each asset is
+# verified against the ".sha256" sidecar published alongside it in the same
+# release, so a corrupted or truncated download fails loudly. S7_VERSION/S7_DATE
+# are kept as upstream provenance.
 
 S7_VERSION="10.8"
 S7_DATE="17-Apr-2024"
 
 # Release tag in kruddage/s7 (release-please semver off Conventional Commits).
-S7_RELEASE="v0.3.0"
+# v0.4.0's Windows .exe was broken (imported libwinpthread-1.dll, failed to
+# load with STATUS_DLL_NOT_FOUND) -- pin v0.4.1, not v0.4.0.
+S7_RELEASE="v0.4.1"
 S7_BASE_URL="https://github.com/kruddage/s7/releases/download/$S7_RELEASE"
 
 # Asset filenames within that release. Each is fetched together with its
 # "<asset>.sha256" sidecar for integrity verification.
+#
+# s7.h and the wasm library are target-independent and shared by every host.
+# The native library and CLI are host-specific; S7_NATIVE_LIB_ASSET and
+# S7_CLI_ASSET below are the Linux pair (the default, used whenever sync.sh
+# doesn't detect a Windows host). S7_*_ASSET_WINDOWS are the MinGW-w64 pair
+# sync.sh switches to on a MINGW*/MSYS* uname.
 S7_HEADER_ASSET="s7.h"
-S7_NATIVE_LIB_ASSET="libs7-linux-x86_64.a"
 S7_WASM_LIB_ASSET="libs7-wasm32.a"
+
+S7_NATIVE_LIB_ASSET="libs7-linux-x86_64.a"
 S7_CLI_ASSET="krudds7-linux-x86_64"
+
+S7_NATIVE_LIB_ASSET_WINDOWS="libs7-windows-x86_64.a"
+S7_CLI_ASSET_WINDOWS="krudds7-windows-x86_64.exe"

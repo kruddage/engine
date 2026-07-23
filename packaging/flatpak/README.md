@@ -35,7 +35,12 @@ flatpak run io.github.kruddage.Editor
 ```
 
 Updates land the normal Flatpak way — `flatpak update` — whenever a signed
-build is published (currently: any push to `main`).
+build is published. That happens automatically on every engine **release**:
+release-please cuts a version tag/GitHub Release (see
+`.github/workflows/release-please.yml`), which triggers `flatpak-build.yml` to
+rebuild and re-sign the registry from that tag. A push to `main` that changes
+the packaging files themselves also republishes, and the workflow can be run
+manually (`workflow_dispatch`) at any time.
 
 ## On a Steam Deck (Discover)
 

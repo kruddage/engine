@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
-# Pin for the s7 artifacts, sourced by krudd/third_party/sync.sh. This is the
-# one place the s7 pin lives — see VENDOR.md for the fetch mechanism and license
-# rationale.
+# Config for the s7 artifacts, sourced by krudd/third_party/sync.sh. This is
+# the one place the s7 fetch config lives — see VENDOR.md for the fetch
+# mechanism and license rationale.
 #
 # s7 is no longer vendored as source here. kruddage/s7 re-cuts upstream S7 Scheme
 # as this org's own GitHub Releases and ships prebuilt, linkable artifacts:
@@ -15,24 +15,26 @@
 #   krudds7-windows-x86_64.exe standalone s7 CLI, windows build
 #
 # The wasm-only KRUDD-LOCAL PATCH that used to live in this repo's s7.c now lives
-# in kruddage/s7 and is baked into libs7-wasm32.a, so re-pinning here is just a
-# tag bump — there is no source to re-patch.
+# in kruddage/s7 and is baked into libs7-wasm32.a, so a new kruddage/s7 release
+# is picked up with no source to re-patch here.
 #
-# Re-pinning: bump S7_RELEASE to the new kruddage/s7 release tag, then delete the
-# cached artifacts in this directory (libs7-*.a, s7.h, krudds7-linux-x86_64,
-# krudds7-windows-x86_64.exe) and re-run sync.sh (or krudd.sh). Each asset is
-# verified against the ".sha256" sidecar published alongside it in the same
-# release, so a corrupted or truncated download fails loudly. S7_VERSION/S7_DATE
-# are kept as upstream provenance.
+# We always build against the *latest* kruddage/s7 release rather than a pinned
+# tag: S7_BASE_URL points at GitHub's "latest release" alias, which redirects to
+# whichever release is newest at fetch time. sync.sh still verifies every asset
+# against the ".sha256" sidecar published beside it in that release, so a
+# corrupted or truncated download fails loudly even though the tag floats.
+# There is nothing to bump here when kruddage/s7 cuts a new release — just
+# delete the cached artifacts in this directory (libs7-*.a, s7.h,
+# krudds7-linux-x86_64, krudds7-windows-x86_64.exe) and re-run sync.sh (or
+# krudd.sh) to force a re-fetch; sync.sh's own sidecar-checksum comparison
+# already refetches automatically once the cached artifact no longer matches
+# the latest release's sidecar. S7_VERSION/S7_DATE are kept as upstream
+# provenance and may lag the actual latest release.
 
 S7_VERSION="10.8"
 S7_DATE="17-Apr-2024"
 
-# Release tag in kruddage/s7 (release-please semver off Conventional Commits).
-# v0.4.0's Windows .exe was broken (imported libwinpthread-1.dll, failed to
-# load with STATUS_DLL_NOT_FOUND) -- pin v0.4.1, not v0.4.0.
-S7_RELEASE="v0.4.1"
-S7_BASE_URL="https://github.com/kruddage/s7/releases/download/$S7_RELEASE"
+S7_BASE_URL="https://github.com/kruddage/s7/releases/latest/download"
 
 # Asset filenames within that release. Each is fetched together with its
 # "<asset>.sha256" sidecar for integrity verification.

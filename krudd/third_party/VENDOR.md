@@ -1,11 +1,13 @@
-# s7 Scheme (krudd's build interpreter) — pinned release artifacts
+# s7 Scheme (krudd's build interpreter) — latest release artifacts
 
 s7 is third-party, **not** engine-authored code. It is no longer vendored as
-source in this repo. Instead it is pinned to a release of **`kruddage/s7`** — the
-org's own repo that re-cuts upstream [S7 Scheme][upstream] as tagged GitHub
-Releases and ships prebuilt, linkable artifacts. `s7.artifact` pins the release
-tag; `sync.sh` fetches the artifacts below into this directory and verifies each
-against the `.sha256` sidecar published beside it in the release:
+source in this repo. Instead it always builds against the *latest* release of
+**`kruddage/s7`** — the org's own repo that re-cuts upstream [S7 Scheme][upstream]
+as tagged GitHub Releases and ships prebuilt, linkable artifacts. `s7.artifact`
+points `sync.sh` at GitHub's "latest release" alias, so it always fetches
+whichever `kruddage/s7` release is newest; `sync.sh` fetches the artifacts below
+into this directory and verifies each against the `.sha256` sidecar published
+beside it in that release:
 
 | Artifact | Role |
 |---|---|
@@ -39,6 +41,12 @@ first build; `sync.sh` is idempotent, so once each artifact is present and
 matches its sidecar checksum, no network I/O happens on later runs. The download
 host is `github.com`, reachable from CI and normal dev machines.
 
+Because "latest" tracks `kruddage/s7`'s release-please automation, a fetch can
+briefly land in the gap between a new release being cut and its build workflow
+finishing the asset upload (the release exists but an asset request 404s);
+`sync.sh` retries a fetch a few times, 20s apart, before giving up, so that gap
+doesn't fail the build outright.
+
 The native build wires the prebuilt archives in through `kruddmake/ninja.scm`:
 `$s7nativelib` rides after the engine archives on every native executable link
 (as a static archive the linker pulls only referenced members, so s7-free
@@ -48,16 +56,20 @@ binaries are unchanged), and `$s7wasmlib` links into the WASM main module.
 
 | Field    | Value |
 |----------|-------|
-| Version  | s7 **10.8** (upstream `S7_VERSION`/`S7_DATE`, 17-Apr-2024) |
-| Release  | `kruddage/s7` **`v0.4.1`** (see `S7_RELEASE` in `s7.artifact`) |
+| Version  | s7 **10.8** (upstream `S7_VERSION`/`S7_DATE`, 17-Apr-2024; provenance only, may lag the actual latest release) |
+| Release  | always the **latest** `kruddage/s7` release (see `S7_BASE_URL` in `s7.artifact`) |
 | License  | 0BSD (Zero-Clause BSD) — permissive, zero conditions |
 | Upstream | [S7 Scheme][upstream] |
 | Source   | https://github.com/kruddage/s7 (release-please semver off Conventional Commits) |
 
-Re-pinning means bumping `S7_RELEASE` in `s7.artifact` to a newer `kruddage/s7`
-tag, deleting the cached artifacts here, and re-running `sync.sh` (or
-`krudd.sh`). Each download is checksum-verified against its published sidecar, so
-a corrupted or truncated fetch fails loudly.
+There is no tag to bump: `sync.sh` re-fetches each asset's `.sha256` sidecar on
+every run and re-downloads whenever the cached artifact no longer matches it, so
+a new `kruddage/s7` release is picked up automatically the next time `sync.sh`
+(or `krudd.sh`) runs. Each download is still checksum-verified against its
+published sidecar, so a corrupted or truncated fetch fails loudly — but a
+*bad* `kruddage/s7` release (one that publishes broken artifacts with a
+matching sidecar, as v0.4.0's Windows build did) will now reach every build
+immediately instead of staying quarantined behind a pinned tag.
 
 [upstream]: https://ccrma.stanford.edu/software/snd/snd/s7.html
 

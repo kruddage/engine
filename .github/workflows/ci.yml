@@ -50,7 +50,7 @@ jobs:
       # krudd.sh picks clang first if it's on PATH, falling back to gcc then
       # cc, so installing clang here makes CI build with it by default while
       # keeping gcc as the fallback compiler. curl is required by
-      # krudd/third_party/sync.sh to fetch the pinned s7 release artifacts
+      # krudd/third_party/sync.sh to fetch the latest s7 release artifacts
       # (header + static libs + CLI), which are not committed to the repo.
       - name: Install a host compiler and ninja for krudd
         run: apt-get update && apt-get install -y clang gcc ninja-build curl

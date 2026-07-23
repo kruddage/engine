@@ -57,9 +57,10 @@ fi
 
 echo "krudd.sh: found C compiler $cc"
 
-# s7 is pinned to a kruddage/s7 release (see krudd/third_party/s7.artifact);
-# sync.sh fetches + checksum-verifies the prebuilt header/library before we
-# link the tool that embeds them, and exports S7_HEADER / S7_NATIVE_LIB.
+# We always build against the latest kruddage/s7 release (see
+# krudd/third_party/s7.artifact); sync.sh fetches + checksum-verifies the
+# prebuilt header/library before we link the tool that embeds them, and
+# exports S7_HEADER / S7_NATIVE_LIB.
 . "$root/krudd/third_party/sync.sh"
 
 bin="$root/krudd/krudd"

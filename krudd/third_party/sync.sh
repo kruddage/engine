@@ -18,14 +18,24 @@
 # Expects $root (the repo root) to already be set by the sourcing script. On
 # success it exports the resolved artifact paths:
 #
-#   S7_HEADER       s7.h                 (its dir is the -I include path)
-#   S7_NATIVE_LIB   libs7-linux-x86_64.a (link into native binaries)
-#   S7_WASM_LIB     libs7-wasm32.a       (link into the wasm module)
-#   S7_CLI          krudds7-linux-x86_64 (the kruddmake bootstrap interpreter)
+#   S7_HEADER       s7.h                     (its dir is the -I include path)
+#   S7_NATIVE_LIB   libs7-{linux,windows}-x86_64.a (link into native binaries)
+#   S7_WASM_LIB     libs7-wasm32.a           (link into the wasm module)
+#   S7_CLI          krudds7-{linux,windows}-x86_64[.exe] (kruddmake's bootstrap interpreter)
+#
+# S7_NATIVE_LIB and S7_CLI resolve to the Windows pair (see s7.artifact) on a
+# MINGW*/MSYS* uname, and to the Linux pair everywhere else.
 
 s7_dir="$root/krudd/third_party"
 # shellcheck source=s7.artifact
 . "$s7_dir/s7.artifact"
+
+case "$(uname -s)" in
+	MINGW*|MSYS*)
+		S7_NATIVE_LIB_ASSET="$S7_NATIVE_LIB_ASSET_WINDOWS"
+		S7_CLI_ASSET="$S7_CLI_ASSET_WINDOWS"
+		;;
+esac
 
 s7_sha256() {
 	if command -v sha256sum >/dev/null 2>&1; then

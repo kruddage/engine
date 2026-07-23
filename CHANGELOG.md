@@ -1,5 +1,12 @@
 # Changelog
 
+## [18.6.0](https://github.com/kruddage/engine/compare/v18.5.0...v18.6.0) (2026-07-23)
+
+
+### Features
+
+* **editor:** collapse the web editor menu bar into a hamburger on narrow viewports ([#744](https://github.com/kruddage/engine/issues/744)) ([f4aa986](https://github.com/kruddage/engine/commit/f4aa986d0e7dc774a7dfd2e46607b27fdbeaf052))
+
 ## [18.5.0](https://github.com/kruddage/engine/compare/v18.4.0...v18.5.0) (2026-07-22)
 
 

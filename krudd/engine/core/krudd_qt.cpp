@@ -84,6 +84,7 @@ extern "C" {
 #include "asset_api.h"       /* the "asset" api: mesh source for click-to-pick */
 #include "editor_boot.h"     /* the native render-cluster boot */
 #include "editor_layout.h"   /* the .scm-driven chrome spec walked below (#722) */
+#include "version.h"         /* ENGINE_VERSION_STRING — the toolbar badge */
 #include "viewport_pick.h"   /* the shared click-to-pick raycast (#697) */
 #include "vulkan_platform.h" /* the native windowing host seam (VkSurfaceKHR) */
 }
@@ -125,6 +126,7 @@ extern "C" {
 #include <QtWidgets/QMenu>
 #include <QtWidgets/QMenuBar>
 #include <QtWidgets/QMessageBox>
+#include <QtWidgets/QSizePolicy>
 #include <QtWidgets/QStatusBar>
 #include <QtWidgets/QToolBar>
 #include <QtWidgets/QWidget>
@@ -714,6 +716,17 @@ static EditorChrome build_editor_chrome(QMainWindow &win,
 			chrome.badges.insert(QString::fromUtf8(t->id), badge);
 			break;
 		}
+		case EDITOR_TOOL_SPACER: {
+			/* An empty widget that claims every spare pixel, which
+			 * is how a QToolBar right-aligns: it has no alignment
+			 * of its own, so the gap does the pushing. */
+			QWidget *gap = new QWidget;
+
+			gap->setSizePolicy(QSizePolicy::Expanding,
+					   QSizePolicy::Preferred);
+			toolbar->addWidget(gap);
+			break;
+		}
 		}
 	}
 
@@ -902,6 +915,13 @@ int main(int argc, char **argv)
 	QLabel *renderer_badge = chrome.badges.value(QStringLiteral("renderer"));
 	QLabel *fps_readout    = chrome.status.value(QStringLiteral("fps"));
 	QLabel *res_readout    = chrome.status.value(QStringLiteral("resolution"));
+	/* The version badge is fixed for the life of the process, so it is
+	 * finished here rather than in the frame loop — the spec seeds the
+	 * product name, this appends the semver the build was stamped with. */
+	if (QLabel *version_badge =
+		    chrome.badges.value(QStringLiteral("version")))
+		version_badge->setText(version_badge->text() +
+				       QStringLiteral(" " ENGINE_VERSION_STRING));
 	if (QLabel *driver_readout =
 		    chrome.status.value(QStringLiteral("driver")))
 		driver_readout->setText(

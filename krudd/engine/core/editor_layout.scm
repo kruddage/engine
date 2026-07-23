@@ -26,8 +26,11 @@
 ;;!         (dock-toggles)                     expands to one show/hide toggle
 ;;!             per dock below, in declaration order — the View menu's body.
 ;;!   (toolbar ITEM ...)
-;;!       ITEM is (item LABEL ACTION-ID) | (separator) | (badge ID TEXT). The
-;;!       badge is a live label the host updates by ID (the renderer status).
+;;!       ITEM is (item LABEL ACTION-ID) | (separator) | (spacer) |
+;;!       (badge ID TEXT). The badge is a live label the host updates by ID (the
+;;!       renderer status, the version). The spacer is an elastic gap: it eats
+;;!       the leftover width, so everything declared after it sits against the
+;;!       toolbar's trailing edge.
 ;;!   (docks (dock ID TITLE AREA PANEL BLURB EXTRA ...) ...)
 ;;!       ID is the dock objectName — saveState/restoreState and View > Reset
 ;;!       Layout key off it. AREA is left/right/top/bottom. PANEL/BLURB are the
@@ -65,7 +68,11 @@
      (item "▶ Play" "play")
      (item "■ Stop" "stop")
      (separator)
-     (badge "renderer" "Vulkan — booting…"))
+     (badge "renderer" "Vulkan — booting…")
+     (spacer)
+     ;;! Right-aligned build identity. The host fills in the semver from
+     ;;! ENGINE_VERSION_STRING, which only it knows — the spec seeds the name.
+     (badge "version" "KRUDD Editor"))
     (docks
      (dock "dock.scene" "Scene" left
            "Scene Tree"

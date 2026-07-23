@@ -58,10 +58,16 @@ out but not yet wired**:
   viewport's selection (click a node to select it; a viewport pick highlights
   it back), and Inspector shows the selected entity's name, id, parent,
   components and local transform (updating live as a scripted entity animates).
-  **Assets** and **Console** are still "coming soon" placeholders. The remaining
-  #676 work is write-back — Inspector edits pushed through
-  `set_transform`/`set_name` — plus the asset browser, the live REPL and
-  project save.
+  **Assets** and **Console** are still "coming soon" placeholders. Which live
+  panel a dock hosts is authored in the shared layout spec as data —
+  `(panel-kind scene-tree)` / `(panel-kind inspector)` in
+  `core/editor_layout.scm` — so the host builds the matching widget from the
+  declared kind rather than hard-coding a dock id, and the **same kind crosses
+  into the web chrome's JSON** (via `script_layout_json`) untouched: the web
+  editor already receives the panel identity and only needs to render its own
+  body later (#706 part C). The remaining #676 work is write-back — Inspector
+  edits pushed through `set_transform`/`set_name` — plus the asset browser, the
+  live REPL and project save.
 - The docks are **fully reconfigurable**: movable, floatable, closable,
   tabbable and nestable in any dock area (`setDockNestingEnabled` +
   `AllowNestedDocks | AllowTabbedDocks | GroupedDragging`). Drag one out to

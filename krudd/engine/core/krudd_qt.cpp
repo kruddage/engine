@@ -935,17 +935,20 @@ static EditorChrome build_editor_chrome(QMainWindow &win,
 
 	/* ---- docks (build before menus so dock-toggles can resolve) ------ */
 	for (uint32_t i = 0; i < L->dock_count; i++) {
-		const struct editor_dock *d  = &L->docks[i];
-		QString                   id = QString::fromUtf8(d->id);
+		const struct editor_dock *d    = &L->docks[i];
+		QString                   id   = QString::fromUtf8(d->id);
+		QString                   kind = QString::fromUtf8(d->panel_kind);
 
-		/* Two dock ids get a live body wired to the running image; every
-		 * other falls through to the "coming soon" placeholder — the same
-		 * known-id dispatch connect_action uses for menu actions. */
+		/* The dock's (panel-kind …) chooses its body: a live panel wired to
+		 * the running image, or — for a dock with no kind — the "coming soon"
+		 * placeholder. Keying off the spec-declared kind (not the dock id)
+		 * keeps this host-agnostic: the same kind reaches the web chrome's
+		 * JSON, so neither frontend hard-codes which id is which panel. */
 		QWidget *body;
-		if (id == QLatin1String("dock.scene")) {
+		if (kind == QLatin1String("scene-tree")) {
 			panels.scene_tree = new SceneTreePanel();
 			body              = panels.scene_tree->widget();
-		} else if (id == QLatin1String("dock.inspector")) {
+		} else if (kind == QLatin1String("inspector")) {
 			panels.inspector = new InspectorPanel();
 			body             = panels.inspector->widget();
 		} else {

@@ -162,7 +162,8 @@ static void parse_toolbar(s7_scheme *sc, s7_pointer section,
 	}
 }
 
-/* (docks (dock ID TITLE AREA PANEL BLURB EXTRA ...) ...) */
+/* (docks (dock ID TITLE AREA PANEL BLURB EXTRA ...) ...)
+ * EXTRA is any of (tabbed-with ID), (raise), (panel-kind KIND). */
 static void parse_docks(s7_scheme *sc, s7_pointer section,
 			struct editor_layout *out)
 {
@@ -195,6 +196,10 @@ static void parse_docks(s7_scheme *sc, s7_pointer section,
 					 nth(sc, e, 1));
 			else if (!strcmp(tag, "raise"))
 				dst->raise = 1;
+			else if (!strcmp(tag, "panel-kind"))
+				copy_str(dst->panel_kind,
+					 sizeof dst->panel_kind,
+					 nth(sc, e, 1));
 		}
 		out->dock_count++;
 	}

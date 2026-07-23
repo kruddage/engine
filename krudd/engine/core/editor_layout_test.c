@@ -124,9 +124,20 @@ int main(void)
 	assert(dock_by_id(&L, "dock.inspector") &&
 	       dock_by_id(&L, "dock.inspector")->area == EDITOR_AREA_RIGHT);
 
+	/* The live docks declare their host-agnostic panel kind; the host builds
+	 * the matching body from it rather than hard-coding the dock id. */
+	assert(!strcmp(dock_by_id(&L, "dock.scene")->panel_kind, "scene-tree") &&
+	       "the Scene dock hosts the scene-tree panel");
+	assert(!strcmp(dock_by_id(&L, "dock.inspector")->panel_kind, "inspector") &&
+	       "the Inspector dock hosts the inspector panel");
+
 	assets  = dock_by_id(&L, "dock.assets");
 	console = dock_by_id(&L, "dock.console");
 	assert(assets && console);
+	/* Placeholder docks carry no panel-kind, so the host renders their
+	 * "coming soon" body. */
+	assert(assets->panel_kind[0] == '\0' && console->panel_kind[0] == '\0' &&
+	       "Assets and Console are placeholder docks, no panel-kind");
 	assert(assets->area == EDITOR_AREA_BOTTOM &&
 	       console->area == EDITOR_AREA_BOTTOM);
 	assert(assets->raise && "Assets is raised above its tab group");

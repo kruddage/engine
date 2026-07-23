@@ -97,6 +97,14 @@ struct editor_dock {
 	char                  blurb[256];      /* placeholder body           */
 	char                  tabbed_with[48]; /* "" or another dock id      */
 	int                   raise;           /* show on top of its tab group */
+	/*
+	 * The live panel this dock hosts, from a (panel-kind KIND) form —
+	 * "scene-tree", "inspector", or "" for a plain placeholder dock. The
+	 * host-agnostic panel identity: the Qt host builds the matching widget
+	 * from it (rather than hard-coding which dock id is which panel), and the
+	 * web chrome receives the same value in its JSON to render its own body.
+	 */
+	char                  panel_kind[32];
 };
 
 struct editor_status_field {

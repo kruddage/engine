@@ -35,8 +35,14 @@
 ;;!       ID is the dock objectName — saveState/restoreState and View > Reset
 ;;!       Layout key off it. AREA is left/right/top/bottom. PANEL/BLURB are the
 ;;!       "coming soon" placeholder's heading and one-line description. EXTRA is
-;;!       any of (tabbed-with ID) — tab this dock behind another — and (raise) —
-;;!       show this dock on top of its tab group.
+;;!       any of (tabbed-with ID) — tab this dock behind another — (raise) —
+;;!       show this dock on top of its tab group — and (panel-kind KIND) — the
+;;!       live panel this dock hosts (scene-tree / inspector), the shared,
+;;!       host-agnostic identity each frontend renders its own body from. A dock
+;;!       with no panel-kind is a plain "coming soon" placeholder. The Qt host
+;;!       builds the matching widget from KIND; the web chrome receives the same
+;;!       KIND in its JSON and renders its own body later (#676) — neither host
+;;!       hard-codes which dock id is which panel.
 ;;!   (statusbar (field ID TEXT) ...)
 ;;!       a permanent status-bar label; the host updates fps / resolution /
 ;;!       driver by ID each frame.
@@ -76,10 +82,12 @@
     (docks
      (dock "dock.scene" "Scene" left
            "Scene Tree"
-           "The entity hierarchy of the open project — pick a node to edit it in the Inspector.")
+           "The entity hierarchy of the open project — pick a node to edit it in the Inspector."
+           (panel-kind scene-tree))
      (dock "dock.inspector" "Inspector" right
            "Inspector"
-           "Components and properties of the selected entity, written back to the project files.")
+           "Components and properties of the selected entity, written back to the project files."
+           (panel-kind inspector))
      (dock "dock.assets" "Assets" bottom
            "Asset Browser"
            "Meshes, textures, sounds and scenes in the project, ready to drag into the scene."

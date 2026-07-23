@@ -131,6 +131,11 @@ static void test_layout_json(void)
 	must_contain(j, "[\"tabbed-with\",\"dock.assets\"]");
 	/* Assets is raised above the group — a nullary marker form. */
 	must_contain(j, "[\"raise\"]");
+	/* The live docks' panel-kind crosses the seam, so the web chrome receives
+	 * the same host-agnostic panel identity the Qt host dispatches on — this
+	 * is what pre-hooks the web body without any web-side change (#676). */
+	must_contain(j, "[\"panel-kind\",\"scene-tree\"]");
+	must_contain(j, "[\"panel-kind\",\"inspector\"]");
 
 	/* Status fields, including the empty-string driver field. */
 	must_contain(j, "[\"field\",\"fps\",\"fps \xE2\x80\x94\"]");

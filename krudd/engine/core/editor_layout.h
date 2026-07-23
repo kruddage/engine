@@ -72,7 +72,8 @@ struct editor_menu {
 enum editor_tool_kind {
 	EDITOR_TOOL_ITEM = 0,   /* a clickable action (label + action id)     */
 	EDITOR_TOOL_SEPARATOR,  /* a divider                                  */
-	EDITOR_TOOL_BADGE       /* a live label (id + initial text)           */
+	EDITOR_TOOL_BADGE,      /* a live label (id + initial text)           */
+	EDITOR_TOOL_SPACER      /* elastic gap — pushes the rest to the end   */
 };
 
 struct editor_tool {

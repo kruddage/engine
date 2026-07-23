@@ -51,6 +51,16 @@
   (let ((d (krudd-strip (system "date -u +%Y-%m-%d" #t))))
     (if (> (string-length d) 0) d "unknown")))
 
+;;! Whether this build is riding a version number older than HEAD: version.txt
+;;! only ever changes in the release-please "chore(main): release X.Y.Z"
+;;! commit, so HEAD touching it is the one race-free signal that this checkout
+;;! *is* that release commit. Checking `git tag --points-at HEAD` instead would
+;;! race the release-please workflow, which pushes the tag in a separate
+;;! parallel run — it may not exist yet when this build's checkout happens.
+(define (krudd-version-ahead?)
+  (= (string-length (krudd-git "diff --name-only HEAD~1 HEAD -- version.txt"))
+     0))
+
 (define (krudd-split s ch)
   (let loop ((i 0) (start 0) (out '()))
     (cond ((>= i (string-length s))
@@ -61,14 +71,17 @@
 
 (define (krudd-template-values)
   (let* ((version (krudd-version))
-         (parts   (krudd-split (krudd-version-core version) #\.)))
+         (parts   (krudd-split (krudd-version-core version) #\.))
+         (ahead   (krudd-version-ahead?)))
     (list (cons "PROJECT_NAME" "krudd")
           (cons "PROJECT_VERSION" version)
           (cons "PROJECT_VERSION_MAJOR" (list-ref parts 0))
           (cons "PROJECT_VERSION_MINOR" (list-ref parts 1))
           (cons "PROJECT_VERSION_PATCH" (list-ref parts 2))
           (cons "GIT_COMMIT_HASH" (krudd-commit-hash))
-          (cons "BUILD_DATE" (krudd-build-date)))))
+          (cons "BUILD_DATE" (krudd-build-date))
+          (cons "VERSION_AHEAD_CLASS" (if ahead "ahead" ""))
+          (cons "VERSION_AHEAD_NOTE" (if ahead " &middot; ahead of release" "")))))
 
 (define (krudd-replace s old new)
   (let ((ol (string-length old)))

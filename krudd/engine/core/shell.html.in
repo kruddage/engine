@@ -195,6 +195,11 @@ body {
 
 .version:hover { color: #ccc; }
 
+/* Set when this build's version.txt is older than HEAD (see
+ * krudd-version-ahead? in introspect.scm) — this deploy is not the exact
+ * tagged release, it carries commits merged after the last release bump. */
+.version.ahead { color: #d9a520; }
+
 .version-detail {
 	display: none;
 	font-size: 11px;
@@ -906,8 +911,8 @@ canvas {
 	<button class="menu-hamburger" id="menu-hamburger" aria-label="menus" aria-haspopup="true" aria-expanded="false">&#9776;</button>
 	<div class="menu-group" id="menu-group"></div>
 	<div class="menubar-right">
-		<span class="version" id="version" title="click for build info">@PROJECT_VERSION@</span>
-		<span class="version-detail" id="version-detail">commit @GIT_COMMIT_HASH@ &middot; built @BUILD_DATE@</span>
+		<span class="version @VERSION_AHEAD_CLASS@" id="version" title="click for build info">@PROJECT_VERSION@</span>
+		<span class="version-detail" id="version-detail">commit @GIT_COMMIT_HASH@ &middot; built @BUILD_DATE@@VERSION_AHEAD_NOTE@</span>
 	</div>
 </div>
 

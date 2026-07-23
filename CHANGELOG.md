@@ -1,5 +1,18 @@
 # Changelog
 
+## [18.7.0](https://github.com/kruddage/engine/compare/v18.6.0...v18.7.0) (2026-07-23)
+
+
+### Features
+
+* **editor:** color the web shell's version badge yellow when ahead of the last release ([#748](https://github.com/kruddage/engine/issues/748)) ([11232d0](https://github.com/kruddage/engine/commit/11232d09085d1f961ee9c5190910deac17ab2179))
+* **editor:** remove the redundant "menu" button from the web shell ([#746](https://github.com/kruddage/engine/issues/746)) ([71e8094](https://github.com/kruddage/engine/commit/71e809489b4a9ed3c2a7024cd4084d0d658a67b5))
+
+
+### CI
+
+* **flatpak:** rebuild and publish the editor Flatpak on every release ([#750](https://github.com/kruddage/engine/issues/750)) ([66adee2](https://github.com/kruddage/engine/commit/66adee2ba7d4ca820f95e11ff94f5aca7bb036f5))
+
 ## [18.6.0](https://github.com/kruddage/engine/compare/v18.5.0...v18.6.0) (2026-07-23)
 
 

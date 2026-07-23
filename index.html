@@ -204,19 +204,6 @@ body {
 
 .version-detail.visible { display: inline; }
 
-.menu-btn {
-	background: none;
-	border: 1px solid #333;
-	color: #888;
-	font-family: inherit;
-	font-size: 11px;
-	letter-spacing: 0.1em;
-	padding: 4px 10px;
-	cursor: pointer;
-}
-
-.menu-btn:hover { border-color: #555; color: #ccc; }
-
 /*
  * ── Collapsed menu bar (narrow viewports) ──
  *
@@ -920,8 +907,7 @@ canvas {
 	<div class="menu-group" id="menu-group"></div>
 	<div class="menubar-right">
 		<span class="version" id="version" title="click for build info">18.6.0</span>
-		<span class="version-detail" id="version-detail">commit 284b992 &middot; built 2026-07-23</span>
-		<button class="menu-btn" id="menu-btn" title="back to the menu">&#9776; menu</button>
+		<span class="version-detail" id="version-detail">commit 71e8094 &middot; built 2026-07-23</span>
 	</div>
 </div>
 
@@ -1107,8 +1093,7 @@ canvas {
 	 * game, so the page lands on a real scene — chess by default — instead of
 	 * the "choose a scene" overlay. ?game=<name> picks another registered game
 	 * (matched case-insensitively against its launcher label), and ?game=none
-	 * (or any unknown name) keeps the launcher up. The menu button still
-	 * reopens the launcher to switch scenes after boot.
+	 * (or any unknown name) keeps the launcher up.
 	 */
 	window.kruddBootGame = function () {
 		try {
@@ -1278,28 +1263,10 @@ canvas {
 		document.getElementById('version-detail').classList.toggle('visible');
 	});
 
-	/* Reopen the launcher; the engine keeps running behind it, and picking a
-	 * game clears the world and builds the chosen scene (game.c). The scoreboard
-	 * belongs to the game being left, so hide it — the next tic-tac-toe load
-	 * reveals it again, and any other game never wanted it. */
-	document.getElementById('menu-btn').addEventListener('click', function () {
-		document.getElementById('launcher').classList.remove('hidden');
-		var sb = document.getElementById('ttt-scoreboard');
-		if (sb) {
-			/* Remember whether the scoreboard was up so launcher-close can put it
-			 * back if the user backs out without picking a new scene. */
-			sb.dataset.wasVisible = sb.classList.contains('hidden') ? '' : '1';
-			sb.classList.add('hidden');
-		}
-	});
-
 	/* Back out of the launcher without picking a scene; the engine (and
 	 * whatever scene was already running behind the overlay) keeps going. */
 	document.getElementById('launcher-close').addEventListener('click', function () {
 		document.getElementById('launcher').classList.add('hidden');
-		var sb = document.getElementById('ttt-scoreboard');
-		if (sb && sb.dataset.wasVisible)
-			sb.classList.remove('hidden');
 	});
 
 	if ('serviceWorker' in navigator) {
@@ -1832,13 +1799,13 @@ canvas {
 var Module = {
 	locateFile: function (path, prefix) {
 		if (path.endsWith('.wasm'))
-			return prefix + path.replace(/\.wasm$/, '.284b992.wasm');
+			return prefix + path.replace(/\.wasm$/, '.71e8094.wasm');
 		return prefix + path;
 	}
 };
 </script>
 
-<script async type="text/javascript" src="index.284b992.js"></script>
+<script async type="text/javascript" src="index.71e8094.js"></script>
 
 </body>
 </html>

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>krudd 18.6.0</title>
+<title>krudd 18.7.0</title>
 <!-- Inline SVG favicon (data URI, no network fetch) so browsers stop
      requesting /favicon.ico and logging a 404 on every load. -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20fill='%230d0d0d'/%3E%3Ctext%20x='16'%20y='23'%20font-family='Courier%20New,monospace'%20font-size='22'%20font-weight='700'%20fill='%23ffffff'%20text-anchor='middle'%3EK%3C/text%3E%3C/svg%3E">
@@ -911,8 +911,8 @@ canvas {
 	<button class="menu-hamburger" id="menu-hamburger" aria-label="menus" aria-haspopup="true" aria-expanded="false">&#9776;</button>
 	<div class="menu-group" id="menu-group"></div>
 	<div class="menubar-right">
-		<span class="version ahead" id="version" title="click for build info">18.6.0</span>
-		<span class="version-detail" id="version-detail">commit 66adee2 &middot; built 2026-07-23 &middot; ahead of release</span>
+		<span class="version " id="version" title="click for build info">18.7.0</span>
+		<span class="version-detail" id="version-detail">commit 2b9a8f5 &middot; built 2026-07-23</span>
 	</div>
 </div>
 
@@ -1804,13 +1804,13 @@ canvas {
 var Module = {
 	locateFile: function (path, prefix) {
 		if (path.endsWith('.wasm'))
-			return prefix + path.replace(/\.wasm$/, '.66adee2.wasm');
+			return prefix + path.replace(/\.wasm$/, '.2b9a8f5.wasm');
 		return prefix + path;
 	}
 };
 </script>
 
-<script async type="text/javascript" src="index.66adee2.js"></script>
+<script async type="text/javascript" src="index.2b9a8f5.js"></script>
 
 </body>
 </html>

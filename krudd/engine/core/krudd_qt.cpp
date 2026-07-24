@@ -404,7 +404,8 @@ static VkSurfaceKHR window_create_surface(VkInstance instance, void *user)
 	}
 #endif
 
-#if defined(VK_USE_PLATFORM_WAYLAND_KHR)
+#if defined(VK_USE_PLATFORM_WAYLAND_KHR) && \
+	defined(QT_FEATURE_wayland_client) && QT_FEATURE_wayland_client == 1
 	if (platform == QLatin1String("wayland")) {
 		auto *wlapp =
 			qGuiApp->nativeInterface<QNativeInterface::QWaylandApplication>();
@@ -433,7 +434,7 @@ static VkSurfaceKHR window_create_surface(VkInstance instance, void *user)
 		}
 		return surface;
 	}
-#endif
+#endif /* VK_USE_PLATFORM_WAYLAND_KHR && QT_FEATURE_wayland_client == 1 */
 
 	fprintf(stderr,
 		"krudd_qt: unsupported Qt platform plugin '%s' "

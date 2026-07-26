@@ -28,9 +28,18 @@ importers:
       '@krudd/board':
         specifier: workspace:*
         version: link:../../world/board
+      '@krudd/board-view':
+        specifier: workspace:*
+        version: link:../../ui/board-view
       '@krudd/boundary':
         specifier: workspace:*
         version: link:../../base/boundary
+
+  packages/ui/board-view:
+    dependencies:
+      '@krudd/board':
+        specifier: workspace:*
+        version: link:../../world/board
 
   packages/world/board: {}
 

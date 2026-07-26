@@ -1,0 +1,14 @@
+{
+	"name": "@krudd/board-view",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"description": "The board, drawn: lanes, nodes, wires and ports. Tier: ui.",
+	"exports": {
+		".": "./src/index.ts",
+		"./style.css": "./src/style.css"
+	},
+	"dependencies": {
+		"@krudd/board": "workspace:*"
+	}
+}

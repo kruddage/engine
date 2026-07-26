@@ -59,6 +59,16 @@ export interface ShellOptions {
 	 */
 	readonly canvas: HTMLCanvasElement;
 	/**
+	 * Called after the mode changes, and once on mount.
+	 *
+	 * The board view measures its nodes, and a node inside a pane that has not
+	 * been laid out measures zero — so whatever fills a pane needs to know when
+	 * that pane came into view. Cheaper and far more honest than the page
+	 * guessing from the same pointer and key events the shell is already
+	 * reading.
+	 */
+	readonly onChange?: (mode: Mode) => void;
+	/**
 	 * Where a failure inside an event handler goes.
 	 *
 	 * Handlers run outside `main`'s `catch`, so a throw from one would reach
@@ -103,6 +113,7 @@ export function mountModeShell(options: ShellOptions): ModeShell {
 					"taken for the life of the engine and cannot be created again",
 			);
 		}
+		options.onChange?.(next);
 	};
 
 	/** `show`, for the paths that run outside `main`'s `catch`. */

@@ -54,7 +54,7 @@ higher one.**
 | 2 | `world` | The scene and its data model: entity storage, assets, editing. |
 | 3 | `render` | GPU resources, the renderer interface, and the passes that drive it. |
 | 4 | `audio` | The mixer and its device backends. *(empty)* |
-| 5 | `ui` | Editor chrome. HTML, per [#812] — the editor GUI is not the engine's business to draw. *(empty)* |
+| 5 | `ui` | Editor chrome. HTML, per [#812] — the editor GUI is not the engine's business to draw. |
 | 6 | `game` | Game code and the launcher registry. *(empty)* |
 | 7 | `shell` | The hosts the engine runs inside. **Last on purpose: a shell may reach for anything, and nothing may reach for a shell** — not even another shell. There is one today, the web page, and that is the whole list: [#845] dropped the native shells rather than deferring them. The rule stays stated for whatever host comes next. |
 
@@ -115,6 +115,9 @@ packages/
   world/
     board/       @krudd/board       The board document, and the interpreter that runs it
       harness/                        node:test over the fixture, the validator and the interpreter
+  ui/
+    board-view/  @krudd/board-view  The board, drawn: lanes, nodes, wires and ports
+      harness/                        node:test over the layout geometry
   shell/
     web/         @krudd/shell-web   The browser page, and the mode shell it composites
       harness/                        node:test over the mode track, and the screenshot-and-compare driver
@@ -124,7 +127,8 @@ packages/
 |---|---|---|
 | `@krudd/boundary` | `boot`, `World`, `BootOptions`, `Krudd` — via `"exports": { ".": "./src/index.ts" }`. Nothing else is reachable: a deep import is a resolution error, not a lint. | anything |
 | `@krudd/board` | The board document types, the node-kind registry, the triangles fixture, `parseProject` / `validate`, and `Runner` — the interpreter that runs a document against a world. A board is the scene data model, which is what puts it in `world` rather than in `ui`: the board is the source of truth and a board view is one way of looking at it. It takes a *structural* view of the world rather than importing `@krudd/boundary`, so it depends on nothing and is testable without a wasm build. | `world` and above |
-| `@krudd/shell-web` | nothing. Its `exports` map is empty, so importing it fails to resolve. It boots the engine and runs the triangles board; what the demo *does* is the document's, not this package's. | nothing |
+| `@krudd/board-view` | `mountBoardView`, and the layout geometry beneath it. Read-only: it draws a board and lets you move around it, and never changes one. Reaches down to `@krudd/board` for what a board *is* and no further. | `ui` and above |
+| `@krudd/shell-web` | nothing. Its `exports` map is empty, so importing it fails to resolve. It boots the engine, runs the triangles board and draws it; what the demo *does* is the document's, not this package's. | nothing |
 
 `@krudd/boundary` is also the only module that imports wasm-bindgen's
 generated glue. Everything above it goes through the wrapper, so there is one

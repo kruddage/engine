@@ -59,6 +59,7 @@ pub fn build(opts: &Options) -> Result<Artifacts, String> {
     run_wasm_bindgen(&root, opts.release)?;
     ensure_node_modules(&root, opts)?;
     bundle_typescript(&root, opts.release)?;
+    bundle_css(&root, opts.release)?;
     assemble_dist(&root, &version)?;
 
     println!("built {}", dist.display());
@@ -228,6 +229,26 @@ fn bundle_typescript(root: &Path, release: bool) -> Result<(), String> {
         args.push("--minify".to_string());
     } else {
         args.push("--sourcemap".to_string());
+    }
+    Run::new("pnpm", root).args(args).check()
+}
+
+/// Bundles the stylesheets the page loads.
+///
+/// A second esbuild run rather than an import from the TypeScript: a
+/// stylesheet pulled in by the bundle would arrive only once the module has
+/// been fetched, parsed and run, which is a flash of unstyled board on every
+/// open. A `<link>` in the head is fetched in parallel with everything else.
+fn bundle_css(root: &Path, release: bool) -> Result<(), String> {
+    let mut args = vec![
+        "exec".to_string(),
+        "esbuild".to_string(),
+        "packages/shell/web/src/index.css".to_string(),
+        "--bundle".to_string(),
+        format!("--outfile={DIST}/index.css"),
+    ];
+    if release {
+        args.push("--minify".to_string());
     }
     Run::new("pnpm", root).args(args).check()
 }

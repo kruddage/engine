@@ -2,6 +2,7 @@
 #include "fg.h"
 #include "renderer.h"
 #include "entity_api.h"
+#include "world.h"
 #include "camera.h"
 #include "camera_api.h"
 #include "preview_api.h"

@@ -10,7 +10,7 @@
 /*
  * scene-script — builds a live world from a (scene NAME (entity ...) ...) Scheme
  * form, the declarative twin of the (mesh ...) / (script ...) DSLs. The form is
- * plain S7 source (see core/scene_script.scm): scene_script_build reads it and
+ * plain S7 source (see scene_script.scm): scene_script_build reads it and
  * calls the scene-* host primitives registered here to spawn and bind entities,
  * so a scene is authored and loaded exactly the way every other asset is —
  * source text evaluated against the shared image, not a bespoke binary loader.

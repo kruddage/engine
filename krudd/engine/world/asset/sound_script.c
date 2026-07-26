@@ -4,7 +4,7 @@
  *
  * Reads a bound ASSET_TYPE_SOUND asset's (duration ...) param to size the bake,
  * calls the shared s7 image's (sound-script-generate src params rate frames
- * channels) — see core/sound_script.scm — and copies its float-vector result
+ * channels) — see sound_script.scm — and copies its float-vector result
  * (frame_count * channels interleaved samples) into a sound_blob. Mirrors
  * texture_script.c's host/image seam: the synthesis lives in Scheme, this file
  * only resolves the param override, derives the frame count from the rate, and

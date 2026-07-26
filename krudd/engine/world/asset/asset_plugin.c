@@ -2,6 +2,7 @@
 #include "asset.h"
 #include "asset_api.h"
 #include "asset_codec_api.h"
+#include "scene.h"
 #include "builtin_scripts.h"
 #include "builtin_mesh_scripts.h"
 #include "builtin_texture_scripts.h"

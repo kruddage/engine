@@ -2,11 +2,12 @@
 #ifndef ENTITY_SCRIPT_H
 #define ENTITY_SCRIPT_H
 
+#include "world.h"
 #include <stdint.h>
 
 /*
  * entity_script — the bridge between the world's COMPONENT_SCRIPT entities and
- * the S7 image's entity-script dispatcher (core/entity_script.scm).
+ * the S7 image's entity-script dispatcher (entity_script.scm).
  *
  * It registers the entity-* host primitives a script clause calls, then each
  * frame walks every scripted entity, fetches the bytes of its bound

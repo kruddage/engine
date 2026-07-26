@@ -40,6 +40,7 @@
 #include "log_api.h"
 #include "subsystem.h"
 #include "subsystem_manager.h"
+#include "scene.h"
 
 #include <stddef.h>
 #include <stdint.h>

@@ -48,8 +48,7 @@
          (set=? (resolve-includes table name) expected)))
 
 (display "resolver: include sets vs CMake ground truth\n")
-(inc-check "log" '("base/log/include" "abi"
-                   "core/include"))
+(inc-check "log" '("base/log/include" "abi"))
 (inc-check "log_test" '("base/log/include" "abi"))
 (inc-check "renderer_null" '("${generated}" "base/log/include"
                              "abi" "core/include"))
@@ -60,7 +59,8 @@
                        "render/null" "base/log/include"
                        "abi" "base/memory/include"
                        "core/include"))
-(inc-check "asset_plugin" '("world/asset" "abi" "base/log/include"
+(inc-check "asset_plugin" '("world/asset/include" "abi" "base/math/include"
+                            "world/entity/include" "base/log/include"
                             "base/memory/include" "core/include"))
 
 (display "resolver: transitive link closures\n")

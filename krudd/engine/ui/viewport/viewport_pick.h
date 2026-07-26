@@ -2,6 +2,7 @@
 #ifndef VIEWPORT_PICK_H
 #define VIEWPORT_PICK_H
 
+#include "world.h"
 #include <stdint.h>
 
 struct world;

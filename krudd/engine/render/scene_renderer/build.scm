@@ -4,15 +4,12 @@
 ;;! too, and scene_renderer.c already carries a native (#else) service path — it
 ;;! is plain C, so "wasm-only" was a packaging accident, not a real constraint.
 ((library "scene_renderer"
-   (sources "scene_renderer.c"
-            (root "base/math/math.c")
-            (root "base/math/camera.c")
-            (raw "${generated}/math_gen.c"))
+   (sources "scene_renderer.c")
    (private "." (raw "${generated}") (root "render/frame_graph")
             (root "render/particles")
-            (root "core/include") (root "abi") (root "world/asset")
+            (root "core/include") (root "abi") (root "world/entity/include") (root "base/math/include") (root "world/asset/include")
             (raw "../third_party"))
-   (link "mesh_script" "texture_script" "frame_graph" "particles"
+   (link "math" "mesh_script" "texture_script" "frame_graph" "particles"
          "log" "memory" "subsystem" "subsystem_manager" "script"
          "m"))
  (native-only
@@ -24,10 +21,10 @@
                        (raw "${generated}/math_gen.c"))
               (private "." (raw "${generated}")
                        (root "render/null")
-                       (root "render/frame_graph") (root "world/asset")
+                       (root "render/frame_graph") (root "world/asset/include")
                        (root "render/particles")
                        (root "core/include")
-                       (root "abi") (raw "../third_party"))
+                       (root "abi") (root "world/entity/include") (root "base/math/include") (raw "../third_party"))
               (link "mesh_script" "texture_script" "frame_graph" "renderer_null"
                     "log" "memory" "subsystem_manager" "script" "m"))
   (test "scene_renderer" "scene_renderer_test")))

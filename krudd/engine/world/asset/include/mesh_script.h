@@ -12,7 +12,7 @@
  * turns one into GPU-uploadable geometry.
  *
  * Evaluate SRC — a (mesh NAME [(params ...)] (generate () ...)) form, see
- * core/mesh_script.scm — against the shared s7 image and marshal its result
+ * mesh_script.scm — against the shared s7 image and marshal its result
  * into a heap-allocated mesh_blob. PARAMS (plen bytes, or NULL for none) is the
  * entity's tight-packed override of SRC's declared params; each field is read
  * from the override where present and long enough, else from its declared

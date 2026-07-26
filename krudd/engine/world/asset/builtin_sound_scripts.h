@@ -8,7 +8,7 @@
  * form in the same S7 Scheme the texture / shader / entity / mesh DSLs use —
  * the runtime image's (sound ...) macro evaluates it to a sample procedure and
  * sound_script.c bakes the result into a sound_blob on demand (see
- * core/sound_script.scm). There is no hardcoded C synthesizer: every built-in
+ * sound_script.scm). There is no hardcoded C synthesizer: every built-in
  * clip, like these three, is authored the same way an editor-created sound
  * script is, and is sample-rate-independent — sample is a pure function of the
  * time t in seconds, so the same source bakes at any rate.

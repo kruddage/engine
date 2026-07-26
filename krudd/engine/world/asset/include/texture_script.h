@@ -14,7 +14,7 @@
  * form, and this is what bakes one into GPU-uploadable pixels.
  *
  * Evaluate SRC — a (texture NAME [(params ...)] (shade (u v) ...)) form, see
- * core/texture_script.scm — against the shared s7 image, sampling its shade
+ * texture_script.scm — against the shared s7 image, sampling its shade
  * clause over a WIDTH x HEIGHT grid, and marshal the RGBA8 result into a
  * heap-allocated texture_blob. WIDTH/HEIGHT are the output resolution the
  * caller chooses (the script is resolution-independent); each is clamped to

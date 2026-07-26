@@ -469,7 +469,7 @@
                  "build index.html | index.js index.wasm: main_module "
                  (ninja-join " " (append objs libs (list "$s7wasmlib")))))
     (ninja-emit (string-append "  extraflags = --extern-pre-js "
-                               "$srcroot/core/error_overlay.js "
+                               "$srcroot/shell/web/error_overlay.js "
                                "--shell-file generated/shell.html"))
     (ninja-emit "")
     (ninja-wasm! "index.html")))
@@ -483,7 +483,7 @@
   (for-each
    (lambda (name)
      (ninja-emit (string-append "build " name ": copy "
-                                (string-append srcroot "/core/" name)))
+                                (string-append srcroot "/shell/web/" name)))
      (ninja-wasm! name))
    (list "manifest.webmanifest" "sw.js" "icon-192.png" "icon-512.png"))
   (ninja-emit ""))
@@ -503,28 +503,28 @@
      (string-append srcroot "/core/version.h.in")
      (string-append gen "/version.h"))
     (krudd-configure-file
-     (string-append srcroot "/core/shell.html.in")
+     (string-append srcroot "/shell/web/shell.html.in")
      (string-append gen "/shell.html"))
     (krudd-embed-file
      (string-append srcroot "/core/runtime.scm")
      (string-append gen "/runtime_scm.h") "RUNTIME_SCM")
     (krudd-embed-file
-     (string-append srcroot "/core/entity_script.scm")
+     (string-append srcroot "/world/entity/entity_script.scm")
      (string-append gen "/entity_script_scm.h") "ENTITY_SCRIPT_SCM")
     (krudd-embed-file
-     (string-append srcroot "/core/mesh_script.scm")
+     (string-append srcroot "/world/asset/mesh_script.scm")
      (string-append gen "/mesh_script_scm.h") "MESH_SCRIPT_SCM")
     (krudd-embed-file
-     (string-append srcroot "/core/texture_script.scm")
+     (string-append srcroot "/world/asset/texture_script.scm")
      (string-append gen "/texture_script_scm.h") "TEXTURE_SCRIPT_SCM")
     (krudd-embed-file
-     (string-append srcroot "/core/sound_script.scm")
+     (string-append srcroot "/world/asset/sound_script.scm")
      (string-append gen "/sound_script_scm.h") "SOUND_SCRIPT_SCM")
     (krudd-embed-file
-     (string-append srcroot "/core/scene_script.scm")
+     (string-append srcroot "/world/entity/scene_script.scm")
      (string-append gen "/scene_script_scm.h") "SCENE_SCRIPT_SCM")
     (krudd-embed-file
-     (string-append srcroot "/core/editor_layout.scm")
+     (string-append srcroot "/shell/qt/editor_layout.scm")
      (string-append gen "/editor_layout_scm.h") "LAYOUT_SCM")
     (krudd-embed-file
      (string-append srcroot "/game/tictactoe/scene.scm")
@@ -567,13 +567,18 @@
   (append
    (map (lambda (p) (string-append srcroot "/" p))
         (list "core/version.h.in"
-              "core/shell.html.in"
+              "shell/web/shell.html.in"
               "core/runtime.scm"
-              "core/entity_script.scm"
-              "core/mesh_script.scm"
-              "core/texture_script.scm"
-              "core/sound_script.scm"
-              "core/editor_layout.scm"
+              "shell/qt/editor_layout.scm"
+              "world/entity/entity_script.scm"
+              "world/entity/scene_script.scm"
+              "world/asset/mesh_script.scm"
+              "world/asset/texture_script.scm"
+              "world/asset/sound_script.scm"
+              "game/tictactoe/scene.scm"
+              "game/tictactoe/rules.scm"
+              "game/chess/scene.scm"
+              "game/chess/rules.scm"
               "ui/kruddgui/kruddgui.scm"
               "ui/kruddboard/md_parse.scm"
               "base/math/math.scm"

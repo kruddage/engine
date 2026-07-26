@@ -8,7 +8,7 @@
 ((native-only
   (library "md_parse"
     (sources "md_parse.c")
-    (public (current) (raw "${generated}")))
+    (public "." (raw "${generated}")))
   (executable "md_parse_test"
               (sources "md_parse_test.c")
               (link "md_parse"))

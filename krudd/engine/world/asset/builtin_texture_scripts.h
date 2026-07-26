@@ -8,7 +8,7 @@
  * ...)) form in the same S7 Scheme the shader / entity / mesh DSLs use — the
  * runtime image's (texture ...) macro evaluates it to a shade procedure and
  * texture_script.c bakes the result into a texture_blob on demand (see
- * core/texture_script.scm). There is no hardcoded C texture generator: every
+ * texture_script.scm). There is no hardcoded C texture generator: every
  * built-in image, like these three, is authored the same way an editor-created
  * texture script is, and is resolution-independent — shade is a pure function
  * of the normalized coordinate u,v in [0,1), so the same source bakes at any

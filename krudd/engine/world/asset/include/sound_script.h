@@ -14,7 +14,7 @@
  * bakes one into playable PCM.
  *
  * Evaluate SRC — a (sound NAME [(params ...)] (sample (t) ...)) form, see
- * core/sound_script.scm — against the shared s7 image, sampling its sample
+ * sound_script.scm — against the shared s7 image, sampling its sample
  * clause frame by frame, and marshal the interleaved float32 result into a
  * heap-allocated sound_blob. SAMPLE_RATE is the output rate the caller chooses
  * (the script is rate-independent); 0 defaults to SOUND_SCRIPT_DEFAULT_RATE and

@@ -49,24 +49,28 @@ test("a project file is the document's own bytes", () => {
 		"a reader with no krudd in it can still see what version this is",
 	);
 	assert.equal(PROJECT_MEDIA_TYPE, "application/json", "because that is what");
-	assert.equal(PROJECT_EXTENSION, ".krudd");
+	assert.equal(
+		PROJECT_EXTENSION,
+		".json",
+		"the bytes are JSON, so the name says so",
+	);
 });
 
 test("a project file is named for what it holds", () => {
-	assert.equal(projectFileName("triangles"), "triangles.krudd");
+	assert.equal(projectFileName("triangles"), "triangles.json");
 	assert.equal(
-		projectFileName("triangles.krudd"),
-		"triangles.krudd",
+		projectFileName("triangles.json"),
+		"triangles.json",
 		"a name that already carries the extension does not take a second one",
 	);
-	assert.equal(projectFileName("triangles.krudd.krudd"), "triangles.krudd");
+	assert.equal(projectFileName("triangles.json.json"), "triangles.json");
 	assert.equal(
 		projectFileName("worlds/the best one"),
-		"worlds the best one.krudd",
+		"worlds the best one.json",
 		"a slash in a title is a path, and a path saves somewhere nobody asked",
 	);
 	assert.equal(
-		projectFileName(".krudd"),
+		projectFileName(".json"),
 		`${DEFAULT_PROJECT_NAME}${PROJECT_EXTENSION}`,
 		"and a name that is only the extension is a hidden file, not a save",
 	);
@@ -74,7 +78,7 @@ test("a project file is named for what it holds", () => {
 		projectFileName(),
 		`${DEFAULT_PROJECT_NAME}${PROJECT_EXTENSION}`,
 	);
-	assert.equal(projectFileName("   "), `${DEFAULT_PROJECT_NAME}.krudd`);
+	assert.equal(projectFileName("   "), `${DEFAULT_PROJECT_NAME}.json`);
 });
 
 test("the board comes back out of the file it went into", () => {

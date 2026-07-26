@@ -19,12 +19,31 @@ import {
 	BoardError,
 	PROJECT_EXTENSION,
 	PROJECT_MEDIA_TYPE,
+	serializeProject,
+	TRIANGLES,
 } from "@krudd/board";
-import { loadFailure, PROJECT_ACCEPT, saveFailure } from "../src/project-file";
+import {
+	loadFailure,
+	PROJECT_ACCEPT,
+	readProjectFile,
+	saveFailure,
+} from "../src/project-file";
 
 test("the picker offers what a project file is, from one place", () => {
 	assert.ok(PROJECT_ACCEPT.includes(PROJECT_EXTENSION));
 	assert.ok(PROJECT_ACCEPT.includes(PROJECT_MEDIA_TYPE));
+});
+
+test("what opens a file is its bytes, not its name", async () => {
+	// The extension moved from `.krudd` to `.json` and nothing had to migrate,
+	// because this was always true. Asserted rather than assumed: a name check
+	// added later would refuse every project saved before the move, and would
+	// do it by telling the user their perfectly good file is the wrong kind.
+	const bytes = serializeProject(TRIANGLES);
+	for (const name of ["triangles.json", "triangles.krudd", "triangles"]) {
+		const opened = await readProjectFile(new File([bytes], name));
+		assert.deepEqual(opened, TRIANGLES, `${name} opens the same project`);
+	}
 });
 
 test("a load failure names the file, the reason, and what is still running", () => {
@@ -32,8 +51,8 @@ test("a load failure names the file, the reason, and what is still running", () 
 		{ board: "triangles", wire: "exec-paint-draw", message: "it goes nowhere" },
 	]);
 
-	const said = loadFailure("borrowed.krudd", error);
-	assert.match(said, /borrowed\.krudd/, "which file");
+	const said = loadFailure("borrowed.json", error);
+	assert.match(said, /borrowed\.json/, "which file");
 	assert.match(said, /exec-paint-draw/, "which wire");
 	assert.match(said, /it goes nowhere/, "and what is wrong with it");
 	assert.match(
@@ -45,7 +64,7 @@ test("a load failure names the file, the reason, and what is still running", () 
 
 test("a load failure says every problem, not the first", () => {
 	const said = loadFailure(
-		"broken.krudd",
+		"broken.json",
 		new BoardError([
 			{ node: "ring", message: "count must be a whole number" },
 			{ node: "integrate", message: "nothing runs it" },
@@ -64,7 +83,7 @@ test("a failure that is not about the document still says what happened", () => 
 		),
 		/not valid JSON/,
 	);
-	assert.match(loadFailure("odd.krudd", "something threw a string"), /string/);
+	assert.match(loadFailure("odd.json", "something threw a string"), /string/);
 });
 
 test("a save that did not happen says so", () => {

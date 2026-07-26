@@ -3,7 +3,7 @@
 /**
  * Saving a project to a file, and loading one back.
  *
- * **Tier: `shell`.** What a project file *is* — JSON, named `.krudd`, with
+ * **Tier: `shell`.** What a project file *is* — JSON, named `.json`, with
  * nothing around it — belongs to `@krudd/board` and is the same wherever a
  * project is opened. How a file gets chosen, handed over and written back is
  * the host's, and on this host that means an anchor with a `download`

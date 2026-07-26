@@ -234,7 +234,7 @@ function mountProjectControls(controls: ProjectControls): void {
 		throw new Error(`#${FILE_ID} must be an <input type="file"> to open with`);
 	}
 	// From the package that decides what a project file is, rather than a
-	// second copy of `.krudd` written down here.
+	// second copy of the extension written down here.
 	chooser.accept = PROJECT_ACCEPT;
 
 	required(SAVE_ID).addEventListener("click", () => {

@@ -167,6 +167,28 @@ it.
   `KRUDD_CHROMIUM`/`CHROME_PATH`); CI installs one with a GitHub Action, not
   a project dependency. See `packages/shell/web/harness/cdp.ts` and
   `chromium.ts`.
+- **A node-editor library.** litegraph.js was evaluated for the board view and
+  turned down on fit, not on quality. Three things collide. Its node model is
+  `pos: [x, y]` in pixels, and `@krudd/board` stores a `lane` and a `column`
+  precisely so that one document runs across a wide screen and stacks down a
+  narrow one — taking the first is giving up the second. It paints into a 2D
+  canvas, where [#812] settled that the editor is HTML: a node box is an
+  `<article>` so its text wraps and honours the reader's font size, and the
+  settings sheet is real `<input>`s. And its runtime hands one value per link
+  to one node at a time, which is the per-object crossing the whole engine is
+  arranged to avoid — `Runner` and the `column<vec3>` port types would stay,
+  so the half of the library that carries the most code would never run. What
+  is left is the drawing, and the drawing is the part that conflicts. The
+  licence is not the objection: it is MIT, which composes with both halves of
+  ours. The sizes are one — `build/litegraph.core.min.js` is 176 KB minified,
+  against 133 KB for every TypeScript source file in the tree — and the
+  vocabulary is the other: Simple and Pro as one board at two detail levels, a
+  cut wire that stays in the document, nested boards and the breadcrumb over
+  them are concepts it does not have, so each would be a patch over canvas
+  drawing code rather than a setting. If this is ever revisited, the fork to
+  take is `@comfyorg/litegraph` — ESM, generated types, no dependencies, and
+  released this year — rather than `jagenjo/litegraph.js`, whose last release
+  was 0.7.18 in January 2024.
 
 [#812]: https://github.com/kruddage/engine/issues/812
 [#818]: https://github.com/kruddage/engine/issues/818

@@ -231,6 +231,28 @@ EM_JS(void, krudd_build_editor, (const char *json), {
 	if (typeof window.kruddBuildEditor === 'function')
 		window.kruddBuildEditor(UTF8ToString(json));
 })
+
+/*
+ * Report a layout that could not be serialized (#794). Without this the failure
+ * was silent in the worst possible way: the chrome containers in shell.html are
+ * authored empty and filled by kruddBuildEditor, so a NULL layout left a page
+ * with no menus, no toolbar, no docks and no status fields, and nothing anywhere
+ * saying why. The native host has always failed loudly here — krudd_qt prints
+ * and exits 1 — so this is the browser catching up, not new policy.
+ *
+ * kruddShowError is the shell's existing overlay, the one error_overlay.js
+ * already routes uncaught errors and rejections through, so this reuses the
+ * surface rather than inventing a second one. Missing hook degrades to the
+ * console, like the other bridges.
+ */
+EM_JS(void, krudd_editor_layout_failed, (const char *reason), {
+	var detail = 'The editor chrome could not be built, so this page has no '
+		+ 'menus, toolbar or docks.\n\nReason: ' + UTF8ToString(reason);
+	if (typeof window.kruddShowError === 'function')
+		window.kruddShowError('Editor layout failed', detail);
+	else
+		console.error('krudd: editor layout failed — ' + UTF8ToString(reason));
+})
 #endif
 
 #ifdef __EMSCRIPTEN__
@@ -327,10 +349,20 @@ void engine_init(void)
 	 * the DOM — so the layout has to reach the shell here, not after boot.
 	 */
 	{
-		const char *layout_json = script_layout_json();
+		enum script_layout_status  st;
+		const char                *layout_json = script_layout_json(&st);
 
-		if (layout_json)
+		if (layout_json) {
 			krudd_build_editor(layout_json);
+		} else {
+			/* Log and surface it: an unbuilt chrome is a blank page,
+			 * so silence here reads as "the editor renders nothing"
+			 * (#794). */
+			const char *why = script_layout_status_str(st);
+
+			LOG_ERROR("engine: editor layout failed — %s", why);
+			krudd_editor_layout_failed(why);
+		}
 	}
 
 	/*

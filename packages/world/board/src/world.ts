@@ -33,6 +33,16 @@ export interface WorldView {
 	readonly slotCount: number;
 	/** Draws the world. One crossing for the whole frame. */
 	render(): void;
+	/**
+	 * Presents a frame with nothing in it.
+	 *
+	 * What a board with nothing in its paint lane leaves on the screen. The
+	 * alternative is the last frame it drew, which would make a cut wire look
+	 * like a frozen game rather than like a blank one.
+	 */
+	presentCleared(): void;
+	/** Sets how large one entity draws, in world units. */
+	setScale(scale: number): void;
 }
 
 /**

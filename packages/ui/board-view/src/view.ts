@@ -3,9 +3,10 @@
 /**
  * The board, drawn.
  *
- * Read-only: this shows a document and lets you move around it. Editing is a
- * later PR, and keeping the two apart means the thing that draws a board is
- * never also the thing that changes one.
+ * Shows a document, lets you move around it, and lets you change it — cutting
+ * a wire and setting a param. Every edit goes through `@krudd/board`'s edit
+ * operations rather than reaching into the document here, so there is one
+ * place that knows how a document may be changed.
  *
  * ## Measure, then place
  *
@@ -26,7 +27,14 @@
  */
 
 import type { Board, BoardId, NodeId, Project, Registry } from "@krudd/board";
-import { KINDS, kindOf, paramOf } from "@krudd/board";
+import {
+	drivesTheGame,
+	KINDS,
+	kindOf,
+	paramOf,
+	setParam,
+	toggleWire,
+} from "@krudd/board";
 import {
 	type Detail,
 	type Flow,
@@ -35,6 +43,7 @@ import {
 	type PlacedLane,
 	type PlacedWire,
 	ports,
+	reachable,
 	type Size,
 } from "./layout";
 import { Trail } from "./nav";
@@ -64,6 +73,14 @@ export interface BoardViewOptions {
 	readonly kinds?: Registry;
 	/** Where it starts. Simple, unless a page says otherwise. */
 	readonly detail?: Detail;
+	/**
+	 * Called after any edit to the document.
+	 *
+	 * The board is the source of truth, so an edit here *is* an edit to the
+	 * project — this is only how whatever is running it finds out, so the
+	 * change reaches the game on the next frame rather than on a reload.
+	 */
+	readonly onEdit?: () => void;
 }
 
 /**
@@ -90,6 +107,13 @@ export function mountBoardView(options: BoardViewOptions): BoardView {
 	toggle.className = "board-detail";
 	bar.append(crumbs, toggle);
 	host.append(bar);
+
+	// The settings sheet rolls up from the bottom. Outside the surface for the
+	// same reason the bar is: it must not pan away with the board.
+	const sheet = document.createElement("aside");
+	sheet.className = "board-sheet";
+	sheet.hidden = true;
+	host.append(sheet);
 
 	const surface = document.createElement("div");
 	surface.className = "board-surface";
@@ -152,7 +176,18 @@ export function mountBoardView(options: BoardViewOptions): BoardView {
 				element.style.transform = `translate(${node.x}px, ${node.y}px)`;
 			}
 		}
-		drawWires(wires, placed.wires);
+		const held = trail;
+		drawWires(wires, placed.wires, (id) =>
+			drivesTheGame(held.project, held.here, id, kinds),
+		);
+		// Everything the cut stopped reads as stopped. A board where only the
+		// wire changed would leave the consequence for you to work out.
+		const live = reachable(board, kinds);
+		for (const element of boxes.querySelectorAll<HTMLElement>(".board-node")) {
+			const id = element.dataset.node;
+			element.dataset.inactive =
+				id !== undefined && !live.has(id) ? "true" : "false";
+		}
 		drawBar(crumbs, toggle, trail, detail);
 		applyPan();
 	};
@@ -228,11 +263,110 @@ export function mountBoardView(options: BoardViewOptions): BoardView {
 		const target = event.target;
 		const box =
 			target instanceof Element ? target.closest(".board-node") : null;
-		const id = box instanceof HTMLElement ? box.dataset.opens : undefined;
-		if (id !== undefined && trail?.enter(id, detail) === true) {
+		if (!(box instanceof HTMLElement) || trail === null) {
+			return;
+		}
+		const opens = box.dataset.opens;
+		if (opens !== undefined && trail.enter(opens, detail)) {
 			draw();
+			return;
+		}
+		const node = box.dataset.node;
+		if (node !== undefined) {
+			openSheet(node);
 		}
 	});
+
+	// Tapping a wire cuts it; tapping again reconnects it. Only wires that
+	// genuinely drive the running game are listening — see `drawWires`.
+	wires.addEventListener("click", (event) => {
+		const target = event.target;
+		const group = target instanceof Element ? target.closest("g") : null;
+		const id = group?.getAttribute("data-wire");
+		const held = trail;
+		if (id === null || id === undefined || held === null) {
+			return;
+		}
+		if (toggleWire(held.project, held.here, id) !== undefined) {
+			place();
+			options.onEdit?.();
+		}
+	});
+
+	/**
+	 * Rolls the settings sheet up for one node.
+	 *
+	 * Editing a value edits the document, and the document is what is running —
+	 * so the change reaches the game on the next frame, with no reload.
+	 */
+	const openSheet = (id: NodeId): void => {
+		const held = trail;
+		const board = held?.board;
+		const node = board?.nodes.find((candidate) => candidate.id === id);
+		const kind = node === undefined ? undefined : kindOf(kinds, node.kind);
+		if (held === null || node === undefined || kind === undefined) {
+			return;
+		}
+		sheet.textContent = "";
+		sheet.hidden = false;
+
+		const head = document.createElement("header");
+		const title = document.createElement("h3");
+		title.textContent = kind.title;
+		const close = document.createElement("button");
+		close.type = "button";
+		close.className = "board-sheet-close";
+		close.textContent = "done";
+		close.addEventListener("click", () => {
+			sheet.hidden = true;
+		});
+		head.append(title, close);
+		sheet.append(head);
+
+		if (kind.params.length === 0) {
+			const empty = document.createElement("p");
+			empty.className = "board-sheet-empty";
+			empty.textContent = "nothing to set";
+			sheet.append(empty);
+			return;
+		}
+
+		for (const declared of kind.params) {
+			const row = document.createElement("label");
+			row.className = "board-sheet-row";
+			const name = document.createElement("span");
+			name.textContent = declared.name;
+			const input = document.createElement("input");
+			const numeric = declared.type === "f32" || declared.type === "u32";
+			input.type = numeric ? "number" : "text";
+			if (numeric) {
+				// The kind's own bounds, so the control cannot produce a value
+				// `validate` would then refuse.
+				input.step = declared.type === "u32" ? "1" : "any";
+				if (declared.min !== undefined) {
+					input.min = String(declared.min);
+				}
+				if (declared.max !== undefined) {
+					input.max = String(declared.max);
+				}
+			}
+			input.value = String(paramOf(node, kind, declared.name) ?? "");
+			input.addEventListener("input", () => {
+				const value = numeric ? Number(input.value) : input.value;
+				if (numeric && !Number.isFinite(value as number)) {
+					return;
+				}
+				if (
+					setParam(held.project, held.here, id, declared.name, value, kinds)
+				) {
+					draw();
+					options.onEdit?.();
+				}
+			});
+			row.append(name, input);
+			sheet.append(row);
+		}
+	};
 
 	host.addEventListener("pointerdown", onDown);
 	host.addEventListener("pointermove", onMove);
@@ -422,11 +556,28 @@ function drawLanes(host: HTMLElement, lanes: readonly PlacedLane[]): void {
 }
 
 /** Draws every wire, and a dot on each end. */
-function drawWires(host: SVGElement, wires: readonly PlacedWire[]): void {
+function drawWires(
+	host: SVGElement,
+	wires: readonly PlacedWire[],
+	cuttable: (id: string) => boolean,
+): void {
 	host.textContent = "";
 	for (const wire of wires) {
 		const group = document.createElementNS(SVG_NS, "g");
 		group.setAttribute("class", "board-wire");
+		group.setAttribute("data-wire", wire.id);
+		group.setAttribute("data-cut", wire.cut ? "true" : "false");
+		// Only wires that genuinely drive the running game take a tap. A
+		// control that looks live and changes nothing teaches the wrong thing
+		// about what the board is.
+		if (cuttable(wire.id)) {
+			group.setAttribute("data-cuttable", "true");
+			// A stroke wide enough for a thumb, invisible, under the drawn one.
+			const grab = document.createElementNS(SVG_NS, "path");
+			grab.setAttribute("class", "board-wire-grab");
+			grab.setAttribute("d", wire.path);
+			group.append(grab);
+		}
 		// Execution order and data are told apart by more than colour: the
 		// data wire is dashed as well, because roughly one man in twelve cannot
 		// be relied on to see the difference between coral and teal.

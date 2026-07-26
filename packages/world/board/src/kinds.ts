@@ -156,20 +156,18 @@ export const KINDS: Registry = {
 		inputs: [{ name: "position", type: COLUMN }],
 		outputs: [],
 		params: [
-			// Descriptive, for now. The engine builds its frame from the
-			// position column and scales every triangle by its own constant, so
-			// these two report what it does rather than deciding it. Making them
-			// decide it needs a way to set them across the boundary, which is
-			// the first thing PR-7 needs if a settings sheet is going to change
-			// anything: a control that looks live and changes nothing teaches
-			// the wrong thing about what the board is.
+			// One mesh so far, so `mesh` reports rather than decides. `scale`
+			// decides: it reaches the transform of every draw, because a control
+			// that looks live and changes nothing teaches the wrong thing about
+			// what a board is.
 			{ name: "mesh", type: "mesh", default: "triangle" },
 			{ name: "scale", type: "f32", default: 0.35, min: 0 },
 		],
 		run: (c) => {
-			// One crossing for the whole frame, whatever the draw count. The
+			// Two crossings for the whole frame, whatever the draw count. The
 			// draw list is built inside the engine from the position column —
 			// the same column every node above has been walking.
+			c.world.setScale(c.number("scale"));
 			c.world.render();
 		},
 	},

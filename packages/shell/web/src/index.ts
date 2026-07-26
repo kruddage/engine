@@ -34,7 +34,7 @@
  * screen. Which is what it was before; there is simply less of it.
  */
 
-import { Runner, TRIANGLES } from "@krudd/board";
+import { cloneProject, Runner, TRIANGLES } from "@krudd/board";
 import { mountBoardView } from "@krudd/board-view";
 import { boot, fitCanvas, type World } from "@krudd/boundary";
 import { mountModeShell } from "./shell";
@@ -70,13 +70,23 @@ async function main(): Promise<void> {
 	const world = krudd.world;
 	// Refused here, loudly, rather than a frame at a time: a document that does
 	// not hold together must not boot into a board that half works.
-	const runner = new Runner(TRIANGLES, world);
+	// A copy, because the fixture is a module-level constant and editing the
+	// board edits the project — the board is the source of truth, and a source
+	// of truth shared with every other importer is not one.
+	const project = cloneProject(TRIANGLES);
+	const runner = new Runner(project, world);
 	runner.start();
 
 	// The board pane, filled. Drawn when the pane comes into view rather than
 	// at boot: the view measures its nodes, and a node inside a pane that has
 	// not been laid out yet measures zero.
-	const view = mountBoardView({ host: boardPane() });
+	const view = mountBoardView({
+		host: boardPane(),
+		// The edit has already happened — the view changed the document, and the
+		// document is what is running. This is only how the runner finds out, so
+		// the change reaches the game on the very next frame with no reload.
+		onEdit: () => runner.reload(),
+	});
 	let drawn = false;
 
 	// After `boot`, and exactly once. The shell composites the two modes over
@@ -93,7 +103,7 @@ async function main(): Promise<void> {
 				view.refresh();
 				return;
 			}
-			view.open(TRIANGLES);
+			view.open(project);
 			drawn = true;
 		},
 	});

@@ -55,6 +55,12 @@ export {
 	PORT_TYPES,
 	paramOf,
 } from "./document";
+export {
+	cloneProject,
+	drivesTheGame,
+	setParam,
+	toggleWire,
+} from "./edit";
 export { KINDS, kindOf } from "./kinds";
 export { Runner } from "./run";
 export { FRAME_BOARD, PAINT_TO_DRAW, ROOT_BOARD, TRIANGLES } from "./triangles";

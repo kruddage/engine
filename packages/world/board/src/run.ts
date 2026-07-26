@@ -110,7 +110,14 @@ export class Runner {
 	/** Runs the step lane and then the paint lane. Once per frame. */
 	frame(dt: number): void {
 		this.#runLane("step", dt);
-		this.#runLane("paint", dt);
+		const painted = this.#runLane("paint", dt);
+		if (!painted) {
+			// A board with nothing left in its paint lane has to leave the
+			// screen showing nothing. Without this the last frame it drew stays
+			// on the canvas, and a cut wire reads as a frozen game rather than a
+			// blank one — "working" and "did nothing", told the same way.
+			this.#world.presentCleared();
+		}
 		this.#frames += 1;
 		this.#elapsed += dt;
 	}
@@ -134,7 +141,10 @@ export class Runner {
 		const nodes = new Map(board.nodes.map((node) => [node.id, node]));
 		const next = new Map<NodeId, NodeId>();
 		for (const wire of board.wires) {
-			if (wire.kind === "exec") {
+			// A cut wire is still in the document and is simply not followed.
+			// That is what makes cutting one reversible, and what makes the
+			// nodes past it read as inactive rather than as missing.
+			if (wire.kind === "exec" && wire.cut !== true) {
 				next.set(wire.from.node, wire.to.node);
 			}
 		}
@@ -194,11 +204,11 @@ export class Runner {
 		return board;
 	}
 
-	/** Runs one lane's chain, in order. */
-	#runLane(lane: Lane, dt: number): void {
+	/** Runs one lane's chain, in order. Reports whether it ran anything. */
+	#runLane(lane: Lane, dt: number): boolean {
 		const steps = this.#lanes.get(lane);
-		if (steps === undefined) {
-			return;
+		if (steps === undefined || steps.length === 0) {
+			return false;
 		}
 		for (const step of steps) {
 			// Not `?.`: a step only reaches this list once its kind has been
@@ -207,6 +217,7 @@ export class Runner {
 				context(this.#world, dt, step),
 			);
 		}
+		return true;
 	}
 }
 

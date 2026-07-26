@@ -86,6 +86,30 @@ not a performance regression gate. It also checksums both paths and fails if
 they disagree, because a fast path that quietly skipped the work would
 otherwise report a magnificent speedup.
 
+## Booting crosses twice, and both are awaits
+
+The engine is reached through `boot()`, not through `new`. Two things have to
+happen before there is a world, and neither can be folded into a constructor:
+
+1. **The module is fetched and instantiated.** wasm-bindgen's `init`.
+2. **The GPU adapter and device are requested.** Both are async on the web, so
+   `start(canvas)` is an exported `async fn` — a `#[wasm_bindgen(constructor)]`
+   cannot return a promise.
+
+`start` takes the canvas *by value* and the surface keeps it, which is what
+makes the surface `'static`. A borrowed canvas would put a lifetime on
+`Engine`, and a `#[wasm_bindgen]` type cannot carry one.
+
+The canvas has two sizes and only one of them is the renderer's. `canvas.width`
+is the drawing buffer, in physical pixels; the CSS width is what the page lays
+out. `fitCanvas` in `@krudd/boundary` is the only place that converts between
+them, and `World.resize` takes physical pixels so there is nowhere else for a
+second `devicePixelRatio` multiply to hide.
+
+`render()` is a phase call like `tick()`: one crossing for the whole frame,
+whatever the draw count. The per-draw data goes into a uniform buffer written
+in one upload, for the same reason the position column exists.
+
 ## Ownership
 
 | Value | Allocated by | Freed by | Notes |
@@ -165,7 +189,7 @@ impl Engine {
 TypeScript reads it without a copy, and writes into it without a call:
 
 ```ts
-const { world } = await boot({ width, height });
+const { world } = await boot({ canvas });
 const slot = world.spawn(0, 0, 0);
 
 function frame(dt: number): void {
@@ -173,11 +197,13 @@ function frame(dt: number): void {
 
 	const positions = world.positions();  // a view, not a copy
 	for (let i = 0; i < positions.length; i += 3) {
-		draw(positions[i], positions[i + 1], positions[i + 2]);
+		inspect(positions[i], positions[i + 1], positions[i + 2]);
 	}
 
 	positions[slot * 3] = 0;            // writes reach Rust's memory directly;
 	                                    // the next tick integrates from here
+
+	world.render();                     // one crossing, whole frame
 }
 ```
 

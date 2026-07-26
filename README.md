@@ -11,12 +11,14 @@ Linux to follow via Tauri 2.
 > live here has been deleted, not strangled — see
 > [#812](https://github.com/kruddage/engine/issues/812) for the plan and
 > [#814](https://github.com/kruddage/engine/issues/814) for what left and why.
-> What is here now is the spine: a package boundary, a build driver, and a
-> loadable wasm module. **It renders nothing yet.** The WebGL2 hello triangle
-> is [#818](https://github.com/kruddage/engine/issues/818), the real HTML
-> shell is [#819](https://github.com/kruddage/engine/issues/819), and the live
-> demo and the Flatpak are dark until they land. That window is the accepted
-> cost of delete-and-replace, not a regression.
+> What is here now is the spine: a package boundary, a build driver, a
+> loadable wasm module, and **a triangle on screen** —
+> [#818](https://github.com/kruddage/engine/issues/818) and
+> [#819](https://github.com/kruddage/engine/issues/819). The live demo and the
+> Flatpak are still dark: republishing the site is
+> [#820](https://github.com/kruddage/engine/issues/820) and the Tauri shell is
+> [#821](https://github.com/kruddage/engine/issues/821). That window is the
+> accepted cost of delete-and-replace, not a regression.
 
 ## The shape of it
 
@@ -71,11 +73,16 @@ There is no second build system and no step that exists only inside a CI
 workflow: `ci.yml` runs `cargo xtask check`, so a green local run is a green
 CI run. `cargo xtask help` lists the flags.
 
-What you should see from `cargo xtask serve`: a dark page with **one line of
-status text** — the version, the entity count, the frame number, the frame
-rate, and the position of entity 0, which moves. That is Rust simulating and
-TypeScript reading the result out of wasm memory with no copy. There is no
-canvas yet; if you were expecting pixels, see #818.
+What you should see from `cargo xtask serve`: a dark page with **eight
+coloured triangles** drifting outward from the centre, and a line of readout
+along the bottom — the version, what the renderer actually picked, the drawing
+buffer size, the frame rate, and the draw count. Rust simulates and draws;
+TypeScript reads the world out of wasm memory with no copy and writes back into
+the same view to recycle the ones that drift off screen.
+
+If something is wrong you get a full-screen message instead, not a blank
+canvas. That is deliberate: a renderer that stops drawing leaves its last frame
+up, so a failure has to be louder than the picture it is hiding behind.
 
 ## Layout
 
@@ -86,6 +93,7 @@ crates/            The Rust half, in tier order
   world/asset/       Asset decoding: bytes in, engine data out
   render/gpu/        Typed, generational GPU resource handles
   render/renderer/   The Backend trait and the Frame it is handed
+  render/webgl/      The WebGL2 backend, on wgpu
   shell/web/         The wasm module the browser loads
 packages/          The TypeScript half, same tier vocabulary
   base/boundary/     Loading the wasm and viewing its memory
@@ -114,8 +122,8 @@ deleted C editor. It is kept rather than removed because
 rather than the workflow.
 
 Publishing to GitHub Pages, and the per-PR preview deploys, are
-[#820](https://github.com/kruddage/engine/issues/820) — there is nothing worth
-looking at to publish until the triangle lands.
+[#820](https://github.com/kruddage/engine/issues/820). The triangle has landed,
+so there is now something worth publishing; the deploy itself has not.
 
 ## Versioning and releases
 

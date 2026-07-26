@@ -128,8 +128,13 @@ impl Default for Engine {
 
 #[wasm_bindgen]
 impl Engine {
-    /// Boots an engine rendering into a canvas of the given size, in physical
+    /// An engine with no renderer, at a viewport of the given size in physical
     /// pixels.
+    ///
+    /// It ticks, spawns and hands out its columns; it cannot draw. [`start`] is
+    /// what attaches a canvas, and the page always goes through that — this is
+    /// the form the host tests and the Node harnesses build, neither of which
+    /// has a canvas to give it.
     #[wasm_bindgen(constructor)]
     pub fn new(width: u32, height: u32) -> Self {
         Self {

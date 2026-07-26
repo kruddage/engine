@@ -51,6 +51,33 @@ export const KINDS: Registry = {
 			{ name: "radius", type: "f32", default: 0.4, min: 0 },
 			{ name: "speed", type: "f32", default: 0.25, min: 0 },
 		],
+		run: (c) => {
+			const count = c.number("count");
+			const radius = c.number("radius");
+			const speed = c.number("speed");
+			// Slots first. Allocating is the one per-entity crossing left, and
+			// it happens once when the board opens rather than once a frame, so
+			// the rule the columns exist for is intact. A board that spawns
+			// during play wants a batched allocate on the boundary; nothing does
+			// yet.
+			for (let slot = c.world.slotCount; slot < count; slot++) {
+				c.world.spawn(0, 0, 0);
+			}
+			// Fetched after the spawns, never before: a spawn can move the
+			// column, and a view taken first would be writing into memory that
+			// is no longer it.
+			const position = c.world.positions();
+			const velocity = c.world.velocities();
+			for (let i = 0; i < count; i++) {
+				const angle = (i / count) * Math.PI * 2;
+				position[i * 3] = Math.cos(angle) * radius;
+				position[i * 3 + 1] = Math.sin(angle) * radius;
+				position[i * 3 + 2] = 0;
+				velocity[i * 3] = Math.cos(angle) * speed;
+				velocity[i * 3 + 1] = Math.sin(angle) * speed;
+				velocity[i * 3 + 2] = 0;
+			}
+		},
 	},
 
 	step: {
@@ -69,6 +96,21 @@ export const KINDS: Registry = {
 		],
 		outputs: [{ name: "position", type: COLUMN }],
 		params: [],
+		run: (c) => {
+			const position = c.world.positions();
+			const velocity = c.world.velocities();
+			// The whole column in one walk, tombstones included. A tombstoned
+			// slot has a zero velocity and so integrates to itself, which is
+			// cheaper than asking the engine which slots are live — and asking
+			// per slot is the crossing this is all here to avoid.
+			for (let i = 0; i < position.length; i += 3) {
+				position[i] = (position[i] as number) + (velocity[i] as number) * c.dt;
+				position[i + 1] =
+					(position[i + 1] as number) + (velocity[i + 1] as number) * c.dt;
+				position[i + 2] =
+					(position[i + 2] as number) + (velocity[i + 2] as number) * c.dt;
+			}
+		},
 	},
 
 	recycle: {
@@ -81,6 +123,24 @@ export const KINDS: Registry = {
 			{ name: "limit", type: "f32", default: 3.2, min: 0 },
 			{ name: "radius", type: "f32", default: 0.4, min: 0 },
 		],
+		run: (c) => {
+			const limit = c.number("limit");
+			const radius = c.number("radius");
+			const position = c.world.positions();
+			for (let i = 0; i < position.length; i += 3) {
+				const x = position[i] as number;
+				const y = position[i + 1] as number;
+				const distance = Math.hypot(x, y);
+				if (distance <= limit) {
+					continue;
+				}
+				// Back onto the circle along the same ray, so an entity sets off
+				// again in the direction it left by.
+				const scale = radius / distance;
+				position[i] = x * scale;
+				position[i + 1] = y * scale;
+			}
+		},
 	},
 
 	paint: {
@@ -96,9 +156,22 @@ export const KINDS: Registry = {
 		inputs: [{ name: "position", type: COLUMN }],
 		outputs: [],
 		params: [
+			// Descriptive, for now. The engine builds its frame from the
+			// position column and scales every triangle by its own constant, so
+			// these two report what it does rather than deciding it. Making them
+			// decide it needs a way to set them across the boundary, which is
+			// the first thing PR-7 needs if a settings sheet is going to change
+			// anything: a control that looks live and changes nothing teaches
+			// the wrong thing about what the board is.
 			{ name: "mesh", type: "mesh", default: "triangle" },
 			{ name: "scale", type: "f32", default: 0.35, min: 0 },
 		],
+		run: (c) => {
+			// One crossing for the whole frame, whatever the draw count. The
+			// draw list is built inside the engine from the position column —
+			// the same column every node above has been walking.
+			c.world.render();
+		},
 	},
 
 	// One level down: the frame itself. Viewable rather than authorable —

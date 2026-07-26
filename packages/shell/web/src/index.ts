@@ -14,30 +14,23 @@
  * file will keep doing once there is an editor above it: the chrome belongs in
  * data rather than here (#830).
  *
- * The loop exercises the boundary rule in both directions. Rust simulates and
- * draws; TypeScript reads the position column out of wasm memory with no copy,
- * and writes back into that same view to recycle entities that have drifted out
- * of frame — a whole-world edit with no call across the boundary at all.
- */
-
-import { boot, fitCanvas, type World } from "@krudd/boundary";
-
-/** How many entities the demo spawns. */
-const ENTITY_COUNT = 8;
-
-/** The radius entities are spawned and recycled onto, in world units. */
-const SPAWN_RADIUS = 0.4;
-
-/** How fast they drift outward, in world units per second. */
-const DRIFT_SPEED = 0.25;
-
-/**
- * How far an entity may drift before it is put back.
+ * The loop exercises the boundary rule in both directions. Rust draws;
+ * TypeScript reads the position column out of wasm memory with no copy and
+ * writes back into that same view — a whole-world edit with no call across the
+ * boundary at all.
  *
- * Comfortably outside the camera's box, so a recycle happens off screen rather
- * than as a visible jump.
+ * ## The demo is data now
+ *
+ * What used to be `populate` and `recycle` here is the triangles project, a
+ * board in `@krudd/board`. This file no longer knows that there are eight
+ * entities, that they spawn on a circle of 0.4, or that they drift at 0.25 —
+ * the document does, and `Runner` walks it. The page's job is to boot the
+ * engine, run the board once at open and once a frame, and put a failure on
+ * screen. Which is what it was before; there is simply less of it.
  */
-const RECYCLE_RADIUS = 3.2;
+
+import { Runner, TRIANGLES } from "@krudd/board";
+import { boot, fitCanvas, type World } from "@krudd/boundary";
 
 /** Where the canvas is. */
 const CANVAS_ID = "viewport";
@@ -65,7 +58,10 @@ async function main(): Promise<void> {
 
 	const krudd = await boot({ canvas });
 	const world = krudd.world;
-	populate(world);
+	// Refused here, loudly, rather than a frame at a time: a document that does
+	// not hold together must not boot into a board that half works.
+	const runner = new Runner(TRIANGLES, world);
+	runner.start();
 
 	// Not debounced: `fitCanvas` returns false when nothing changed, so a resize
 	// storm costs a couple of property reads per event rather than a swapchain
@@ -86,9 +82,9 @@ async function main(): Promise<void> {
 		const dt = Math.min((now - previous) / 1000, 0.1);
 		previous = now;
 		try {
-			world.tick(dt);
-			recycle(world);
-			world.render();
+			// Step then paint, both from the document. Nothing about what
+			// happens in either is decided here.
+			runner.frame(dt);
 		} catch (error) {
 			// Reported once and the loop stops. A frame that failed will fail
 			// again next frame, and a page reporting the same error sixty times a
@@ -96,58 +92,19 @@ async function main(): Promise<void> {
 			fail(error);
 			return;
 		}
-		status.textContent = report(krudd.version, world, dt);
+		status.textContent = report(krudd.version, world, runner, dt);
 		requestAnimationFrame(frame);
 	};
 	requestAnimationFrame(frame);
 }
 
-/** Spawns the demo entities on a circle, each drifting outward. */
-function populate(world: World): void {
-	for (let i = 0; i < ENTITY_COUNT; i++) {
-		const angle = (i / ENTITY_COUNT) * Math.PI * 2;
-		const slot = world.spawn(
-			Math.cos(angle) * SPAWN_RADIUS,
-			Math.sin(angle) * SPAWN_RADIUS,
-			0,
-		);
-		world.setVelocity(
-			slot,
-			Math.cos(angle) * DRIFT_SPEED,
-			Math.sin(angle) * DRIFT_SPEED,
-			0,
-		);
-	}
-}
-
-/**
- * Puts entities that have drifted out of frame back onto the spawn circle,
- * keeping their direction so they set off along the same ray.
- *
- * Written straight into the position column: the `Float32Array` is a view over
- * wasm linear memory, so this edits Rust's own state with no crossing per
- * entity and none at all beyond fetching the view. `setPosition` would reach
- * the same bytes at one call each, and `docs/boundary.md` has the measurement
- * of what that costs.
- */
-function recycle(world: World): void {
-	const positions = world.positions();
-	for (let slot = 0; slot < world.slotCount; slot++) {
-		const i = slot * 3;
-		const x = positions[i] as number;
-		const y = positions[i + 1] as number;
-		const distance = Math.hypot(x, y);
-		if (distance <= RECYCLE_RADIUS) {
-			continue;
-		}
-		const scale = SPAWN_RADIUS / distance;
-		positions[i] = x * scale;
-		positions[i + 1] = y * scale;
-	}
-}
-
 /** One line of readout per frame. */
-function report(version: string, world: World, dt: number): string {
+function report(
+	version: string,
+	world: World,
+	runner: Runner,
+	dt: number,
+): string {
 	const fps = dt > 0 ? (1 / dt).toFixed(0) : "—";
 	const { width, height } = world.viewport;
 	return [
@@ -157,8 +114,10 @@ function report(version: string, world: World, dt: number): string {
 		`${fps} fps`,
 		`${world.entityCount} entities`,
 		`${world.drawCount} draws`,
-		`frame ${world.frameCount}`,
-		`${world.elapsed.toFixed(1)}s`,
+		// The board's count and clock, not the engine's: the engine's `tick`
+		// integrates a column, and integrating is a node now.
+		`frame ${runner.frameCount}`,
+		`${runner.elapsed.toFixed(1)}s`,
 	].join("  ·  ");
 }
 

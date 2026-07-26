@@ -42,6 +42,8 @@
  * chosen one of them.
  */
 
+import type { Run } from "./world";
+
 /**
  * The document schema this package reads and writes.
  *
@@ -171,6 +173,22 @@ export interface NodeKind {
 	readonly outputs: readonly Port[];
 	/** The params a node of this kind may set. */
 	readonly params: readonly ParamDeclaration[];
+	/**
+	 * What it does when the frame comes round.
+	 *
+	 * This is the escape hatch, and it is not a special node — it is the only
+	 * kind of node there is. `integrate` and `recycle` are each hand-written
+	 * TypeScript reached through a kind, which is exactly what an escape hatch
+	 * would be, so there is no second mechanism: one substrate, one save file,
+	 * and "open this node" means either descend into a board or open code.
+	 *
+	 * Absent on an entry point, which is where execution begins rather than
+	 * something that runs, and absent on a kind that is viewable but not
+	 * runnable — the frame board's are. The interpreter refuses such a kind by
+	 * name rather than skipping it, because "this board did nothing" must
+	 * never look like "this board ran".
+	 */
+	readonly run?: Run;
 }
 
 /**

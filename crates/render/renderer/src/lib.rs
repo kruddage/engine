@@ -14,8 +14,19 @@
 //! transient lifetimes and automatic barriers — the frame graph, the one
 //! render concept the audit found that wgpu does not already provide — is
 //! #823 and will sit above this.
+//!
+//! ## `Backend` and `Commands` are two different levels
+//!
+//! [`Backend`] is the shell-facing seam: begin a frame, submit it, end it.
+//! [`Commands`] is one level down — the individual GPU calls a pass issues,
+//! the level the old `gpu_api` recorded one call at a time (#826). A `Frame`
+//! is what [`Backend::submit`] is handed whole; `Commands` is what something
+//! *inside* a submit — #823's frame graph, eventually — drives call by call.
+//! Neither trait implies the other: `krudd-webgl`'s [`Backend`] does not go
+//! through `Commands` today, and a `Commands` implementation owes nothing to
+//! `Backend`'s frame boundaries.
 
-use krudd_gpu::{PipelineId, TextureId};
+use krudd_gpu::{BufferId, BufferUsage, IndexFormat, PipelineId, TextureFormat, TextureId};
 use krudd_math::Mat4;
 
 /// The rectangle a frame renders into, in physical pixels.
@@ -177,6 +188,240 @@ pub trait Backend {
     /// Ends the frame. Called exactly once per `begin_frame`, and the only
     /// place per-frame resources may be released.
     fn end_frame(&mut self) -> Result<(), Self::Error>;
+}
+
+/// The shape a texture is created with.
+///
+/// Deliberately smaller than a full GPU texture descriptor: every field here
+/// is one `krudd-record`'s recorder captures, and this is the level
+/// [`Commands::create_texture`] speaks at — widening it without a call site
+/// that needs the extra field is how a descriptor drifts ahead of what
+/// anything asserts on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TextureDesc {
+    /// Pixel layout.
+    pub format: TextureFormat,
+    /// Width in texels.
+    pub width: u32,
+    /// Height in texels.
+    pub height: u32,
+    /// Mip levels, including the base level. `1` means no mip chain.
+    pub mip_levels: u32,
+    /// MSAA sample count. `1` means no multisampling.
+    pub sample_count: u32,
+}
+
+/// The shape a buffer is created with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BufferDesc {
+    /// What the buffer is bound as.
+    pub usage: BufferUsage,
+    /// Size in bytes.
+    pub size: u64,
+}
+
+/// The shape a render pipeline is created with.
+///
+/// One `shader` module compiles both stages — mirroring `krudd-webgl`'s WGSL,
+/// where one module holds both entry points — so `vertex_entry` and
+/// `fragment_entry` name which functions in it are which stage, and either
+/// may be absent: a depth-only pass has no fragment stage, and "whether each
+/// stage had source" only means something because the entry point can be
+/// missing.
+#[derive(Clone, Copy, Debug)]
+pub struct PipelineDesc<'a> {
+    /// For error messages and GPU debug tools.
+    pub label: &'a str,
+    /// The WGSL module both stages compile from.
+    pub shader: &'a str,
+    /// The vertex stage's entry point, if this pipeline has one.
+    pub vertex_entry: Option<&'a str>,
+    /// The fragment stage's entry point, if this pipeline has one.
+    pub fragment_entry: Option<&'a str>,
+    /// The colour targets this pipeline is validated against — see
+    /// `krudd-webgl`'s `Error::PipelineFormat`, which is what a mismatch here
+    /// turns into once something is driving a real backend.
+    pub color_formats: &'a [TextureFormat],
+    /// The depth target this pipeline is validated against, if it writes one.
+    pub depth_format: Option<TextureFormat>,
+    /// MSAA sample count this pipeline is built for.
+    pub sample_count: u32,
+}
+
+/// What a render pass attachment starts a frame with.
+///
+/// One generic enum rather than two near-identical ones: a colour attachment
+/// clears to a [`Color`] and a depth attachment clears to an `f32`, and nothing
+/// else differs between "keep what's there" and "clear to this" regardless of
+/// what the cleared value's type is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LoadOp<T> {
+    /// Keep the attachment's existing contents.
+    Load,
+    /// Clear to this value before anything draws.
+    Clear(T),
+}
+
+/// One colour target a render pass draws into.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ColorAttachment {
+    /// The texture drawn into.
+    pub texture: TextureId,
+    /// Where a multisampled result resolves to, if this attachment is
+    /// multisampled.
+    ///
+    /// Riding on the colour attachment rather than being an attachment in its
+    /// own right is load-bearing for #823: it is what lets a resolve target
+    /// be an ordinary produced resource to the frame graph's cull and
+    /// lifetime machinery, instead of a second kind of pass output the graph
+    /// has to special-case. Do not drop this field because nothing sets it
+    /// yet.
+    pub resolve_target: Option<TextureId>,
+    /// What the attachment starts the pass with.
+    pub load: LoadOp<Color>,
+}
+
+/// The depth target a render pass draws into.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DepthAttachment {
+    /// The texture drawn into.
+    pub texture: TextureId,
+    /// What the attachment starts the pass with.
+    pub load: LoadOp<f32>,
+}
+
+/// A render pass's attachments.
+#[derive(Clone, Copy, Debug)]
+pub struct RenderPassDesc<'a> {
+    /// For error messages and GPU debug tools.
+    pub label: &'a str,
+    /// The colour targets, in binding order.
+    pub colors: &'a [ColorAttachment],
+    /// The depth target, if this pass writes one.
+    pub depth: Option<DepthAttachment>,
+}
+
+/// What a texture is being used as, on either side of a [`Barrier`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Access {
+    /// Written as a colour attachment.
+    RenderTarget,
+    /// Written as a depth attachment.
+    DepthTarget,
+    /// Read through a shader binding.
+    Sampled,
+}
+
+/// A transition a texture must make before the next pass can use it in a
+/// different way.
+///
+/// #823 is what will emit these: a pass that writes a texture as a render
+/// target and a later one that samples it need a barrier in between, and the
+/// frame graph is the only thing that has enough of the pass order to know
+/// where.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Barrier {
+    /// The texture transitioning.
+    pub texture: TextureId,
+    /// What it was being used as.
+    pub from: Access,
+    /// What it is about to be used as.
+    pub to: Access,
+}
+
+/// The individual GPU calls a pass issues.
+///
+/// This is one level below [`Backend`] — see the module docs — and its method
+/// list is deliberately the old `renderer_null.h` call list (#826): that is
+/// what makes it the assertion vocabulary a recording implementation and a
+/// real one can both be tested against. `krudd-record`'s `Recorder`
+/// implements it today; `krudd-webgl` gains an implementation only once
+/// something drives it through here (#823), and does not gain one as part of
+/// this trait landing.
+pub trait Commands {
+    /// The error this implementation reports.
+    type Error: core::fmt::Debug;
+
+    // Off-frame: persistent resources, created against the device directly
+    // and never through a lent pass context — that context is #823's to
+    // define, not this trait's.
+    /// Creates a texture, optionally seeded with data.
+    fn create_texture(
+        &mut self,
+        desc: &TextureDesc,
+        data: Option<&[u8]>,
+    ) -> Result<TextureId, Self::Error>;
+
+    /// Destroys a texture. Every outstanding handle to it goes stale.
+    fn destroy_texture(&mut self, texture: TextureId) -> Result<(), Self::Error>;
+
+    /// Creates a buffer, optionally seeded with data.
+    fn create_buffer(
+        &mut self,
+        desc: &BufferDesc,
+        data: Option<&[u8]>,
+    ) -> Result<BufferId, Self::Error>;
+
+    /// Destroys a buffer. Every outstanding handle to it goes stale.
+    fn destroy_buffer(&mut self, buffer: BufferId) -> Result<(), Self::Error>;
+
+    /// Compiles a render pipeline.
+    fn create_pipeline(&mut self, desc: &PipelineDesc<'_>) -> Result<PipelineId, Self::Error>;
+
+    // Per-frame.
+    /// Transitions one or more textures ahead of the passes that need them in
+    /// their new state.
+    fn barrier(&mut self, barriers: &[Barrier]) -> Result<(), Self::Error>;
+
+    /// Begins a render pass against the given attachments.
+    fn begin_render_pass(&mut self, desc: &RenderPassDesc<'_>) -> Result<(), Self::Error>;
+
+    /// Ends the current render pass.
+    fn end_render_pass(&mut self) -> Result<(), Self::Error>;
+
+    /// Binds the pipeline subsequent draws use.
+    fn set_pipeline(&mut self, pipeline: PipelineId) -> Result<(), Self::Error>;
+
+    /// Binds a vertex buffer at the given slot.
+    fn bind_vertex_buffer(
+        &mut self,
+        slot: u32,
+        buffer: BufferId,
+        offset: u64,
+        size: u64,
+    ) -> Result<(), Self::Error>;
+
+    /// Binds the index buffer subsequent indexed draws read from.
+    fn bind_index_buffer(
+        &mut self,
+        buffer: BufferId,
+        offset: u64,
+        size: u64,
+        format: IndexFormat,
+    ) -> Result<(), Self::Error>;
+
+    /// Binds a uniform buffer at the given slot.
+    fn bind_uniform_buffer(
+        &mut self,
+        slot: u32,
+        buffer: BufferId,
+        offset: u64,
+        size: u64,
+    ) -> Result<(), Self::Error>;
+
+    /// Draws non-indexed vertices.
+    fn draw(
+        &mut self,
+        first_vertex: u32,
+        vertex_count: u32,
+        instance_count: u32,
+    ) -> Result<(), Self::Error>;
+
+    /// Draws indexed vertices, through the bound index buffer.
+    fn draw_indexed(&mut self, index_count: u32, instance_count: u32) -> Result<(), Self::Error>;
+
+    /// Dispatches a compute workgroup grid.
+    fn dispatch(&mut self, x: u32, y: u32, z: u32) -> Result<(), Self::Error>;
 }
 
 #[cfg(test)]

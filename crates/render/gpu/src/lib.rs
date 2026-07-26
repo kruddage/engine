@@ -173,6 +173,20 @@ pub enum BufferUsage {
     Uniform,
 }
 
+/// The width of one index in an index buffer.
+///
+/// A property of the *resource* — the index buffer was uploaded at one width
+/// or the other and stays that width for its whole life — not of a frame, so
+/// it sits beside [`BufferUsage`] rather than with the per-frame vocabulary
+/// in `krudd-render`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IndexFormat {
+    /// 16-bit indices.
+    Uint16,
+    /// 32-bit indices, for a mesh with more vertices than `Uint16` can address.
+    Uint32,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

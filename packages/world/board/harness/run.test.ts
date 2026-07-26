@@ -3,26 +3,17 @@
 /**
  * The interpreter, against a world that is nothing but two columns.
  *
- * The point of running these without wasm is that they can say what the
- * *numbers* are. `render-test` proves the document drives the real engine —
- * pixel for pixel, which is the acceptance criterion that matters — but a
- * screenshot cannot tell you that entity three is at x = 0.4 + 0.25 × 1.5,
- * and that is the assertion that catches an interpreter which is wrong by a
- * frame or by a factor of dt.
- *
- * The world here satisfies `WorldView` structurally, exactly as
- * `@krudd/boundary`'s `World` does. It grows its columns on `spawn` and hands
- * back fresh arrays afterwards, which is not a convenience — it is the
- * boundary's own rule, that a `spawn` can move a column and a view taken
- * beforehand is addressing memory that is no longer it. A node that cached
- * its view across a spawn fails here rather than in a browser.
+ * The numbers a screenshot cannot assert: where each entity is after a given
+ * number of frames, what the paint lane reached, and what an edit did to the
+ * next one. The world it runs against is `harness/world.ts`, shared with the
+ * suites that run a board for some other reason.
  *
  * Run by `cargo xtask test-web`, which `cargo xtask check` runs.
  */
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { Project, Wire, WorldView } from "../src/index";
+import type { Project, Wire } from "../src/index";
 import {
 	BoardError,
 	cloneProject,
@@ -36,73 +27,11 @@ import {
 	toggleWire,
 	validate,
 } from "../src/index";
+import { at, TestWorld } from "./world";
 
 /** The frame the render test steps at, and the count it steps. */
 const DT = 1 / 60;
 const FRAMES = 90;
-
-/** A world that is two columns and a draw counter. */
-class TestWorld implements WorldView {
-	#positions: Float32Array<ArrayBuffer> = new Float32Array(0);
-	#velocities: Float32Array<ArrayBuffer> = new Float32Array(0);
-	/** How many times the paint lane reached the renderer. */
-	draws = 0;
-	/** How many frames were presented with nothing in them. */
-	blanks = 0;
-	/** The scale the paint lane last asked for. */
-	scale = 0;
-
-	get slotCount(): number {
-		return this.#positions.length / 3;
-	}
-
-	spawn(x: number, y: number, z: number): number {
-		const slot = this.slotCount;
-		// New arrays, not resized ones — the real columns move when they grow,
-		// and a node holding a stale view must fail here too.
-		this.#positions = grown(this.#positions);
-		this.#velocities = grown(this.#velocities);
-		this.#positions.set([x, y, z], slot * 3);
-		return slot;
-	}
-
-	positions(): Float32Array {
-		return this.#positions;
-	}
-
-	velocities(): Float32Array {
-		return this.#velocities;
-	}
-
-	render(): void {
-		this.draws += 1;
-	}
-
-	presentCleared(): void {
-		this.blanks += 1;
-	}
-
-	setScale(scale: number): void {
-		this.scale = scale;
-	}
-}
-
-/** One more slot's worth of column, carrying what was already there. */
-function grown(column: Float32Array<ArrayBuffer>): Float32Array<ArrayBuffer> {
-	const next = new Float32Array(column.length + 3);
-	next.set(column);
-	return next;
-}
-
-/** One entity's position. */
-function at(world: TestWorld, slot: number): [number, number, number] {
-	const p = world.positions();
-	return [
-		p[slot * 3] as number,
-		p[slot * 3 + 1] as number,
-		p[slot * 3 + 2] as number,
-	];
-}
 
 /** The fixture with its root board's wires replaced. */
 function rewired(keep: (id: string) => boolean): Project {

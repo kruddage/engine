@@ -204,6 +204,52 @@ test("a grown linear memory is noticed for the velocity column too", async () =>
 	assert.equal(after.length, 12, "the rebuilt view covers the same column");
 });
 
+test("a cleared world is empty, and emptier than a despawned one", async () => {
+	const { world } = await load();
+	populate(world, 8);
+	const before = world.positions();
+	assert.equal(before.length, 24);
+
+	world.clear();
+
+	assert.equal(world.entityCount, 0);
+	assert.equal(
+		world.slotCount,
+		0,
+		"a tombstone keeps its slot, so despawning eight is not this",
+	);
+	assert.equal(world.positions().length, 0, "and both columns went with it");
+	assert.equal(world.velocities().length, 0);
+	assert.notEqual(
+		world.positions(),
+		before,
+		"the view taken beforehand is stale, exactly as it is across a spawn",
+	);
+});
+
+test("a world spawned after a clear is the one a fresh boot builds", async () => {
+	// What opening a project rests on: same slots, same order, same columns as
+	// though the page had just been loaded.
+	const { world } = await load();
+	populate(world, 5);
+	world.clear();
+	populate(world, 8);
+
+	const { world: fresh } = await load();
+	populate(fresh, 8);
+
+	assert.equal(world.slotCount, fresh.slotCount);
+	assert.deepEqual(
+		Array.from(world.positions()),
+		Array.from(fresh.positions()),
+		"the reused engine spawned a different world to the fresh one",
+	);
+	assert.deepEqual(
+		Array.from(world.velocities()),
+		Array.from(fresh.velocities()),
+	);
+});
+
 test("the per-call path refuses a dead slot rather than reading a tombstone", async () => {
 	const { world, engine } = await load();
 	const slot = world.spawn(1, 2, 3);

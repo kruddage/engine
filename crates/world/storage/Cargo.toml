@@ -1,6 +1,6 @@
 [package]
 name = "krudd-world"
-description = "Struct-of-arrays entity storage. Tier: world."
+description = "Generational slot table: handles, generations, tombstones. Tier: world."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,4 +11,3 @@ publish.workspace = true
 missing_docs = "warn"
 
 [dependencies]
-krudd-math.workspace = true

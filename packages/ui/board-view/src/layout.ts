@@ -120,11 +120,24 @@ export interface Layout {
 	readonly wires: readonly PlacedWire[];
 }
 
+/** How much of a board is shown. */
+export type Detail = "simple" | "pro";
+
 /** What to lay out, and how. */
 export interface LayoutOptions {
 	readonly flow: Flow;
 	/** What each lane's strip says. Varies with the board you are standing in. */
 	readonly labels?: Readonly<Record<Lane, string>>;
+	/**
+	 * How much to show. One board at two detail levels, never two boards.
+	 *
+	 * Simple leaves out the data wires — at Simple a board reads as *what
+	 * happens, in order*, and the data wires are the answer to a question
+	 * nobody has asked yet. The nodes, the lanes and the execution order are
+	 * the same either way, which is what makes this a level rather than a
+	 * second editor.
+	 */
+	readonly detail?: Detail;
 }
 
 /**
@@ -194,7 +207,11 @@ export function layout(
 
 	const placed = new Map(nodes.map((node) => [node.id, node]));
 	const wires: PlacedWire[] = [];
+	const detail = options.detail ?? "pro";
 	for (const wire of board.wires) {
+		if (detail === "simple" && wire.kind === "data") {
+			continue;
+		}
 		const from = anchor(board, kinds, placed, wire.from, "out", options.flow);
 		const to = anchor(board, kinds, placed, wire.to, "in", options.flow);
 		if (from === undefined || to === undefined) {
@@ -277,7 +294,14 @@ function anchor(
 	};
 }
 
-/** The ports on one side of a node, in the order they are laid along its edge. */
+/**
+ * The ports on one side of a node, in the order they are laid along its edge.
+ *
+ * The same list at either detail level. What Simple hides is the port *list*
+ * printed in the box and the data wires between them, never where a port is —
+ * so the execution wires land in exactly the same place at both levels, and
+ * switching detail does not move the board under you.
+ */
 export function ports(
 	kinds: Registry,
 	node: BoardNode,

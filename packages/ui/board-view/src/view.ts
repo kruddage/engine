@@ -25,19 +25,33 @@
  * either half converting anything.
  */
 
-import type { Board, BoardId, Lane, NodeId, Registry } from "@krudd/board";
+import type { Board, BoardId, NodeId, Project, Registry } from "@krudd/board";
 import { KINDS, kindOf, paramOf } from "@krudd/board";
-import { type Flow, flowFor, layout, ports, type Size } from "./layout";
+import {
+	type Detail,
+	type Flow,
+	flowFor,
+	layout,
+	type PlacedLane,
+	type PlacedWire,
+	ports,
+	type Size,
+} from "./layout";
+import { Trail } from "./nav";
 
 /** The SVG namespace, which `createElement` does not imply. */
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 /** A mounted board view. */
 export interface BoardView {
-	/** Draws a board. Measures first, so it must be called while visible. */
-	show(board: Board, labels?: Readonly<Record<Lane, string>>): void;
+	/** Opens a project at its root board. Measures, so it must be visible. */
+	open(project: Project): void;
 	/** Re-measures and re-places, after a resize or a change of detail. */
 	refresh(): void;
+	/** How much is shown. Simple leaves out the data wires and the port lists. */
+	detail: Detail;
+	/** Which board is showing, root-first. */
+	readonly path: readonly BoardId[];
 	/** Stops listening. */
 	destroy(): void;
 }
@@ -48,8 +62,8 @@ export interface BoardViewOptions {
 	readonly host: HTMLElement;
 	/** The kinds the document's nodes are resolved through. */
 	readonly kinds?: Registry;
-	/** Called when a node carrying a board is opened. */
-	readonly onOpen?: (board: BoardId, node: NodeId) => void;
+	/** Where it starts. Simple, unless a page says otherwise. */
+	readonly detail?: Detail;
 }
 
 /**
@@ -64,6 +78,19 @@ export function mountBoardView(options: BoardViewOptions): BoardView {
 	host.textContent = "";
 	host.classList.add("board-view");
 
+	// The breadcrumb and the detail toggle sit outside the surface, because
+	// the surface is what pans — chrome that slid off the top when somebody
+	// dragged the board would be chrome nobody could get back to.
+	const bar = document.createElement("nav");
+	bar.className = "board-bar";
+	const crumbs = document.createElement("div");
+	crumbs.className = "board-crumbs";
+	const toggle = document.createElement("button");
+	toggle.type = "button";
+	toggle.className = "board-detail";
+	bar.append(crumbs, toggle);
+	host.append(bar);
+
 	const surface = document.createElement("div");
 	surface.className = "board-surface";
 	const wires = document.createElementNS(SVG_NS, "svg");
@@ -73,14 +100,16 @@ export function mountBoardView(options: BoardViewOptions): BoardView {
 	surface.append(wires, boxes);
 	host.append(surface);
 
-	let board: Board | null = null;
-	let labels: Readonly<Record<Lane, string>> | undefined;
+	let trail: Trail | null = null;
+	let detail: Detail = options.detail ?? "simple";
 	let pan = { x: 0, y: 0 };
 
 	const place = (): void => {
-		if (board === null) {
+		const board = trail?.board;
+		if (trail === null || board === undefined) {
 			return;
 		}
+		host.dataset.detail = detail;
 		// The flow first, and only then the measuring. It is on the host because
 		// the stylesheet keys off it, so setting it afterwards would measure
 		// boxes at one width and place them at another — which is the same
@@ -104,7 +133,8 @@ export function mountBoardView(options: BoardViewOptions): BoardView {
 
 		const placed = layout(board, kinds, sizes, {
 			flow,
-			...(labels === undefined ? {} : { labels }),
+			detail,
+			labels: trail.labels,
 		});
 
 		surface.style.width = `${placed.width}px`;
@@ -123,7 +153,37 @@ export function mountBoardView(options: BoardViewOptions): BoardView {
 			}
 		}
 		drawWires(wires, placed.wires);
+		drawBar(crumbs, toggle, trail, detail);
 		applyPan();
+	};
+
+	/** Redraws the boxes and then places them. */
+	const draw = (): void => {
+		const board = trail?.board;
+		if (trail === null || board === undefined) {
+			return;
+		}
+		// Back to the top-left on every change of board: you have arrived
+		// somewhere new, and the first thing anyone wants to see is where it
+		// starts.
+		pan = { x: 0, y: 0 };
+		buildNodes(boxes, board, kinds, detail, canOpen);
+		place();
+	};
+
+	/** Whether a node's board can be descended into at this detail level. */
+	const canOpen = (id: BoardId): boolean => {
+		const target = trail?.project.boards[id];
+		return target !== undefined && (detail === "pro" || target.pro !== true);
+	};
+
+	const setDetail = (next: Detail): void => {
+		detail = next;
+		// Simple does not reach into a Pro board, so standing in one when the
+		// level changes means climbing out rather than looking at something
+		// Simple says is not there.
+		trail?.settle(next);
+		draw();
 	};
 
 	const applyPan = (): void => {
@@ -151,6 +211,29 @@ export function mountBoardView(options: BoardViewOptions): BoardView {
 			drag = null;
 		}
 	};
+	bar.addEventListener("click", (event) => {
+		const target = event.target;
+		if (target === toggle) {
+			setDetail(detail === "simple" ? "pro" : "simple");
+			return;
+		}
+		const crumb = target instanceof Element ? target.closest("button") : null;
+		const id = crumb?.dataset.board;
+		if (id !== undefined && trail?.goTo(id) === true) {
+			draw();
+		}
+	});
+
+	boxes.addEventListener("click", (event) => {
+		const target = event.target;
+		const box =
+			target instanceof Element ? target.closest(".board-node") : null;
+		const id = box instanceof HTMLElement ? box.dataset.opens : undefined;
+		if (id !== undefined && trail?.enter(id, detail) === true) {
+			draw();
+		}
+	});
+
 	host.addEventListener("pointerdown", onDown);
 	host.addEventListener("pointermove", onMove);
 	host.addEventListener("pointerup", onUp);
@@ -162,17 +245,23 @@ export function mountBoardView(options: BoardViewOptions): BoardView {
 	window.addEventListener("resize", onResize);
 
 	return {
-		show(next: Board, nextLabels?: Readonly<Record<Lane, string>>): void {
-			board = next;
-			labels = nextLabels;
+		open(project: Project): void {
 			// Opened at the top-left with a margin rather than zoomed to fit: a
 			// board scaled down to fit a phone is a board nobody can read, and
 			// the first thing anyone wants to see is where it starts.
-			pan = { x: 0, y: 0 };
-			buildNodes(boxes, next, kinds, options.onOpen);
-			place();
+			trail = new Trail(project);
+			draw();
 		},
 		refresh: place,
+		get detail(): Detail {
+			return detail;
+		},
+		set detail(next: Detail) {
+			setDetail(next);
+		},
+		get path(): readonly BoardId[] {
+			return trail?.crumbs.map((crumb) => crumb.id) ?? [];
+		},
 		destroy(): void {
 			host.removeEventListener("pointerdown", onDown);
 			host.removeEventListener("pointermove", onMove);
@@ -188,7 +277,8 @@ function buildNodes(
 	host: HTMLElement,
 	board: Board,
 	kinds: Registry,
-	onOpen: BoardViewOptions["onOpen"],
+	detail: Detail,
+	canOpen: (board: BoardId) => boolean,
 ): void {
 	for (const stale of host.querySelectorAll(".board-node")) {
 		stale.remove();
@@ -220,46 +310,98 @@ function buildNodes(
 			box.append(row);
 		}
 
-		for (const side of ["in", "out"] as const) {
-			// The execution port is on every node and is drawn as the chain
-			// rather than as a name, so it is not listed here.
-			const named = ports(kinds, node, side).slice(1);
-			if (named.length === 0) {
-				continue;
+		// Port lists are Pro. At Simple a board reads as what happens and in
+		// what order, and a port type is the answer to a question nobody
+		// standing at Simple has asked yet.
+		if (detail === "pro") {
+			for (const side of ["in", "out"] as const) {
+				// The execution port is on every node and is drawn as the chain
+				// rather than as a name, so it is not listed here.
+				const named = ports(kinds, node, side)
+					.slice(1)
+					.map((name) => withType(kinds, node, side, name));
+				if (named.length === 0) {
+					continue;
+				}
+				const row = document.createElement("p");
+				row.className = "board-ports";
+				row.dataset.side = side;
+				row.textContent = `${side} ${named.join(", ")}`;
+				box.append(row);
 			}
-			const row = document.createElement("p");
-			row.className = "board-ports";
-			row.dataset.side = side;
-			row.textContent = `${side} ${named.join(", ")}`;
-			box.append(row);
 		}
 
-		if (node.board !== undefined) {
+		if (node.board !== undefined && canOpen(node.board)) {
+			box.dataset.opens = node.board;
 			const open = document.createElement("p");
 			open.className = "board-opens";
-			open.textContent = "opens a board";
+			open.textContent = "open ›";
 			box.append(open);
-			if (onOpen !== undefined) {
-				const target = node.board;
-				box.addEventListener("click", () => onOpen(target, node.id));
-			}
 		}
 		host.append(box);
 	}
 }
 
-/** Draws the lane bands and their labels. */
-function drawLanes(
-	host: HTMLElement,
-	lanes: readonly {
-		lane: Lane;
-		label: string;
-		x: number;
-		y: number;
-		width: number;
-		height: number;
-	}[],
+/** A port with its type, which is the other thing Pro adds. */
+function withType(
+	kinds: Registry,
+	node: { kind: string },
+	side: "in" | "out",
+	name: string,
+): string {
+	const kind = kindOf(kinds, node.kind);
+	const port = (side === "in" ? kind?.inputs : kind?.outputs)?.find(
+		(candidate) => candidate.name === name,
+	);
+	return port === undefined ? name : `${name}: ${port.type}`;
+}
+
+/**
+ * Draws the breadcrumb and the detail toggle.
+ *
+ * The breadcrumb is buttons rather than text because every crumb but the last
+ * is a way back, and a way back that does not look like a control is a way
+ * back nobody finds.
+ */
+function drawBar(
+	crumbs: HTMLElement,
+	toggle: HTMLButtonElement,
+	trail: Trail,
+	detail: Detail,
 ): void {
+	crumbs.textContent = "";
+	const path = trail.crumbs;
+	for (const [index, crumb] of path.entries()) {
+		if (index > 0) {
+			const chevron = document.createElement("span");
+			chevron.textContent = "›";
+			crumbs.append(chevron);
+		}
+		const button = document.createElement("button");
+		button.type = "button";
+		button.dataset.board = crumb.id;
+		button.textContent = crumb.title;
+		// The board you are standing in is not a way back to itself.
+		button.disabled = index === path.length - 1;
+		button.setAttribute("aria-current", button.disabled ? "true" : "false");
+		crumbs.append(button);
+	}
+	// Scrolled to the end rather than reversed: a path too long for a phone
+	// should run off the left, and the crumb worth seeing is the one you are
+	// standing in — but the order it reads in is root first, always.
+	crumbs.scrollLeft = crumbs.scrollWidth;
+	toggle.textContent = detail === "simple" ? "simple" : "pro";
+	toggle.dataset.detail = detail;
+	toggle.setAttribute(
+		"aria-label",
+		detail === "simple"
+			? "showing simple, tap for pro"
+			: "showing pro, tap for simple",
+	);
+}
+
+/** Draws the lane bands and their labels. */
+function drawLanes(host: HTMLElement, lanes: readonly PlacedLane[]): void {
 	for (const stale of host.querySelectorAll(".board-lane")) {
 		stale.remove();
 	}
@@ -280,16 +422,7 @@ function drawLanes(
 }
 
 /** Draws every wire, and a dot on each end. */
-function drawWires(
-	host: SVGElement,
-	wires: readonly {
-		id: string;
-		kind: string;
-		path: string;
-		from: { x: number; y: number };
-		to: { x: number; y: number };
-	}[],
-): void {
+function drawWires(host: SVGElement, wires: readonly PlacedWire[]): void {
 	host.textContent = "";
 	for (const wire of wires) {
 		const group = document.createElementNS(SVG_NS, "g");

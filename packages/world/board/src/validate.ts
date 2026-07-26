@@ -22,6 +22,7 @@ import type {
 	Board,
 	BoardId,
 	BoardNode,
+	Lane,
 	NodeId,
 	NodeKind,
 	ParamDeclaration,
@@ -516,6 +517,8 @@ export function serializeProject(project: Project): string {
 		if (board !== undefined) {
 			boards[id] = {
 				title: board.title,
+				...(board.lanes === undefined ? {} : { lanes: board.lanes }),
+				...(board.pro === undefined ? {} : { pro: board.pro }),
 				nodes: board.nodes.map(plainNode),
 				wires: board.wires.map(plainWire),
 			};
@@ -586,11 +589,36 @@ function asBoard(value: unknown, board: BoardId): Board {
 	if (!Array.isArray(raw.wires)) {
 		throw one({ board }, "`wires` must be a list");
 	}
+	if (raw.pro !== undefined && typeof raw.pro !== "boolean") {
+		throw one({ board }, "`pro` must be true or false");
+	}
 	return {
 		title: raw.title,
+		...(raw.lanes === undefined ? {} : { lanes: asLanes(raw.lanes, board) }),
+		...(raw.pro === undefined ? {} : { pro: raw.pro }),
 		nodes: raw.nodes.map((node) => asNode(node, board)),
 		wires: raw.wires.map((wire) => asWire(wire, board)),
 	};
+}
+
+/** A board's lane labels, checked — one string per lane, all three required. */
+function asLanes(
+	value: unknown,
+	board: BoardId,
+): Readonly<Record<Lane, string>> {
+	const raw = asRecord(value, { board }, "`lanes`");
+	const labels: Partial<Record<Lane, string>> = {};
+	for (const lane of LANES) {
+		const held = raw[lane];
+		if (typeof held !== "string") {
+			throw one({ board }, `\`lanes.${lane}\` must be text`);
+		}
+		labels[lane] = held;
+	}
+	// All three, because a board that labelled two of its lanes and left the
+	// third saying something about the game would be worse than one that
+	// labelled none.
+	return labels as Record<Lane, string>;
 }
 
 /** One node, checked. */

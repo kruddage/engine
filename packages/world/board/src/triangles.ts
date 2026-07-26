@@ -120,6 +120,17 @@ export const TRIANGLES: Project = {
 
 		[FRAME_BOARD]: {
 			title: "Draw Entities",
+			// One level down, the three lanes are stages of a frame rather than
+			// of the game. Saying "every frame, to the screen" in here would be
+			// telling somebody standing inside a frame about frames.
+			lanes: {
+				start: "set up the frame",
+				step: "draw into it",
+				paint: "hand it to the screen",
+			},
+			// The frame is the detail, and Simple is the level where the detail
+			// is not shown. Opening Draw Entities at Simple opens nothing.
+			pro: true,
 			nodes: [
 				{ id: "begin", kind: "begin-frame", lane: "start", column: 0 },
 				{ id: "clear", kind: "clear", lane: "start", column: 1 },

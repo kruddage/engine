@@ -128,7 +128,7 @@ in one upload, for the same reason the position column exists.
 | Value | Allocated by | Freed by | Notes |
 |---|---|---|---|
 | `Engine` | Rust, on `new Engine(…)` | JS, on `free()` or `Symbol.dispose` | wasm-bindgen also registers a `FinalizationRegistry`, so a dropped reference is eventually collected — eventually, at the collector's discretion. The page holds one engine for its lifetime, so this does not come up yet. |
-| A column (`positions`) | Rust | Rust | TypeScript never allocates or frees engine data. |
+| A column (`positions`, `velocities`) | Rust | Rust | TypeScript never allocates or frees engine data. |
 | A `Float32Array` **view** | nobody | nobody | It is a window, not an object with contents. Dropping it frees nothing. |
 | A `Float32Array` **returned** from a call | Rust, then copied to JS | the JS collector | This is the per-call path. The copy is the cost. |
 | A returned `string` | Rust, then copied to JS | the JS collector | UTF-8 → UTF-16 conversion on every call. Fine for `version()`, not for anything per-frame. |
@@ -153,9 +153,12 @@ silent.
    exception, no warning. A detached view reads nothing, which is
    indistinguishable from an engine that stopped simulating.
 
-`@krudd/boundary` is the one place that knows this. `World.positions()`
-compares all three facts — pointer, length, and buffer identity — against the
-view it cached, and rebuilds when any of them has changed:
+`@krudd/boundary` is the one place that knows this. Each column caches one
+view, compares all three facts — pointer, length, and buffer identity —
+against it, and rebuilds when any of them has changed. `World.positions()` and
+`World.velocities()` are the same three comparisons over different columns,
+which is why they share one `Column` rather than each carrying their own copy
+of the rule:
 
 ```ts
 const view = world.positions();  // cheap when nothing moved: the cached view

@@ -131,8 +131,9 @@ pub struct Engine {
     /// [`Handle::index`]. Sized to [`Store::capacity`], so a tombstoned slot
     /// still occupies its three floats.
     positions: Vec<Vec3>,
-    /// The per-slot velocity that [`Engine::tick`] integrates. Private: it is
-    /// engine state, not something the page reads.
+    /// The per-slot velocity that [`Engine::tick`] integrates, laid out like
+    /// [`Engine::positions`] and read by TypeScript the same way — see
+    /// [`Engine::velocities_ptr`].
     velocities: Vec<Vec3>,
     viewport: Viewport,
     frame_count: u32,
@@ -270,6 +271,28 @@ impl Engine {
     /// The length of the position column, in `f32`s — three per slot.
     pub fn positions_len(&self) -> usize {
         self.positions.len() * 3
+    }
+
+    /// The address of the velocity column in wasm linear memory.
+    ///
+    /// The write counterpart to [`Engine::positions_ptr`], and the reason it
+    /// exists: work that gives a whole world its velocities — spawning a ring,
+    /// steering a flock — writes the column directly instead of calling
+    /// [`Engine::set_velocity`] once per entity, which is the per-object
+    /// crossing `docs/boundary.md` measures at ~36× and forbids.
+    ///
+    /// Same loan, same lifetime, same three ways to go stale as the position
+    /// column. `@krudd/boundary` holds the rules.
+    pub fn velocities_ptr(&self) -> usize {
+        self.velocities.as_ptr() as usize
+    }
+
+    /// The length of the velocity column, in `f32`s — three per slot.
+    ///
+    /// Always equal to [`Engine::positions_len`]: the two columns are indexed
+    /// by the same slot and grown together.
+    pub fn velocities_len(&self) -> usize {
+        self.velocities.len() * 3
     }
 
     /// How many slots the position column covers, live and tombstoned alike.
@@ -557,6 +580,33 @@ mod tests {
         assert_eq!(e.positions[b as usize].x, 9.5);
         assert_eq!(e.frame_count(), 1);
         assert_eq!(e.elapsed(), 0.5);
+    }
+
+    #[test]
+    fn the_two_columns_are_indexed_alike_and_grow_together() {
+        // The page indexes both with `slot * 3`, so a slot that exists in one
+        // column and not the other reads another entity's velocity rather than
+        // failing.
+        let mut e = Engine::default();
+        assert_eq!(e.velocities_len(), 0);
+        e.spawn(0.0, 0.0, 0.0);
+        e.spawn(1.0, 0.0, 0.0);
+        assert_eq!(e.velocities_len(), e.positions_len());
+        assert_eq!(e.velocities_len(), 6);
+    }
+
+    #[test]
+    fn a_write_into_the_velocity_column_is_what_tick_integrates() {
+        // The batched write path: the page fills the column through a view and
+        // never calls `set_velocity`. If `tick` read from anywhere else, a
+        // world driven the batched way would sit still.
+        let mut e = Engine::default();
+        let a = e.spawn(0.0, 0.0, 0.0);
+        e.velocities[a as usize] = Vec3::new(2.0, -3.0, 0.0);
+
+        e.tick(0.5);
+
+        assert_eq!(e.positions[a as usize], Vec3::new(1.0, -1.5, 0.0));
     }
 
     #[test]

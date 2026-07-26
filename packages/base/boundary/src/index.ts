@@ -139,6 +139,48 @@ export async function boot(options: BootOptions): Promise<Krudd> {
 }
 
 /**
+ * One cached view over a column in wasm memory, and the three facts that can
+ * invalidate it.
+ *
+ * `buffer` is in there because growing wasm memory *detaches* the old
+ * `ArrayBuffer`: every view over it becomes zero-length, silently. That is the
+ * failure this cache exists to prevent — a stale view does not throw, it just
+ * reads nothing, which looks exactly like an engine that stopped simulating.
+ *
+ * One class rather than a pair of fields and a pair of comparisons per column,
+ * because there is now more than one column and the rule they are checked
+ * against has to be the same rule. See `docs/boundary.md`.
+ */
+class Column {
+	#cached: {
+		view: Float32Array;
+		ptr: number;
+		length: number;
+		buffer: ArrayBufferLike;
+	} | null = null;
+
+	/**
+	 * The column as a `Float32Array` over `memory`, rebuilt only when the
+	 * address, the length or the buffer identity has changed.
+	 */
+	view(memory: WebAssembly.Memory, ptr: number, length: number): Float32Array {
+		const buffer = memory.buffer;
+		const cached = this.#cached;
+		if (
+			cached !== null &&
+			cached.ptr === ptr &&
+			cached.length === length &&
+			cached.buffer === buffer
+		) {
+			return cached.view;
+		}
+		const view = new Float32Array(buffer, ptr, length);
+		this.#cached = { view, ptr, length, buffer };
+		return view;
+	}
+}
+
+/**
  * The world, and the views over it.
  *
  * Wraps the generated `Engine` rather than re-exporting it so that the
@@ -149,21 +191,8 @@ export class World {
 	readonly #engine: Engine;
 	readonly #memory: WebAssembly.Memory;
 
-	/**
-	 * The cached position view, and the three facts that can invalidate it.
-	 *
-	 * `buffer` is in there because growing wasm memory *detaches* the old
-	 * `ArrayBuffer`: every view over it becomes zero-length, silently. That is
-	 * the failure this cache exists to prevent — a stale view does not throw,
-	 * it just reads nothing, which looks exactly like an engine that stopped
-	 * simulating.
-	 */
-	#positions: {
-		view: Float32Array;
-		ptr: number;
-		length: number;
-		buffer: ArrayBufferLike;
-	} | null = null;
+	readonly #positions = new Column();
+	readonly #velocities = new Column();
 
 	/** Wraps an engine and the memory its pointers refer into. */
 	constructor(engine: Engine, memory: WebAssembly.Memory) {
@@ -243,21 +272,34 @@ export class World {
 	 * day something does. See `docs/boundary.md`.
 	 */
 	positions(): Float32Array {
-		const ptr = this.#engine.positions_ptr();
-		const length = this.#engine.positions_len();
-		const buffer = this.#memory.buffer;
-		const cached = this.#positions;
-		if (
-			cached !== null &&
-			cached.ptr === ptr &&
-			cached.length === length &&
-			cached.buffer === buffer
-		) {
-			return cached.view;
-		}
-		const view = new Float32Array(buffer, ptr, length);
-		this.#positions = { view, ptr, length, buffer };
-		return view;
+		return this.#positions.view(
+			this.#memory,
+			this.#engine.positions_ptr(),
+			this.#engine.positions_len(),
+		);
+	}
+
+	/**
+	 * The velocity column as a `Float32Array` over wasm memory: three floats
+	 * per slot, in units per second, indexed by the same slot index
+	 * `positions()` is.
+	 *
+	 * The batched counterpart to `setVelocity`, and the reason to prefer it:
+	 * giving a whole world its velocities through the per-entity call is the
+	 * crossing the column exists to avoid. Write into the view and the next
+	 * `tick` integrates from it, with no call across the boundary at all.
+	 *
+	 * Goes stale exactly as `positions()` does — a `tick` cannot invalidate
+	 * it, a `spawn` can, and so can anything that grows wasm memory. Fetch it
+	 * where you use it and never store one in a field. See
+	 * `docs/boundary.md`.
+	 */
+	velocities(): Float32Array {
+		return this.#velocities.view(
+			this.#memory,
+			this.#engine.velocities_ptr(),
+			this.#engine.velocities_len(),
+		);
 	}
 
 	/** The position of one entity, or `null` if the slot is not live. */

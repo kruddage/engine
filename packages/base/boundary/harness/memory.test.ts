@@ -126,6 +126,84 @@ test("the batched and per-call paths report the same world", async () => {
 	}
 });
 
+test("the velocity column is a view over Rust's memory, not a copy of it", async () => {
+	const { world, engine } = await load();
+	const slot = world.spawn(0, 0, 0);
+	assert.ok(world.setVelocity(slot, 1, 2, 3));
+
+	const view = world.velocities();
+	assert.equal(view.length, 3, "one slot, three floats");
+	assert.deepEqual(
+		Array.from(view),
+		[1, 2, 3],
+		"the per-call write is visible",
+	);
+
+	// And in the other direction: the batched write is what `tick` integrates,
+	// which is the whole reason the column is exported.
+	view[0] = 10;
+	view[1] = -20;
+	view[2] = 0;
+	world.tick(0.5);
+	assert.deepEqual(
+		Array.from(engine.position_of(slot) ?? []),
+		[5, -10, 0],
+		"a velocity written through the view did not reach the integrator",
+	);
+});
+
+test("the two columns cover the same slots and are indexed alike", async () => {
+	const { world } = await load();
+	populate(world, 16);
+
+	assert.equal(
+		world.velocities().length,
+		world.positions().length,
+		"a slot in one column and not the other reads another entity's velocity",
+	);
+	// `populate` spawns on a circle drifting outward, so slot 0 sits at x = 1
+	// and moves along +x. Same index into both columns.
+	assert.equal(world.positions()[0], 1);
+	assert.ok((world.velocities()[0] as number) > 0);
+});
+
+test("a velocity view is rebuilt after a spawn moves the column", async () => {
+	const { world, engine } = await load();
+	populate(world, 1);
+	const before = world.velocities();
+	const address = engine.velocities_ptr();
+
+	populate(world, MANY);
+
+	assert.notEqual(
+		engine.velocities_ptr(),
+		address,
+		`${MANY} spawns should have reallocated the column`,
+	);
+	const after = world.velocities();
+	assert.notEqual(after, before, "the view still points at the old address");
+	assert.equal(after.length, (MANY + 1) * 3);
+});
+
+test("a grown linear memory is noticed for the velocity column too", async () => {
+	const { world, memory } = await load();
+	populate(world, 4);
+	const before = world.velocities();
+	assert.equal(before.length, 12);
+	assert.equal(world.velocities(), before, "an unchanged column re-viewed");
+
+	memory.grow(1);
+
+	assert.equal(
+		before.byteLength,
+		0,
+		"growing memory should have detached the old buffer",
+	);
+	const after = world.velocities();
+	assert.notEqual(after, before, "the stale view was handed back");
+	assert.equal(after.length, 12, "the rebuilt view covers the same column");
+});
+
 test("the per-call path refuses a dead slot rather than reading a tombstone", async () => {
 	const { world, engine } = await load();
 	const slot = world.spawn(1, 2, 3);

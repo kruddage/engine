@@ -277,6 +277,14 @@ name = "krudd-math"
 version = "0.0.0"
 
 [[package]]
+name = "krudd-record"
+version = "0.0.0"
+dependencies = [
+ "krudd-gpu",
+ "krudd-render",
+]
+
+[[package]]
 name = "krudd-render"
 version = "0.0.0"
 dependencies = [
@@ -312,6 +320,9 @@ dependencies = [
 [[package]]
 name = "krudd-world"
 version = "0.0.0"
+dependencies = [
+ "krudd-math",
+]
 
 [[package]]
 name = "libc"

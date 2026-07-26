@@ -81,7 +81,8 @@ crates/
     asset/       krudd-asset   Asset decoding: bytes in, engine data out
   render/
     gpu/         krudd-gpu     Typed, generational GPU resource handles
-    renderer/    krudd-render  The Backend trait and the Frame it is handed
+    record/      krudd-record  A Commands recorder — the render test oracle
+    renderer/    krudd-render  The Backend and Commands traits, and the Frame it is handed
     webgl/       krudd-webgl   The WebGL2 backend, on wgpu
   shell/
     web/         krudd-web     The wasm module the browser loads
@@ -93,9 +94,10 @@ xtask/           xtask         The build driver — outside the tier order
 | `krudd-math` | `Vec2`, `Vec3`, `Mat4`. `#[repr(C)]` and column-major, because these are written into buffers that both the GPU and TypeScript read. | nothing |
 | `krudd-world` | The slot table: generational handles, tombstones, and the rule that columns are sized to `capacity()` rather than `len()`. Owns no component data — columns are separate `Vec`s. | `base` |
 | `krudd-asset` | The `Decode` trait, `DecodeError`, and `Reader` — the bounds-checked cursor every codec reads through, so the no-panic-on-hostile-input rule has one enforcement point. | `base` |
-| `krudd-gpu` | `Id<K>`: a typed, generational handle. A handle crosses a language boundary where a `WebGLTexture` cannot, and it can outlive its resource safely. | `base`, `world` |
-| `krudd-render` | `Viewport`, `Frame`, `Draw`, and the `Backend` trait — including the rule that `end_frame` is not `submit`. Holds no backend. | `base`, `world`, `render` |
-| `krudd-webgl` | The `Backend` implementation: wgpu with its WebGL2 backend and no WebGPU path at all, the pipeline slot table, and the per-draw uniform buffer. Takes a `wgpu::SurfaceTarget` rather than a canvas, so it compiles and tests on the host. | `base`, `world`, `render` |
+| `krudd-gpu` | `Id<K>`: a typed, generational handle, and `IndexFormat` beside it — a property of the index buffer resource, not of a frame. A handle crosses a language boundary where a `WebGLTexture` cannot, and it can outlive its resource safely. | `base`, `world` |
+| `krudd-render` | `Viewport`, `Frame`, `Draw`, the `Backend` trait — including the rule that `end_frame` is not `submit` — and, one level below it, the `Commands` trait: the individual GPU calls a pass issues. Holds no backend and no `Commands` implementation. | `base`, `world`, `render` |
+| `krudd-record` | `Recorder`: a `Commands` implementation that logs every call instead of touching a GPU, and `Call`, the assertion vocabulary a test reads the log through. The render test oracle [#826] — no GPU, no adapter, no flakiness. Not the frame graph: [#823] is what will drive one of these. | `base`, `world`, `render` |
+| `krudd-webgl` | The `Backend` implementation: wgpu with its WebGL2 backend and no WebGPU path at all, the pipeline slot table, and the per-draw uniform buffer. Takes a `wgpu::SurfaceTarget` rather than a canvas, so it compiles and tests on the host. Does not implement `Commands`. | `base`, `world`, `render` |
 | `krudd-web` | The `#[wasm_bindgen]` surface. **The only crate that knows wasm-bindgen exists**, which is what keeps every crate below it host-compilable and `cargo test` a real test run rather than a browser harness. | anything |
 | `xtask` | The build. Not in the tier order and depends on no engine crate — it builds them, it is not built with them. | nothing |
 
@@ -181,5 +183,7 @@ version" at runtime rather than an error at build time.
 See [`toolchain.md`](toolchain.md) for why each tool was chosen.
 
 [#812]: https://github.com/kruddage/engine/issues/812
+[#823]: https://github.com/kruddage/engine/issues/823
 [#824]: https://github.com/kruddage/engine/issues/824
+[#826]: https://github.com/kruddage/engine/issues/826
 [#845]: https://github.com/kruddage/engine/issues/845

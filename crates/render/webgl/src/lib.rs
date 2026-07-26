@@ -128,6 +128,22 @@ pub enum Error {
     Device(String),
 }
 
+impl Error {
+    /// Whether this is a frame worth skipping rather than a failure worth
+    /// reporting.
+    ///
+    /// A browser produces both of the transient cases routinely — a resize
+    /// between frames, a tab going to the background — and a page that put
+    /// either on screen as an error would cry wolf often enough that nobody
+    /// would read the ones that matter. Everything else is real: a caller that
+    /// treats an unknown pipeline or a device error as a skipped frame is back
+    /// to a blank canvas with no explanation, which is the failure mode #812
+    /// forbids.
+    pub fn is_transient(&self) -> bool {
+        matches!(self, Self::SurfaceOutdated | Self::SurfaceUnavailable(_))
+    }
+}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -763,6 +779,19 @@ mod tests {
             .to_string()
             .contains("800x600")
         );
+    }
+
+    #[test]
+    fn only_the_surface_errors_are_worth_skipping_a_frame_over() {
+        assert!(Error::SurfaceOutdated.is_transient());
+        assert!(Error::SurfaceUnavailable("timed out").is_transient());
+
+        // These have to reach the page. A silent retry loop over a validation
+        // error is a blank canvas that reports nothing wrong.
+        assert!(!Error::Device("validation".to_string()).is_transient());
+        assert!(!Error::UnknownPipeline(PipelineId::new(0, 0)).is_transient());
+        assert!(!Error::OffscreenTarget.is_transient());
+        assert!(!Error::FrameStillOpen.is_transient());
     }
 
     #[test]

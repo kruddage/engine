@@ -39,6 +39,10 @@ krudd-gpu = { path = "crates/render/gpu" }
 krudd-render = { path = "crates/render/renderer" }
 krudd-webgl = { path = "crates/render/webgl" }
 wasm-bindgen = "0.2"
+# Required by `#[wasm_bindgen]` on an async fn: the generated glue turns the
+# future into a JavaScript promise through it.
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["HtmlCanvasElement"] }
 wgpu = { version = "30", default-features = false, features = [
 	"std",
 	"wgsl",

@@ -288,10 +288,15 @@ dependencies = [
 name = "krudd-web"
 version = "0.0.0"
 dependencies = [
+ "krudd-gpu",
  "krudd-math",
  "krudd-render",
+ "krudd-webgl",
  "krudd-world",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "wgpu",
 ]
 
 [[package]]

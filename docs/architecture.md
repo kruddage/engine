@@ -116,8 +116,8 @@ packages/
     board/       @krudd/board       The board document: what a project is, as data
       harness/                        node:test over the fixture and the validator
   shell/
-    web/         @krudd/shell-web   The browser page
-      harness/                        the screenshot-and-compare driver, over the DevTools Protocol
+    web/         @krudd/shell-web   The browser page, and the mode shell it composites
+      harness/                        node:test over the mode track, and the screenshot-and-compare driver
 ```
 
 | Package | Exports | May be imported by |

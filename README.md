@@ -4,8 +4,8 @@
 [![CI](https://github.com/kruddage/engine/actions/workflows/ci.yml/badge.svg)](https://github.com/kruddage/engine/actions/workflows/ci.yml)
 
 A game engine written in **Rust** and **TypeScript**, compiled to WebAssembly
-and served as a static site. Web first, WebGL2 first, with native Windows and
-Linux to follow via Tauri 2.
+and served as a static site. Web only, WebGL2 first — there is no native
+build and no desktop packaging.
 
 > **krudd 2 is a rewrite in progress.** The C and Scheme engine that used to
 > live here has been deleted, not strangled — see
@@ -16,9 +16,8 @@ Linux to follow via Tauri 2.
 > [#818](https://github.com/kruddage/engine/issues/818),
 > [#819](https://github.com/kruddage/engine/issues/819) and
 > [#820](https://github.com/kruddage/engine/issues/820), which puts the live
-> demo back up. The Flatpak is still dark until the Tauri shell replaces it
-> ([#821](https://github.com/kruddage/engine/issues/821)). That window is the
-> accepted cost of delete-and-replace, not a regression.
+> demo back up. The desktop targets the old tree shipped are not coming back
+> with it — see [#845](https://github.com/kruddage/engine/issues/845).
 
 ## The shape of it
 
@@ -31,8 +30,7 @@ Rust owns the hot path; TypeScript owns everything else.
 | **Owns** | render graph, GPU resources, math, physics, asset decode, ECS storage | editor, gameplay, scene authoring, tooling |
 
 TypeScript is the GC half because the browser's collector is already there and
-already paid for — in the browser and in a Tauri webview alike, so the engine
-ships zero GC bytes of its own.
+already paid for, so the engine ships zero GC bytes of its own.
 
 The boundary between them is **batched, never per-object**: TypeScript reads
 typed-array views straight over wasm linear memory and calls into Rust once
@@ -101,7 +99,6 @@ packages/          The TypeScript half, same tier vocabulary
   shell/web/         The browser page
 xtask/             The build driver
 docs/              Architecture and toolchain decisions
-packaging/flatpak/ The old editor's Flatpak. Dark until #821 replaces it.
 ```
 
 A crate or package may depend on its own tier or a lower one, never a higher
@@ -122,16 +119,10 @@ violation fails the build, not review.
 publish; a failed preview does not hold up an auto-merge.
 
 Both publish to the **`gh-pages` branch**, not through the Pages "GitHub
-Actions" source, and that is deliberate: a repository has one Pages source, and
-`flatpak-build` publishes the self-hosted Flatpak registry into
-`gh-pages/flatpak/`. One branch, several writers, serialised under a shared
-concurrency group. A preview build stamps its version `-pr<N>+<sha>`, so the
-version the page prints tells you which build you are looking at.
-
-`flatpak-build` is dispatch-only and cannot currently succeed — it packages the
-deleted C editor. It is kept rather than removed because
-[#821](https://github.com/kruddage/engine/issues/821) replaces its contents
-rather than the workflow.
+Actions" source, and that is deliberate: the site root and every open PR's
+preview directory share that one branch. Several writers, serialised under a
+shared concurrency group. A preview build stamps its version `-pr<N>+<sha>`, so
+the version the page prints tells you which build you are looking at.
 
 ## Versioning and releases
 

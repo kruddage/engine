@@ -15,10 +15,6 @@ name: CI
 # when the PR closes. Neither can fail the build.
 #
 # NOT covered, deliberately:
-#   * the Flatpak — #821. flatpak-build.yml is dispatch-only and cannot
-#     currently succeed; it packages the deleted C editor. It is the one
-#     workflow still naming the old tree, and #812's plan is that #821 fills it
-#     in rather than that the delete removes it.
 #   * sanitizers and gcov coverage — those gated the C build. Rust's own
 #     guarantees replace most of what ASan caught; a coverage report on the new
 #     tree is worth adding once there is enough of it to measure.
@@ -110,11 +106,10 @@ jobs:
   # Publishing.
   #
   # Both jobs below write to the `gh-pages` branch rather than using the Pages
-  # "GitHub Actions" source, and that is not a legacy detail. A repository has
-  # exactly one Pages source, and flatpak-build.yml publishes the self-hosted
-  # Flatpak registry into gh-pages/flatpak/ — the one a Steam Deck subscribes
-  # to. Switching the site to the Actions source would take that registry
-  # offline. So: one branch, several writers, serialised.
+  # "GitHub Actions" source, and that is not a legacy detail. The site root and
+  # every open PR's preview directory live side by side on that one branch, and
+  # the preview action is branch-based by construction. So: one branch, several
+  # writers, serialised.
   # ---------------------------------------------------------------------------
 
   deploy:
@@ -123,11 +118,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    # Every gh-pages writer shares this group name, flatpak-build.yml included,
-    # so a push to main never has two jobs pushing to the branch at once — a
-    # concurrent push is rejected non-fast-forward. `cancel-in-progress: false`
-    # because a half-finished deploy should be allowed to finish rather than be
-    # replaced mid-push.
+    # One serial group for site deploys, so two pushes to main in quick
+    # succession never have two jobs pushing to gh-pages at once — a concurrent
+    # push is rejected non-fast-forward. `cancel-in-progress: false` because a
+    # half-finished deploy should be allowed to finish rather than be replaced
+    # mid-push. A new writer of this branch joins this group.
     concurrency:
       group: gh-pages-deploy
       cancel-in-progress: false
@@ -167,9 +162,9 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./dist
           publish_branch: gh-pages
-          # Without this, publishing the site would delete gh-pages/flatpak/
-          # and every open PR's preview directory along with it — the action
-          # mirrors publish_dir by default. The cost is that a file we stop
+          # Without this, publishing the site would delete every open PR's
+          # preview directory along with it — the action mirrors publish_dir
+          # by default. The cost is that a file we stop
           # producing is never pruned from the site root; the three we do
           # produce have fixed names and are overwritten in place, so nothing
           # accumulates today.

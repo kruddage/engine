@@ -57,10 +57,9 @@ wasm interface layer.
 | **Format + lint** | Biome, recommended preset, defaults |
 | **Tests** | `node:test`, run over an esbuild bundle |
 
-**Why TypeScript at all** is [#812]'s call: the host JavaScript engine's
-collector is already present and already paid for, in the browser and in a
-Tauri webview alike, so the GC half of the engine ships zero GC bytes. Go via
-TinyGo was the alternative and was the weaker half — its wasip2 target
+**Why TypeScript at all** is [#812]'s call: the browser's collector is already
+present and already paid for, so the GC half of the engine ships zero GC bytes.
+Go via TinyGo was the alternative and was the weaker half — its wasip2 target
 hardwires the `wasi:cli/command` world, so the custom WIT worlds it would have
 been brought in for are not yet expressible.
 
@@ -140,9 +139,11 @@ it.
 
 ## What is deliberately absent
 
-- **WebGPU.** Deferred entirely ([#812]). WebKitGTK ships no `navigator.gpu`
-  and Tauri uses WebKitGTK on Linux, so WebGL2-first removes the risk instead
-  of maintaining a fallback. Whether that is still true is [#822].
+- **WebGPU.** Deferred entirely ([#812]). The original reason was that a
+  desktop webview would have had to run on WebKitGTK, which ships no
+  `navigator.gpu`; dropping the desktop targets ([#845]) takes that reason
+  away, and what is left is that one backend is cheaper than two until there
+  is a frame WebGL2 cannot draw. [#822] revisits it.
 - **A test runner for TypeScript.** `node:test` is the runner, and it is not
   a dependency — see above. Vitest and friends buy watch mode, mocking and a
   browser environment; nothing here wants the first two, and the third is a
@@ -150,13 +151,16 @@ it.
 - **A benchmark library.** `cargo xtask bench` times two loops with
   `performance.now()` and prints a table. A statistical harness would be worth
   it for a 5% regression; the thing being measured here is a 36× cliff.
-- **A native build.** Tauri hosts the same web build; there is no separate
-  native render path ([#821]).
+- **A native build, and desktop packaging with it.** No Windows target, no
+  Linux target, no Flatpak — the engine is the static site and nothing else
+  ([#845]). The tier table keeps a `shell` slot, so a second host is a crate
+  away if that changes; what is gone is the toolchain, the packaging manifest
+  and the CI that carried them while nothing shipped through them.
 
 [#812]: https://github.com/kruddage/engine/issues/812
 [#818]: https://github.com/kruddage/engine/issues/818
 [#819]: https://github.com/kruddage/engine/issues/819
 [#820]: https://github.com/kruddage/engine/issues/820
-[#821]: https://github.com/kruddage/engine/issues/821
 [#822]: https://github.com/kruddage/engine/issues/822
 [#830]: https://github.com/kruddage/engine/issues/830
+[#845]: https://github.com/kruddage/engine/issues/845

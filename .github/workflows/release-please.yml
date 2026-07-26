@@ -37,10 +37,9 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-      # NOTE: release-please used to dispatch flatpak-build.yml at the tag it
-      # had just cut, because a GITHUB_TOKEN-authored Release starts no
-      # workflow run of its own (#790). That dispatch is gone: #814 deleted the
-      # C editor the Flatpak packages, so the build cannot succeed and
-      # dispatching it would turn every release red. #821 rebuilds the
-      # packaging on Tauri 2 and puts the dispatch back — the recursion rule it
-      # worked around has not changed.
+      # NOTE: nothing is dispatched after a release. There is no packaging step
+      # left to kick off — the engine ships as the static site ci.yml deploys,
+      # and a tag is a marker on that. Worth knowing if one ever comes back: a
+      # GITHUB_TOKEN-authored Release starts no workflow run of its own (#790),
+      # so it would need an explicit dispatch from here rather than a `release`
+      # trigger of its own.

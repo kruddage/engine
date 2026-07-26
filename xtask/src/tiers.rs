@@ -12,8 +12,8 @@
 //! - **No upward dependency.** `base` cannot reach for `world`; `world`
 //!   cannot reach for `render`.
 //! - **Nothing reaches for a shell.** Stronger than the tier rule, because it
-//!   also forbids one shell depending on another: the web shell and the Tauri
-//!   shell are alternative hosts, not a layer.
+//!   also forbids one shell depending on another: two shells would be
+//!   alternative hosts, not a layer.
 //! - **On-disk layout matches the order**, so the ordering reads without
 //!   consulting a list, and every crate/package on disk is a declared
 //!   workspace member — a crate the workspace does not know about is neither

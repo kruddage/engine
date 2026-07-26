@@ -18,9 +18,8 @@ fails the build on a violation — see [The tier check](#the-tier-check).
 | **Built by** | `cargo`, driven by `cargo xtask` | `esbuild`, driven by `cargo xtask` |
 
 TypeScript is the GC half because the browser's collector is already present
-and already paid for, in the browser and in a Tauri webview alike — zero GC
-bytes shipped. It relocates GC pauses rather than removing them, which is the
-same deal Unity and Godot live with.
+and already paid for — zero GC bytes shipped. It relocates GC pauses rather
+than removing them, which is the same deal Unity and Godot live with.
 
 ### The boundary is batched, never per-object
 
@@ -57,7 +56,7 @@ higher one.**
 | 4 | `audio` | The mixer and its device backends. *(empty)* |
 | 5 | `ui` | Editor chrome. HTML, per [#812] — the editor GUI is not the engine's business to draw. *(empty)* |
 | 6 | `game` | Game code and the launcher registry. *(empty)* |
-| 7 | `shell` | The hosts the engine runs inside. **Last on purpose: a shell may reach for anything, and nothing may reach for a shell** — not even another shell, since the web page and the Tauri window ([#821]) are alternative hosts rather than a layer. |
+| 7 | `shell` | The hosts the engine runs inside — today that is the browser page and nothing else. **Last on purpose: a shell may reach for anything, and nothing may reach for a shell** — not even another shell, since two shells would be alternative hosts rather than a layer. |
 
 The empty tiers are listed anyway. The old tree's mistake was that the
 ordering lived in people's heads until someone finally wrote it down; naming
@@ -180,5 +179,4 @@ version" at runtime rather than an error at build time.
 See [`toolchain.md`](toolchain.md) for why each tool was chosen.
 
 [#812]: https://github.com/kruddage/engine/issues/812
-[#821]: https://github.com/kruddage/engine/issues/821
 [#824]: https://github.com/kruddage/engine/issues/824

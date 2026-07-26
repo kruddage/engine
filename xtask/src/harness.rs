@@ -29,11 +29,12 @@ use crate::web;
 /// The `node:test` suites — one entry per contract, each bundled separately
 /// because esbuild bundles an entry point and `node --test` runs files.
 ///
-/// Not every suite here needs the wasm. The board document is plain
-/// TypeScript and would run under `node --experimental-strip-types` on its
-/// own; it is listed with the rest because one command that runs every
-/// TypeScript test is worth more than a second command nobody remembers.
-const TEST_ENTRIES: [(&str, &str); 5] = [
+/// Most of them do not need the wasm at all — the board document, the
+/// interpreter and the mode track are plain TypeScript and would each run
+/// under `node --experimental-strip-types` on its own. They are listed with
+/// the rest because one command that runs every TypeScript test is worth more
+/// than a second command nobody remembers.
+const TEST_ENTRIES: [(&str, &str); 6] = [
     (
         "packages/base/boundary/harness/memory.test.ts",
         "memory.test",
@@ -51,6 +52,7 @@ const TEST_ENTRIES: [(&str, &str); 5] = [
         "validate.test",
     ),
     ("packages/world/board/harness/run.test.ts", "run.test"),
+    ("packages/shell/web/harness/track.test.ts", "track.test"),
 ];
 
 /// The batched-versus-per-call benchmark.

@@ -94,10 +94,55 @@ const VIEWPORT = { width: 400, height: 300 };
  */
 const HIDE_STATUS_EXPRESSION = `
 	(() => {
-		const status = document.getElementById("status");
-		if (status !== null) {
-			status.style.display = "none";
+		for (const id of ["status", "modes"]) {
+			const element = document.getElementById(id);
+			if (element !== null) {
+				element.style.display = "none";
+			}
 		}
+	})();
+`;
+
+/**
+ * Swipes to the board and back, twice, and reports whether the canvas came
+ * through it.
+ *
+ * The one thing about the mode shell that a unit test cannot prove:
+ * `boot()` takes the canvas for the life of the engine, and a second boot
+ * against the same canvas fails because the WebGL2 context is already taken.
+ * A shell that unmounted the viewport would therefore work perfectly once and
+ * kill the engine on the second swipe — and the failure looks like a blank
+ * canvas, which is exactly the "rendered nothing" this harness exists to
+ * refuse.
+ *
+ * So it compares element identity across the round trip and leaves the page
+ * back in game mode. The screenshot that follows is the other half of the
+ * proof: the canvas is not merely still there, it is still drawing. Driven
+ * through the rail's own buttons rather than a page-side test hook, because a
+ * hook is a second code path that can pass while the real one is broken.
+ */
+const MODE_ROUND_TRIP_EXPRESSION = `
+	(() => {
+		const before = document.getElementById("viewport");
+		const press = (mode) => {
+			const button = document.querySelector(
+				'#modes button[data-mode="' + mode + '"]',
+			);
+			if (button === null) {
+				throw new Error("the page has no " + mode + " button");
+			}
+			button.click();
+		};
+		for (let i = 0; i < 2; i++) {
+			press("board");
+			press("game");
+		}
+		const after = document.getElementById("viewport");
+		return {
+			same: before === after && after !== null,
+			connected: after !== null && after.isConnected,
+			mode: document.body.dataset.mode,
+		};
 	})();
 `;
 
@@ -185,6 +230,15 @@ async function run(browser: Browser, baseUrl: string): Promise<void> {
 		deviceScaleFactor: 1,
 		mobile: false,
 	});
+	// The mode shell slides the board pane in and out over 220ms of *real*
+	// time, which the virtual clock below does not touch. Asking for reduced
+	// motion turns the transition off at the source, so a mode switch has
+	// finished by the time anything is captured — rather than adding a
+	// test-only hook to the page, or waiting out a duration this harness
+	// would then have to keep in step with the stylesheet.
+	await cdp.send("Emulation.setEmulatedMedia", {
+		features: [{ name: "prefers-reduced-motion", value: "reduce" }],
+	});
 	// Registered before the real navigation below, so the demo's very first
 	// `performance.now()` call and its very first `requestAnimationFrame`
 	// already see the virtual clock rather than a real one.
@@ -194,6 +248,25 @@ async function run(browser: Browser, baseUrl: string): Promise<void> {
 	await cdp.send("Page.navigate", { url: baseUrl });
 
 	await waitForBoot(cdp, pageErrors);
+
+	// Before the frames are stepped, so that everything after this point is
+	// running on a canvas that has already survived four mode switches.
+	const trip = await evaluate<{
+		same: boolean;
+		connected: boolean;
+		mode: string;
+	}>(cdp, MODE_ROUND_TRIP_EXPRESSION, true);
+	if (trip.same !== true || trip.connected !== true || trip.mode !== "game") {
+		fail([
+			"the canvas did not survive swiping between modes:",
+			`  same element: ${trip.same}`,
+			`  still in the page: ${trip.connected}`,
+			`  mode after the round trip: ${trip.mode}`,
+			"the WebGL2 context is taken for the life of the engine — a shell that",
+			"unmounts the viewport works once and kills the engine on the next swipe",
+		]);
+		return;
+	}
 
 	await evaluate(
 		cdp,

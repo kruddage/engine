@@ -2,6 +2,7 @@
 #ifndef WORLD_H
 #define WORLD_H
 
+#include "math_types.h"
 #include "scene.h"
 
 #include <stdint.h>
@@ -73,12 +74,6 @@
  * since these feed a CPU texture generator, not a GPU uniform block.
  */
 #define WORLD_TEXTURE_PARAM_CAP 64
-
-struct transform {
-	float position[3];
-	float rotation[4];   /* quaternion, xyzw */
-	float scale[3];
-};
 
 struct world {
 	uint32_t         count;       /* high-water mark, not the live count */

@@ -7,7 +7,7 @@
    (sources "scene_renderer.c")
    (private "." (raw "${generated}") (root "render/frame_graph")
             (root "render/particles")
-            (root "core/include") (root "abi") (root "world/asset")
+            (root "core/include") (root "abi") (root "base/math/include") (root "world/asset")
             (raw "../third_party"))
    (link "math" "mesh_script" "texture_script" "frame_graph" "particles"
          "log" "memory" "subsystem" "subsystem_manager" "script"
@@ -24,7 +24,7 @@
                        (root "render/frame_graph") (root "world/asset")
                        (root "render/particles")
                        (root "core/include")
-                       (root "abi") (raw "../third_party"))
+                       (root "abi") (root "base/math/include") (raw "../third_party"))
               (link "mesh_script" "texture_script" "frame_graph" "renderer_null"
                     "log" "memory" "subsystem_manager" "script" "m"))
   (test "scene_renderer" "scene_renderer_test")))

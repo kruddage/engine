@@ -28,7 +28,16 @@ struct mat4 {
 	float m[16];
 };
 
-struct transform; /* full definition in world.h */
+/*
+ * A spatial TRS transform. Pure geometry — no engine concepts — so it
+ * lives with the other math types rather than in the world data model,
+ * which is what lets base/ stay below world/ in the module order.
+ */
+struct transform {
+	float position[3];
+	float rotation[4];   /* quaternion, xyzw */
+	float scale[3];
+};
 
 void mat4_identity(struct mat4 *out);
 

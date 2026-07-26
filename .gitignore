@@ -7,13 +7,16 @@ public/
 
 # s7 artifacts fetched from the kruddage/s7 release by
 # krudd/third_party/sync.sh (see krudd/third_party/VENDOR.md) — pinned in
-# s7.artifact and checksum-verified, not committed.
+# s7.artifact and checksum-verified, not committed. The .sha256 sidecars are
+# cached beside them so an offline run (KRUDD_S7_OFFLINE=1) still has an
+# integrity anchor to verify against.
 /krudd/third_party/s7.h
 /krudd/third_party/libs7-linux-x86_64.a
 /krudd/third_party/libs7-wasm32.a
 /krudd/third_party/krudds7-linux-x86_64
 /krudd/third_party/libs7-windows-x86_64.a
 /krudd/third_party/krudds7-windows-x86_64.exe
+/krudd/third_party/*.sha256
 
 # local env written by setup.sh (machine-specific paths)
 .krudd-env

@@ -30,9 +30,17 @@ modules:
       # lookup, which pkg-config does not report. org.kde.Sdk ships the private
       # headers under <includedir>/QtGui/<ver>; derive that from pkg-config so
       # this keeps working across runtime-version bumps.
+      #
+      # KRUDD_S7_OFFLINE=1 because flatpak-builder runs module builds in a
+      # sandbox with networking off: krudd/third_party/sync.sh would otherwise
+      # try to fetch the s7 artifacts from github.com here and fail the build
+      # on an unresolvable host. The artifacts are fetched before the sandbox
+      # starts (the workflow's pre-fetch step, or any earlier local build) and
+      # copied in with the source below; offline mode verifies them against
+      # their cached .sha256 sidecars instead of re-downloading.
       - >-
         cd krudd-src &&
-        KRUDD_VULKAN=1 KRUDD_QT=1 KRUDD_GENERATE_ONLY=1
+        KRUDD_VULKAN=1 KRUDD_QT=1 KRUDD_GENERATE_ONLY=1 KRUDD_S7_OFFLINE=1
         KRUDD_QT_CFLAGS="$(pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core)
         -I$(pkg-config --variable=includedir Qt6Gui)/QtGui/$(pkg-config --modversion Qt6Gui)"
         KRUDD_QT_LIBS="$(pkg-config --libs Qt6Widgets Qt6Gui Qt6Core)"
@@ -45,7 +53,18 @@ modules:
       # Plasma Discover (the SteamOS Desktop store) won't list or tile the app,
       # even from a configured remote. The icon is the engine's existing PWA
       # icon, reused straight from source — no duplicate binary in packaging/.
-      - install -Dm644 krudd-src/packaging/flatpak/io.github.kruddage.Editor.metainfo.xml
+      #
+      # The metainfo's <release> is a template: its version comes from
+      # version.txt (the same release-please-maintained line the editor's own
+      # version badge reads) and its date from the build, so the version
+      # Discover shows tracks what was actually packaged instead of drifting
+      # behind a number hand-edited into the XML.
+      - >-
+        sed -e "s/@VERSION@/$(cat krudd-src/version.txt)/g"
+        -e "s/@DATE@/$(date -u +%Y-%m-%d)/g"
+        krudd-src/packaging/flatpak/io.github.kruddage.Editor.metainfo.xml
+        > io.github.kruddage.Editor.metainfo.xml
+      - install -Dm644 io.github.kruddage.Editor.metainfo.xml
         /app/share/metainfo/io.github.kruddage.Editor.metainfo.xml
       - install -Dm644 krudd-src/krudd/engine/core/icon-512.png
         /app/share/icons/hicolor/512x512/apps/io.github.kruddage.Editor.png

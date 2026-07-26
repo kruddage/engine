@@ -25,6 +25,9 @@ separately in #667/#675/#676 and isn't gated on this.
   to list and tile the app; without it a configured remote installs only from
   the command line. Installed to `/app/share/metainfo/` by the manifest, which
   also installs a `512x512` icon named for the app id so the tile isn't blank.
+  Its `<release>` version/date are placeholders substituted at build time from
+  `version.txt`, so the version Discover shows is the version that was
+  packaged — never hand-edit a number into it.
 
 ## Installing from the published registry
 
@@ -37,10 +40,21 @@ flatpak run io.github.kruddage.Editor
 Updates land the normal Flatpak way — `flatpak update` — whenever a signed
 build is published. That happens automatically on every engine **release**:
 release-please cuts a version tag/GitHub Release (see
-`.github/workflows/release-please.yml`), which triggers `flatpak-build.yml` to
-rebuild and re-sign the registry from that tag. A push to `main` that changes
-the packaging files themselves also republishes, and the workflow can be run
-manually (`workflow_dispatch`) at any time.
+`.github/workflows/release-please.yml`) and then dispatches `flatpak-build.yml`
+**at that tag**, which rebuilds and re-signs the registry from exactly the
+released source. A push to `main` that changes the packaging files themselves
+also republishes, and the workflow can be run manually (`workflow_dispatch`) at
+any time — dispatch it at a `vX.Y.Z` tag to re-publish that release.
+
+Why the explicit dispatch rather than just triggering on the `release` event:
+release-please creates the Release with `GITHUB_TOKEN`, and Actions does not
+start workflow runs from `GITHUB_TOKEN`-authored events. The `release` trigger
+is still declared (it works if release-please is ever moved to a PAT or App
+token), but it fires nothing today — which is exactly how the published
+registry silently froze at 18.3.1 while `main` ran on to 18.8.2
+([#790](https://github.com/kruddage/engine/issues/790)). `workflow_dispatch` is
+one of the two documented exceptions to that recursion rule, so dispatching is
+what actually starts the build.
 
 ## On a Steam Deck (Discover)
 
@@ -85,10 +99,18 @@ build to anyone's registry.
 ## Building it locally
 
 You only need `flatpak` and `flatpak-builder` — Qt6 and the Vulkan loader both
-come from `org.kde.Sdk` inside the sandbox, so there is no local toolchain or
-prebuilt library to stage first:
+come from `org.kde.Sdk` inside the sandbox, so there is no local toolchain to
+install first. One thing *does* have to be staged: `flatpak-builder` runs the
+module build in a sandbox with **no network**, so the prebuilt s7 artifacts the
+engine links (`krudd/third_party/sync.sh`) must already be in the working tree
+before you start — otherwise the build dies on `Could not resolve host:
+github.com`. Any previous `./krudd.sh build` will have fetched them; from a
+fresh checkout, fetch them directly:
 
 ```sh
+# once per checkout — populates krudd/third_party/ (+ .sha256 sidecars)
+root="$PWD" ./krudd/third_party/sync.sh
+
 flatpak remote-add --if-not-exists --user flathub \
   https://flathub.org/repo/flathub.flatpakrepo
 flatpak-builder --user --force-clean --install-deps-from=flathub \

@@ -11,10 +11,12 @@ on:
     branches: [main]
 
 # Needed to open the release PR and, on merge, push the tag + create the
-# release. GITHUB_TOKEN is sufficient for both.
+# release. GITHUB_TOKEN is sufficient for both. `actions: write` is for the
+# flatpak-build dispatch in the last step below.
 permissions:
   contents: write
   pull-requests: write
+  actions: write
 
 # One release PR at a time; let an in-flight run finish rather than racing.
 concurrency:
@@ -31,7 +33,33 @@ jobs:
       # which need no build. If we later want CI to run on the release PR,
       # swap `token` for a PAT or GitHub App token.
       - uses: googleapis/release-please-action@v5
+        id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      # Same recursion rule as the NOTE above, with teeth: the GitHub Release
+      # this action just cut is also authored by GITHUB_TOKEN, so it starts no
+      # workflow run either — flatpak-build.yml's `release` trigger never fires
+      # and the self-hosted Flatpak registry silently stops tracking releases
+      # (it sat at 18.3.1 while main was at 18.8.2, see #790).
+      #
+      # workflow_dispatch is one of the two documented exceptions to that rule,
+      # so dispatching the build here does start it. The ref is the new tag, so
+      # the Flatpak is packaged from exactly the released source.
+      - name: Rebuild and publish the Flatpak registry for the new tag
+        if: steps.release.outputs.releases_created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # In manifest mode the per-path outputs are prefixed; the unprefixed
+          # ones are only set when a single package released. This repo has
+          # exactly one ("." — see release-please-config.json), so tag_name is
+          # what we get, with the prefixed form as a belt-and-braces fallback.
+          TAG: ${{ steps.release.outputs.tag_name || steps.release.outputs['.--tag_name'] }}
+        run: |
+          if [ -z "$TAG" ]; then
+            echo "release-please reported a release but no tag name to build" >&2
+            exit 1
+          fi
+          gh workflow run flatpak-build.yml --ref "$TAG"

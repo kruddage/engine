@@ -290,9 +290,13 @@ jobs:
   # moves. The web build (WebGL + WebGPU) is covered by the `build` job above and
   # is untouched by this one — Vulkan is native only.
   #
-  # Qt >= 6.5 is required: krudd_qt.cpp reaches a QWindow's wl_surface through
-  # QNativeInterface::QWaylandWindow, added in Qt 6.5, and #errors on older Qt
-  # (see krudd_qt.cpp and docs/qt-editor-shell.md). ubuntu-latest ships Qt 6.4,
+  # Qt >= 6.5 is required: krudd_qt.cpp reaches the Wayland wl_display through
+  # QNativeInterface::QWaylandApplication, which became public in Qt 6.5. (The
+  # per-window wl_surface has no public API in any Qt 6 release, so that one
+  # comes from the QPA native-resource lookup — see krudd_qt.cpp's SURFACE
+  # CREATION note.) The Wayland branch itself is guarded by
+  # QT_FEATURE_wayland_client (#758), so a Qt without it still compiles.
+  # ubuntu-latest ships Qt 6.4,
   # so the Qt here comes from install-qt-action rather than apt; the Vulkan
   # loader, headers, validation layers and glslang are ordinary apt packages.
   editor-linux:

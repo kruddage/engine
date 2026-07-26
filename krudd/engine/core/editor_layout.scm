@@ -4,12 +4,19 @@
 ;;! #706).
 ;;!
 ;;! (editor-layout) evaluates to one data tree describing the whole editor
-;;! shell: its menu bar, toolbar, docks and status-bar fields. The native Qt
-;;! host (core/krudd_qt.cpp) walks this tree — through the s7 reader in
-;;! core/editor_layout.c — and emits the equivalent Qt widgets, so there are no
-;;! hard-coded menu/dock/toolbar literals left in the C++. This spec is the
-;;! single source of the shell's structure; a later slice (#706 parts B/C) feeds
-;;! the same tree to a Qt-free HTML/JS web editor.
+;;! shell: its menu bar, toolbar, docks and status-bar fields. Two hosts read
+;;! it, and neither hard-codes a menu, dock, toolbar or status literal:
+;;!   - the native Qt editor, through the s7 reader in shell/qt/editor_layout.c,
+;;!     which walks the tree into a C struct shell/qt/krudd_qt.cpp emits Qt
+;;!     widgets from;
+;;!   - the Qt-free browser editor, through core/script.c's script_layout_json,
+;;!     which serializes the same tree to JSON for shell/web/shell.html.in's
+;;!     kruddBuildEditor to build DOM from.
+;;! This spec is the single source of the shell's structure: a menu or dock
+;;! added here reaches both hosts with no host-specific edit. That is the whole
+;;! point of #706, and the reason the spec lives in core/ rather than beside
+;;! either shell — `script` is a library every module may link, so it may not
+;;! reach into a shell for its own generated header.
 ;;!
 ;;! The tree is a list of tagged sections. editor_layout.c is the reader, so its
 ;;! shape and this doc move together:
@@ -18,10 +25,13 @@
 ;;!       ITEM is one of
 ;;!         (action LABEL SHORTCUT ACTION-ID)  a menu entry. SHORTCUT is a
 ;;!             standard-key symbol (new open save save-as quit undo redo cut
-;;!             copy paste) or `none`. ACTION-ID is an opaque string the host
-;;!             maps to behavior — open-project / quit / reset-layout / about are
-;;!             wired; every other id falls through to the "coming soon" status
-;;!             hint (its label is derived from LABEL).
+;;!             copy paste) or `none`. ACTION-ID is an opaque string, and which
+;;!             ids a host has wired is that host's business, not the spec's —
+;;!             an id a host does not recognize falls through to its "coming
+;;!             soon" hint, with the label derived from LABEL. The two hosts do
+;;!             not agree today: the Qt shell wires open-project, quit, about
+;;!             and reset-layout, the web shell only reset-layout and the dock
+;;!             toggles. Converging them is #802, not a change to this spec.
 ;;!         (separator)                        a menu divider.
 ;;!         (dock-toggles)                     expands to one show/hide toggle
 ;;!             per dock below, in declaration order — the View menu's body.

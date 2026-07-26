@@ -351,7 +351,7 @@ const char *script_json(s7_pointer value)
 /*
  * Evaluate the embedded editor layout spec and serialize (editor-layout) to
  * JSON for the web chrome to consume — the s7->JS half of #706 the native
- * reader (core/editor_layout.c) is the C-struct half of. Starts the interpreter
+ * reader (shell/qt/editor_layout.c) is the C-struct half of. Starts the interpreter
  * on demand, exactly as editor_layout_load does, so no prior script_init() is
  * required. Returns NULL if the interpreter is down, the spec did not define
  * editor-layout, the tree is not a list, or the JSON overflows script_json's

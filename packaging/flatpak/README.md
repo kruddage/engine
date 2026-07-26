@@ -10,8 +10,8 @@ separately in #667/#675/#676 and isn't gated on this.
 ## What's here
 
 - `io.github.kruddage.Editor.yml` — the `flatpak-builder` manifest for the Qt
-  editor shell (`krudd editor-qt`, see
-  [`docs/qt-editor-shell.md`](../../docs/qt-editor-shell.md)). Builds
+  editor shell (`krudd editor-qt`, see the "Build from source" section of the
+  [root README](../../README.md#build-from-source)). Builds
   `krudd_qt` **entirely inside the sandbox**, against `org.kde.Sdk`'s own Qt6
   and Vulkan loader/headers — nothing is vendored (the native GPU path is
   Vulkan, an ordinary SDK dependency, not a prebuilt library).
@@ -123,7 +123,10 @@ flatpak build-bundle packaging/flatpak/export-repo krudd-editor.flatpak io.githu
 
 ## Known caveat
 
-`editor-qt` still renders an animated clear colour, not a real scene
-(`docs/qt-editor-shell.md`) — a signed, published build today installs and
+`editor-qt` still renders an animated clear colour, not a real scene — the
+Vulkan backend presents, but does not yet translate the renderer's draw stream
+(see the `SCOPE` note atop
+[`renderer_vulkan.c`](../../krudd/engine/render/vulkan/renderer_vulkan.c)). A
+signed, published build today installs and
 runs, but shows a color-cycling window. That's tracked separately
 (#667/#675/#676), not blocked on anything here.

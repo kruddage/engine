@@ -68,7 +68,9 @@ const TRIANGLE_SCALE: f32 = 0.35;
 /// The engine's viewport comes from `canvas.width`/`height`, the canvas's
 /// *drawing buffer* size in physical pixels — not its CSS size. The page is
 /// responsible for setting them from `devicePixelRatio`, because the page is
-/// the half that can read it.
+/// the half that can read it, and for putting them through
+/// [`fit_drawing_buffer`] first, because a drawing buffer past the WebGL2
+/// limit is a validation error rather than a clamp.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub async fn start(canvas: web_sys::HtmlCanvasElement) -> Result<Engine, JsValue> {
@@ -78,6 +80,29 @@ pub async fn start(canvas: web_sys::HtmlCanvasElement) -> Result<Engine, JsValue
         .await
         .map_err(|why| JsValue::from_str(&why.to_string()))?;
     Ok(engine)
+}
+
+/// The largest drawing buffer the renderer can present, given a requested one:
+/// `[width, height]` in physical pixels.
+///
+/// A canvas at `devicePixelRatio` on a portrait phone is routinely taller than
+/// the 2048 the WebGL2 backend configures a surface within
+/// ([`krudd_webgl::MAX_SURFACE_EXTENT`]), and asking for more is a validation
+/// error that takes the page down rather than a clamp that costs resolution.
+/// So the page scales the buffer down to fit, keeping the aspect — an
+/// independently clamped side would be stretched back over the canvas's CSS
+/// box and read as a squashed image.
+///
+/// Exported because the page has to size the drawing buffer before [`start`]
+/// has a device to ask, and because the arithmetic must be *the same*
+/// arithmetic on both sides: a page that fitted to a slightly different size
+/// than the renderer would set the buffer, have wgpu set it back, and do it
+/// again on every resize event. `fitCanvas` in `@krudd/boundary` is the one
+/// caller.
+#[wasm_bindgen]
+pub fn fit_drawing_buffer(width: u32, height: u32) -> Box<[u32]> {
+    let fitted = Viewport::new(width, height).fit_within(krudd_webgl::MAX_SURFACE_EXTENT);
+    Box::new([fitted.width, fitted.height])
 }
 
 /// The engine version, from `version.txt` by way of the build.
@@ -129,7 +154,7 @@ impl Default for Engine {
 #[wasm_bindgen]
 impl Engine {
     /// An engine with no renderer, at a viewport of the given size in physical
-    /// pixels.
+    /// pixels, fitted within what the renderer will be able to present.
     ///
     /// It ticks, spawns and hands out its columns; it cannot draw. [`start`] is
     /// what attaches a canvas, and the page always goes through that — this is
@@ -141,7 +166,7 @@ impl Engine {
             store: Store::new(),
             positions: Vec::new(),
             velocities: Vec::new(),
-            viewport: Viewport::new(width, height),
+            viewport: Viewport::new(width, height).fit_within(krudd_webgl::MAX_SURFACE_EXTENT),
             frame_count: 0,
             elapsed: 0.0,
             renderer: None,
@@ -268,8 +293,14 @@ impl Engine {
     }
 
     /// Tells the engine the canvas changed size, in physical pixels.
+    ///
+    /// Fitted within what the renderer can present, for the same reason
+    /// [`fit_drawing_buffer`] exists — and it has to happen here as well as on
+    /// the page, because this viewport is what the frame is submitted at and a
+    /// frame that disagrees with the surface is refused outright.
+    /// [`Engine::width`] and [`Engine::height`] report what it settled on.
     pub fn resize(&mut self, width: u32, height: u32) {
-        self.viewport = Viewport::new(width, height);
+        self.viewport = Viewport::new(width, height).fit_within(self.max_extent());
     }
 
     /// The current viewport width in physical pixels.
@@ -338,12 +369,30 @@ impl Engine {
         target: wgpu::SurfaceTarget<'static>,
     ) -> Result<(), krudd_webgl::Error> {
         let mut renderer = Renderer::new(target, self.viewport).await?;
+        // The surface is the authority on its own size: it fits the viewport
+        // within what the device can present, and on the web wgpu sizes the
+        // canvas's drawing buffer from the configuration it settled on. Adopting
+        // it here rather than asserting the two agree is what keeps the frame,
+        // the camera's aspect and the canvas describing one size.
+        self.viewport = renderer.viewport();
         // Compiled once, off-frame, against the device — pipelines outlive the
         // frame and must never be created through a lent frame context. See
         // krudd-webgl's module docs.
         self.triangle = Some(renderer.create_triangle_pipeline());
         self.renderer = Some(renderer);
         Ok(())
+    }
+
+    /// The largest either dimension of the viewport may be.
+    ///
+    /// The attached renderer's device limit, or — before there is one — the
+    /// limit the device request will pin it to. The two agree; asking the
+    /// renderer once it exists means a device that somehow reported less could
+    /// not leave the engine submitting frames at a size its surface refused.
+    fn max_extent(&self) -> u32 {
+        self.renderer
+            .as_ref()
+            .map_or(krudd_webgl::MAX_SURFACE_EXTENT, Renderer::max_extent)
     }
 
     /// [`Engine::render`] without the `JsValue`.
@@ -588,6 +637,36 @@ mod tests {
         let mut e = Engine::new(800, 600);
         e.resize(0, 0);
         assert_eq!((e.width(), e.height()), (1, 1));
+    }
+
+    #[test]
+    fn a_viewport_past_the_webgl2_limit_is_fitted_rather_than_configured() {
+        // A 1080x2256 portrait phone at its device pixel ratio. Configuring a
+        // surface that tall is a validation error — "must be within the maximum
+        // supported texture size" — which took the page down on every Android
+        // browser. The engine renders a little softer instead.
+        let mut e = Engine::new(1080, 2256);
+        assert_eq!(e.height(), krudd_webgl::MAX_SURFACE_EXTENT);
+        assert!(e.width() < 1080, "both sides scale, or the image squashes");
+
+        e.resize(1080, 2256);
+        assert_eq!(e.height(), krudd_webgl::MAX_SURFACE_EXTENT);
+
+        // And the camera follows the viewport, so the fitted frame still shows
+        // the same box of world the unfitted one would have.
+        let fitted = e.build_frame().viewport;
+        assert_eq!(fitted, Viewport::new(e.width(), e.height()));
+        assert!((fitted.aspect() - Viewport::new(1080, 2256).aspect()).abs() < 0.001);
+    }
+
+    #[test]
+    fn a_viewport_within_the_limit_is_left_exactly_alone() {
+        // The overwhelmingly common case, and the one a rounding bug in the
+        // fitting would show up in first.
+        let mut e = Engine::new(1920, 1080);
+        assert_eq!((e.width(), e.height()), (1920, 1080));
+        e.resize(2048, 2048);
+        assert_eq!((e.width(), e.height()), (2048, 2048));
     }
 
     #[test]

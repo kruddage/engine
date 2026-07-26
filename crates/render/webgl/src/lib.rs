@@ -70,6 +70,29 @@ pub const TRIANGLE_SHADER: &str = include_str!("triangle.wgsl");
 /// uniform block.
 const UNIFORM_BYTES: u64 = 64;
 
+/// The limits every device this backend asks for is held to.
+///
+/// The WebGL2 floor, so a device request cannot succeed here and fail on a
+/// weaker machine. Asking for more than the engine uses is how a renderer
+/// becomes untestable on the hardware it ships to.
+const REQUIRED_LIMITS: wgpu::Limits = wgpu::Limits::downlevel_webgl2_defaults();
+
+/// The largest either dimension of a surface may be, in physical pixels.
+///
+/// wgpu validates `Surface::configure` against the device's
+/// `max_texture_dimension_2d`, and since [`REQUIRED_LIMITS`] pins that to the
+/// WebGL2 floor this is a property of what the engine *asks for* rather than
+/// of the machine it runs on. It is 2048, and a portrait phone's drawing
+/// buffer routinely is not: 1080x2256 at a device pixel ratio of 3 is a
+/// validation error, not a clamp, and it took the page down on every Android
+/// browser until [`Viewport::fit_within`] went in front of it.
+///
+/// Public and a constant because the shell has to size the canvas's drawing
+/// buffer *before* there is a device to ask — see `krudd-web`'s
+/// `fit_drawing_buffer`. Once a renderer exists, [`Renderer::max_extent`] is
+/// the same number read back from the device that will enforce it.
+pub const MAX_SURFACE_EXTENT: u32 = REQUIRED_LIMITS.max_texture_dimension_2d;
+
 /// What can go wrong, from booting the backend to presenting a frame.
 ///
 /// Every variant carries enough to act on: a boot failure says which stage
@@ -304,11 +327,7 @@ impl Renderer {
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("krudd device"),
                 required_features: wgpu::Features::empty(),
-                // The WebGL2 floor, so a device request cannot succeed here and
-                // fail on a weaker machine. Asking for more than the engine
-                // uses is how a renderer becomes untestable on the hardware it
-                // ships to.
-                required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
+                required_limits: REQUIRED_LIMITS,
                 ..Default::default()
             })
             .await
@@ -324,6 +343,11 @@ impl Renderer {
             sink.record(format!("device lost ({reason:?}): {message}"));
         });
 
+        // Fitted before anything is configured at it: a surface larger than
+        // the device's `max_texture_dimension_2d` is a validation error rather
+        // than a clamp, and a portrait phone hands us one routinely. See
+        // `MAX_SURFACE_EXTENT`.
+        let viewport = viewport.fit_within(device.limits().max_texture_dimension_2d);
         let mut config = surface
             .get_default_config(&adapter, viewport.width, viewport.height)
             .ok_or(Error::NoSurfaceFormat)?;
@@ -408,8 +432,25 @@ impl Renderer {
     }
 
     /// The surface size the renderer is currently configured at.
+    ///
+    /// Not necessarily the size that was asked for: a viewport past
+    /// [`Renderer::max_extent`] is fitted within it, so this is what the
+    /// surface — and, on the web, the canvas's drawing buffer, which wgpu
+    /// sizes from the surface configuration — actually ended up being. A
+    /// caller that draws at its own idea of the size instead of this one gets
+    /// [`Error::ViewportMismatch`].
     pub fn viewport(&self) -> Viewport {
         Viewport::new(self.config.width, self.config.height)
+    }
+
+    /// The largest either dimension of this renderer's surface may be, read
+    /// back from the device that enforces it.
+    ///
+    /// Equal to [`MAX_SURFACE_EXTENT`] for any device this backend requests —
+    /// it is read from the device rather than assumed because the device is
+    /// what wgpu validates a surface configuration against.
+    pub fn max_extent(&self) -> u32 {
+        self.device.limits().max_texture_dimension_2d
     }
 
     /// A one-line description of what actually got picked — backend, adapter
@@ -430,8 +471,13 @@ impl Renderer {
         self.errors.take()
     }
 
-    /// Reconfigures the surface to a new size.
+    /// Reconfigures the surface to a new size, fitted within what the device
+    /// can present.
+    ///
+    /// The one place `config.width`/`height` are written, so the surface can
+    /// never be configured past the limit however it was reached.
     fn reconfigure(&mut self, viewport: Viewport) {
+        let viewport = viewport.fit_within(self.max_extent());
         self.config.width = viewport.width;
         self.config.height = viewport.height;
         self.surface.configure(&self.device, &self.config);
@@ -586,6 +632,11 @@ impl Backend for Renderer {
         if let Some(why) = self.errors.take() {
             return Err(Error::Device(why));
         }
+        // Fitted before the comparison and not only inside `reconfigure`: a
+        // caller asking for more than the device can present would otherwise
+        // never match the surface it just configured, and would reconfigure
+        // every frame for the rest of the run.
+        let viewport = viewport.fit_within(self.max_extent());
         if viewport != self.viewport() {
             self.reconfigure(viewport);
         }
@@ -754,6 +805,16 @@ mod tests {
         assert_eq!(&bytes[48..52], &1.0f32.to_le_bytes());
         assert_eq!(&bytes[52..56], &2.0f32.to_le_bytes());
         assert_eq!(&bytes[56..60], &3.0f32.to_le_bytes());
+    }
+
+    #[test]
+    fn the_surface_limit_is_the_one_the_device_request_pins() {
+        // The shell sizes the canvas's drawing buffer against the constant,
+        // before there is a device to ask. If the two ever came apart, the
+        // shell would fit to one number and wgpu would validate against
+        // another — which is the bug this constant exists to make impossible.
+        assert_eq!(MAX_SURFACE_EXTENT, REQUIRED_LIMITS.max_texture_dimension_2d);
+        assert_eq!(MAX_SURFACE_EXTENT, 2048, "the WebGL2 floor");
     }
 
     #[test]

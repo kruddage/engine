@@ -254,8 +254,19 @@ mod tests {
     #[test]
     fn an_unknown_extension_falls_back_rather_than_guessing() {
         assert_eq!(
-            content_type(Path::new("thing.krudd")),
+            content_type(Path::new("thing.unknown")),
             "application/octet-stream"
+        );
+    }
+
+    #[test]
+    fn a_project_file_is_served_as_the_json_it_is() {
+        // A project saves as `.json`, so the one extension the engine's own
+        // documents use is already in the table rather than falling through to
+        // octet-stream.
+        assert_eq!(
+            content_type(Path::new("triangles.json")),
+            "application/json; charset=utf-8"
         );
     }
 }

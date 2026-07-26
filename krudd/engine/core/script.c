@@ -336,7 +336,7 @@ static void json_write(struct jbuf *b, s7_pointer v, int depth)
  */
 const char *script_json(s7_pointer value)
 {
-	static char g_json[16384];
+	static char g_json[SCRIPT_JSON_MAX];
 	struct jbuf b = { g_json, sizeof g_json, 0, 0 };
 
 	if (!g_s7 || !value)
@@ -348,32 +348,74 @@ const char *script_json(s7_pointer value)
 	return g_json;
 }
 
+const char *script_layout_status_str(enum script_layout_status status)
+{
+	switch (status) {
+	case SCRIPT_LAYOUT_OK:
+		return "ok";
+	case SCRIPT_LAYOUT_NO_INTERPRETER:
+		return "the Scheme interpreter would not start";
+	case SCRIPT_LAYOUT_SPEC_FAILED:
+		return "the layout spec did not evaluate";
+	case SCRIPT_LAYOUT_NO_PROCEDURE:
+		return "the layout spec defines no (editor-layout)";
+	case SCRIPT_LAYOUT_NOT_A_LIST:
+		return "(editor-layout) did not return a list";
+	case SCRIPT_LAYOUT_TOO_LARGE:
+		return "the layout JSON is larger than the transport buffer";
+	}
+	return "unknown layout failure";
+}
+
 /*
  * Evaluate the embedded editor layout spec and serialize (editor-layout) to
  * JSON for the web chrome to consume — the s7->JS half of #706 the native
- * reader (shell/qt/editor_layout.c) is the C-struct half of. Starts the interpreter
- * on demand, exactly as editor_layout_load does, so no prior script_init() is
- * required. Returns NULL if the interpreter is down, the spec did not define
- * editor-layout, the tree is not a list, or the JSON overflows script_json's
- * buffer.
+ * reader (shell/qt/editor_layout.c) is the C-struct half of. Starts the
+ * interpreter on demand, exactly as editor_layout_load does, so no prior
+ * script_init() is required.
+ *
+ * On failure returns NULL and reports which failure through *STATUS (see the
+ * enum in script.h for why that distinction is worth carrying). Every early
+ * return sets it, so a caller that reports the reason cannot accidentally
+ * report "ok".
  */
-const char *script_layout_json(void)
+const char *script_layout_json(enum script_layout_status *status)
 {
-	s7_scheme *sc;
-	s7_pointer fn, tree;
+	s7_scheme  *sc;
+	s7_pointer  fn, tree;
+	const char *json;
+
+	/* Assigned through on every path below, so a caller passing NULL is the
+	 * only way *status goes unwritten. */
+#define LAYOUT_FAIL(code) do {                  \
+		if (status)                     \
+			*status = (code);       \
+		return NULL;                    \
+	} while (0)
 
 	sc = script_s7(); /* starts the interpreter on first use */
 	if (!sc)
-		return NULL;
+		LAYOUT_FAIL(SCRIPT_LAYOUT_NO_INTERPRETER);
 	if (script_eval(LAYOUT_SCM) != 0)
-		return NULL;
+		LAYOUT_FAIL(SCRIPT_LAYOUT_SPEC_FAILED);
 	fn = s7_name_to_value(sc, "editor-layout");
 	if (!s7_is_procedure(fn))
-		return NULL;
+		LAYOUT_FAIL(SCRIPT_LAYOUT_NO_PROCEDURE);
 	tree = s7_call(sc, fn, s7_nil(sc));
 	if (!s7_is_pair(tree))
-		return NULL;
-	return script_json(tree);
+		LAYOUT_FAIL(SCRIPT_LAYOUT_NOT_A_LIST);
+
+	/* The tree is well-formed, so the only way script_json can fail here is
+	 * the size ceiling — g_s7 is up and `tree` is non-NULL. */
+	json = script_json(tree);
+	if (!json)
+		LAYOUT_FAIL(SCRIPT_LAYOUT_TOO_LARGE);
+
+#undef LAYOUT_FAIL
+
+	if (status)
+		*status = SCRIPT_LAYOUT_OK;
+	return json;
 }
 
 /* Copy a Scheme string field into a fixed C buffer, always NUL-terminated. */

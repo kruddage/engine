@@ -53,24 +53,65 @@ const char *script_shader_transpile(const char *src, const char *stage);
 const char *script_shader_transpile_wgsl(const char *src, const char *stage);
 
 /*
+ * The script_json output buffer, in bytes (NUL included). A hard ceiling, not a
+ * hint: a value that would exceed it yields NULL rather than a truncated string
+ * a JSON.parse would reject. Sized well above what any authored value needs —
+ * the editor layout spec, the largest real caller, serializes to about 1.5 KB —
+ * so the margin absorbs a spec that grows without the ceiling becoming a thing
+ * anyone has to think about. It is exposed so a test can assert its own budget
+ * against it (script_layout_json_test does) instead of the limit being an
+ * invisible cliff. Costs this much BSS once, for the life of the process.
+ */
+enum { SCRIPT_JSON_MAX = 65536 };
+
+/*
  * Serialize an s7 VALUE to a JSON string so a value produced inside the image
  * can cross the s7->JS seam (JS cannot hold an s7 value; it JSON.parses this).
  * Pairs become arrays, strings and symbols become strings, integers/reals
  * numbers, #t/#f booleans and () an empty array. The result is a static buffer
  * valid until the next call; NULL when the interpreter is down, VALUE is NULL,
- * or the JSON would exceed the buffer (never a truncated, unparseable string).
+ * or the JSON would exceed SCRIPT_JSON_MAX (never a truncated, unparseable
+ * string).
  */
 const char *script_json(struct s7_cell *value);
+
+/*
+ * Why script_layout_json reports a reason rather than just NULL.
+ *
+ * The web editor builds its entire chrome — menus, toolbar, docks, status
+ * fields — from this one string. When it is NULL the shell has nothing to build
+ * from, so the page comes up as a bare canvas. That is indistinguishable, to
+ * anyone looking at it, from "the layout spec renders no chrome", and the five
+ * ways it can happen want five different fixes: a broken spec is an authoring
+ * error, an overflow is a budget decision, a dead interpreter is a boot bug.
+ * Collapsing them all to NULL is what made the failure silent (#794).
+ */
+enum script_layout_status {
+	SCRIPT_LAYOUT_OK = 0,
+	SCRIPT_LAYOUT_NO_INTERPRETER, /* s7 would not start                    */
+	SCRIPT_LAYOUT_SPEC_FAILED,    /* the spec text did not evaluate        */
+	SCRIPT_LAYOUT_NO_PROCEDURE,   /* it defines no (editor-layout)         */
+	SCRIPT_LAYOUT_NOT_A_LIST,     /* (editor-layout) returned a non-list   */
+	SCRIPT_LAYOUT_TOO_LARGE       /* the JSON outgrew SCRIPT_JSON_MAX      */
+};
+
+/* A short human-readable reason for STATUS, suitable for a log line or an
+ * on-screen error. Never NULL, including for an unknown value. */
+const char *script_layout_status_str(enum script_layout_status status);
 
 /*
  * Evaluate the embedded editor layout spec (core/editor_layout.scm) and
  * serialize (editor-layout) to JSON via script_json — the s7->JS transport the
  * Qt-free web editor renders its chrome from, the browser-side twin of the
- * native C-struct reader in shell/qt/editor_layout.c (#706 part B). The interpreter
- * starts on demand. Returns NULL if it is down, the spec is missing
- * editor-layout, the tree is not a list, or the JSON overflows.
+ * native C-struct reader in shell/qt/editor_layout.c (#706 part B). The
+ * interpreter starts on demand.
+ *
+ * Returns the JSON on success. On failure returns NULL and, when STATUS is
+ * non-NULL, writes which of the five failures happened there; STATUS may be
+ * NULL for a caller that genuinely does not care. A caller that renders the
+ * layout should report the reason rather than treat NULL as "no chrome".
  */
-const char *script_layout_json(void);
+const char *script_layout_json(enum script_layout_status *status);
 
 /*
  * One editable parameter of a source-declared parameter block — a shader's

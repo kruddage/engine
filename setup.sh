@@ -12,7 +12,7 @@
 #   2. writes .krudd-env so `./krudd.sh editor` picks up the Qt cflags/libs
 #      automatically — no manual exports
 #
-# The native editor renders on Vulkan directly (see docs/qt-editor-shell.md),
+# The native editor renders on Vulkan directly,
 # so there is no multi-gigabyte out-of-tree GPU library to build any more: the
 # Vulkan loader and validation layers are ordinary system packages, and the
 # whole bootstrap is a single package install.
@@ -22,7 +22,7 @@
 #
 #   ./setup.sh              bootstrap, then tells you to run ./krudd.sh editor
 #
-# See docs/qt-editor-shell.md for the long-form explanation of each step.
+# README.md's "Build from source" section explains each step long-form.
 set -e
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
@@ -127,7 +127,7 @@ elif [ "$os_id" = steamos ] && ! in_container; then
 	setup.sh:     distrobox create -i archlinux:latest krudd && distrobox enter krudd
 	setup.sh:     cd $root && ./setup.sh
 	setup.sh:
-	setup.sh: See docs/qt-editor-shell.md for the full walkthrough.
+	setup.sh: See README.md, "Build from source", for the full walkthrough.
 	EOF
 	exit 1
 else
@@ -176,7 +176,7 @@ if pkg-config --exists Qt6Widgets Qt6Gui Qt6Core 2>/dev/null; then
 	say "Qt6 found — the editor is wired up."
 else
 	say "warning: Qt6 not found via pkg-config — install it (see"
-	say "docs/qt-editor-shell.md) and set KRUDD_QT_CFLAGS before ./krudd.sh editor."
+	say "README.md, \"Build from source\") and set KRUDD_QT_CFLAGS before ./krudd.sh editor."
 fi
 
 say "done. Wrote $env_file."

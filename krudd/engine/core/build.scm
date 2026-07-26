@@ -2,8 +2,17 @@
 ;;! version.h.in is the header every binary reports itself by, substituted from
 ;;! git. runtime.scm is the prelude script.c evaluates first into the s7 image —
 ;;! embedded rather than loaded from disk, because in the browser there is none.
+;;! editor_layout.scm is the editor chrome's spec, embedded the same way and for
+;;! the same reason: script.c evaluates it to serialize the tree for the web
+;;! shell. It lives here rather than beside either shell because BOTH read it —
+;;! the browser through script.c's script_layout_json, the native editor through
+;;! shell/qt/editor_layout.c — and `script` is a library every module may link,
+;;! so it may not reach into a shell for its own generated header (#786 lists
+;;! shell/qt last precisely so nothing reaches into it). A shell reaching the
+;;! other way, into core's generated header, is allowed.
 ((configure-file "version.h.in" "version.h")
  (embed "runtime.scm" "runtime_scm.h" "RUNTIME_SCM")
+ (embed "editor_layout.scm" "editor_layout_scm.h" "LAYOUT_SCM")
 
  (library "subsystem"
    (sources "subsystem.c")

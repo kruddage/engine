@@ -39,10 +39,23 @@ on:
   push:
     branches: [main]
 
-# A superseded run on the same branch is wasted CI; cancel it.
+# Merging a pull request fires two runs of this file at the same instant: a
+# `push` to main, and the `pull_request` `closed` that `preview` needs. They
+# must not share a concurrency group, and keying on `github.ref` alone puts
+# them in one — on the `closed` event `github.ref` is the base branch rather
+# than the pull request's merge ref, the same value the push run sees. With
+# `cancel-in-progress`, whichever run registered first loses: from #844 (the
+# change that added `closed`) onward, every push to main was cancelled within
+# two seconds of starting, before a single job began. Keying pull request runs
+# on the pull request number keeps them clear of main.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  # A superseded pull request build is wasted CI. A superseded main build is
+  # not: it is the only build that commit will ever get, and `deploy` publishes
+  # the live site from it, so back-to-back merges each need their own run. They
+  # queue behind each other instead of cancelling, which is what the shared
+  # `gh-pages-deploy` group on `deploy` below already assumes.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:

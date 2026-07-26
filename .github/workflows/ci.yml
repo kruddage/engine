@@ -10,6 +10,14 @@ name: CI
 # bundle, tsc, biome, and the boundary tests run against the built module under
 # Node. See xtask/src/check.rs.
 #
+# `render-test` is not part of that command, on purpose — see
+# xtask/src/render_test.rs and packages/shell/web/harness/render-test.ts. It
+# launches a real, headful Chromium (there is no `--headless` mode to fall
+# back to; see #827), which a contributor's own machine may or may not be
+# able to do, so it is this job's own step instead of part of the gate
+# everyone runs locally before every push — the same reasoning `bench` below
+# already follows.
+#
 # The other two jobs publish rather than gate. `deploy` puts main on the live
 # site; `preview` puts each pull request on its own URL and takes it down again
 # when the PR closes. Neither can fail the build.
@@ -91,6 +99,35 @@ jobs:
       # See docs/boundary.md.
       - name: Benchmark the boundary
         run: cargo xtask bench
+
+      # `render-test` re-execs itself under `xvfb-run` when `DISPLAY` is
+      # unset (see packages/shell/web/harness/xvfb.ts), which this runner
+      # always is — but `xvfb-run` itself still has to be on the machine for
+      # that re-exec to find it.
+      - name: Install Xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+
+      # A standalone Chrome/Chromium binary, installed the same way any other
+      # CI-only tool is — as a step in this workflow, not as a project
+      # dependency. `render-test.ts` looks for CHROME_PATH itself (among a
+      # few conventional locations), so nothing here has to know the install
+      # path in advance.
+      - name: Install Chromium
+        id: setup-chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: stable
+
+      # #827: a screenshot-and-compare regression gate against the WebGL2
+      # build, checked in as packages/shell/web/harness/reference.png. See
+      # packages/shell/web/harness/render-test.ts for what it asserts and why
+      # it cannot pass on a blank capture.
+      - name: Render test
+        run: cargo xtask render-test
+        env:
+          CHROME_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
 
       # Last before the upload, because every xtask build reassembles dist/ —
       # a step after this one would replace the release build being published

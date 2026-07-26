@@ -157,10 +157,21 @@ it.
   ([#845]). A native shell is a second platform to keep the renderer, the
   packaging and the release working on, and the engine is not yet finished
   being right on one.
+- **A browser automation library.** `cargo xtask render-test`'s
+  screenshot-and-compare harness ([#827]) drives Chromium itself, over the
+  DevTools Protocol, rather than through Puppeteer or Playwright: Node's
+  built-in `WebSocket` is the whole transport, and the page it already is a
+  PNG codec decodes the PNGs — the two things such a library would mostly be
+  buying here. What it does not replace is the browser binary itself, which
+  the harness expects to already be on disk (a few conventional paths, or
+  `KRUDD_CHROMIUM`/`CHROME_PATH`); CI installs one with a GitHub Action, not
+  a project dependency. See `packages/shell/web/harness/cdp.ts` and
+  `chromium.ts`.
 
 [#812]: https://github.com/kruddage/engine/issues/812
 [#818]: https://github.com/kruddage/engine/issues/818
 [#819]: https://github.com/kruddage/engine/issues/819
 [#820]: https://github.com/kruddage/engine/issues/820
+[#827]: https://github.com/kruddage/engine/issues/827
 [#830]: https://github.com/kruddage/engine/issues/830
 [#845]: https://github.com/kruddage/engine/issues/845

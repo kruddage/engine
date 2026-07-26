@@ -19,15 +19,11 @@
 //! bundling is what resolves that. `node --experimental-strip-types` would
 //! run the files but would not resolve the imports.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::Options;
 use crate::sh::{self, Run};
 use crate::web;
-
-/// Where the bundled harnesses land. Under `target/` because they are build
-/// output, gitignored with the rest of it.
-const OUT_DIR: &str = "target/harness";
 
 /// The `node:test` suite over the memory contract.
 const TEST_ENTRY: &str = "packages/base/boundary/harness/memory.test.ts";
@@ -61,7 +57,7 @@ pub fn bench(opts: &Options) -> Result<(), String> {
 
 /// Runs the boundary tests against an already-built module.
 pub fn run_tests(root: &Path) -> Result<(), String> {
-    let bundle = bundle(root, TEST_ENTRY, "memory.test")?;
+    let bundle = sh::bundle_ts(root, TEST_ENTRY, "memory.test")?;
     node(root)
         .args(["--test".as_ref(), bundle.as_os_str()])
         .check()
@@ -69,7 +65,7 @@ pub fn run_tests(root: &Path) -> Result<(), String> {
 
 /// Runs the benchmark against an already-built module.
 pub fn run_bench(root: &Path) -> Result<(), String> {
-    let bundle = bundle(root, BENCH_ENTRY, "bench")?;
+    let bundle = sh::bundle_ts(root, BENCH_ENTRY, "bench")?;
     node(root).args([bundle.as_os_str()]).check()
 }
 
@@ -79,25 +75,4 @@ pub fn run_bench(root: &Path) -> Result<(), String> {
 /// never quietly run against a module left over from an older build.
 fn node(root: &Path) -> Run {
     Run::new("node", root).env("KRUDD_WASM", &web::wasm_path(root).to_string_lossy())
-}
-
-/// Bundles one harness entry point into `target/harness/<name>.mjs`.
-fn bundle(root: &Path, entry: &str, name: &str) -> Result<PathBuf, String> {
-    let out = PathBuf::from(OUT_DIR).join(format!("{name}.mjs"));
-    Run::new("pnpm", root)
-        .args([
-            "exec",
-            "esbuild",
-            entry,
-            "--bundle",
-            "--format=esm",
-            // Node, so the builtins the harnesses import stay external and
-            // `import.meta.url` keeps working in the generated glue.
-            "--platform=node",
-            "--target=node22",
-            "--sourcemap",
-            &format!("--outfile={}", out.display()),
-        ])
-        .check()?;
-    Ok(root.join(out))
 }

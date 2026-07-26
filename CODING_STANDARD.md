@@ -102,6 +102,13 @@ parity on the frame graph because the null backend recorded every GPU call, so
 a renderer could be asserted on without a GPU. Asserting on pixels instead is
 what makes render tests expensive and flaky. See [#826] and [#827].
 
+**The boundary is batched, never per-object.** TypeScript reads and writes
+typed-array views over wasm linear memory and calls into Rust once per phase.
+Before adding anything to the `#[wasm_bindgen]` surface, read
+[`docs/boundary.md`](docs/boundary.md) — it has the ownership rules, the test
+for whether something may be exported, and the three ways a view goes stale,
+two of which are silent. `cargo xtask bench` keeps the numbers honest.
+
 **One build entry point.** `cargo xtask`. A gate that only exists inside a CI
 workflow is a gate nobody can run before pushing.
 

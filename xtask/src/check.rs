@@ -12,6 +12,7 @@
 //! built.
 
 use crate::Options;
+use crate::harness;
 use crate::sh::{self, Run};
 use crate::tiers;
 use crate::web;
@@ -44,9 +45,19 @@ pub fn run(opts: &Options) -> Result<(), String> {
     // Plain `tsc`: the root tsconfig.json sets `noEmit`, so this only ever
     // typechecks. esbuild is the only thing that emits.
     Run::new("pnpm", &root).args(["exec", "tsc"]).check()?;
+    // The harnesses again, against the Node config — they are the only
+    // TypeScript here that is not browser code, and the split is what keeps
+    // `process` and `node:fs` unreachable from everything that is.
+    Run::new("pnpm", &root)
+        .args(["exec", "tsc", "-p", "tsconfig.harness.json"])
+        .check()?;
     Run::new("pnpm", &root)
         .args(["exec", "biome", "ci", "."])
         .check()?;
+
+    // Last, because it is the only gate that runs the artifact rather than
+    // reading it: the memory contract holds or it does not.
+    harness::run_tests(&root)?;
 
     println!("\nall checks passed");
     Ok(())

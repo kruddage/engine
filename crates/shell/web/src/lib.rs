@@ -10,12 +10,18 @@
 //!
 //! ## What the boundary looks like
 //!
-//! The exported surface here is deliberately tiny, and none of it is
-//! per-object. [`Engine::tick`] advances the whole world in one call, and
-//! TypeScript reads the result as a `Float32Array` mapped straight over wasm
-//! linear memory via [`Engine::positions_ptr`] — no serialisation, no copy,
-//! no call per entity. Violating that would look like "wasm is slow" and
-//! would not be.
+//! The exported surface here is deliberately tiny, and the path the engine
+//! takes through it is never per-object. [`Engine::tick`] advances the whole
+//! world in one call, and TypeScript reads the result as a `Float32Array`
+//! mapped straight over wasm linear memory via [`Engine::positions_ptr`] — no
+//! serialisation, no copy, no call per entity. Violating that would look like
+//! "wasm is slow" and would not be.
+//!
+//! The full contract — who allocates, who frees, when a view goes stale, and
+//! what the per-call path costs when measured rather than asserted — is
+//! `docs/boundary.md`. [`Engine::position_of`] and [`Engine::set_position`]
+//! are the per-call path, kept so the benchmark there has something to
+//! measure the batched path against.
 //!
 //! ## Scope
 //!
@@ -23,7 +29,7 @@
 //! build links against, not the engine. It draws nothing — the WebGL2
 //! renderer is #818 and the HTML shell around it is #819. Generating both
 //! sides of this boundary from one spec, rather than hand-writing the pair,
-//! is #817 and #824.
+//! is #824.
 
 use krudd_math::Vec3;
 use krudd_render::{Frame, Viewport};
@@ -91,7 +97,7 @@ impl Engine {
     /// The slot index, not the generational handle: a `u32` is what a
     /// TypeScript caller can hold, and it is also the index into the position
     /// view, which is the only thing the page does with it. Handing out the
-    /// generation as well is #817's business, once the boundary is generated
+    /// generation as well is #824's business, once the boundary is generated
     /// rather than hand-written.
     pub fn spawn(&mut self, x: f32, y: f32, z: f32) -> u32 {
         let handle = self.store.alloc();
@@ -139,6 +145,9 @@ impl Engine {
     /// ([`Engine::spawn`]) and by wasm memory growth, so the caller rebuilds
     /// it whenever [`Engine::positions_len`] changes — `@krudd/boundary` does
     /// that for it.
+    ///
+    /// The column stays owned by Rust: the pointer is a loan for the lifetime
+    /// of the next call in, not a transfer. See `docs/boundary.md`.
     pub fn positions_ptr(&self) -> usize {
         self.positions.as_ptr() as usize
     }
@@ -187,6 +196,37 @@ impl Engine {
     pub fn despawn(&mut self, slot: u32) -> bool {
         match self.live_handle(slot) {
             Some(handle) => self.store.free(handle),
+            None => false,
+        }
+    }
+
+    /// One entity's position as a fresh `Float32Array`, or `undefined` if the
+    /// slot is not live.
+    ///
+    /// **This is the per-call path, and the contract forbids the engine from
+    /// taking it.** It is exported because a claim nobody measured is a claim
+    /// nobody can defend: `cargo xtask bench` reads a whole world through
+    /// here and through the batched view, and reports the difference. Every
+    /// call is a boundary crossing plus an allocation the collector then has
+    /// to take back — which is the cost the column exists to avoid.
+    pub fn position_of(&self, slot: u32) -> Option<Box<[f32]>> {
+        let handle = self.live_handle(slot)?;
+        let p = self.positions[handle.index() as usize];
+        Some(Box::new([p.x, p.y, p.z]))
+    }
+
+    /// Moves one entity. Returns whether the slot was live.
+    ///
+    /// The per-call write path, and the counterpart to [`Engine::position_of`]
+    /// — same reason for existing, same rule against using it. The batched
+    /// form is to write into the `Float32Array` view directly, which reaches
+    /// the same bytes with no crossing at all.
+    pub fn set_position(&mut self, slot: u32, x: f32, y: f32, z: f32) -> bool {
+        match self.live_handle(slot) {
+            Some(handle) => {
+                self.positions[handle.index() as usize] = Vec3::new(x, y, z);
+                true
+            }
             None => false,
         }
     }
@@ -301,6 +341,35 @@ mod tests {
             "the recycled slot kept the old entity's velocity"
         );
         assert_eq!(e.slot_count(), 1);
+    }
+
+    #[test]
+    fn the_per_call_path_reads_what_the_column_holds() {
+        let mut e = Engine::default();
+        let a = e.spawn(1.0, 2.0, 3.0);
+        assert_eq!(
+            e.position_of(a).as_deref(),
+            Some([1.0, 2.0, 3.0].as_slice()),
+            "the benchmark's two paths have to agree, or it measures nothing"
+        );
+    }
+
+    #[test]
+    fn the_per_call_path_refuses_a_dead_slot() {
+        let mut e = Engine::default();
+        let a = e.spawn(1.0, 2.0, 3.0);
+        assert!(e.despawn(a));
+        assert!(e.position_of(a).is_none());
+        assert!(!e.set_position(a, 9.0, 9.0, 9.0));
+        assert!(e.position_of(a + 1).is_none(), "out of range is not live");
+    }
+
+    #[test]
+    fn a_per_call_write_lands_where_the_view_reads() {
+        let mut e = Engine::default();
+        let a = e.spawn(0.0, 0.0, 0.0);
+        assert!(e.set_position(a, 4.0, 5.0, 6.0));
+        assert_eq!(e.positions[a as usize], Vec3::new(4.0, 5.0, 6.0));
     }
 
     #[test]

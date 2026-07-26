@@ -55,6 +55,7 @@ wasm interface layer.
 | **Bundler** | esbuild |
 | **Typechecker** | `tsc`, `noEmit`, every strict flag on |
 | **Format + lint** | Biome, recommended preset, defaults |
+| **Tests** | `node:test`, run over an esbuild bundle |
 
 **Why TypeScript at all** is [#812]'s call: the host JavaScript engine's
 collector is already present and already paid for, in the browser and in a
@@ -94,11 +95,25 @@ real decision with real upside and it should be made on its merits, not
 inherited by default at the moment the tree is being stood up. The pin is
 recorded here so the next person knows it was noticed rather than missed.
 
+**`node:test` over a bundle, and no test runner installed.** The prediction
+below held: the first TypeScript worth testing was the boundary wrapper, and
+Node's built-in runner covered it without adding a dependency. It runs over an
+esbuild bundle rather than the sources because the harnesses import a package
+by its `exports` map, and bundling is what resolves that —
+`--experimental-strip-types` would run the files but not find their imports.
+`cargo xtask test-web` does both steps; `cargo xtask check` runs it.
+
 **One `tsconfig.json` for the whole workspace,** not one per package. Package
 boundaries are enforced by each `package.json`'s `exports` map — which tsc and
 esbuild both honour, so a deep import is a resolution error — and by
 `cargo xtask tiers`. Splitting the config would add a place for two packages
 to disagree about strictness without adding any enforcement.
+
+The one exception is `tsconfig.harness.json`, and it splits on *environment*
+rather than on package: the harnesses run under Node and need `@types/node`,
+and browser code must not be able to see `process` or `node:fs`. Merging them
+would put Node's globals in scope for the whole tree. Both configs typecheck
+in `cargo xtask check`.
 
 `noEmit` is on: esbuild emits, tsc only typechecks. Two things emitting the
 same code is how the two come to disagree.
@@ -128,15 +143,20 @@ it.
 - **WebGPU.** Deferred entirely ([#812]). WebKitGTK ships no `navigator.gpu`
   and Tauri uses WebKitGTK on Linux, so WebGL2-first removes the risk instead
   of maintaining a fallback. Whether that is still true is [#822].
-- **A test runner for TypeScript.** Nothing in `packages/` has logic worth a
-  unit test yet — the boundary wrapper is thin and the shell is a demo. When
-  that changes, Node's built-in `node:test` is the first thing to try, because
-  it is the option that adds no dependency.
+- **A test runner for TypeScript.** `node:test` is the runner, and it is not
+  a dependency — see above. Vitest and friends buy watch mode, mocking and a
+  browser environment; nothing here wants the first two, and the third is a
+  browser harness ([#818], [#820]) rather than a runner choice.
+- **A benchmark library.** `cargo xtask bench` times two loops with
+  `performance.now()` and prints a table. A statistical harness would be worth
+  it for a 5% regression; the thing being measured here is a 36× cliff.
 - **A native build.** Tauri hosts the same web build; there is no separate
   native render path ([#821]).
 
 [#812]: https://github.com/kruddage/engine/issues/812
+[#818]: https://github.com/kruddage/engine/issues/818
 [#819]: https://github.com/kruddage/engine/issues/819
+[#820]: https://github.com/kruddage/engine/issues/820
 [#821]: https://github.com/kruddage/engine/issues/821
 [#822]: https://github.com/kruddage/engine/issues/822
 [#830]: https://github.com/kruddage/engine/issues/830

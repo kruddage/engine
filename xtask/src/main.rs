@@ -13,6 +13,7 @@
 //! tree's Scheme `kruddmake` held.
 
 mod check;
+mod harness;
 mod serve;
 mod sh;
 mod tiers;
@@ -31,6 +32,8 @@ COMMANDS:
     dist                build-web with release optimisation, and report the sizes
     serve               Build, then serve dist/ over HTTP
     check               Everything CI gates on: fmt, clippy, tests, tiers, typecheck, lint
+    test-web            Run the boundary tests against the built wasm, under Node
+    bench               Time the batched boundary against the per-call one
     tiers               Check the crate and package tier order on its own
     help                Show this
 
@@ -61,6 +64,8 @@ fn main() -> ExitCode {
         "dist" => web::dist(&opts),
         "serve" => serve::run(&opts),
         "check" => check::run(&opts),
+        "test-web" => harness::test(&opts),
+        "bench" => harness::bench(&opts),
         "tiers" => tiers::check(&sh::workspace_root()),
         "help" | "--help" | "-h" => {
             print!("{USAGE}");

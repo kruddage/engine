@@ -34,8 +34,13 @@ would present as "wasm is slow" rather than as the mistake it is. That is why
 the storage is struct-of-arrays (`crates/world/storage`): a column per field
 means the view *is* the memory, with no stride and no marshalling.
 
+How much slower is measured rather than asserted — `cargo xtask bench` puts
+the two paths side by side, and the per-call one reads ~36× more expensively.
+[`boundary.md`](boundary.md) is the full contract: ownership, what may be
+exported, and the three ways a typed-array view goes stale.
+
 The boundary is hand-written on both sides today. Generating both halves from
-one spec so they cannot drift is [#817] and [#824].
+one spec so they cannot drift is [#824].
 
 ## The tiers
 
@@ -103,6 +108,7 @@ comment rather than a keyword.
 packages/
   base/
     boundary/    @krudd/boundary    Loading the wasm and viewing its memory
+      harness/                        node:test over the memory contract, and the benchmark
   shell/
     web/         @krudd/shell-web   The browser page
 ```
@@ -117,7 +123,8 @@ generated glue. Everything above it goes through the wrapper, so there is one
 place that knows how the module is loaded and one place that knows when a
 typed-array view has gone stale — which matters, because growing wasm memory
 *detaches* the old `ArrayBuffer` and every view over it silently becomes
-zero-length.
+zero-length. Its `harness/` directory holds that rule against the real module
+under Node and times the alternative; see [`boundary.md`](boundary.md).
 
 ## The tier check
 
@@ -144,7 +151,9 @@ that exists only inside a CI workflow.
 cargo xtask build-web    wasm + TypeScript into dist/
 cargo xtask dist         the same, optimised, with artifact sizes
 cargo xtask serve        build, then serve dist/ on :8080
-cargo xtask check        fmt, clippy, tests, tiers, typecheck, lint
+cargo xtask check        fmt, clippy, tests, tiers, typecheck, lint, boundary tests
+cargo xtask test-web     just the boundary tests, under Node
+cargo xtask bench        the batched boundary against the per-call one
 cargo xtask tiers        just the tier check
 ```
 
@@ -169,6 +178,5 @@ version" at runtime rather than an error at build time.
 See [`toolchain.md`](toolchain.md) for why each tool was chosen.
 
 [#812]: https://github.com/kruddage/engine/issues/812
-[#817]: https://github.com/kruddage/engine/issues/817
 [#821]: https://github.com/kruddage/engine/issues/821
 [#824]: https://github.com/kruddage/engine/issues/824

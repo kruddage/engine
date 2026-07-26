@@ -29,6 +29,7 @@
 #ifndef __EMSCRIPTEN__
 #include "log.h"
 #include "memory.h"
+#include "world.h"
 static const struct log_api    native_log = { log_write };
 static const struct memory_api native_mem = {
 	mem_alloc, mem_alloc_zero, mem_free,

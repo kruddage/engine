@@ -2,9 +2,17 @@
 #ifndef ENTITY_API_H
 #define ENTITY_API_H
 
-#include "world.h"
-
 #include <stdint.h>
+
+/*
+ * Both are only ever handled as pointers here, so the vtable needs their tags
+ * and not their layouts. Declaring them rather than including the headers that
+ * define them (world/entity's world.h, base/math's math_types.h) keeps the ABI
+ * free of any dependency on the modules that implement it — callers that
+ * dereference these include those headers themselves.
+ */
+struct world;
+struct transform;
 
 /*
  * Cross-plugin access to the live entity world, published as the "scene"

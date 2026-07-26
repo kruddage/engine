@@ -59,7 +59,8 @@
                        "render/null" "base/log/include"
                        "abi" "base/memory/include"
                        "core/include"))
-(inc-check "asset_plugin" '("world/asset" "abi" "base/log/include"
+(inc-check "asset_plugin" '("world/asset" "abi" "base/math/include"
+                            "world/entity/include" "base/log/include"
                             "base/memory/include" "core/include"))
 
 (display "resolver: transitive link closures\n")

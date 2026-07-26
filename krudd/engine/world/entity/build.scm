@@ -2,13 +2,14 @@
 ((library "entity_plugin"
    (sources "entity.c" "entity_plugin.c" "entity_script.c"
             "scene_script.c" "scene_edit.c")
-   (public "." (root "abi") (root "base/math/include") (root "core/include"))
+   (public "include" (root "abi") (root "base/math/include")
+           (root "core/include"))
    (private (raw "../third_party"))
    (link "memory" "subsystem_manager" "script"))
  (native-only
   (executable "entity_test"
               (sources "entity_test.c" "entity.c")
-              (private "." (root "abi") (root "base/math/include")
+              (private "." "include" (root "abi") (root "base/math/include")
                        (root "core/include")
                        (root "base/memory/include"))
               (link "memory"))
@@ -16,7 +17,7 @@
   (executable "scene_edit_test"
               (sources "scene_edit_test.c" "scene_edit.c" "entity.c"
                        (root "world/edit/edit.c"))
-              (private "." (root "abi") (root "base/math/include")
+              (private "." "include" (root "abi") (root "base/math/include")
                        (root "world/edit")
                        (root "core/include")
                        (root "base/memory/include"))
@@ -28,7 +29,7 @@
   ;;! is asset content and not part of the plugin ABI.
   (executable "entity_script_test"
               (sources "entity_script_test.c" "entity_script.c" "entity.c")
-              (private "." (root "abi") (root "base/math/include")
+              (private "." "include" (root "abi") (root "base/math/include")
                        (root "core/include")
                        (root "base/memory/include")
                        (root "world/asset")
@@ -37,7 +38,7 @@
   (test "entity_script" "entity_script_test")
   (executable "scene_script_test"
               (sources "scene_script_test.c" "scene_script.c" "entity.c")
-              (private "." (root "abi") (root "base/math/include")
+              (private "." "include" (root "abi") (root "base/math/include")
                        (root "core/include")
                        (root "base/memory/include")
                        (raw "../third_party"))

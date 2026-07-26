@@ -87,6 +87,7 @@ extern "C" {
 #include "version.h"         /* ENGINE_VERSION_STRING — the toolbar badge */
 #include "viewport_pick.h"   /* the shared click-to-pick raycast (#697) */
 #include "vulkan_platform.h" /* the native windowing host seam (VkSurfaceKHR) */
+#include "world.h"
 }
 
 #include <cmath>

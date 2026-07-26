@@ -51,6 +51,7 @@ static const struct subsystem_manager *g_mgr;
 #include "memory_api.h"
 #include "math_types.h"
 #include "viewport_pick.h"
+#include "world.h"
 
 #include <stdint.h>
 

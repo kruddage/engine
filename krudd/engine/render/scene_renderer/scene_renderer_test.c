@@ -10,6 +10,7 @@
 #include "subsystem_manager.h"
 #include "memory.h"
 #include "script.h"
+#include "world.h"
 
 #include <assert.h>
 #include <math.h>

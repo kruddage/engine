@@ -16,7 +16,7 @@
  (executable "index"
              (sources "engine.c")
              (private "include" (raw "${generated}")
-                      (root "abi") (root "base/math/include") (root "game/host"))
+                      (root "abi") (root "world/entity/include") (root "base/math/include") (root "game/host"))
              (link "subsystem" "subsystem_manager" "log" "memory" "script")
              (wasm-modules "asset_plugin" "edit_plugin" "entity_plugin"
                            "renderer_webgl" "renderer_webgpu" "frame_graph" "scene_renderer"
@@ -42,7 +42,7 @@
   (executable "editor_boot_test"
               (sources "editor_boot_test.c" "editor_boot.c")
               (private "include" (raw "${generated}")
-                       (root "render/null") (root "abi") (root "base/math/include"))
+                       (root "render/null") (root "abi") (root "world/entity/include") (root "base/math/include"))
               (link "renderer_null" "scene_renderer"
                     "frame_graph" "entity_plugin" "asset_plugin" "edit_plugin"
                     "mesh_script" "texture_script" "particles"
@@ -71,7 +71,7 @@
   (executable "krudd_qt"
               (sources "krudd_qt.cpp" "editor_boot.c" "editor_layout.c")
               (private "include" (raw "${generated}") (raw "../third_party")
-                       (root "render/vulkan") (root "abi") (root "base/math/include"))
+                       (root "render/vulkan") (root "abi") (root "world/entity/include") (root "base/math/include"))
               (vulkan)
               (qt)
               (link "renderer_vulkan" "scene_renderer"

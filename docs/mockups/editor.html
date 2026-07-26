@@ -1,0 +1,2176 @@
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
+<title>krudd — board and game</title>
+
+<style>
+	/* ------------------------------------------------------------------ *
+	 * Tokens. Every colour and size below is named once here and used
+	 * through the token, so the two themes are one edit rather than two.
+	 * ------------------------------------------------------------------ */
+	:root {
+		--g0: #e9ebee;
+		--g1: #f7f8fa;
+		--g2: #ffffff;
+		--ink: #14181d;
+		--muted: #5c6670;
+		--line: #d3d8de;
+		--line-strong: #b9c1ca;
+		--exec: #e24a22;
+		--exec-soft: #fbe4dc;
+		--data: #0f7a6e;
+		--data-soft: #dbeeeb;
+		--viewport: #080a0d;
+		--viewport-ink: #d7dde3;
+		--shadow-1: 0 1px 2px rgba(20, 24, 29, 0.1);
+		--shadow-2: 0 2px 4px rgba(20, 24, 29, 0.07), 0 12px 28px rgba(20, 24, 29, 0.09);
+
+		--mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo,
+			Consolas, "Liberation Mono", monospace;
+		--sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+			"Helvetica Neue", Arial, sans-serif;
+
+		--rail-h: 62px;
+		--top-h: 52px;
+		--radius: 10px;
+	}
+
+	@media (prefers-color-scheme: dark) {
+		:root {
+			--g0: #101317;
+			--g1: #181c21;
+			--g2: #1e2329;
+			--ink: #e6e9ed;
+			--muted: #8a939d;
+			--line: #262c33;
+			--line-strong: #39424b;
+			--exec: #ff6a42;
+			--exec-soft: #3a1d14;
+			--data: #3fb8a8;
+			--data-soft: #10302d;
+			--shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+			--shadow-2: 0 2px 4px rgba(0, 0, 0, 0.3), 0 12px 28px rgba(0, 0, 0, 0.45);
+		}
+	}
+
+	/* The viewer's toggle stamps data-theme on the root and must win over
+	   the media query in both directions. */
+	:root[data-theme="light"] {
+		--g0: #e9ebee;
+		--g1: #f7f8fa;
+		--g2: #ffffff;
+		--ink: #14181d;
+		--muted: #5c6670;
+		--line: #d3d8de;
+		--line-strong: #b9c1ca;
+		--exec: #e24a22;
+		--exec-soft: #fbe4dc;
+		--data: #0f7a6e;
+		--data-soft: #dbeeeb;
+		--shadow-1: 0 1px 2px rgba(20, 24, 29, 0.1);
+		--shadow-2: 0 2px 4px rgba(20, 24, 29, 0.07), 0 12px 28px rgba(20, 24, 29, 0.09);
+	}
+
+	:root[data-theme="dark"] {
+		--g0: #101317;
+		--g1: #181c21;
+		--g2: #1e2329;
+		--ink: #e6e9ed;
+		--muted: #8a939d;
+		--line: #262c33;
+		--line-strong: #39424b;
+		--exec: #ff6a42;
+		--exec-soft: #3a1d14;
+		--data: #3fb8a8;
+		--data-soft: #10302d;
+		--shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+		--shadow-2: 0 2px 4px rgba(0, 0, 0, 0.3), 0 12px 28px rgba(0, 0, 0, 0.45);
+	}
+
+	*,
+	*::before,
+	*::after {
+		box-sizing: border-box;
+	}
+
+	body {
+		margin: 0;
+		background: var(--g0);
+		color: var(--ink);
+		font-family: var(--sans);
+		-webkit-text-size-adjust: 100%;
+		overscroll-behavior: none;
+	}
+
+	:focus-visible {
+		outline: 2px solid var(--exec);
+		outline-offset: 2px;
+		border-radius: 4px;
+	}
+
+	/* ------------------------------------------------------------------ *
+	 * Shell
+	 * ------------------------------------------------------------------ */
+	.app {
+		display: flex;
+		flex-direction: column;
+		height: 100dvh;
+		width: 100%;
+		overflow: hidden;
+		background: var(--g0);
+	}
+
+	.topbar {
+		flex: 0 0 auto;
+		height: var(--top-h);
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 0 12px;
+		border-bottom: 1px solid var(--line);
+		background: var(--g1);
+	}
+
+	.mark {
+		font-family: var(--mono);
+		font-size: 13px;
+		font-weight: 700;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		color: var(--ink);
+		white-space: nowrap;
+	}
+
+	.crumbs {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		min-width: 0;
+		flex: 1 1 auto;
+		overflow: hidden;
+	}
+
+	.crumb {
+		font-family: var(--mono);
+		font-size: 12px;
+		color: var(--muted);
+		background: none;
+		border: 0;
+		padding: 4px 6px;
+		border-radius: 6px;
+		cursor: pointer;
+		white-space: nowrap;
+		text-overflow: ellipsis;
+		overflow: hidden;
+	}
+
+	.crumb:last-child {
+		color: var(--ink);
+		font-weight: 600;
+	}
+
+	.crumb:not(:last-child):hover {
+		background: var(--g0);
+		color: var(--ink);
+	}
+
+	.crumb-sep {
+		color: var(--line-strong);
+		font-family: var(--mono);
+		font-size: 12px;
+	}
+
+	.seg {
+		display: flex;
+		flex: 0 0 auto;
+		border: 1px solid var(--line);
+		border-radius: 8px;
+		overflow: hidden;
+		background: var(--g0);
+	}
+
+	.seg button {
+		font-family: var(--mono);
+		font-size: 11px;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		padding: 7px 11px;
+		border: 0;
+		background: transparent;
+		color: var(--muted);
+		cursor: pointer;
+		min-height: 34px;
+	}
+
+	.seg button[aria-pressed="true"] {
+		background: var(--g2);
+		color: var(--ink);
+		font-weight: 700;
+		box-shadow: var(--shadow-1);
+	}
+
+	.iconbtn {
+		flex: 0 0 auto;
+		width: 34px;
+		height: 34px;
+		border-radius: 8px;
+		border: 1px solid var(--line);
+		background: var(--g0);
+		color: var(--muted);
+		font-family: var(--mono);
+		font-size: 14px;
+		cursor: pointer;
+	}
+
+	.iconbtn:hover {
+		color: var(--ink);
+		border-color: var(--line-strong);
+	}
+
+	/* ------------------------------------------------------------------ *
+	 * The two modes ride one horizontal track. Switching translates the
+	 * track; the game canvas is never unmounted, because the engine takes
+	 * the canvas over for its whole lifetime and cannot be handed a second.
+	 * ------------------------------------------------------------------ */
+	.stage {
+		position: relative;
+		flex: 1 1 auto;
+		overflow: hidden;
+		touch-action: none;
+	}
+
+	.track {
+		display: flex;
+		width: 200%;
+		height: 100%;
+		transition: transform 320ms cubic-bezier(0.22, 0.61, 0.36, 1);
+		will-change: transform;
+	}
+
+	.track.dragging {
+		transition: none;
+	}
+
+	.pane {
+		width: 50%;
+		height: 100%;
+		position: relative;
+		overflow: hidden;
+	}
+
+	/* --- game --- */
+	.pane-game {
+		background: var(--viewport);
+	}
+
+	#viewport {
+		display: block;
+		width: 100%;
+		height: 100%;
+	}
+
+	.hud {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		padding: 10px 12px;
+		font-family: var(--mono);
+		font-size: 11px;
+		color: var(--viewport-ink);
+		background: linear-gradient(to top, rgba(8, 10, 13, 0.9), rgba(8, 10, 13, 0));
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px 14px;
+		font-variant-numeric: tabular-nums;
+		pointer-events: none;
+	}
+
+	.hud b {
+		font-weight: 700;
+		color: #fff;
+	}
+
+	.hud .warn {
+		color: var(--exec);
+		font-weight: 700;
+	}
+
+	.swipe-hint {
+		position: absolute;
+		top: 12px;
+		right: 12px;
+		font-family: var(--mono);
+		font-size: 10px;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: rgba(215, 221, 227, 0.55);
+		pointer-events: none;
+	}
+
+	/* --- board --- */
+	.pane-board {
+		background: var(--g0);
+		background-image: radial-gradient(
+			circle at 1px 1px,
+			var(--line) 1px,
+			transparent 0
+		);
+		background-size: 22px 22px;
+		cursor: grab;
+	}
+
+	.pane-board.panning {
+		cursor: grabbing;
+	}
+
+	.canvasing {
+		position: absolute;
+		inset: 0;
+		transform-origin: 0 0;
+	}
+
+	.wires {
+		position: absolute;
+		top: 0;
+		left: 0;
+		overflow: visible;
+		pointer-events: none;
+	}
+
+	.wire-hit {
+		fill: none;
+		stroke: transparent;
+		stroke-width: 20;
+		pointer-events: stroke;
+		cursor: pointer;
+	}
+
+	.wire {
+		fill: none;
+		stroke-width: 2.5;
+		pointer-events: none;
+	}
+
+	.wire.exec {
+		stroke: var(--exec);
+	}
+
+	.wire.data {
+		stroke: var(--data);
+		stroke-width: 2;
+		stroke-dasharray: 1 6;
+		stroke-linecap: round;
+	}
+
+	.wire.cut {
+		stroke: var(--line-strong);
+		stroke-dasharray: 5 7;
+		opacity: 0.75;
+	}
+
+	.wire-group:hover .wire:not(.data) {
+		stroke-width: 4;
+	}
+
+	.lane {
+		position: absolute;
+		border-radius: 14px;
+		border: 1px dashed var(--line);
+		pointer-events: none;
+	}
+
+	.lane-label {
+		position: absolute;
+		font-family: var(--mono);
+		font-size: 10px;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+		color: var(--muted);
+		pointer-events: none;
+	}
+
+	.node {
+		position: absolute;
+		width: 212px;
+		background: var(--g2);
+		border: 1px solid var(--line);
+		border-radius: var(--radius);
+		box-shadow: var(--shadow-1);
+		font-family: var(--mono);
+		cursor: pointer;
+		user-select: none;
+		transition: box-shadow 140ms ease, border-color 140ms ease,
+			transform 140ms ease;
+	}
+
+	.node:hover {
+		border-color: var(--line-strong);
+		box-shadow: var(--shadow-2);
+	}
+
+	.node[data-selected="true"] {
+		border-color: var(--exec);
+		box-shadow: 0 0 0 2px var(--exec-soft), var(--shadow-2);
+	}
+
+	.node[data-off="true"] {
+		opacity: 0.45;
+	}
+
+	.node-head {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 9px 10px;
+		border-bottom: 1px solid var(--line);
+	}
+
+	.node-kind {
+		width: 8px;
+		height: 8px;
+		border-radius: 2px;
+		flex: 0 0 auto;
+		background: var(--data);
+	}
+
+	.node[data-entry="true"] .node-kind {
+		background: var(--exec);
+		border-radius: 50%;
+	}
+
+	.node[data-entry="true"] .node-head {
+		background: var(--exec-soft);
+	}
+
+	.node-title {
+		font-size: 12px;
+		font-weight: 700;
+		letter-spacing: 0.02em;
+		flex: 1 1 auto;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.node-open {
+		flex: 0 0 auto;
+		border: 1px solid var(--line);
+		background: var(--g1);
+		color: var(--muted);
+		border-radius: 5px;
+		font-family: var(--mono);
+		font-size: 11px;
+		line-height: 1;
+		padding: 4px 5px;
+		cursor: pointer;
+	}
+
+	.node-open:hover {
+		color: var(--ink);
+		border-color: var(--line-strong);
+	}
+
+	.node-body {
+		padding: 8px 10px 10px;
+		display: flex;
+		flex-direction: column;
+		gap: 3px;
+	}
+
+	.node-row {
+		display: flex;
+		justify-content: space-between;
+		gap: 8px;
+		font-size: 11px;
+		color: var(--muted);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.node-row b {
+		color: var(--ink);
+		font-weight: 600;
+	}
+
+	.node-ports {
+		font-size: 10px;
+		color: var(--data);
+		letter-spacing: 0.04em;
+		padding-top: 2px;
+	}
+
+	.port {
+		position: absolute;
+		width: 10px;
+		height: 10px;
+		border-radius: 50%;
+		border: 2px solid var(--g2);
+		pointer-events: none;
+	}
+
+	.port.exec {
+		background: var(--exec);
+	}
+
+	.port.data {
+		background: var(--data);
+	}
+
+	/* ------------------------------------------------------------------ *
+	 * Rollout drawer — #811's "rolled up at the bottom, tap and it slides
+	 * up". Bottom-anchored because the primary device is held in two hands.
+	 * ------------------------------------------------------------------ */
+	.drawer {
+		flex: 0 0 auto;
+		background: var(--g1);
+		border-top: 1px solid var(--line);
+		max-height: 0;
+		overflow: hidden;
+		transition: max-height 260ms cubic-bezier(0.22, 0.61, 0.36, 1);
+	}
+
+	.drawer[data-open="true"] {
+		max-height: 46dvh;
+	}
+
+	.drawer-head {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 10px 12px;
+		border-bottom: 1px solid var(--line);
+	}
+
+	.drawer-title {
+		font-family: var(--mono);
+		font-size: 12px;
+		font-weight: 700;
+		flex: 1 1 auto;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.drawer-body {
+		padding: 12px;
+		overflow-y: auto;
+		max-height: calc(46dvh - 48px);
+	}
+
+	.params {
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
+	}
+
+	.param {
+		display: grid;
+		grid-template-columns: 1fr auto;
+		gap: 6px 10px;
+		align-items: center;
+	}
+
+	.param-name {
+		font-family: var(--mono);
+		font-size: 11px;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--muted);
+	}
+
+	.param-value {
+		font-family: var(--mono);
+		font-size: 12px;
+		font-weight: 700;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.param input[type="range"] {
+		grid-column: 1 / -1;
+		width: 100%;
+		accent-color: var(--exec);
+		height: 28px;
+	}
+
+	.toggle {
+		grid-column: 1 / -1;
+		display: flex;
+		gap: 8px;
+	}
+
+	.toggle button {
+		flex: 1 1 0;
+		font-family: var(--mono);
+		font-size: 11px;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		padding: 9px;
+		min-height: 40px;
+		border: 1px solid var(--line);
+		background: var(--g2);
+		color: var(--muted);
+		border-radius: 8px;
+		cursor: pointer;
+	}
+
+	.toggle button[aria-pressed="true"] {
+		border-color: var(--exec);
+		color: var(--ink);
+		background: var(--exec-soft);
+		font-weight: 700;
+	}
+
+	.swatches {
+		grid-column: 1 / -1;
+		display: flex;
+		gap: 8px;
+	}
+
+	.swatch {
+		width: 40px;
+		height: 34px;
+		border-radius: 8px;
+		border: 1px solid var(--line);
+		cursor: pointer;
+	}
+
+	.swatch[aria-pressed="true"] {
+		box-shadow: 0 0 0 2px var(--exec);
+	}
+
+	.tabs {
+		display: flex;
+		gap: 4px;
+	}
+
+	.tabs button {
+		font-family: var(--mono);
+		font-size: 11px;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		padding: 6px 10px;
+		min-height: 32px;
+		border: 1px solid transparent;
+		background: transparent;
+		color: var(--muted);
+		border-radius: 7px;
+		cursor: pointer;
+	}
+
+	.tabs button[aria-pressed="true"] {
+		background: var(--g2);
+		border-color: var(--line);
+		color: var(--ink);
+		font-weight: 700;
+	}
+
+	pre {
+		margin: 0;
+		overflow-x: auto;
+		background: var(--g2);
+		border: 1px solid var(--line);
+		border-radius: 8px;
+		padding: 12px;
+		font-family: var(--mono);
+		font-size: 12px;
+		line-height: 1.55;
+		color: var(--ink);
+		tab-size: 2;
+	}
+
+	.note {
+		font-size: 12px;
+		line-height: 1.55;
+		color: var(--muted);
+		max-width: 62ch;
+		margin: 10px 0 0;
+	}
+
+	.note code {
+		font-family: var(--mono);
+		font-size: 11px;
+		background: var(--g0);
+		padding: 1px 4px;
+		border-radius: 4px;
+		color: var(--ink);
+	}
+
+	/* ------------------------------------------------------------------ *
+	 * Mode rail
+	 * ------------------------------------------------------------------ */
+	.rail {
+		flex: 0 0 auto;
+		height: var(--rail-h);
+		display: flex;
+		align-items: stretch;
+		gap: 8px;
+		padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px));
+		background: var(--g1);
+		border-top: 1px solid var(--line);
+	}
+
+	.rail button {
+		flex: 1 1 0;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 2px;
+		border: 1px solid var(--line);
+		background: var(--g0);
+		color: var(--muted);
+		border-radius: 10px;
+		font-family: var(--mono);
+		font-size: 11px;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		cursor: pointer;
+		min-height: 44px;
+	}
+
+	.rail button[aria-pressed="true"] {
+		background: var(--g2);
+		color: var(--ink);
+		border-color: var(--exec);
+		font-weight: 700;
+		box-shadow: var(--shadow-1);
+	}
+
+	.rail .sub {
+		font-size: 9px;
+		letter-spacing: 0.04em;
+		text-transform: none;
+		color: var(--muted);
+		font-weight: 400;
+	}
+
+	/* ------------------------------------------------------------------ *
+	 * Coach card
+	 * ------------------------------------------------------------------ */
+	.coach {
+		position: fixed;
+		left: 50%;
+		transform: translateX(-50%);
+		bottom: calc(var(--rail-h) + 14px);
+		width: min(460px, calc(100vw - 24px));
+		background: var(--g2);
+		border: 1px solid var(--line-strong);
+		border-radius: 12px;
+		box-shadow: var(--shadow-2);
+		padding: 14px 16px 12px;
+		z-index: 40;
+	}
+
+	.coach[hidden] {
+		display: none;
+	}
+
+	.coach h2 {
+		margin: 0 0 8px;
+		font-family: var(--mono);
+		font-size: 11px;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		color: var(--muted);
+		font-weight: 700;
+		text-wrap: balance;
+	}
+
+	.coach ol {
+		margin: 0;
+		padding-left: 18px;
+		font-size: 13px;
+		line-height: 1.6;
+	}
+
+	.coach li {
+		margin-bottom: 5px;
+	}
+
+	.coach li b {
+		font-family: var(--mono);
+		font-size: 12px;
+	}
+
+	.coach-close {
+		margin-top: 10px;
+		width: 100%;
+		min-height: 40px;
+		border: 1px solid var(--line);
+		background: var(--g1);
+		color: var(--ink);
+		border-radius: 8px;
+		font-family: var(--mono);
+		font-size: 11px;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		font-weight: 700;
+		cursor: pointer;
+	}
+
+	@media (max-width: 560px) {
+		.mark {
+			display: none;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.track,
+		.drawer,
+		.node {
+			transition: none;
+		}
+	}
+</style>
+
+<div class="app">
+	<header class="topbar">
+		<span class="mark">krudd</span>
+		<nav class="crumbs" id="crumbs" aria-label="Board"></nav>
+		<div class="seg" role="group" aria-label="Detail level">
+			<button type="button" id="modeSimple" aria-pressed="true">Simple</button>
+			<button type="button" id="modePro" aria-pressed="false">Pro</button>
+		</div>
+		<button type="button" class="iconbtn" id="help" aria-label="Show hints">?</button>
+	</header>
+
+	<div class="stage" id="stage">
+		<div class="track" id="track">
+			<section class="pane pane-game" aria-label="Game">
+				<canvas id="viewport"></canvas>
+				<div class="swipe-hint">swipe left for the board</div>
+				<div class="hud" id="hud"></div>
+			</section>
+
+			<section class="pane pane-board" id="boardPane" aria-label="Board">
+				<div class="canvasing" id="canvasing">
+					<svg class="wires" id="wires" width="1400" height="760"></svg>
+					<div id="nodes"></div>
+				</div>
+			</section>
+		</div>
+	</div>
+
+	<aside class="drawer" id="drawer" data-open="false">
+		<div class="drawer-head">
+			<span class="drawer-title" id="drawerTitle">—</span>
+			<div class="tabs" role="group" aria-label="Panel">
+				<button type="button" id="tabParams" aria-pressed="true">Settings</button>
+				<button type="button" id="tabCode" aria-pressed="false">TypeScript</button>
+			</div>
+			<button type="button" class="iconbtn" id="drawerClose" aria-label="Close">×</button>
+		</div>
+		<div class="drawer-body" id="drawerBody"></div>
+	</aside>
+
+	<nav class="rail" aria-label="Mode">
+		<button type="button" id="railGame" aria-pressed="true">
+			Game<span class="sub">what you play</span>
+		</button>
+		<button type="button" id="railBoard" aria-pressed="false">
+			Board<span class="sub">what makes it</span>
+		</button>
+	</nav>
+</div>
+
+<div class="coach" id="coach">
+	<h2>Three things to try</h2>
+	<ol>
+		<li><b>Swipe</b> from a screen edge, or use Game / Board below, to move between playing and making.</li>
+		<li><b>Tap a coral wire</b> to cut it — then look at the game. Cut <b>paint → draw entities</b> and the triangles are gone.</li>
+		<li><b>Pro</b> opens the paint node into its own board, and shows the TypeScript each node compiles to.</li>
+	</ol>
+	<button type="button" class="coach-close" id="coachClose">Start</button>
+</div>
+
+<script>
+	"use strict";
+
+	/* =================================================================== *
+	 * The project.
+	 *
+	 * This is the whole point of the mock: the running demo in
+	 * crates/shell/web is not hardcoded here either. It is this object,
+	 * and the game view is what happens when you interpret it. Cutting a
+	 * wire edits data; the frame after that draws something different.
+	 * =================================================================== */
+
+	const project = {
+		params: {
+			count: 8,
+			radius: 0.4,
+			speed: 0.25,
+			limit: 3.2,
+			scale: 0.35,
+			extent: 2.0,
+			clear: "#080a0d",
+		},
+		cut: {
+			w_start_ring: false,
+			w_step_integrate: false,
+			w_integrate_recycle: false,
+			w_paint_draw: false,
+		},
+	};
+
+	/* Lane geometry, in board units. Three lanes because there are three
+	   entry points, and the lane a node sits in is when it runs. */
+	const LANE_ORDER = ["start", "step", "paint"];
+
+	/* Filled in on every render from the measured node heights, so a lane is
+	   as tall as what is in it — Simple mode hides the port lists, and a lane
+	   sized for Pro leaves a hole on a phone where the space is dearest. */
+	let laneGeom = {};
+
+	/* A lane runs left-to-right where there is room and top-to-bottom where
+	   there is not. Same board, same order, same wires — the reactive layout
+	   #811 asks for, rather than a phone build of the editor. */
+	let layout = "wide";
+
+	/* Order within a lane. Derived from the authored x so the board data
+	   stays one set of coordinates rather than two. */
+	function columnOf(node) {
+		return Math.round((node.x - 40) / 276);
+	}
+
+	/* A lane means "when this runs", and what that means depends on the
+	   board you are standing in. One level down, inside a frame, the three
+	   lanes are stages of that frame rather than of the game. */
+	const LANE_LABELS = {
+		root: {
+			start: "start — once, when the game opens",
+			step: "step — every frame, before painting",
+			paint: "paint — every frame, to the screen",
+		},
+		paintboard: {
+			start: "set up the frame",
+			step: "draw into it",
+			paint: "hand it to the screen",
+		},
+	};
+
+	const NODE_W = 212;
+
+	const boards = {
+		root: {
+			title: "triangles",
+			nodes: [
+				{
+					id: "start",
+					lane: "start",
+					x: 40,
+					title: "Start",
+					entry: true,
+					rows: [],
+					code: `// Entry point. Runs once, before the first frame.
+//
+// An entry point compiles to a plain exported function; the wires
+// out of it become the calls in its body, in order.
+
+export function start(world: World): void {
+  spawnRing(world, { count: 8, radius: 0.4, speed: 0.25 });
+}`,
+				},
+				{
+					id: "ring",
+					lane: "start",
+					x: 316,
+					title: "Spawn Ring",
+					rows: [
+						["count", "count"],
+						["radius", "radius"],
+						["speed", "speed"],
+					],
+					out: ["position", "velocity"],
+					params: ["count", "radius", "speed"],
+					code: `// Writes two whole columns, once. Not called per entity —
+// the node takes the columns and fills them.
+
+export function spawnRing(
+  world: World,
+  p: { count: number; radius: number; speed: number },
+): void {
+  const position = world.positions();   // view over wasm memory
+  const velocity = world.velocities();
+  for (let i = 0; i < p.count; i++) {
+    const a = (i / p.count) * Math.PI * 2;
+    position[i * 3]     = Math.cos(a) * p.radius;
+    position[i * 3 + 1] = Math.sin(a) * p.radius;
+    velocity[i * 3]     = Math.cos(a) * p.speed;
+    velocity[i * 3 + 1] = Math.sin(a) * p.speed;
+  }
+}`,
+				},
+				{
+					id: "step",
+					lane: "step",
+					x: 40,
+					title: "Step",
+					entry: true,
+					rows: [],
+					code: `// Entry point. Runs once per frame, before paint.
+// dt is seconds since the last frame, already clamped.
+
+export function step(world: World, dt: number): void {
+  integrate(world, dt);
+  recycle(world, { limit: 3.2, radius: 0.4 });
+}`,
+				},
+				{
+					id: "integrate",
+					lane: "step",
+					x: 316,
+					title: "Integrate",
+					rows: [["reads", "dt"]],
+					in: ["position", "velocity"],
+					out: ["position"],
+					code: `// The rule that keeps the boundary honest: a node takes a
+// COLUMN and walks it. One call per phase, never one per entity.
+// Per-entity crossings measure ~36x more expensive — that is what
+// cargo xtask bench exists to keep true.
+
+export function integrate(world: World, dt: number): void {
+  const position = world.positions();
+  const velocity = world.velocities();
+  for (let i = 0; i < position.length; i += 3) {
+    position[i]     += velocity[i]     * dt;
+    position[i + 1] += velocity[i + 1] * dt;
+    position[i + 2] += velocity[i + 2] * dt;
+  }
+}`,
+				},
+				{
+					id: "recycle",
+					lane: "step",
+					x: 592,
+					title: "Recycle",
+					rows: [
+						["past", "limit"],
+						["back to", "radius"],
+					],
+					in: ["position"],
+					out: ["position"],
+					params: ["limit"],
+					code: `// This one already exists, hand-written, in
+// packages/shell/web/src/index.ts — it edits Rust's own memory
+// through a Float32Array view with no crossing per entity.
+// It is a node that has not been drawn yet.
+
+export function recycle(
+  world: World,
+  p: { limit: number; radius: number },
+): void {
+  const position = world.positions();
+  for (let i = 0; i < position.length; i += 3) {
+    const x = position[i];
+    const y = position[i + 1];
+    const d = Math.hypot(x, y);
+    if (d <= p.limit) continue;
+    const s = p.radius / d;
+    position[i]     = x * s;
+    position[i + 1] = y * s;
+  }
+}`,
+				},
+				{
+					id: "paint",
+					lane: "paint",
+					x: 40,
+					title: "Paint",
+					entry: true,
+					rows: [],
+					code: `// Entry point. Runs once per frame, after step.
+// Everything below it is what ends up on the screen.
+
+export function paint(world: World, frame: Frame): void {
+  drawEntities(world, frame, { mesh: "triangle", scale: 0.35 });
+}`,
+				},
+				{
+					id: "draw",
+					lane: "paint",
+					x: 316,
+					title: "Draw Entities",
+					rows: [
+						["mesh", "triangle"],
+						["scale", "scale"],
+					],
+					in: ["position"],
+					params: ["scale"],
+					opens: "paintboard",
+					code: `// One draw per live entity, built from the position column.
+// Opening this node is opening the frame itself — clear, camera,
+// the draw, the present. Same board, one level down.
+
+export function drawEntities(
+  world: World,
+  frame: Frame,
+  p: { mesh: MeshId; scale: number },
+): void {
+  const position = world.positions();
+  for (let slot = 0; slot < world.slotCount; slot++) {
+    frame.push({
+      mesh: p.mesh,
+      transform: translate(position, slot).scaled(p.scale),
+      vertexCount: 3,
+    });
+  }
+}`,
+				},
+			],
+			wires: [
+				{ id: "w_start_ring", from: "start", to: "ring", kind: "exec" },
+				{ id: "w_step_integrate", from: "step", to: "integrate", kind: "exec" },
+				{
+					id: "w_integrate_recycle",
+					from: "integrate",
+					to: "recycle",
+					kind: "exec",
+				},
+				{ id: "w_paint_draw", from: "paint", to: "draw", kind: "exec" },
+				{
+					id: "d_ring_integrate",
+					from: "ring",
+					to: "integrate",
+					kind: "data",
+					label: "position",
+				},
+				{
+					id: "d_recycle_draw",
+					from: "recycle",
+					to: "draw",
+					kind: "data",
+					label: "position",
+				},
+			],
+		},
+
+		/* One level down. This is the frame, drawn — #839's "the frame graph
+		   is viewable" without needing the pass DAG to exist first. */
+		paintboard: {
+			title: "Draw Entities",
+			parent: "root",
+			pro: true,
+			nodes: [
+				{
+					id: "p_begin",
+					lane: "start",
+					x: 40,
+					title: "Begin Frame",
+					entry: true,
+					rows: [["surface", "canvas"]],
+					code: `// The frame the backend is handed. Rust owns it; this is the
+// shape of it, not a second implementation.
+
+export function beginFrame(surface: Surface): Frame {
+  return new Frame(surface.viewport());
+}`,
+				},
+				{
+					id: "p_clear",
+					lane: "start",
+					x: 316,
+					title: "Clear",
+					rows: [["colour", "clear"]],
+					params: ["clear"],
+					code: `// LoadOp::Clear on the colour attachment. Changing this
+// changes the first thing the eye sees, which is why it is a
+// setting and not a constant.
+
+frame.color[0].load = { clear: p.colour };`,
+				},
+				{
+					id: "p_camera",
+					lane: "step",
+					x: 40,
+					title: "Camera",
+					rows: [
+						["kind", "orthographic"],
+						["extent", "extent"],
+					],
+					params: ["extent"],
+					out: ["viewProjection"],
+					code: `// A fixed orthographic box, widened by the canvas aspect —
+// widened rather than squashed, so a wider window shows more
+// world instead of stretching what is already on screen.
+
+export function camera(viewport: Viewport, extent: number): Mat4 {
+  const halfWidth = extent * viewport.aspect();
+  return Mat4.orthographic(
+    -halfWidth, halfWidth, -extent, extent, -1, 1,
+  );
+}`,
+				},
+				{
+					id: "p_draw",
+					lane: "step",
+					x: 316,
+					title: "Draw",
+					rows: [
+						["pipeline", "triangle"],
+						["vertices", "3"],
+					],
+					in: ["position", "viewProjection"],
+					code: `// The draw list, submitted once. Each entry is a pipeline, a
+// transform and a vertex count — Draw in crates/render/renderer.
+
+for (const draw of frame.draws()) {
+  commands.setPipeline(draw.pipeline);
+  commands.setUniform(draw.transform);
+  commands.draw(draw.firstVertex, draw.vertexCount);
+}`,
+				},
+				{
+					id: "p_present",
+					lane: "paint",
+					x: 40,
+					title: "Present",
+					rows: [["to", "surface"]],
+					code: `// end_frame is not submit. The backend decides when the queue
+// is flushed; this node only says the frame is finished.
+
+backend.endFrame(frame);`,
+				},
+			],
+			wires: [
+				{ id: "p1", from: "p_begin", to: "p_clear", kind: "exec" },
+				{ id: "p2", from: "p_camera", to: "p_draw", kind: "exec" },
+				{
+					id: "p3",
+					from: "p_camera",
+					to: "p_draw",
+					kind: "data",
+					label: "viewProjection",
+				},
+			],
+		},
+	};
+
+	/* =================================================================== *
+	 * State
+	 * =================================================================== */
+
+	const state = {
+		mode: "game", // "game" | "board"
+		pro: false,
+		boardId: "root",
+		selected: null,
+		tab: "params",
+	};
+
+	const el = (id) => document.getElementById(id);
+	const nodesHost = el("nodes");
+	const wiresHost = el("wires");
+
+	/* =================================================================== *
+	 * Board rendering
+	 * =================================================================== */
+
+	function laneOf(id) {
+		return laneGeom[id] || { y: 26, h: 150 };
+	}
+
+	function boardWidth(board) {
+		return Math.max(...board.nodes.map((n) => (n._x ?? n.x) + NODE_W)) + 40;
+	}
+
+	function boardHeight() {
+		const used = LANE_ORDER.filter((id) => laneGeom[id]);
+		if (used.length === 0) return 400;
+		const last = laneGeom[used[used.length - 1]];
+		return last.y + last.h + 30;
+	}
+
+	/* Measured after layout rather than predicted from row counts. A node
+	   sizes to its own content — port lists wrap, and a guessed height
+	   spills text past the border and lands wires off the ports. */
+	function nodeHeight(node) {
+		return node.measured || 96;
+	}
+
+	function nodeX(node) {
+		return node._x ?? node.x;
+	}
+
+	function nodeY(node) {
+		return node._y ?? laneOf(node.lane).y + 44;
+	}
+
+	function currentBoard() {
+		return boards[state.boardId];
+	}
+
+	function paramText(node, key) {
+		const p = project.params;
+		if (key === "count") return String(p.count);
+		if (key === "radius") return p.radius.toFixed(2);
+		if (key === "speed") return p.speed.toFixed(2);
+		if (key === "limit") return p.limit.toFixed(1);
+		if (key === "scale") return p.scale.toFixed(2);
+		if (key === "extent") return p.extent.toFixed(1);
+		if (key === "clear") return p.clear;
+		return key;
+	}
+
+	function renderBoard() {
+		const board = currentBoard();
+		nodesHost.textContent = "";
+		wiresHost.textContent = "";
+
+		// Pass 1 — build and measure. Position comes later: a node's height
+		// decides how tall its lane is, and the lane decides where it sits.
+		const built = new Map();
+		for (const node of board.nodes) {
+			const box = buildNode(node);
+			nodesHost.appendChild(box);
+			built.set(node, box);
+		}
+		for (const [node, box] of built) {
+			node.measured = box.offsetHeight;
+		}
+
+		// Pass 2 — lay the lanes out around what they hold.
+		layout = el("boardPane").clientWidth < 720 ? "narrow" : "wide";
+		laneGeom = {};
+		let y = 26;
+		for (const id of LANE_ORDER) {
+			const inLane = board.nodes
+				.filter((n) => n.lane === id)
+				.sort((a, b) => columnOf(a) - columnOf(b));
+			if (inLane.length === 0) continue;
+
+			if (layout === "narrow") {
+				let cursor = y + 44;
+				for (const node of inLane) {
+					node._x = 40;
+					node._y = cursor;
+					cursor += node.measured + 34;
+				}
+				laneGeom[id] = { y, h: cursor - 34 + 24 - y };
+			} else {
+				const tallest = Math.max(...inLane.map((n) => n.measured));
+				for (const node of inLane) {
+					node._x = node.x;
+					node._y = y + 44;
+				}
+				laneGeom[id] = { y, h: 44 + tallest + 24 };
+			}
+			y += laneGeom[id].h + 28;
+		}
+
+		// Pass 3 — place everything.
+		const width = boardWidth(board);
+		for (const id of Object.keys(laneGeom)) {
+			const lane = laneGeom[id];
+			const box = document.createElement("div");
+			box.className = "lane";
+			box.style.left = "20px";
+			box.style.top = lane.y + "px";
+			box.style.width = width - 20 + "px";
+			box.style.height = lane.h + "px";
+			nodesHost.prepend(box);
+
+			const label = document.createElement("div");
+			label.className = "lane-label";
+			label.style.left = "34px";
+			label.style.top = lane.y + 12 + "px";
+			label.textContent = LANE_LABELS[state.boardId][id];
+			nodesHost.prepend(label);
+		}
+
+		for (const [node, box] of built) {
+			box.style.left = nodeX(node) + "px";
+			box.style.top = nodeY(node) + "px";
+			const execIn = box.querySelector(".port.exec.in");
+			const execOut = box.querySelector(".port.exec.out");
+			if (layout === "narrow") {
+				if (execIn) {
+					execIn.style.left = NODE_W / 2 - 5 + "px";
+					execIn.style.top = "-5px";
+				}
+				if (execOut) {
+					execOut.style.left = NODE_W / 2 - 5 + "px";
+					execOut.style.top = node.measured - 5 + "px";
+				}
+			}
+			const dataOut = box.querySelector(".port.data.out");
+			if (dataOut) dataOut.style.top = node.measured - 21 + "px";
+			const dataIn = box.querySelector(".port.data.in");
+			if (dataIn) dataIn.style.top = node.measured - 21 + "px";
+		}
+
+		for (const wire of board.wires) {
+			if (wire.kind === "data" && !state.pro) continue;
+			// Stacked, every node shares a column, so a data wire would loop
+			// around the outside of everything to reach the node below it.
+			if (wire.kind === "data" && layout === "narrow") continue;
+			drawWire(board, wire);
+		}
+	}
+
+	function portOut(node, kind) {
+		if (layout === "narrow" && kind === "exec") {
+			return { x: nodeX(node) + NODE_W / 2, y: nodeY(node) + nodeHeight(node) };
+		}
+		return {
+			x: nodeX(node) + NODE_W,
+			y: nodeY(node) + (kind === "exec" ? 20 : nodeHeight(node) - 16),
+		};
+	}
+
+	function portIn(node, kind) {
+		if (layout === "narrow" && kind === "exec") {
+			return { x: nodeX(node) + NODE_W / 2, y: nodeY(node) };
+		}
+		return {
+			x: nodeX(node),
+			y: nodeY(node) + (kind === "exec" ? 20 : nodeHeight(node) - 16),
+		};
+	}
+
+	function drawWire(board, wire) {
+		const from = board.nodes.find((n) => n.id === wire.from);
+		const to = board.nodes.find((n) => n.id === wire.to);
+		if (!from || !to) return;
+
+		const a = portOut(from, wire.kind);
+		const b = portIn(to, wire.kind);
+		const cut = project.cut[wire.id] === true;
+		const vertical = layout === "narrow" && wire.kind === "exec";
+		const bend = vertical
+			? Math.max(26, Math.abs(b.y - a.y) * 0.5)
+			: Math.max(48, Math.abs(b.x - a.x) * 0.45);
+		const c1 = vertical
+			? { x: a.x, y: a.y + bend }
+			: { x: a.x + bend, y: a.y };
+		const c2 = vertical
+			? { x: b.x, y: b.y - bend }
+			: { x: b.x - bend, y: b.y };
+
+		let d;
+		if (cut) {
+			// A cut wire is drawn as two stubs with daylight between them,
+			// so "disconnected" reads at a glance rather than on inspection.
+			const midA = { x: a.x + (b.x - a.x) * 0.34, y: a.y + (b.y - a.y) * 0.34 };
+			const midB = { x: a.x + (b.x - a.x) * 0.66, y: a.y + (b.y - a.y) * 0.66 };
+			d = `M ${a.x} ${a.y} L ${midA.x} ${midA.y} M ${midB.x} ${midB.y} L ${b.x} ${b.y}`;
+		} else {
+			d = `M ${a.x} ${a.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${b.x} ${b.y}`;
+		}
+
+		const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+		group.setAttribute("class", "wire-group");
+
+		const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+		path.setAttribute("class", `wire ${wire.kind}${cut ? " cut" : ""}`);
+		path.setAttribute("d", d);
+		group.appendChild(path);
+
+		// Only wires that genuinely drive the running game are cuttable. A
+		// control that looks live and changes nothing teaches the wrong
+		// lesson about what the board is.
+		if (wire.kind === "exec" && wire.id in project.cut) {
+			const hit = document.createElementNS("http://www.w3.org/2000/svg", "path");
+			hit.setAttribute("class", "wire-hit");
+			hit.setAttribute(
+				"d",
+				`M ${a.x} ${a.y} C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${b.x} ${b.y}`,
+			);
+			hit.addEventListener("click", (event) => {
+				event.stopPropagation();
+				project.cut[wire.id] = !project.cut[wire.id];
+				renderBoard();
+			});
+			group.appendChild(hit);
+
+			const title = document.createElementNS(
+				"http://www.w3.org/2000/svg",
+				"title",
+			);
+			title.textContent = cut ? "Cut — tap to reconnect" : "Tap to cut";
+			group.appendChild(title);
+		}
+
+		if (wire.kind === "data" && wire.label) {
+			const text = document.createElementNS(
+				"http://www.w3.org/2000/svg",
+				"text",
+			);
+			text.setAttribute("x", (a.x + b.x) / 2);
+			text.setAttribute("y", (a.y + b.y) / 2 - 7);
+			text.setAttribute("text-anchor", "middle");
+			text.setAttribute("fill", "currentColor");
+			text.setAttribute(
+				"style",
+				"font-family:var(--mono);font-size:10px;fill:var(--data)",
+			);
+			text.textContent = wire.label;
+			group.appendChild(text);
+		}
+
+		wiresHost.appendChild(group);
+	}
+
+	function buildNode(node) {
+		const box = document.createElement("div");
+		box.className = "node";
+		box.style.left = node.x + "px";
+		box.style.top = nodeY(node) + "px";
+		box.dataset.entry = node.entry ? "true" : "false";
+		box.dataset.selected = state.selected === node.id ? "true" : "false";
+		box.dataset.off = isNodeOff(node) ? "true" : "false";
+		box.tabIndex = 0;
+		box.setAttribute("role", "button");
+
+		const head = document.createElement("div");
+		head.className = "node-head";
+
+		const kind = document.createElement("span");
+		kind.className = "node-kind";
+		head.appendChild(kind);
+
+		const title = document.createElement("span");
+		title.className = "node-title";
+		title.textContent = node.title;
+		head.appendChild(title);
+
+		if (node.opens && state.pro) {
+			const open = document.createElement("button");
+			open.type = "button";
+			open.className = "node-open";
+			open.textContent = "open";
+			open.setAttribute("aria-label", `Open ${node.title}`);
+			open.addEventListener("click", (event) => {
+				event.stopPropagation();
+				descend(node.opens);
+			});
+			head.appendChild(open);
+		}
+
+		box.appendChild(head);
+
+		const body = document.createElement("div");
+		body.className = "node-body";
+		for (const [label, key] of node.rows) {
+			const row = document.createElement("div");
+			row.className = "node-row";
+			const name = document.createElement("span");
+			name.textContent = label;
+			const value = document.createElement("b");
+			value.textContent = paramText(node, key);
+			row.append(name, value);
+			body.appendChild(row);
+		}
+		if (state.pro && (node.in || node.out)) {
+			for (const [label, list] of [
+				["in", node.in],
+				["out", node.out],
+			]) {
+				if (!list) continue;
+				const ports = document.createElement("div");
+				ports.className = "node-ports";
+				ports.textContent = `${label} ${list.join(", ")}`;
+				body.appendChild(ports);
+			}
+		}
+		if (node.rows.length === 0 && !(state.pro && (node.in || node.out))) {
+			const row = document.createElement("div");
+			row.className = "node-row";
+			row.textContent = node.entry ? "entry point" : "—";
+			body.appendChild(row);
+		}
+		box.appendChild(body);
+
+		// ports
+		const execOut = document.createElement("span");
+		execOut.className = "port exec out";
+		execOut.style.left = NODE_W - 5 + "px";
+		execOut.style.top = "15px";
+		box.appendChild(execOut);
+
+		if (!node.entry) {
+			const execIn = document.createElement("span");
+			execIn.className = "port exec in";
+			execIn.style.left = "-5px";
+			execIn.style.top = "15px";
+			box.appendChild(execIn);
+		}
+
+		if (state.pro && node.out) {
+			const dataOut = document.createElement("span");
+			dataOut.className = "port data out";
+			dataOut.style.left = NODE_W - 5 + "px";
+			box.appendChild(dataOut);
+		}
+		if (state.pro && node.in) {
+			const dataIn = document.createElement("span");
+			dataIn.className = "port data in";
+			dataIn.style.left = "-5px";
+			box.appendChild(dataIn);
+		}
+
+		const choose = () => select(node.id);
+		box.addEventListener("click", choose);
+		box.addEventListener("keydown", (event) => {
+			if (event.key === "Enter" || event.key === " ") {
+				event.preventDefault();
+				choose();
+			}
+		});
+		box.addEventListener("dblclick", () => {
+			if (node.opens && state.pro) descend(node.opens);
+		});
+
+		return box;
+	}
+
+	/* A node is greyed when the exec wire feeding it is cut — the thing you
+	   turned off should look turned off without switching to the game. */
+	function isNodeOff(node) {
+		const board = currentBoard();
+		const feed = board.wires.find(
+			(w) => w.to === node.id && w.kind === "exec",
+		);
+		if (!feed) return false;
+		if (project.cut[feed.id]) return true;
+		const upstream = board.nodes.find((n) => n.id === feed.from);
+		return upstream ? isNodeOff(upstream) : false;
+	}
+
+	/* =================================================================== *
+	 * Navigation
+	 * =================================================================== */
+
+	function descend(boardId) {
+		state.boardId = boardId;
+		state.selected = null;
+		closeDrawer();
+		renderCrumbs();
+		renderBoard();
+		fitBoard();
+	}
+
+	function renderCrumbs() {
+		const host = el("crumbs");
+		host.textContent = "";
+		const chain = [];
+		let id = state.boardId;
+		while (id) {
+			chain.unshift(id);
+			id = boards[id].parent;
+		}
+		chain.forEach((boardId, index) => {
+			if (index > 0) {
+				const sep = document.createElement("span");
+				sep.className = "crumb-sep";
+				sep.textContent = "/";
+				host.appendChild(sep);
+			}
+			const crumb = document.createElement("button");
+			crumb.type = "button";
+			crumb.className = "crumb";
+			crumb.textContent = boards[boardId].title;
+			crumb.addEventListener("click", () => descend(boardId));
+			host.appendChild(crumb);
+		});
+	}
+
+	function setMode(mode) {
+		state.mode = mode;
+		el("track").style.transform =
+			mode === "game" ? "translateX(0%)" : "translateX(-50%)";
+		el("railGame").setAttribute("aria-pressed", String(mode === "game"));
+		el("railBoard").setAttribute("aria-pressed", String(mode === "board"));
+		if (mode === "board") fitBoard();
+	}
+
+	function setPro(pro) {
+		state.pro = pro;
+		el("modeSimple").setAttribute("aria-pressed", String(!pro));
+		el("modePro").setAttribute("aria-pressed", String(pro));
+		el("tabCode").style.display = pro ? "" : "none";
+		if (!pro) {
+			if (boards[state.boardId].pro) descend("root");
+			if (state.tab === "code") setTab("params");
+		}
+		renderBoard();
+		// Port lists appear and disappear with the detail level, so the lanes
+		// change height and the fit is no longer the fit.
+		fitBoard();
+		if (state.selected) renderDrawer();
+	}
+
+	/* =================================================================== *
+	 * Drawer
+	 * =================================================================== */
+
+	function select(nodeId) {
+		state.selected = nodeId;
+		renderBoard();
+		renderDrawer();
+		el("drawer").dataset.open = "true";
+	}
+
+	function closeDrawer() {
+		state.selected = null;
+		el("drawer").dataset.open = "false";
+		renderBoard();
+	}
+
+	function setTab(tab) {
+		state.tab = tab;
+		el("tabParams").setAttribute("aria-pressed", String(tab === "params"));
+		el("tabCode").setAttribute("aria-pressed", String(tab === "code"));
+		renderDrawer();
+	}
+
+	const SLIDERS = {
+		count: { label: "how many", min: 0, max: 24, step: 1, fixed: 0 },
+		radius: { label: "start ring", min: 0.1, max: 1.5, step: 0.05, fixed: 2 },
+		speed: { label: "how fast", min: 0, max: 1.2, step: 0.05, fixed: 2 },
+		limit: { label: "put back past", min: 0.8, max: 6, step: 0.1, fixed: 1 },
+		scale: { label: "size", min: 0.05, max: 1.2, step: 0.05, fixed: 2 },
+		extent: { label: "how much world", min: 0.8, max: 6, step: 0.1, fixed: 1 },
+	};
+
+	const CLEARS = ["#080a0d", "#101c2a", "#241018", "#0d1f18"];
+
+	function renderDrawer() {
+		const board = currentBoard();
+		const node = board.nodes.find((n) => n.id === state.selected);
+		if (!node) return;
+
+		el("drawerTitle").textContent = node.title;
+		const body = el("drawerBody");
+		body.textContent = "";
+
+		if (state.tab === "code" && state.pro) {
+			const pre = document.createElement("pre");
+			pre.textContent = node.code;
+			body.appendChild(pre);
+			const note = document.createElement("p");
+			note.className = "note";
+			note.textContent =
+				"Not a preview of code someone else wrote — this is what the node is. The board is the source, and this is what it lowers to.";
+			body.appendChild(note);
+			return;
+		}
+
+		const params = document.createElement("div");
+		params.className = "params";
+
+		for (const key of node.params || []) {
+			if (key === "clear") {
+				params.appendChild(buildSwatches());
+				continue;
+			}
+			params.appendChild(buildSlider(key));
+		}
+
+		if (!node.params || node.params.length === 0) {
+			const note = document.createElement("p");
+			note.className = "note";
+			note.textContent = node.entry
+				? "An entry point has nothing to set. It is when, not what — everything wired out of it runs in order."
+				: "Nothing to set on this node. Its behaviour comes from what is wired into it.";
+			params.appendChild(note);
+		}
+
+		// The cut control, offered on the node as well as on the wire, because
+		// a wire is a small target on a phone.
+		const feed = board.wires.find(
+			(w) => w.to === node.id && w.kind === "exec" && w.id in project.cut,
+		);
+		if (feed) {
+			const wrap = document.createElement("div");
+			wrap.className = "param";
+			const name = document.createElement("span");
+			name.className = "param-name";
+			name.textContent = "connected";
+			const value = document.createElement("span");
+			value.className = "param-value";
+			value.textContent = project.cut[feed.id] ? "no" : "yes";
+			const toggle = document.createElement("div");
+			toggle.className = "toggle";
+			for (const [label, cut] of [
+				["Connected", false],
+				["Cut", true],
+			]) {
+				const button = document.createElement("button");
+				button.type = "button";
+				button.textContent = label;
+				button.setAttribute(
+					"aria-pressed",
+					String(project.cut[feed.id] === cut),
+				);
+				button.addEventListener("click", () => {
+					project.cut[feed.id] = cut;
+					renderBoard();
+					renderDrawer();
+				});
+				toggle.appendChild(button);
+			}
+			wrap.append(name, value, toggle);
+			params.appendChild(wrap);
+		}
+
+		body.appendChild(params);
+	}
+
+	function buildSlider(key) {
+		const spec = SLIDERS[key];
+		const wrap = document.createElement("div");
+		wrap.className = "param";
+
+		const name = document.createElement("label");
+		name.className = "param-name";
+		name.textContent = spec.label;
+		name.htmlFor = "p_" + key;
+
+		const value = document.createElement("span");
+		value.className = "param-value";
+		value.textContent = project.params[key].toFixed(spec.fixed);
+
+		const input = document.createElement("input");
+		input.type = "range";
+		input.id = "p_" + key;
+		input.min = String(spec.min);
+		input.max = String(spec.max);
+		input.step = String(spec.step);
+		input.value = String(project.params[key]);
+		input.addEventListener("input", () => {
+			project.params[key] = Number(input.value);
+			value.textContent = project.params[key].toFixed(spec.fixed);
+			if (key === "count" || key === "radius" || key === "speed") respawn();
+			renderBoard();
+		});
+
+		wrap.append(name, value, input);
+		return wrap;
+	}
+
+	function buildSwatches() {
+		const wrap = document.createElement("div");
+		wrap.className = "param";
+		const name = document.createElement("span");
+		name.className = "param-name";
+		name.textContent = "background";
+		const value = document.createElement("span");
+		value.className = "param-value";
+		value.textContent = project.params.clear;
+		const row = document.createElement("div");
+		row.className = "swatches";
+		for (const colour of CLEARS) {
+			const button = document.createElement("button");
+			button.type = "button";
+			button.className = "swatch";
+			button.style.background = colour;
+			button.setAttribute("aria-label", `Background ${colour}`);
+			button.setAttribute(
+				"aria-pressed",
+				String(project.params.clear === colour),
+			);
+			button.addEventListener("click", () => {
+				project.params.clear = colour;
+				value.textContent = colour;
+				renderBoard();
+				renderDrawer();
+			});
+			row.appendChild(button);
+		}
+		wrap.append(name, value, row);
+		return wrap;
+	}
+
+	/* =================================================================== *
+	 * The game — the same demo crates/shell/web runs, interpreted from the
+	 * project above rather than hardcoded. Constants match the engine:
+	 * VIEW_EXTENT 2.0, TRIANGLE_SCALE 0.35, spawn radius 0.4, drift
+	 * 0.25 u/s, recycle past 3.2.
+	 * =================================================================== */
+
+	const canvas = el("viewport");
+	const ctx = canvas.getContext("2d");
+	let positions = new Float32Array(0);
+	let velocities = new Float32Array(0);
+	let frameCount = 0;
+	let elapsed = 0;
+	let fps = 60;
+
+	function respawn() {
+		const n = Math.round(project.params.count);
+		positions = new Float32Array(n * 3);
+		velocities = new Float32Array(n * 3);
+		if (project.cut.w_start_ring) return;
+		for (let i = 0; i < n; i++) {
+			const a = (i / n) * Math.PI * 2;
+			positions[i * 3] = Math.cos(a) * project.params.radius;
+			positions[i * 3 + 1] = Math.sin(a) * project.params.radius;
+			velocities[i * 3] = Math.cos(a) * project.params.speed;
+			velocities[i * 3 + 1] = Math.sin(a) * project.params.speed;
+		}
+	}
+
+	let lastCutStart = false;
+
+	function simulate(dt) {
+		if (lastCutStart !== project.cut.w_start_ring) {
+			lastCutStart = project.cut.w_start_ring;
+			respawn();
+		}
+		if (!project.cut.w_step_integrate) {
+			for (let i = 0; i < positions.length; i += 3) {
+				positions[i] += velocities[i] * dt;
+				positions[i + 1] += velocities[i + 1] * dt;
+			}
+			if (!project.cut.w_integrate_recycle) {
+				for (let i = 0; i < positions.length; i += 3) {
+					const x = positions[i];
+					const y = positions[i + 1];
+					const d = Math.hypot(x, y);
+					if (d <= project.params.limit) continue;
+					const s = project.params.radius / d;
+					positions[i] = x * s;
+					positions[i + 1] = y * s;
+				}
+			}
+		}
+		elapsed += dt;
+		frameCount++;
+	}
+
+	function resizeCanvas() {
+		const ratio = Math.min(window.devicePixelRatio || 1, 2);
+		const w = Math.max(1, Math.round(canvas.clientWidth * ratio));
+		const h = Math.max(1, Math.round(canvas.clientHeight * ratio));
+		if (canvas.width !== w || canvas.height !== h) {
+			canvas.width = w;
+			canvas.height = h;
+		}
+	}
+
+	function paintGame() {
+		resizeCanvas();
+		const w = canvas.width;
+		const h = canvas.height;
+
+		ctx.fillStyle = project.params.clear;
+		ctx.fillRect(0, 0, w, h);
+
+		const drawn = project.cut.w_paint_draw ? 0 : positions.length / 3;
+		if (drawn > 0) {
+			// Orthographic box `extent` tall, widened by aspect — so a wider
+			// window shows more world rather than stretching what is there.
+			const extent = project.params.extent;
+			const pxPerUnit = h / (extent * 2);
+			const cx = w / 2;
+			const cy = h / 2;
+			const s = project.params.scale * pxPerUnit;
+
+			ctx.fillStyle = "#ff6a42";
+			for (let i = 0; i < positions.length; i += 3) {
+				const x = cx + positions[i] * pxPerUnit;
+				const y = cy - positions[i + 1] * pxPerUnit;
+				ctx.beginPath();
+				ctx.moveTo(x, y - s * 0.62);
+				ctx.lineTo(x - s * 0.55, y + s * 0.44);
+				ctx.lineTo(x + s * 0.55, y + s * 0.44);
+				ctx.closePath();
+				ctx.fill();
+			}
+		}
+
+		const hud = el("hud");
+		hud.textContent = "";
+		const parts = [
+			["krudd", "0.2.0"],
+			["", "webgl2"],
+			["", `${Math.round(w)}x${Math.round(h)}`],
+			["", `${fps.toFixed(0)} fps`],
+			["", `${positions.length / 3} entities`],
+			["", `${drawn} draws`],
+			["", `frame ${frameCount}`],
+			["", `${elapsed.toFixed(1)}s`],
+		];
+		for (const [prefix, text] of parts) {
+			const span = document.createElement("span");
+			if (prefix) {
+				const b = document.createElement("b");
+				b.textContent = prefix + " ";
+				span.appendChild(b);
+			}
+			span.appendChild(document.createTextNode(text));
+			if (text.endsWith("draws") && drawn === 0) span.className = "warn";
+			hud.appendChild(span);
+		}
+		if (project.cut.w_paint_draw) {
+			const span = document.createElement("span");
+			span.className = "warn";
+			span.textContent = "paint → draw entities is cut";
+			hud.appendChild(span);
+		}
+	}
+
+	let previous = performance.now();
+	function loop(now) {
+		const dt = Math.min((now - previous) / 1000, 0.1);
+		previous = now;
+		if (dt > 0) fps = fps * 0.9 + (1 / dt) * 0.1;
+		simulate(dt);
+		paintGame();
+		requestAnimationFrame(loop);
+	}
+
+	/* =================================================================== *
+	 * Board panning, and the edge swipe.
+	 *
+	 * Interior drag pans the board; a drag starting within EDGE of the left
+	 * or right edge navigates between modes instead. Navigation at the
+	 * edges, content in the middle — so panning a board never accidentally
+	 * throws you into the game.
+	 * =================================================================== */
+
+	const EDGE = 44;
+	let pan = { x: 0, y: 0, scale: 1 };
+	let gesture = null;
+
+	function applyPan() {
+		el("canvasing").style.transform =
+			`translate(${pan.x}px, ${pan.y}px) scale(${pan.scale})`;
+	}
+
+	function fitBoard() {
+		const pane = el("boardPane");
+		const board = currentBoard();
+		const width = boardWidth(board) + 20;
+		const height = boardHeight();
+
+		let scale;
+		if (layout === "narrow") {
+			// Stacked: fit the one column across and scroll down through it,
+			// which is the gesture a phone already teaches everyone.
+			scale = Math.min(1, pane.clientWidth / width);
+		} else {
+			scale = Math.min(1, pane.clientWidth / width, pane.clientHeight / height);
+			// Below this the whole board fits and nobody can read it. Panning
+			// is a first-class gesture here — show it legibly and let the
+			// finger do the rest.
+			if (scale < 0.62) {
+				scale = Math.min(1, pane.clientWidth / (NODE_W * 2.3));
+			}
+		}
+		pan.scale = Math.max(0.5, scale);
+
+		const shownW = width * pan.scale;
+		const shownH = height * pan.scale;
+		pan.x = shownW < pane.clientWidth ? (pane.clientWidth - shownW) / 2 : 14;
+		pan.y = shownH < pane.clientHeight ? (pane.clientHeight - shownH) / 2 : 14;
+		applyPan();
+	}
+
+	const stage = el("stage");
+
+	stage.addEventListener("pointerdown", (event) => {
+		// Nodes and wires own their own taps; a drag starting on one must
+		// not also pan the board out from under the finger.
+		if (event.target.closest(".node") || event.target.closest(".wire-hit")) {
+			return;
+		}
+		const fromEdge =
+			event.clientX < EDGE || event.clientX > window.innerWidth - EDGE;
+		const onGame = state.mode === "game";
+		stage.setPointerCapture(event.pointerId);
+		gesture = {
+			id: event.pointerId,
+			x0: event.clientX,
+			y0: event.clientY,
+			panX: pan.x,
+			panY: pan.y,
+			mode: onGame || fromEdge ? "swipe" : "pan",
+			moved: false,
+		};
+		if (gesture.mode === "pan") el("boardPane").classList.add("panning");
+	});
+
+	stage.addEventListener("pointermove", (event) => {
+		if (!gesture || event.pointerId !== gesture.id) return;
+		const dx = event.clientX - gesture.x0;
+		const dy = event.clientY - gesture.y0;
+		if (Math.abs(dx) + Math.abs(dy) > 6) gesture.moved = true;
+
+		if (gesture.mode === "pan") {
+			pan.x = gesture.panX + dx;
+			pan.y = gesture.panY + dy;
+			applyPan();
+			return;
+		}
+
+		if (Math.abs(dx) > Math.abs(dy)) {
+			const base = state.mode === "game" ? 0 : -50;
+			const pct = (dx / window.innerWidth) * 50;
+			const wanted = Math.max(-50, Math.min(0, base + pct));
+			el("track").classList.add("dragging");
+			el("track").style.transform = `translateX(${wanted}%)`;
+		}
+	});
+
+	function endGesture(event) {
+		if (!gesture || (event && event.pointerId !== gesture.id)) return;
+		el("boardPane").classList.remove("panning");
+		el("track").classList.remove("dragging");
+		if (gesture.mode === "swipe" && event) {
+			const dx = event.clientX - gesture.x0;
+			if (Math.abs(dx) > window.innerWidth * 0.18) {
+				setMode(dx < 0 ? "board" : "game");
+			} else {
+				setMode(state.mode);
+			}
+		}
+		gesture = null;
+	}
+
+	stage.addEventListener("pointerup", endGesture);
+	stage.addEventListener("pointercancel", endGesture);
+
+	el("boardPane").addEventListener("click", (event) => {
+		if (event.target === el("boardPane") || event.target === el("canvasing")) {
+			closeDrawer();
+		}
+	});
+
+	/* =================================================================== *
+	 * Wiring up the chrome
+	 * =================================================================== */
+
+	el("railGame").addEventListener("click", () => setMode("game"));
+	el("railBoard").addEventListener("click", () => setMode("board"));
+	el("modeSimple").addEventListener("click", () => setPro(false));
+	el("modePro").addEventListener("click", () => setPro(true));
+	el("tabParams").addEventListener("click", () => setTab("params"));
+	el("tabCode").addEventListener("click", () => setTab("code"));
+	el("drawerClose").addEventListener("click", closeDrawer);
+	el("coachClose").addEventListener("click", () => {
+		el("coach").hidden = true;
+	});
+	el("help").addEventListener("click", () => {
+		el("coach").hidden = false;
+	});
+
+	window.addEventListener("keydown", (event) => {
+		if (event.key === "ArrowRight" && state.mode === "game") setMode("board");
+		if (event.key === "ArrowLeft" && state.mode === "board") setMode("game");
+		if (event.key === "Escape") closeDrawer();
+	});
+
+	window.addEventListener("resize", () => {
+		// A resize can cross the point where lanes stop flowing across and
+		// start flowing down, so this is a relayout and not only a refit.
+		renderBoard();
+		fitBoard();
+	});
+
+	setPro(false);
+	renderCrumbs();
+	renderBoard();
+	respawn();
+	setMode("game");
+	requestAnimationFrame(loop);
+</script>

@@ -2,11 +2,11 @@
 
 ;;! The chess scene — a full set in the standard opening position, the visual
 ;;! showcase for the engine's lathed meshes and PBR materials. Authored the way
-;;! games/tictactoe/scene.scm is: one static (scene ...) form of (entity ...)
+;;! game/tictactoe/scene.scm is: one static (scene ...) form of (entity ...)
 ;;! declarations the engine's scene-build walks (core/scene_script.scm), each
 ;;! binding a builtin mesh + material and an authored transform. There is no
 ;;! game logic here and none alongside it — this slice is a set to look at, not
-;;! a rules engine (see games/chess/chess.c); a later slice can add moves.
+;;! a rules engine (see game/chess/chess.c); a later slice can add moves.
 ;;!
 ;;! Layout: files a..h run along +X (x = file - 3.5), ranks 1..8 along Z with
 ;;! white's first rank nearest the camera at z = +3.5 and black's at z = -3.5
@@ -24,7 +24,7 @@
 ;;! The board is 64 plane tiles (builtin://mesh/plane, board-light/board-dark)
 ;;! riding just above a walnut slab (a scaled box), the whole set resting on a
 ;;! wide matte ground plane. The "Camera" entity parks the eye high and to one
-;;! side for a fixed 3/4 view, then the chess-camera script (games/chess/
+;;! side for a fixed 3/4 view, then the chess-camera script (game/chess/
 ;;! rules.scm's chess-camera-tick!) eases it toward the side to move, a picked-
 ;;! up piece, or a just-landed square every frame; scene_renderer reads its
 ;;! world position as the camera eye each frame (the view target stays the

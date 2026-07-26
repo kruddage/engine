@@ -48,20 +48,20 @@
          (set=? (resolve-includes table name) expected)))
 
 (display "resolver: include sets vs CMake ground truth\n")
-(inc-check "log" '("log/include" "abi"
+(inc-check "log" '("base/log/include" "abi"
                    "core/include"))
-(inc-check "log_test" '("log/include" "abi"))
-(inc-check "renderer_null" '("${generated}" "log/include"
+(inc-check "log_test" '("base/log/include" "abi"))
+(inc-check "renderer_null" '("${generated}" "base/log/include"
                              "abi" "core/include"))
 (inc-check "renderer_null_test"
-           '("render/null" "${generated}" "log/include"
+           '("render/null" "${generated}" "base/log/include"
              "abi" "core/include"))
 (inc-check "fg_test" '("render/frame_graph" "${generated}"
-                       "render/null" "log/include"
-                       "abi" "memory/include"
+                       "render/null" "base/log/include"
+                       "abi" "base/memory/include"
                        "core/include"))
-(inc-check "asset_plugin" '("asset" "abi" "log/include"
-                            "memory/include" "core/include"))
+(inc-check "asset_plugin" '("world/asset" "abi" "base/log/include"
+                            "base/memory/include" "core/include"))
 
 (display "resolver: transitive link closures\n")
 (let ((libs (resolve-link-libs table "renderer_null_test")))
@@ -146,7 +146,7 @@
        (contains? ninja-text "build test/log.stamp: run_test bin/log_test"))
 (check "C plugin compiles as a WASM library object (emcc_c), no side-module rule"
        (and (contains? ninja-text
-                       (string-append "build wasm-obj/edit_plugin/edit/"
+                       (string-append "build wasm-obj/edit_plugin/world/edit/"
                                       "edit_plugin.c.o: emcc_c "))
             (contains? ninja-text "build wasm/libedit_plugin.a: emar ")
             (not (contains? ninja-text "sm_cc"))

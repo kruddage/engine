@@ -1,7 +1,7 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
 
 ;;! chess rules — the game's logic, in Scheme, living in the shared image, the
-;;! way games/tictactoe/rules.scm drives tic-tac-toe. This is the first playable
+;;! way game/tictactoe/rules.scm drives tic-tac-toe. This is the first playable
 ;;! slice: click a piece of the side to move to pick it up, then click where it
 ;;! goes — an empty square to slide there, or an enemy piece to capture it — and
 ;;! the turn passes. It is deliberately FREE movement: any piece may go to any

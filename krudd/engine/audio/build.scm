@@ -20,7 +20,7 @@
  (library "audio_scriptnode"
    (sources "audio_scriptnode.c")
    (public "." (root "abi"))
-   (private (root "asset") (root "core/include"))
+   (private (root "world/asset") (root "core/include"))
    (link "audio_core" "mixer" "sound_script" "log" "memory"
          "subsystem" "subsystem_manager"))
  (native-only

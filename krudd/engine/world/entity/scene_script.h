@@ -16,7 +16,7 @@
  * source text evaluated against the shared image, not a bespoke binary loader.
  *
  * This is the engine's generic "build a scene from Scheme" capability; a game
- * (engine/games/<name>) is that vocabulary plus a scene form and its logic. No
+ * (engine/game/<name>) is that vocabulary plus a scene form and its logic. No
  * game-specific knowledge lives here.
  */
 

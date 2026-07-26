@@ -4,9 +4,9 @@
 
 /*
  * Built-in meshes, seeded as read-only ASSET_TYPE_MESH assets (see
- * asset_plugin.c). Each is a single (mesh NAME (generate () ...)) form
- * in the same S7 Scheme the shader and entity-script DSLs use — the runtime
- * image's (mesh ...) macro registers it and asset/mesh_script.c marshals its
+ * asset_plugin.c). Each is a single (mesh NAME (generate () ...)) form in the
+ * same S7 Scheme the shader and entity-script DSLs use — the runtime image's
+ * (mesh ...) macro registers it and world/asset/mesh_script.c marshals its
  * result into a mesh_blob on demand (see core/mesh_script.scm). There is no
  * hardcoded C mesh generator anymore: every built-in shape, including these
  * five, is authored the same way an editor-created mesh script is.
@@ -321,7 +321,8 @@
  * wider than ~0.6 units, heights rising pawn < knight < rook < bishop < queen <
  * king. Five are pure surfaces of revolution — a single (r y) silhouette swept
  * around Y, mesh-lathe deriving the smooth normals — so the whole set reads as
- * one turned-ivory family. games/chess binds these through builtin://mesh/chess-*.
+ * one turned-ivory family. game/chess binds these through
+ * builtin://mesh/chess-*.
  */
 
 /*
@@ -403,7 +404,7 @@
 /*
  * king — the tallest piece: the queen's proportions with a taller crown and a
  * knobbed finial. The king's cross is added in the scene as two small crossed
- * boxes on top (games/chess/scene.scm), the way tic-tac-toe builds its X — the
+ * boxes on top (game/chess/scene.scm), the way tic-tac-toe builds its X — the
  * lathe body cannot express it. 19 points: 475 verts / 2592 indices.
  */
 #define CHESS_KING_MESH_SCRIPT_SRC \

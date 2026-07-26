@@ -46,8 +46,8 @@ export KRUDD_S7BIN="$s7bin"
 
 # Stage 1b: the monolang reference oracle — evaluate math.scm's (define-c-fn)
 # bodies in s7 and check the numbers, the same math the generated C is checked
-# for by engine/math/math_test.c in the native stage below.
-"$s7bin" "$root/krudd/engine/math/math_test.scm"
+# for by engine/base/math/math_test.c in the native stage below.
+"$s7bin" "$root/krudd/engine/base/math/math_test.scm"
 
 # Stage 1c: the shader DSL oracle — run shader.scm's transpiler in s7 and check
 # the GLSL it lowers the built-in shaders to, the same transpiler embedded into

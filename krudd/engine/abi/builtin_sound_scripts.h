@@ -7,7 +7,7 @@
  * asset_plugin.c). Each is a single (sound NAME (params ...) (sample (t) ...))
  * form in the same S7 Scheme the texture / shader / entity / mesh DSLs use —
  * the runtime image's (sound ...) macro evaluates it to a sample procedure and
- * asset/sound_script.c bakes the result into a sound_blob on demand (see
+ * world/asset/sound_script.c bakes the result into a sound_blob on demand (see
  * core/sound_script.scm). There is no hardcoded C synthesizer: every built-in
  * clip, like these three, is authored the same way an editor-created sound
  * script is, and is sample-rate-independent — sample is a pure function of the

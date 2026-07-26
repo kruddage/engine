@@ -2,7 +2,7 @@
 
 (define krudd-root (or (getenv "KRUDD_ROOT") "."))
 
-(load (string-append krudd-root "/krudd/engine/math/math.scm"))
+(load (string-append krudd-root "/krudd/engine/base/math/math.scm"))
 
 (define fail-count 0)
 

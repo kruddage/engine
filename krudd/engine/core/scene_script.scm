@@ -3,10 +3,10 @@
 ;;! scene-script — the (scene NAME (entity ...) ...) form and its builder, the
 ;;! declarative twin of the (mesh ...) / (script ...) / (texture ...) DSLs. A
 ;;! scene is a list of entity declarations; scene-build walks the form and calls
-;;! the scene-* host primitives (entity/scene_script.c) to spawn and bind each
-;;! one. Same source-text-is-the-asset pattern every other asset uses: a scene is
-;;! plain S7, read and evaluated against the shared image, so it needs no bespoke
-;;! deserializer — loading a scene IS evaluating it.
+;;! the scene-* host primitives (world/entity/scene_script.c) to spawn and bind
+;;! each one. Same source-text-is-the-asset pattern every other asset uses: a
+;;! scene is plain S7, read and evaluated against the shared image, so it needs
+;;! no bespoke deserializer — loading a scene IS evaluating it.
 ;;!
 ;;!   (scene tic-tac-toe
 ;;!     (entity (name "board")

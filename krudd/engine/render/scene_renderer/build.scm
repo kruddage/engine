@@ -7,7 +7,7 @@
    (sources "scene_renderer.c")
    (private "." (raw "${generated}") (root "render/frame_graph")
             (root "render/particles")
-            (root "core/include") (root "abi") (root "world/entity/include") (root "base/math/include") (root "world/asset")
+            (root "core/include") (root "abi") (root "world/entity/include") (root "base/math/include") (root "world/asset/include")
             (raw "../third_party"))
    (link "math" "mesh_script" "texture_script" "frame_graph" "particles"
          "log" "memory" "subsystem" "subsystem_manager" "script"
@@ -21,7 +21,7 @@
                        (raw "${generated}/math_gen.c"))
               (private "." (raw "${generated}")
                        (root "render/null")
-                       (root "render/frame_graph") (root "world/asset")
+                       (root "render/frame_graph") (root "world/asset/include")
                        (root "render/particles")
                        (root "core/include")
                        (root "abi") (root "world/entity/include") (root "base/math/include") (raw "../third_party"))

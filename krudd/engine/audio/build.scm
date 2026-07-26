@@ -1,7 +1,7 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
 ((library "mixer"
    (sources "mixer.c")
-   (public "." (root "abi"))
+   (public "." (root "abi") (root "world/asset/include"))
    (link "m"))
  ;;! The thread seam: mixer + a lock-free SPSC command ring between bake and
  ;;! render. Pure C, no browser deps, so it links into the native audio_core_test
@@ -10,7 +10,7 @@
  ;;! core shared with the AudioWorklet variant.)
  (library "audio_core"
    (sources "audio_core.c")
-   (public "." (root "abi"))
+   (public "." (root "abi") (root "world/asset/include"))
    (link "mixer" "m"))
  ;;! The ScriptProcessorNode device backend (main-thread onaudioprocess ->
  ;;! audio_core -> mixer). Browser only; a native no-op stub keeps the tree
@@ -19,19 +19,19 @@
  ;;! variant over the AudioWorklet backend.
  (library "audio_scriptnode"
    (sources "audio_scriptnode.c")
-   (public "." (root "abi"))
-   (private (root "world/asset") (root "core/include"))
+   (public "." (root "abi") (root "world/asset/include"))
+   (private (root "world/asset/include") (root "core/include"))
    (link "audio_core" "mixer" "sound_script" "log" "memory"
          "subsystem" "subsystem_manager"))
  (native-only
   (executable "mixer_test"
               (sources "mixer_test.c")
-              (private "." (root "abi"))
+              (private "." (root "abi") (root "world/asset/include"))
               (link "mixer" "memory" "m"))
   (test "mixer" "mixer_test")
 
   (executable "audio_core_test"
               (sources "audio_core_test.c")
-              (private "." (root "abi"))
+              (private "." (root "abi") (root "world/asset/include"))
               (link "audio_core" "mixer" "memory" "m"))
   (test "audio_core" "audio_core_test")))

@@ -23,7 +23,7 @@
                        (root "base/memory/include"))
               (link "memory"))
   (test "scene_edit" "scene_edit_test")
-  ;;! (root "world/asset") is for builtin_scripts.h — the entity-script source
+  ;;! (root "world/asset/include") is for builtin_scripts.h — the entity-script source
   ;;! the asset seeder embeds, which this test asserts against so the two can
   ;;! never drift. It lives next to that seeder rather than in abi/, since it
   ;;! is asset content and not part of the plugin ABI.
@@ -32,7 +32,7 @@
               (private "." "include" (root "abi") (root "base/math/include")
                        (root "core/include")
                        (root "base/memory/include")
-                       (root "world/asset")
+                       (root "world/asset/include")
                        (raw "../third_party"))
               (link "script" "memory"))
   (test "entity_script" "entity_script_test")

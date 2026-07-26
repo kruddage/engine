@@ -112,6 +112,9 @@ packages/
   base/
     boundary/    @krudd/boundary    Loading the wasm and viewing its memory
       harness/                        node:test over the memory contract, and the benchmark
+  world/
+    board/       @krudd/board       The board document: what a project is, as data
+      harness/                        node:test over the fixture and the validator
   shell/
     web/         @krudd/shell-web   The browser page, and the mode shell it composites
       harness/                        node:test over the mode track, and the screenshot-and-compare driver
@@ -120,6 +123,7 @@ packages/
 | Package | Exports | May be imported by |
 |---|---|---|
 | `@krudd/boundary` | `boot`, `World`, `BootOptions`, `Krudd` — via `"exports": { ".": "./src/index.ts" }`. Nothing else is reachable: a deep import is a resolution error, not a lint. | anything |
+| `@krudd/board` | The board document types, the node-kind registry, the triangles fixture, and `parseProject` / `validate`. A board is the scene data model, which is what puts it in `world` rather than in `ui`: the board is the source of truth and a board view is one way of looking at it. | `world` and above |
 | `@krudd/shell-web` | nothing. Its `exports` map is empty, so importing it fails to resolve. | nothing |
 
 `@krudd/boundary` is also the only module that imports wasm-bindgen's

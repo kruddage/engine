@@ -143,3 +143,83 @@
 	color: color-mix(in srgb, var(--ink, #e6e6ea) 55%, transparent);
 	font-size: 0.7rem;
 }
+
+/*
+  The breadcrumb and the detail toggle. Outside the surface, because the
+  surface is what pans — chrome that slid off the top when somebody dragged the
+  board would be chrome nobody could get back to.
+*/
+.board-bar {
+	position: absolute;
+	inset: 0 0 auto 0;
+	z-index: 1;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.5rem;
+	padding: 0.4rem 0.6rem;
+	background: color-mix(in srgb, #16161c 88%, transparent);
+	backdrop-filter: blur(6px);
+}
+
+.board-crumbs {
+	display: flex;
+	align-items: center;
+	gap: 0.3rem;
+	min-width: 0;
+	overflow-x: auto;
+	/* Left to right, root first — a breadcrumb read the other way round is not
+	   a breadcrumb. A path too long for a phone runs off the *left* instead,
+	   which the view arranges by scrolling to the end after it draws: the crumb
+	   worth seeing is the one you are standing in. */
+	scrollbar-width: none;
+}
+
+.board-crumbs span {
+	color: color-mix(in srgb, var(--ink, #e6e6ea) 35%, transparent);
+}
+
+.board-crumbs button,
+.board-detail {
+	appearance: none;
+	border: 0;
+	border-radius: 999px;
+	/* Thumb-sized: the device this is designed for is held, not pointed at. */
+	min-height: 2rem;
+	padding: 0 0.7rem;
+	font: inherit;
+	font-size: 0.75rem;
+	white-space: nowrap;
+	color: color-mix(in srgb, var(--ink, #e6e6ea) 70%, transparent);
+	background: color-mix(in srgb, var(--ink, #e6e6ea) 8%, transparent);
+	cursor: pointer;
+}
+
+/* The board you are standing in is not a way back to itself. */
+.board-crumbs button[aria-current="true"] {
+	color: var(--ink, #e6e6ea);
+	background: transparent;
+	cursor: default;
+}
+
+.board-detail[data-detail="pro"] {
+	color: #101014;
+	background: #4fc9c0;
+}
+
+/* The bar sits over the board, so the first lane starts below it. Applied to
+   the layers rather than to the surface, which is the box that pans — padding
+   on that would slide away with the first drag. */
+.board-wires,
+.board-nodes {
+	top: 2.8rem;
+}
+
+/* A node that opens a board says so, and looks like it can be tapped. */
+.board-node[data-opens] {
+	cursor: pointer;
+}
+
+.board-node[data-opens] .board-opens {
+	color: #4fc9c0;
+}

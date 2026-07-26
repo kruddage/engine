@@ -14,7 +14,8 @@
  *
  * - `layout` — where everything goes, as arithmetic over measured sizes. No
  *   DOM, so the geometry can be asserted under `node:test`.
- * - `view` — the elements, the measuring, and panning.
+ * - `nav` — where you are in a project, and how you got there. Also no DOM.
+ * - `view` — the elements, the measuring, panning, and the breadcrumb.
  *
  * The stylesheet is a separate export rather than injected: a page decides
  * what it loads, and a package that wrote to `document.head` on import would
@@ -22,6 +23,7 @@
  */
 
 export type {
+	Detail,
 	Flow,
 	Layout,
 	LayoutOptions,
@@ -32,5 +34,7 @@ export type {
 	Size,
 } from "./layout";
 export { flowFor, LANE_LABELS, layout, NARROW_WIDTH, ports } from "./layout";
+export type { Crumb } from "./nav";
+export { Trail } from "./nav";
 export type { BoardView, BoardViewOptions } from "./view";
 export { mountBoardView } from "./view";

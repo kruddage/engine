@@ -263,6 +263,27 @@ export interface Wire {
 export interface Board {
 	/** What the breadcrumb shows. */
 	readonly title: string;
+	/**
+	 * What each lane's strip says, if the top-level words are wrong for it.
+	 *
+	 * A lane means *when a node runs*, and what that means depends on the board
+	 * you are standing in: "every frame, to the screen" at the top level is not
+	 * what the third lane means one level down inside a frame, where the three
+	 * are stages of that frame rather than of the game. Held here rather than
+	 * derived from depth in the view, because the board is the source of truth
+	 * and only the board knows what its own lanes are for.
+	 */
+	readonly lanes?: Readonly<Record<Lane, string>>;
+	/**
+	 * Whether this board is a Pro concept.
+	 *
+	 * Simple and Pro are one board at two detail levels, not two editors — but
+	 * some boards are the detail. The frame is the case in point: it is what
+	 * `Draw Entities` is made of, and an eight-year-old placing a Draw Entities
+	 * node has no business being dropped into `clear → camera → draw →
+	 * present`. A node opening into one of these does not open at Simple.
+	 */
+	readonly pro?: boolean;
 	/** Its nodes, in no particular order — `lane` and `column` place them. */
 	readonly nodes: readonly BoardNode[];
 	/** Its wires. */

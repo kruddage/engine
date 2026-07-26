@@ -34,7 +34,7 @@
  * screen. Which is what it was before; there is simply less of it.
  */
 
-import { type Board, Runner, TRIANGLES } from "@krudd/board";
+import { Runner, TRIANGLES } from "@krudd/board";
 import { mountBoardView } from "@krudd/board-view";
 import { boot, fitCanvas, type World } from "@krudd/boundary";
 import { mountModeShell } from "./shell";
@@ -93,7 +93,7 @@ async function main(): Promise<void> {
 				view.refresh();
 				return;
 			}
-			view.show(rootBoard());
+			view.open(TRIANGLES);
 			drawn = true;
 		},
 	});
@@ -165,17 +165,6 @@ function boardPane(): HTMLElement {
 		);
 	}
 	return element;
-}
-
-/** The board the triangles project opens on. */
-function rootBoard(): Board {
-	const board = TRIANGLES.boards[TRIANGLES.root];
-	if (board === undefined) {
-		throw new Error(
-			`the project opens on board \`${TRIANGLES.root}\`, which it does not hold`,
-		);
-	}
-	return board;
 }
 
 /** The readout element, which the page is required to have. */

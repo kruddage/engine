@@ -152,3 +152,19 @@ test("the wire the proof of life cuts is in the fixture and drives the game", ()
 	assert.deepEqual(wire.from, { node: "paint", port: "out" });
 	assert.deepEqual(wire.to, { node: "draw", port: "in" });
 });
+
+test("a board carries what its own lanes mean, and whether it is the detail", () => {
+	// Both are the board's rather than the view's: a lane means when a node
+	// runs, and only the board knows what that means in there.
+	const frame = TRIANGLES.boards[FRAME_BOARD];
+	assert.equal(frame?.pro, true, "the frame is a Pro concept");
+	assert.equal(frame?.lanes?.paint, "hand it to the screen");
+
+	const root = TRIANGLES.boards[ROOT_BOARD];
+	assert.equal(
+		root?.lanes,
+		undefined,
+		"the top level takes the default words rather than restating them",
+	);
+	assert.notEqual(root?.pro, true);
+});

@@ -25,7 +25,7 @@
 ;;! board up.
 ;;!
 ;;! "ground" is a builtin://mesh/heightfield (a gently wavy parametric surface;
-;;! see core/mesh_script.scm) wearing builtin://material/pbr-grass — a
+;;! see world/asset/mesh_script.scm) wearing builtin://material/pbr-grass — a
 ;;! substance-designer-style procedural texture whose alpha channel doubles as a
 ;;! per-texel height the pbr-textured shader reads back out to bump the surface
 ;;! normal (see GRASS_TEXTURE_SCRIPT_SRC / PBR_TEXTURED_SHADER_SRC in

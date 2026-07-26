@@ -14,11 +14,12 @@
  * story for pixels, now for audio.
  *
  * A sound is baked from a (sound NAME (sample (t) ...)) Scheme script (see
- * core/sound_script.scm); the sample clause is a pure function of the time t in
- * seconds, so the same script bakes the same waveform at any sample rate.
- * sample_rate and frame_count are an output setting the baker supplies — the
- * host picks the rate (its audio context's) and derives the frame count from
- * the sound's (duration ...) param — never baked into the script itself.
+ * world/asset/sound_script.scm); the sample clause is a pure function of the
+ * time t in seconds, so the same script bakes the same waveform at any
+ * sample rate. sample_rate and frame_count are an output setting the baker
+ * supplies — the host picks the rate (its audio context's) and derives the
+ * frame count from the sound's (duration ...) param — never baked into the
+ * script itself.
  *
  * Float32 is the only stored format: it is what Web Audio's AudioBuffer and a
  * float mixer consume, so a baked blob plays with no per-sample conversion.

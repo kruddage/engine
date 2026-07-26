@@ -3,7 +3,7 @@
  * mesh_script — host side of the mesh scripting layer.
  *
  * Calls the shared s7 image's (mesh-script-generate src) — see
- * core/mesh_script.scm — and walks its (VERTS . INDICES) result into a
+ * mesh_script.scm — and walks its (VERTS . INDICES) result into a
  * mesh_blob: VERTS a list of 8-element (px py pz nx ny nz u v) lists,
  * INDICES a flat list of vertex-index integers. Mirrors entity_script.c's
  * host/image seam — the geometry logic lives in Scheme, this file only

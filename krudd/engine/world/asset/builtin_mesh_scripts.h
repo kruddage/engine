@@ -7,7 +7,7 @@
  * asset_plugin.c). Each is a single (mesh NAME (generate () ...)) form in the
  * same S7 Scheme the shader and entity-script DSLs use — the runtime image's
  * (mesh ...) macro registers it and mesh_script.c marshals its result into a
- * mesh_blob on demand (see core/mesh_script.scm). There is no hardcoded C mesh
+ * mesh_blob on demand (see mesh_script.scm). There is no hardcoded C mesh
  * generator anymore: every built-in shape, including these five, is authored
  * the same way an editor-created mesh script is.
  *
@@ -15,7 +15,7 @@
  * mesh_script oracle test compile the exact same script text.
  *
  * Beyond the original five, two families lean on the shared shape "engines" in
- * core/mesh_script.scm rather than hand-listing vertices:
+ * mesh_script.scm rather than hand-listing vertices:
  *
  *   - cylinder/cone/capsule/disc/torus are each a meridian PROFILE swept around
  *     the Y axis by mesh-revolve — a lathe. A profile point is (r y nr ny v);
@@ -27,7 +27,7 @@
  */
 
 /*
- * box — 6 quad faces via mesh-quad-verts/-indices (core/mesh_script.scm),
+ * box — 6 quad faces via mesh-quad-verts/-indices (mesh_script.scm),
  * 24 verts / 36 indices, parameterized by full width/height/depth. Its
  * generate body reads (param 'width) etc. and scales the unit-cube positions,
  * so two entities sharing this one mesh asset draw at different sizes purely
@@ -155,7 +155,7 @@
 
 /*
  * cylinder — a six-point meridian profile swept around Y by mesh-revolve
- * (core/mesh_script.scm), 24 sectors: bottom cap (down normals), the side wall
+ * (mesh_script.scm), 24 sectors: bottom cap (down normals), the side wall
  * (radial normals), top cap (up normals), with the rim doubled at each cap so
  * the cap/side crease stays hard. Radius 0.5, height 1 (y in ±0.5). 150 verts /
  * 432 indices; the two zero-height crease rings emit no triangles.
@@ -282,7 +282,7 @@
 /*
  * sdf-rook — the implicit-surface showcase: a chess rook built as a signed
  * distance field and polygonised by marching cubes (mesh-sdf, see
- * core/mesh_script.scm), the third shape engine after the lathe and the
+ * mesh_script.scm), the third shape engine after the lathe and the
  * parametric grid. Where those emit an explicit surface, this one composes a
  * *field* and lets the marcher recover the mesh — so the whole piece is
  * constructive solid geometry: a flared foot, a decorative collar ring, a
@@ -315,7 +315,7 @@
 
 /*
  * The chess set — six turned/blocky pieces that showcase the lathe (mesh-lathe,
- * core/mesh_script.scm) the way cylinder/cone/torus showcase mesh-revolve. Each
+ * mesh_script.scm) the way cylinder/cone/torus showcase mesh-revolve. Each
  * piece is authored base-at-origin (its foot sits on y = 0, so a scene drops it
  * straight onto a board square) and sized against a one-unit square: a body no
  * wider than ~0.6 units, heights rising pawn < knight < rook < bishop < queen <

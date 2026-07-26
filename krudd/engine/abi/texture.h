@@ -14,10 +14,10 @@
  * for geometry, now for pixels.
  *
  * A texture is generated from a (texture NAME (shade (u v) ...)) Scheme
- * script (see core/texture_script.scm); the generator is a pure function of
- * the normalized coordinate u,v in [0,1), so the same script bakes at any
- * resolution. width/height are an output setting the baker supplies, never
- * baked into the script.
+ * script (see world/asset/texture_script.scm); the generator is a pure
+ * function of the normalized coordinate u,v in [0,1), so the same script
+ * bakes at any resolution. width/height are an output setting the baker
+ * supplies, never baked into the script.
  */
 #define TEXTURE_BLOB_MAGIC 0x30584554u /* 'TEX0' sentinel, not a version */
 

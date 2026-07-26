@@ -3,7 +3,7 @@
  * texture_script — host side of the texture scripting layer.
  *
  * Calls the shared s7 image's (texture-script-generate src params w h) — see
- * core/texture_script.scm — and copies its byte-vector result (width*height
+ * texture_script.scm — and copies its byte-vector result (width*height
  * RGBA8 texels) into a texture_blob. Mirrors mesh_script.c's host/image seam:
  * the pixel logic lives in Scheme, this file only resolves the param override
  * and marshals the flat buffer into the wire format.

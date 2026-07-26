@@ -27,11 +27,12 @@ struct entity_api {
 	/* Load and ingest a .scene asset by path; 0 on success, -1 otherwise. */
 	int32_t             (*load_scene)(const char *path);
 	/*
-	 * Build a scene from a (scene ...) Scheme form (see core/scene_script.scm),
-	 * spawning its entities into the live world. Returns the entity count, or
-	 * -1 if the interpreter is down or SRC is not a scene form. This is how a
-	 * built-in game boots its world: the scene is authored .scm evaluated
-	 * against the shared image — the source-authored twin of load_scene.
+	 * Build a scene from a (scene ...) Scheme form (see
+	 * world/entity/scene_script.scm), spawning its entities into the live
+	 * world. Returns the entity count, or -1 if the interpreter is down or
+	 * SRC is not a scene form. This is how a built-in game boots its world:
+	 * the scene is authored .scm evaluated against the shared image — the
+	 * source-authored twin of load_scene.
 	 */
 	int32_t             (*build_scene_scm)(const char *src);
 	/*

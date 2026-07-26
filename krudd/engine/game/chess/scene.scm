@@ -3,8 +3,9 @@
 ;;! The chess scene — a full set in the standard opening position, the visual
 ;;! showcase for the engine's lathed meshes and PBR materials. Authored the way
 ;;! game/tictactoe/scene.scm is: one static (scene ...) form of (entity ...)
-;;! declarations the engine's scene-build walks (core/scene_script.scm), each
-;;! binding a builtin mesh + material and an authored transform. There is no
+;;! declarations the engine's scene-build walks
+;;! (world/entity/scene_script.scm), each binding a builtin mesh + material
+;;! and an authored transform. There is no
 ;;! game logic here and none alongside it — this slice is a set to look at, not
 ;;! a rules engine (see game/chess/chess.c); a later slice can add moves.
 ;;!

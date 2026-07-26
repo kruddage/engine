@@ -11,13 +11,14 @@
 //! documenting the workaround.
 
 use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Component, Path, PathBuf};
 
 use crate::Options;
 use crate::web;
 
-/// Builds and serves.
+/// Builds and serves, blocking until interrupted. What `cargo xtask serve`
+/// runs.
 pub fn run(opts: &Options) -> Result<(), String> {
     let artifacts = web::build(opts)?;
     let address = format!("{}:{}", opts.host, opts.port);
@@ -31,10 +32,38 @@ pub fn run(opts: &Options) -> Result<(), String> {
     );
     println!("ctrl-c to stop");
 
+    serve_forever(listener, artifacts.dist);
+    Ok(())
+}
+
+/// Serves an already-built `dist` on an OS-assigned loopback port, in a
+/// background thread, and returns the address it bound to.
+///
+/// `render-test` needs a URL to point a browser at, not a blocking accept
+/// loop — and an OS-assigned port means it never collides with a
+/// contributor's own `cargo xtask serve` on the fixed default port, or with a
+/// second CI job on the same runner.
+///
+/// The thread is never joined. That is not an oversight: xtask is a
+/// short-lived CLI, and the server has no work left to finish when the
+/// process exits — it dies with it, the same as any other child work a CLI
+/// invocation leaves running.
+pub fn spawn(dist: PathBuf, bind_addr: &str) -> Result<SocketAddr, String> {
+    let listener =
+        TcpListener::bind(bind_addr).map_err(|e| format!("could not bind {bind_addr}: {e}"))?;
+    let addr = listener
+        .local_addr()
+        .map_err(|e| format!("could not read the bound address: {e}"))?;
+    std::thread::spawn(move || serve_forever(listener, dist));
+    Ok(addr)
+}
+
+/// The accept loop shared by both entry points above.
+fn serve_forever(listener: TcpListener, dist: PathBuf) {
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                let dist = artifacts.dist.clone();
+                let dist = dist.clone();
                 // A thread per connection: browsers open several at once, and
                 // a sequential loop would stall the page on its own requests.
                 std::thread::spawn(move || {
@@ -46,7 +75,6 @@ pub fn run(opts: &Options) -> Result<(), String> {
             Err(e) => eprintln!("serve: accept failed: {e}"),
         }
     }
-    Ok(())
 }
 
 /// Serves one request and closes the connection.

@@ -112,6 +112,7 @@ packages/
       harness/                        node:test over the memory contract, and the benchmark
   shell/
     web/         @krudd/shell-web   The browser page
+      harness/                        the screenshot-and-compare driver, over the DevTools Protocol
 ```
 
 | Package | Exports | May be imported by |
@@ -155,6 +156,7 @@ cargo xtask serve        build, then serve dist/ on :8080
 cargo xtask check        fmt, clippy, tests, tiers, typecheck, lint, boundary tests
 cargo xtask test-web     just the boundary tests, under Node
 cargo xtask bench        the batched boundary against the per-call one
+cargo xtask render-test  screenshot-and-compare against the built WebGL2 page
 cargo xtask tiers        just the tier check
 ```
 

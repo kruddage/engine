@@ -14,6 +14,7 @@
 
 mod check;
 mod harness;
+mod render_test;
 mod serve;
 mod sh;
 mod tiers;
@@ -34,6 +35,7 @@ COMMANDS:
     check               Everything CI gates on: fmt, clippy, tests, tiers, typecheck, lint
     test-web            Run the boundary tests against the built wasm, under Node
     bench               Time the batched boundary against the per-call one
+    render-test         Screenshot-and-compare against the built WebGL2 page
     tiers               Check the crate and package tier order on its own
     help                Show this
 
@@ -66,6 +68,7 @@ fn main() -> ExitCode {
         "check" => check::run(&opts),
         "test-web" => harness::test(&opts),
         "bench" => harness::bench(&opts),
+        "render-test" => render_test::run(&opts),
         "tiers" => tiers::check(&sh::workspace_root()),
         "help" | "--help" | "-h" => {
             print!("{USAGE}");

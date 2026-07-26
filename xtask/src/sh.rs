@@ -130,6 +130,36 @@ fn install_hint(program: &str) -> &'static str {
     }
 }
 
+/// Where esbuild bundles a harness entry point, keyed by name. Under
+/// `target/` because it is build output, gitignored with the rest of it.
+const HARNESS_OUT_DIR: &str = "target/harness";
+
+/// Bundles a TypeScript entry point for Node.
+///
+/// Every xtask harness needs this, not just the boundary one: `test-web`,
+/// `bench` and `render-test` all import a package by its `exports` map, and
+/// only bundling — not `node --experimental-strip-types` — resolves that.
+/// Shared here rather than duplicated per harness module.
+pub fn bundle_ts(root: &Path, entry: &str, name: &str) -> Result<PathBuf, String> {
+    let out = PathBuf::from(HARNESS_OUT_DIR).join(format!("{name}.mjs"));
+    Run::new("pnpm", root)
+        .args([
+            "exec",
+            "esbuild",
+            entry,
+            "--bundle",
+            "--format=esm",
+            // Node, so the builtins a harness imports stay external and
+            // `import.meta.url` keeps working in the generated glue.
+            "--platform=node",
+            "--target=node22",
+            "--sourcemap",
+            &format!("--outfile={}", out.display()),
+        ])
+        .check()?;
+    Ok(root.join(out))
+}
+
 /// Reads a file, reporting the path in the error rather than just the errno.
 pub fn read(path: &Path) -> Result<String, String> {
     std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))

@@ -10,6 +10,10 @@
  * malformed form degrades to a default rather than trapping. Keeping the s7 out
  * of krudd_qt.cpp lets the Qt shell and the Qt-free CI test (editor_layout_test)
  * read one spec through one reader.
+ *
+ * Panel bodies (#795) are the one part that nests arbitrarily, so they land in a
+ * flat pool referenced by index rather than a nested struct — see the arena note
+ * in editor_layout.h for why, and parse_body_node below for the walk.
  */
 #include "editor_layout.h"
 
@@ -162,6 +166,92 @@ static void parse_toolbar(s7_scheme *sc, s7_pointer section,
 	}
 }
 
+static enum editor_body_kind body_kind_of(const char *tag)
+{
+	if (!strcmp(tag, "tree"))          return EDITOR_BODY_TREE;
+	if (!strcmp(tag, "list"))          return EDITOR_BODY_LIST;
+	if (!strcmp(tag, "property-grid")) return EDITOR_BODY_PROPERTY_GRID;
+	if (!strcmp(tag, "field"))         return EDITOR_BODY_FIELD;
+	if (!strcmp(tag, "console"))       return EDITOR_BODY_CONSOLE;
+	if (!strcmp(tag, "label"))         return EDITOR_BODY_LABEL;
+	if (!strcmp(tag, "stack"))         return EDITOR_BODY_STACK;
+	return EDITOR_BODY_NONE;
+}
+
+/*
+ * Walk one body node (KIND SOURCE LABEL CHILD ...) into the shared pool and
+ * return its index, or -1 when it cannot be represented — an unknown kind, a
+ * malformed form, or a pool that is full. Recurses for children.
+ *
+ * Every node has the same shape, so this is one function rather than one per
+ * kind: leading strings fill `source` then `label`, and any nested pair is a
+ * child. A kind that takes no strings simply has none to consume, and a kind
+ * that takes no children simply has no pairs — so adding a widget kind is an
+ * entry in body_kind_of, not a parse function.
+ *
+ * DEPTH is bounded for the same reason script.c's json_write bounds its own: the
+ * authored spec nests two or three deep, and the cap only stops a pathological
+ * form from recursing without end. Returning -1 at the cap prunes that subtree
+ * rather than truncating a parent, so a host sees a node it can skip instead of
+ * a half-built one.
+ */
+static int32_t parse_body_node(s7_scheme *sc, s7_pointer form,
+			       struct editor_layout *out, int32_t parent,
+			       int depth)
+{
+	enum editor_body_kind    kind;
+	struct editor_body_node *node;
+	int32_t                  self, prev = -1;
+	s7_pointer               arg;
+	int                      strings = 0;
+
+	if (depth > EDITOR_BODY_MAX_DEPTH || !s7_is_pair(form))
+		return -1;
+	kind = body_kind_of(head_sym(form));
+	if (kind == EDITOR_BODY_NONE)
+		return -1; /* forward-compatible: a kind this reader predates */
+	if (out->body_count >= EDITOR_MAX_BODY_NODES)
+		return -1;
+
+	self = (int32_t)out->body_count++;
+	node = &out->bodies[self];
+	node->kind         = kind;
+	node->parent       = parent;
+	node->first_child  = -1;
+	node->next_sibling = -1;
+
+	for (arg = s7_cdr(form); s7_is_pair(arg); arg = s7_cdr(arg)) {
+		s7_pointer a = s7_car(arg);
+
+		if (s7_is_pair(a)) {
+			int32_t child = parse_body_node(sc, a, out, self,
+							depth + 1);
+
+			if (child < 0)
+				continue; /* skipped child, not a fatal body */
+			/* Append rather than prepend, so children keep
+			 * declaration order — a property grid's rows and a
+			 * stack's contents are both order-carrying. */
+			if (prev < 0)
+				out->bodies[self].first_child = child;
+			else
+				out->bodies[prev].next_sibling = child;
+			prev = child;
+		} else if (strings == 0) {
+			copy_str(out->bodies[self].source,
+				 sizeof out->bodies[self].source, a);
+			strings++;
+		} else if (strings == 1) {
+			copy_str(out->bodies[self].label,
+				 sizeof out->bodies[self].label, a);
+			strings++;
+		}
+		/* Extra strings past the two the shape defines are ignored, the
+		 * same way an unknown section is: additive, never fatal. */
+	}
+	return self;
+}
+
 /* (docks (dock ID TITLE AREA PANEL BLURB EXTRA ...) ...) */
 static void parse_docks(s7_scheme *sc, s7_pointer section,
 			struct editor_layout *out)
@@ -181,8 +271,9 @@ static void parse_docks(s7_scheme *sc, s7_pointer section,
 		dst->area = area_of(nth(sc, dock, 3));
 		copy_str(dst->panel, sizeof dst->panel, nth(sc, dock, 4));
 		copy_str(dst->blurb, sizeof dst->blurb, nth(sc, dock, 5));
+		dst->body = -1; /* no body until a (body ...) form says so */
 
-		/* Any trailing (tabbed-with ID) / (raise) forms. */
+		/* Any trailing (tabbed-with ID) / (raise) / (body NODE) forms. */
 		for (ex = s7_cdr(dock);
 		     s7_is_pair(ex);
 		     ex = s7_cdr(ex)) {
@@ -195,6 +286,9 @@ static void parse_docks(s7_scheme *sc, s7_pointer section,
 					 nth(sc, e, 1));
 			else if (!strcmp(tag, "raise"))
 				dst->raise = 1;
+			else if (!strcmp(tag, "body"))
+				dst->body = parse_body_node(
+					sc, nth(sc, e, 1), out, -1, 0);
 		}
 		out->dock_count++;
 	}
@@ -229,6 +323,18 @@ int editor_layout_load(struct editor_layout *out)
 	if (!out)
 		return -1;
 	memset(out, 0, sizeof(*out));
+	/*
+	 * "No body" is -1, and a zeroed struct would read as index 0 — a real
+	 * node. Seed every slot, not just the docks the spec fills, so a host
+	 * that walks the whole array rather than dock_count cannot follow a zero
+	 * into someone else's node.
+	 */
+	{
+		uint32_t i;
+
+		for (i = 0; i < EDITOR_MAX_DOCKS; i++)
+			out->docks[i].body = -1;
+	}
 
 	sc = script_s7(); /* starts the interpreter on first use */
 	if (!sc)

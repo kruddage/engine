@@ -156,6 +156,30 @@ static void test_layout_json(void)
 	must_contain(j, "[\"field\",\"driver\",\"\"]");
 
 	/*
+	 * Panel bodies (#795). The native reader flattens these into an index
+	 * arena; the web host gets the nesting verbatim, because script_json is
+	 * generic and needed no change to carry a deeper tree. Asserting the
+	 * nested shape here is what proves that — the two hosts read one spec
+	 * through two very different representations, and this is the side that
+	 * has to keep its shape.
+	 */
+	must_contain(j, "[\"body\",[\"tree\",\"scene\"]]");
+	must_contain(j, "[\"body\",[\"list\",\"asset\"]]");
+	must_contain(j, "[\"body\",[\"console\",\"script\"]]");
+
+	/* The Inspector's nesting, whole: a stack wrapping a property grid with
+	 * its four rows in order, then the empty-state label. If the serializer
+	 * ever flattened or reordered a level, this one string would break. */
+	must_contain(j,
+		"[\"body\",[\"stack\","
+		"[\"property-grid\",\"scene.selection\","
+		"[\"field\",\"name\",\"Name\"],"
+		"[\"field\",\"position\",\"Position\"],"
+		"[\"field\",\"rotation\",\"Rotation\"],"
+		"[\"field\",\"scale\",\"Scale\"]],"
+		"[\"label\",\"Select an entity in the Scene tree to edit it.\"]]]");
+
+	/*
 	 * A budget, not a limit check. #794 exists because outgrowing the
 	 * transport used to blank the web editor silently, and #795 is about to
 	 * grow this spec with panel bodies. Failing here when the layout passes

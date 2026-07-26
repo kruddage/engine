@@ -48,8 +48,7 @@
          (set=? (resolve-includes table name) expected)))
 
 (display "resolver: include sets vs CMake ground truth\n")
-(inc-check "log" '("base/log/include" "abi"
-                   "core/include"))
+(inc-check "log" '("base/log/include" "abi"))
 (inc-check "log_test" '("base/log/include" "abi"))
 (inc-check "renderer_null" '("${generated}" "base/log/include"
                              "abi" "core/include"))

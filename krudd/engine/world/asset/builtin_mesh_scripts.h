@@ -6,10 +6,10 @@
  * Built-in meshes, seeded as read-only ASSET_TYPE_MESH assets (see
  * asset_plugin.c). Each is a single (mesh NAME (generate () ...)) form in the
  * same S7 Scheme the shader and entity-script DSLs use — the runtime image's
- * (mesh ...) macro registers it and world/asset/mesh_script.c marshals its
- * result into a mesh_blob on demand (see core/mesh_script.scm). There is no
- * hardcoded C mesh generator anymore: every built-in shape, including these
- * five, is authored the same way an editor-created mesh script is.
+ * (mesh ...) macro registers it and mesh_script.c marshals its result into a
+ * mesh_blob on demand (see core/mesh_script.scm). There is no hardcoded C mesh
+ * generator anymore: every built-in shape, including these five, is authored
+ * the same way an editor-created mesh script is.
  *
  * Kept here as one shared source of truth so the asset seeder and the native
  * mesh_script oracle test compile the exact same script text.

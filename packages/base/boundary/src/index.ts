@@ -138,6 +138,12 @@ export async function boot(options: BootOptions): Promise<Krudd> {
 	};
 }
 
+/** The position column's name: three floats per slot, in world units. */
+const POSITION = "position";
+
+/** The velocity column's name: three floats per slot, in units per second. */
+const VELOCITY = "velocity";
+
 /**
  * One cached view over a column in wasm memory, and the three facts that can
  * invalidate it.
@@ -148,22 +154,33 @@ export async function boot(options: BootOptions): Promise<Krudd> {
  * reads nothing, which looks exactly like an engine that stopped simulating.
  *
  * One class rather than a pair of fields and a pair of comparisons per column,
- * because there is now more than one column and the rule they are checked
- * against has to be the same rule. See `docs/boundary.md`.
+ * because there is more than one column and the rule they are checked against
+ * has to be the same rule whichever column it guards — `position`, `velocity`,
+ * or a column a board declared itself. See `docs/boundary.md`.
  */
 class Column {
 	#cached: {
-		view: Float32Array;
+		view: Float32Array | Uint32Array;
 		ptr: number;
 		length: number;
 		buffer: ArrayBufferLike;
 	} | null = null;
 
 	/**
-	 * The column as a `Float32Array` over `memory`, rebuilt only when the
+	 * The column as a typed-array view over `memory`, rebuilt only when the
 	 * address, the length or the buffer identity has changed.
+	 *
+	 * `ints` picks `Uint32Array` over `Float32Array`. It is fixed for the
+	 * lifetime of the column this cache belongs to — a column's kind cannot
+	 * change once created, because `ensure_column` refuses to reinterpret an
+	 * existing one — so it never disagrees with what a cached view already is.
 	 */
-	view(memory: WebAssembly.Memory, ptr: number, length: number): Float32Array {
+	view(
+		memory: WebAssembly.Memory,
+		ptr: number,
+		length: number,
+		ints: boolean,
+	): Float32Array | Uint32Array {
 		const buffer = memory.buffer;
 		const cached = this.#cached;
 		if (
@@ -174,7 +191,9 @@ class Column {
 		) {
 			return cached.view;
 		}
-		const view = new Float32Array(buffer, ptr, length);
+		const view = ints
+			? new Uint32Array(buffer, ptr, length)
+			: new Float32Array(buffer, ptr, length);
 		this.#cached = { view, ptr, length, buffer };
 		return view;
 	}
@@ -191,8 +210,12 @@ export class World {
 	readonly #engine: Engine;
 	readonly #memory: WebAssembly.Memory;
 
-	readonly #positions = new Column();
-	readonly #velocities = new Column();
+	/**
+	 * One cache per named column, keyed by name. `position` and `velocity`
+	 * live in here too — they are ordinary columns the engine happens to
+	 * create at boot, not a special case this map excludes.
+	 */
+	readonly #columns = new Map<string, Column>();
 
 	/** Wraps an engine and the memory its pointers refer into. */
 	constructor(engine: Engine, memory: WebAssembly.Memory) {
@@ -300,22 +323,62 @@ export class World {
 	}
 
 	/**
+	 * Creates a named column if it does not already exist, sized to the
+	 * current slot count.
+	 *
+	 * `kind` is `"vec3"` (three floats per slot), `"f32"` or `"u32"`.
+	 * Re-declaring a column at the same kind is a no-op and keeps what is in
+	 * it; re-declaring it at a different kind throws rather than
+	 * reinterpreting the column's existing bytes.
+	 */
+	ensureColumn(name: string, kind: "vec3" | "f32" | "u32"): void {
+		this.#engine.ensure_column(name, kind);
+	}
+
+	/**
+	 * A named column as a typed-array view over wasm memory: `Float32Array`
+	 * for a `"vec3"` or `"f32"` column, `Uint32Array` for a `"u32"` one.
+	 *
+	 * The array is a **view, not a copy**, and goes stale exactly as
+	 * `positions()` does — a `tick` cannot invalidate it, a `spawn` can, and so
+	 * can anything that grows wasm memory. The cache is per column, so asking
+	 * for two different columns never rebuilds one because the other moved.
+	 * Fetch it where you use it and never store one in a field. See
+	 * `docs/boundary.md`.
+	 *
+	 * Throws if no column of that name exists — call `ensureColumn` first.
+	 */
+	column(name: string): Float32Array | Uint32Array {
+		const ptr = this.#engine.column_ptr(name);
+		const length = this.#engine.column_len(name);
+		const ints = this.#engine.column_is_ints(name);
+		if (ptr === undefined || length === undefined || ints === undefined) {
+			throw new Error(
+				`no column named "${name}" — call ensureColumn(name, kind) first`,
+			);
+		}
+		let cache = this.#columns.get(name);
+		if (cache === undefined) {
+			cache = new Column();
+			this.#columns.set(name, cache);
+		}
+		return cache.view(this.#memory, ptr, length, ints);
+	}
+
+	/**
 	 * The position column as a `Float32Array` over wasm memory: three floats
 	 * per slot, indexed by the slot index `spawn` returned.
 	 *
-	 * The array is a **view, not a copy** — reading it after a `tick` sees the
-	 * new positions with no call across the boundary. A `tick` cannot
-	 * invalidate it; a `spawn` can, and so can anything that grows wasm
-	 * memory. Fetch it where you use it and never store one in a field: it is
-	 * three comparisons when nothing moved, and a silent correctness bug the
-	 * day something does. See `docs/boundary.md`.
+	 * A thin wrapper over `column("position")` — kept under its own name
+	 * because `docs/boundary.md` and every existing caller name it, and
+	 * rewriting them to the generic lookup is out of scope for the column this
+	 * method now delegates to. Same staleness rule as `column()`: a `tick`
+	 * cannot invalidate it, a `spawn` can, and so can anything that grows wasm
+	 * memory. Fetch it where you use it and never store one in a field. See
+	 * `docs/boundary.md`.
 	 */
 	positions(): Float32Array {
-		return this.#positions.view(
-			this.#memory,
-			this.#engine.positions_ptr(),
-			this.#engine.positions_len(),
-		);
+		return this.column(POSITION) as Float32Array;
 	}
 
 	/**
@@ -328,17 +391,13 @@ export class World {
 	 * crossing the column exists to avoid. Write into the view and the next
 	 * `tick` integrates from it, with no call across the boundary at all.
 	 *
-	 * Goes stale exactly as `positions()` does — a `tick` cannot invalidate
-	 * it, a `spawn` can, and so can anything that grows wasm memory. Fetch it
-	 * where you use it and never store one in a field. See
+	 * A thin wrapper over `column("velocity")` — see `positions()` for why it
+	 * stays exported under its own name. Goes stale exactly as `positions()`
+	 * does. Fetch it where you use it and never store one in a field. See
 	 * `docs/boundary.md`.
 	 */
 	velocities(): Float32Array {
-		return this.#velocities.view(
-			this.#memory,
-			this.#engine.velocities_ptr(),
-			this.#engine.velocities_len(),
-		);
+		return this.column(VELOCITY) as Float32Array;
 	}
 
 	/** The position of one entity, or `null` if the slot is not live. */

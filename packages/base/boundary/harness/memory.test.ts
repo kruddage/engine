@@ -263,3 +263,81 @@ test("the per-call path refuses a dead slot rather than reading a tombstone", as
 		"the tombstone keeps its slot, so every index the page holds stays valid",
 	);
 });
+
+test("a named f32 column is a view over Rust's memory, not a copy of it", async () => {
+	const { world, engine, memory } = await load();
+	world.ensureColumn("hp", "f32");
+	const slot = world.spawn(0, 0, 0);
+
+	const view = world.column("hp");
+	assert.ok(view instanceof Float32Array, 'an "f32" column is a Float32Array');
+	view[slot] = 42;
+
+	// Read it back a different way — straight off the pointer and length the
+	// engine itself reports, not through the cache under test — so a pass
+	// here cannot be explained by the cache handing back a JS-side copy.
+	const ptr = engine.column_ptr("hp");
+	const length = engine.column_len("hp");
+	assert.ok(ptr !== undefined && length !== undefined, "the column must exist");
+	const raw = new Float32Array(memory.buffer, ptr, length);
+	assert.equal(
+		raw[slot],
+		42,
+		"the write through the view reached Rust's own memory",
+	);
+});
+
+test("a u32 column comes back as a Uint32Array, not a Float32Array", async () => {
+	const { world } = await load();
+	world.ensureColumn("tag", "u32");
+	world.spawn(0, 0, 0);
+
+	const view = world.column("tag");
+	assert.ok(
+		view instanceof Uint32Array,
+		'a "u32" column must not be handed back as floats',
+	);
+	assert.ok(!(view instanceof Float32Array));
+});
+
+test("a named column is re-viewed at its new address after a spawn moves it", async () => {
+	const { world, engine } = await load();
+	world.ensureColumn("hp", "f32");
+	world.spawn(0, 0, 0);
+	const before = world.column("hp");
+	const address = engine.column_ptr("hp");
+
+	populate(world, MANY);
+
+	assert.notEqual(
+		engine.column_ptr("hp"),
+		address,
+		`${MANY} spawns should have reallocated the column`,
+	);
+	const after = world.column("hp");
+	assert.notEqual(after, before, "the view still points at the old address");
+	assert.equal(
+		after.length,
+		MANY + 1,
+		"one element per slot, grown alongside position",
+	);
+});
+
+test("a grown linear memory is noticed for a named column too", async () => {
+	const { world, memory } = await load();
+	world.ensureColumn("hp", "f32");
+	world.spawn(0, 0, 0);
+	const before = world.column("hp");
+	assert.equal(world.column("hp"), before, "an unchanged column re-viewed");
+
+	memory.grow(1);
+
+	assert.equal(
+		before.byteLength,
+		0,
+		"growing memory should have detached the old buffer",
+	);
+	const after = world.column("hp");
+	assert.notEqual(after, before, "the stale view was handed back");
+	assert.equal(after.length, 1, "the rebuilt view covers the same column");
+});

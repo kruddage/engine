@@ -1,0 +1,10 @@
+{
+	"name": "@krudd/boundary",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"description": "The wasm boundary: loading the module and viewing its memory. Tier: base.",
+	"exports": {
+		".": "./src/index.ts"
+	}
+}

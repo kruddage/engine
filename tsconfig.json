@@ -1,0 +1,47 @@
+// One tsconfig for the whole TypeScript half. Per-package configs were the
+// other option; one is the choice, for the same reason the Rust side takes
+// rustfmt at its defaults — a setting that can differ per package is a setting
+// somebody will eventually have to argue about.
+//
+// Package boundaries are enforced by each package.json's `exports` map (which
+// tsc and esbuild both honour) and by `cargo xtask tiers`, not by splitting
+// this file up.
+//
+// Run it through `cargo xtask check`, never directly: the generated glue in
+// packages/base/boundary/generated/ does not exist until the wasm is built.
+{
+	"compilerOptions": {
+		"target": "es2022",
+		"lib": ["es2022", "dom", "dom.iterable"],
+		"module": "esnext",
+		"moduleResolution": "bundler",
+		"moduleDetection": "force",
+		"types": [],
+
+		// Every strictness flag on. `noUncheckedIndexedAccess` in particular:
+		// the boundary hands out Float32Array views whose length Rust decides,
+		// so an index TypeScript cannot prove is in range must come back as
+		// possibly-undefined.
+		"strict": true,
+		"noUncheckedIndexedAccess": true,
+		"exactOptionalPropertyTypes": true,
+		"noImplicitOverride": true,
+		"noImplicitReturns": true,
+		"noFallthroughCasesInSwitch": true,
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
+		"allowUnreachableCode": false,
+
+		// esbuild emits; tsc only ever typechecks. Two things emitting the
+		// same code is how the two come to disagree.
+		"noEmit": true,
+		"isolatedModules": true,
+		"verbatimModuleSyntax": true,
+		"skipLibCheck": true,
+		"forceConsistentCasingInFileNames": true
+	},
+	"include": [
+		"packages/*/*/src/**/*.ts",
+		"packages/base/boundary/generated/*.d.ts"
+	]
+}

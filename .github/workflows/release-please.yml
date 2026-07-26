@@ -11,12 +11,10 @@ on:
     branches: [main]
 
 # Needed to open the release PR and, on merge, push the tag + create the
-# release. GITHUB_TOKEN is sufficient for both. `actions: write` is for the
-# flatpak-build dispatch in the last step below.
+# release. GITHUB_TOKEN is sufficient for both.
 permissions:
   contents: write
   pull-requests: write
-  actions: write
 
 # One release PR at a time; let an in-flight run finish rather than racing.
 concurrency:
@@ -39,27 +37,10 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-      # Same recursion rule as the NOTE above, with teeth: the GitHub Release
-      # this action just cut is also authored by GITHUB_TOKEN, so it starts no
-      # workflow run either — flatpak-build.yml's `release` trigger never fires
-      # and the self-hosted Flatpak registry silently stops tracking releases
-      # (it sat at 18.3.1 while main was at 18.8.2, see #790).
-      #
-      # workflow_dispatch is one of the two documented exceptions to that rule,
-      # so dispatching the build here does start it. The ref is the new tag, so
-      # the Flatpak is packaged from exactly the released source.
-      - name: Rebuild and publish the Flatpak registry for the new tag
-        if: steps.release.outputs.releases_created == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # In manifest mode the per-path outputs are prefixed; the unprefixed
-          # ones are only set when a single package released. This repo has
-          # exactly one ("." — see release-please-config.json), so tag_name is
-          # what we get, with the prefixed form as a belt-and-braces fallback.
-          TAG: ${{ steps.release.outputs.tag_name || steps.release.outputs['.--tag_name'] }}
-        run: |
-          if [ -z "$TAG" ]; then
-            echo "release-please reported a release but no tag name to build" >&2
-            exit 1
-          fi
-          gh workflow run flatpak-build.yml --ref "$TAG"
+      # NOTE: release-please used to dispatch flatpak-build.yml at the tag it
+      # had just cut, because a GITHUB_TOKEN-authored Release starts no
+      # workflow run of its own (#790). That dispatch is gone: #814 deleted the
+      # C editor the Flatpak packages, so the build cannot succeed and
+      # dispatching it would turn every release red. #821 rebuilds the
+      # packaging on Tauri 2 and puts the dispatch back — the recursion rule it
+      # worked around has not changed.

@@ -1,0 +1,11 @@
+{
+	"name": "@krudd/shell-web",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"description": "The browser page. Tier: shell — nothing may import it.",
+	"exports": {},
+	"dependencies": {
+		"@krudd/boundary": "workspace:*"
+	}
+}

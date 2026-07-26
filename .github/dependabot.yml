@@ -1,16 +1,40 @@
 # Dependabot keeps our pinned dependencies current so pins don't rot.
 #
-# Today the GitHub Actions we use float on major tags (actions/checkout@v4 etc.);
-# once those are SHA-pinned (part of #309), Dependabot opens PRs that bump the
-# pin and update the trailing version comment, keeping "pinned but current".
+# Three ecosystems: the workflows, the Cargo workspace, and the pnpm workspace.
+# The commit-message prefixes make Dependabot's squash titles valid Conventional
+# Commits, which .github/workflows/pr-title.yml requires and release-please
+# parses — `ci` for the workflows and `build` for the two dependency trees.
+# Neither bumps the version; both are recorded in the changelog (see
+# release-please-config.json).
 version: 2
 updates:
+  # The GitHub Actions we use float on major tags (actions/checkout@v7 etc.);
+  # once those are SHA-pinned (part of #309), Dependabot opens PRs that bump
+  # the pin and update the trailing version comment, keeping "pinned but
+  # current".
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
-    # prefix "ci" makes Dependabot's squash title a Conventional Commit
-    # (ci: ...), which release-please records in the changelog without bumping
-    # the version — the successor to the old release:chore label.
     commit-message:
       prefix: "ci"
+
+  # The Cargo workspace. `wasm-bindgen` is the one that matters: xtask keeps
+  # the CLI in step by reading the resolved version out of Cargo.lock, so a
+  # bump here reinstalls the matching CLI on the next build rather than
+  # producing an "invalid schema version" at page load.
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "build"
+
+  # The pnpm workspace. Only the root has registry dependencies today — the
+  # packages depend on each other and on nothing published.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "build"

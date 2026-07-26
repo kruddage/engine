@@ -1,6 +1,23 @@
 <!-- SPDX-License-Identifier: GPL-2.0-or-later -->
 # Flatpak packaging + self-hosted registry
 
+> **This directory describes a build that no longer exists.** #814 deleted the
+> C and Scheme tree, including the Qt editor this packages, so every path and
+> command below that reaches into `krudd/` is stale — `krudd.sh`, `krudd_qt`,
+> `krudd/third_party/sync.sh`, the Vulkan backend. `flatpak-build.yml` is
+> dispatch-only and fails on a guard step that says so.
+>
+> It is kept, rather than deleted with the tree, because the *packaging* half
+> is still correct and still wanted: the manifest shape, the signing opt-in,
+> the OSTree export, and the self-hosted `gh-pages` registry a Steam Deck
+> subscribes to. [#821](https://github.com/kruddage/engine/issues/821) rebuilds
+> the editor on Tauri 2 and repoints all of it. Until then the registry is
+> frozen at whatever it last published and `flatpak update` pulls nothing new —
+> the accepted cost of delete-and-replace over strangler-fig
+> ([#812](https://github.com/kruddage/engine/issues/812)).
+>
+> Everything below is preserved as written, as the reference #821 works from.
+
 Closes [#686](https://github.com/kruddage/engine/issues/686) — "Distribute the
 native editor as a Flatpak from a self-hosted registry". This is the
 packaging/registry-hosting half of that issue; the other half — `editor-qt`

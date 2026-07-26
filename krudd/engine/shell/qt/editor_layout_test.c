@@ -61,6 +61,46 @@ static int has_action(const struct editor_menu *menu, const char *action,
 	return 0;
 }
 
+/* The Nth child of NODE in declaration order, or NULL. Walks first_child then
+ * next_sibling, which is the only way to read the arena — so using it here means
+ * the test exercises the link structure rather than trusting pool order. */
+static const struct editor_body_node *body_child(const struct editor_layout *L,
+						 int32_t node, uint32_t n)
+{
+	int32_t c;
+
+	if (node < 0 || (uint32_t)node >= L->body_count)
+		return NULL;
+	c = L->bodies[node].first_child;
+	while (c >= 0 && n--)
+		c = L->bodies[c].next_sibling;
+	if (c < 0 || (uint32_t)c >= L->body_count)
+		return NULL;
+	return &L->bodies[c];
+}
+
+/* How many children NODE has, by walking the sibling run. */
+static uint32_t body_child_count(const struct editor_layout *L, int32_t node)
+{
+	uint32_t n = 0;
+	int32_t  c;
+
+	if (node < 0)
+		return 0;
+	for (c = L->bodies[node].first_child; c >= 0;
+	     c = L->bodies[c].next_sibling)
+		n++;
+	return n;
+}
+
+/* The index of DOCK's body root, or -1. */
+static int32_t dock_body(const struct editor_layout *L, const char *id)
+{
+	const struct editor_dock *d = dock_by_id(L, id);
+
+	return d ? d->body : -1;
+}
+
 static int menu_has_kind(const struct editor_menu *menu,
 			 enum editor_menu_item_kind kind)
 {
@@ -72,6 +112,103 @@ static int menu_has_kind(const struct editor_menu *menu,
 		if (menu->items[i].kind == kind)
 			return 1;
 	return 0;
+}
+
+/*
+ * The panel bodies each dock declares, and the arena's link structure (#795).
+ *
+ * The contents matter, but the structure matters more: every assertion below
+ * reaches its node by walking first_child / next_sibling rather than indexing
+ * the pool, so a reader that filled the arena but linked it wrongly — children
+ * prepended instead of appended, a sibling run that loops, a parent that does
+ * not point back — fails here rather than in a host that draws a scrambled
+ * panel.
+ */
+static void test_bodies(const struct editor_layout *L)
+{
+	int32_t                        scene, inspector, assets, console, grid;
+	const struct editor_body_node *n;
+	uint32_t                       i;
+
+	/* Each of the four docks names what its panel is. */
+	scene     = dock_body(L, "dock.scene");
+	inspector = dock_body(L, "dock.inspector");
+	assets    = dock_body(L, "dock.assets");
+	console   = dock_body(L, "dock.console");
+	assert(scene >= 0 && inspector >= 0 && assets >= 0 && console >= 0 &&
+	       "every dock declares a body");
+
+	/* Leaf kinds carry their source and no children. */
+	assert(L->bodies[scene].kind == EDITOR_BODY_TREE);
+	assert(!strcmp(L->bodies[scene].source, "scene"));
+	assert(body_child_count(L, scene) == 0);
+
+	assert(L->bodies[assets].kind == EDITOR_BODY_LIST);
+	assert(!strcmp(L->bodies[assets].source, "asset"));
+
+	assert(L->bodies[console].kind == EDITOR_BODY_CONSOLE);
+	assert(!strcmp(L->bodies[console].source, "script"));
+
+	/* The Inspector nests: a stack of a property grid and an empty-state
+	 * label. This is the case a fixed-shape struct could not have held. */
+	assert(L->bodies[inspector].kind == EDITOR_BODY_STACK);
+	assert(body_child_count(L, inspector) == 2 &&
+	       "the Inspector stacks a grid and a label");
+
+	n = body_child(L, inspector, 0);
+	assert(n && n->kind == EDITOR_BODY_PROPERTY_GRID &&
+	       "the grid is the stack's FIRST child — declaration order, so "
+	       "children are appended, not prepended");
+	assert(!strcmp(n->source, "scene.selection"));
+
+	n = body_child(L, inspector, 1);
+	assert(n && n->kind == EDITOR_BODY_LABEL &&
+	       "the empty-state label follows the grid");
+	assert(strstr(n->source, "Select an entity") &&
+	       "a label carries its text in `source`");
+
+	/* The grid's rows: four fields, in order, each with a name and a label
+	 * — the two-string form. */
+	grid = L->bodies[inspector].first_child;
+	assert(body_child_count(L, grid) == 4 && "four property rows");
+	n = body_child(L, grid, 0);
+	assert(n && n->kind == EDITOR_BODY_FIELD);
+	assert(!strcmp(n->source, "name") && !strcmp(n->label, "Name") &&
+	       "a field's two strings land in source then label");
+	n = body_child(L, grid, 3);
+	assert(n && !strcmp(n->source, "scale") && !strcmp(n->label, "Scale") &&
+	       "the last row is reached by walking the sibling run");
+
+	/* Structural invariants across the whole pool, so a malformed link
+	 * cannot hide in a node this test does not name individually. */
+	assert(L->body_count > 0 && L->body_count <= EDITOR_MAX_BODY_NODES);
+	for (i = 0; i < L->body_count; i++) {
+		const struct editor_body_node *b = &L->bodies[i];
+
+		assert(b->kind != EDITOR_BODY_NONE &&
+		       "an unknown kind is skipped, never pooled");
+		assert(b->parent >= -1 && b->parent < (int32_t)L->body_count);
+		assert(b->first_child >= -1 &&
+		       b->first_child < (int32_t)L->body_count);
+		assert(b->next_sibling >= -1 &&
+		       b->next_sibling < (int32_t)L->body_count);
+		/* A child is created after its parent, so an index that points
+		 * backwards would mean a cycle. */
+		assert(b->first_child == -1 || b->first_child > (int32_t)i);
+		assert(b->next_sibling == -1 || b->next_sibling > (int32_t)i);
+		/* Every child agrees with its parent about the relationship. */
+		if (b->first_child >= 0)
+			assert(L->bodies[b->first_child].parent == (int32_t)i &&
+			       "first_child points back at its parent");
+		if (b->next_sibling >= 0)
+			assert(L->bodies[b->next_sibling].parent == b->parent &&
+			       "siblings share a parent");
+	}
+
+	/* Docks the spec never filled keep "no body" rather than index 0. */
+	for (i = L->dock_count; i < EDITOR_MAX_DOCKS; i++)
+		assert(L->docks[i].body == -1 &&
+		       "an unfilled dock reads as no body, not node 0");
 }
 
 int main(void)
@@ -164,9 +301,13 @@ int main(void)
 	assert(!strcmp(L.status[1].id, "resolution"));
 	assert(!strcmp(L.status[2].id, "driver"));
 
+	/* ---- panel bodies (#795) ---------------------------------------- */
+	test_bodies(&L);
+
 	printf("editor_layout_test: %u menus, %u docks, %u tools, %u status "
-	       "fields\n",
-	       L.menu_count, L.dock_count, L.tool_count, L.status_count);
+	       "fields, %u body nodes\n",
+	       L.menu_count, L.dock_count, L.tool_count, L.status_count,
+	       L.body_count);
 	printf("editor_layout tests passed\n");
 	return 0;
 }

@@ -61,21 +61,27 @@ krudd/
     resolve.scm  Transitive include/link resolver
     introspect.scm Codegen — reads a module's .scm spec, emits its .h/.c
   engine/        The engine — one folder per module, Scheme spec + C together
-    abi/         Public vtable headers (the plugin ABI)
+    abi/         The plugin vtables, and nothing else
     core/        Engine heartbeat — init/tick/shutdown, subsystem manager, script host
-    log/         Structured logging with level filtering and ring-buffer history
-    memory/      Allocator and fixed-size pool allocator
-    math/        Vector/matrix math (math.scm spec → generated C) and camera
-    render/      Rendering cluster — renderer interface spec + webgl/null backends,
-                 frame_graph, scene_renderer
-    shader/      The shader DSL + transpiler (shader.scm)
-    asset/ entity/ edit/ ui/ …
-                 Engine subsystems, all compiled into the single WASM module
+    base/        No engine concepts — log/, memory/, math/ (incl. the spatial types)
+    world/       The scene and its data model — entity/, asset/, edit/
+    render/      Backends and the passes that drive them — webgl/, webgpu/, vulkan/,
+                 null/, frame_graph/, particles/, scene_renderer/, plus renderer.scm
+                 (the backend interface spec) and shader/ (the shader DSL)
+    audio/       The mixer and its device backends
+    ui/          Editor chrome — kruddgui/, viewport/, kruddboard/
+    game/        host/ is the launcher registry; its siblings register with it
+    shell/       The hosts the engine runs inside — qt/ and web/
 ```
 
+The tiers are listed in dependency order: a module may only reach for one in a tier above
+it. `kruddmake/manifest.scm` is the authoritative list and explains what each tier is for.
+
 Each module owns its Scheme source-of-truth spec, the C it lowers to (or hand-written C for
-speed), its headers, and its tests. `kruddmake/` is the thin build layer that reads those
-specs and emits + compiles them; it holds no engine domain logic.
+speed), its headers, and its tests. A module that other modules consume exports an
+`include/` directory holding exactly what they consume; everything else stays private at
+the module root. `kruddmake/` is the thin build layer that reads those specs and emits +
+compiles them; it holds no engine domain logic.
 
 Every module is compiled straight into the one WASM module; at boot `engine.c` calls each
 subsystem's `<name>_plugin_entry` in dependency order. A subsystem discovers engine services

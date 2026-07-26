@@ -547,6 +547,7 @@ function plainWire(wire: Wire): Record<string, unknown> {
 		from: { node: wire.from.node, port: wire.from.port },
 		to: { node: wire.to.node, port: wire.to.port },
 		kind: wire.kind,
+		...(wire.cut === undefined ? {} : { cut: wire.cut }),
 	};
 }
 
@@ -684,11 +685,15 @@ function asWire(value: unknown, board: BoardId): Wire {
 	if (raw.kind !== "exec" && raw.kind !== "data") {
 		throw one(at, "`kind` must be `exec` or `data`");
 	}
+	if (raw.cut !== undefined && typeof raw.cut !== "boolean") {
+		throw one(at, "`cut` must be true or false");
+	}
 	return {
 		id: raw.id,
 		from: asEndpoint(raw.from, at, "from"),
 		to: asEndpoint(raw.to, at, "to"),
 		kind: raw.kind,
+		...(raw.cut === undefined ? {} : { cut: raw.cut }),
 	};
 }
 

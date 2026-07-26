@@ -257,6 +257,15 @@ export interface Wire {
 	readonly to: Endpoint;
 	/** Execution order, or data. */
 	readonly kind: WireKind;
+	/**
+	 * Whether this wire is cut.
+	 *
+	 * A state of the document rather than a wire that was deleted, because a
+	 * cut is meant to be undone by tapping again — and because a board with a
+	 * wire missing has lost the fact that there was one. The interpreter skips
+	 * a cut wire; the view draws it as cut.
+	 */
+	readonly cut?: boolean;
 }
 
 /** One canvas of nodes. */

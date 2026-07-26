@@ -96,6 +96,8 @@ export interface PlacedLane extends Size {
 export interface PlacedWire {
 	readonly id: WireId;
 	readonly kind: WireKind;
+	/** Whether it is cut. A cut wire is drawn, and drawn as cut. */
+	readonly cut: boolean;
 	/** The `d` attribute of the path. */
 	readonly path: string;
 	/** Where the two ends sit, for the dots drawn on them. */
@@ -220,6 +222,7 @@ export function layout(
 		wires.push({
 			id: wire.id,
 			kind: wire.kind,
+			cut: wire.cut === true,
 			path: bow(from, to, across),
 			from,
 			to,
@@ -336,6 +339,39 @@ function bow(from: Point, to: Point, across: boolean): string {
 	}
 	const reach = Math.max(WIRE_BOW, dy / 2);
 	return `M ${from.x} ${from.y} C ${from.x} ${from.y + reach}, ${to.x} ${to.y - reach}, ${to.x} ${to.y}`;
+}
+
+/**
+ * The nodes execution still reaches, walking the uncut wires from the entry
+ * points.
+ *
+ * What is *not* in here reads as inactive. That is the other half of cutting a
+ * wire being legible: the wire looks cut, and everything the cut stopped looks
+ * stopped. A board where only the wire changed would leave you working out the
+ * consequence for yourself.
+ */
+export function reachable(board: Board, kinds: Registry): Set<NodeId> {
+	const next = new Map<NodeId, NodeId>();
+	for (const wire of board.wires) {
+		if (wire.kind === "exec" && wire.cut !== true) {
+			next.set(wire.from.node, wire.to.node);
+		}
+	}
+	const live = new Set<NodeId>();
+	for (const node of board.nodes) {
+		if (kindOf(kinds, node.kind)?.entry === undefined) {
+			continue;
+		}
+		// An entry point is always live: it is where execution begins, and
+		// nothing upstream of it can be cut.
+		live.add(node.id);
+		let at = next.get(node.id);
+		while (at !== undefined && !live.has(at)) {
+			live.add(at);
+			at = next.get(at);
+		}
+	}
+	return live;
 }
 
 /** Adds up a list of numbers. */

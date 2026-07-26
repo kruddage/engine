@@ -246,6 +246,29 @@ export class World {
 	}
 
 	/**
+	 * Presents a frame with nothing in it.
+	 *
+	 * The counterpart to `render`. A board whose paint lane runs nothing has to
+	 * leave the screen showing *nothing* rather than the last frame it happened
+	 * to draw — a canvas still holding a picture after the wire that drew it was
+	 * cut says "working" and "did nothing" the same way.
+	 */
+	presentCleared(): void {
+		this.#engine.present_cleared();
+	}
+
+	/**
+	 * Sets how large one entity draws, in world units.
+	 *
+	 * One call for the whole world. A board's `scale` param reaches the picture
+	 * through here; without it the param would be a control that looks live and
+	 * changes nothing.
+	 */
+	setScale(scale: number): void {
+		this.#engine.set_scale(scale);
+	}
+
+	/**
 	 * What the renderer picked: backend, adapter and surface format.
 	 *
 	 * `undefined` only when no canvas is attached, which `boot` never leaves

@@ -55,7 +55,8 @@ use wasm_bindgen::prelude::wasm_bindgen;
 /// happens to be.
 const VIEW_EXTENT: f32 = 2.0;
 
-/// How large one entity's triangle draws, in world units.
+/// How large one entity's triangle draws, in world units, before a board says
+/// otherwise.
 const TRIANGLE_SCALE: f32 = 0.35;
 
 /// Boots an engine that draws into `canvas`.
@@ -144,6 +145,21 @@ pub struct Engine {
     renderer: Option<Renderer>,
     /// The one pipeline, compiled when the renderer is attached.
     triangle: Option<PipelineId>,
+    /// How many draws the last presented frame carried.
+    ///
+    /// What was *submitted*, not what the next frame would submit. The
+    /// difference is the whole value of the number: a board whose paint lane
+    /// has been cut still has eight entities the next frame *could* draw, and
+    /// a readout that reported the prediction would say "8 draws" over a black
+    /// screen. An instrument that reports what might happen is not measuring.
+    last_draws: u32,
+    /// How large a triangle draws, in world units.
+    ///
+    /// A setting rather than a constant because a board sets it: a node whose
+    /// `scale` param the engine ignored would be a control that looks live and
+    /// changes nothing, which teaches exactly the wrong thing about what a
+    /// board is.
+    scale: f32,
 }
 
 impl Default for Engine {
@@ -172,7 +188,37 @@ impl Engine {
             elapsed: 0.0,
             renderer: None,
             triangle: None,
+            last_draws: 0,
+            scale: TRIANGLE_SCALE,
         }
+    }
+
+    /// Sets how large one entity's triangle draws, in world units.
+    ///
+    /// One call for the whole world, like every other phase call — the scale
+    /// goes into the transform of every draw the next frame builds.
+    pub fn set_scale(&mut self, scale: f32) {
+        self.scale = scale;
+    }
+
+    /// How large one entity's triangle draws.
+    pub fn scale(&self) -> f32 {
+        self.scale
+    }
+
+    /// Presents a frame with nothing in it.
+    ///
+    /// The counterpart to [`Engine::render`], and the reason it exists: a board
+    /// whose paint lane runs nothing has to leave the screen showing *nothing*,
+    /// not the last frame it happened to draw. A canvas still holding a picture
+    /// after the wire that drew it was cut is the exact mixed signal
+    /// `CODING_STANDARD.md` forbids — it says "working" and "did nothing" the
+    /// same way.
+    pub fn present_cleared(&mut self) -> Result<(), JsValue> {
+        let mut frame = Frame::new(self.viewport);
+        frame.view_projection = self.view_projection();
+        self.present(&frame)
+            .map_err(|why| JsValue::from_str(&why.to_string()))
     }
 
     /// Draws the world.
@@ -187,7 +233,8 @@ impl Engine {
     /// silently stops drawing looks exactly like a canvas that was drawing
     /// nothing all along.
     pub fn render(&mut self) -> Result<(), JsValue> {
-        self.render_frame()
+        let frame = self.build_frame();
+        self.present(&frame)
             .map_err(|why| JsValue::from_str(&why.to_string()))
     }
 
@@ -200,12 +247,14 @@ impl Engine {
         self.renderer.as_ref().map(Renderer::description)
     }
 
-    /// How many draws the last [`Engine::render`] would submit.
+    /// How many draws the last presented frame carried.
     ///
-    /// For the page's debug readout, and for a test that wants to know the
-    /// world reached the frame without needing a GPU to ask.
+    /// Zero before the first frame, and zero after a frame presented with
+    /// nothing in it. For the page's debug readout — and it is a measurement
+    /// rather than a prediction, so a cut wire reads as `0 draws` beside a
+    /// black canvas instead of as the eight the world still holds.
     pub fn draw_count(&self) -> u32 {
-        self.build_frame().draws().len() as u32
+        self.last_draws
     }
 
     /// Spawns an entity and returns its slot index.
@@ -418,16 +467,19 @@ impl Engine {
             .map_or(krudd_webgl::MAX_SURFACE_EXTENT, Renderer::max_extent)
     }
 
-    /// [`Engine::render`] without the `JsValue`.
+    /// Puts one frame on the screen, without the `JsValue`.
     ///
-    /// The exported method is a one-line wrapper around this so that the
+    /// The exported methods are one-line wrappers around this so that the
     /// decision of what is worth reporting is testable: `JsValue::from_str`
     /// panics off wasm, so anything that touches it can only be exercised in a
-    /// browser.
-    fn render_frame(&mut self) -> Result<(), RenderError> {
-        let frame = self.build_frame();
+    /// browser. It is also the one place that knows an empty frame is
+    /// presented exactly like a full one — the difference between them is what
+    /// is in the draw list, and nothing else.
+    fn present(&mut self, frame: &Frame) -> Result<(), RenderError> {
+        let submitted = frame.draws().len() as u32;
         let renderer = self.renderer.as_mut().ok_or(RenderError::Detached)?;
-        match draw(renderer, &frame) {
+        self.last_draws = submitted;
+        match draw(renderer, frame) {
             Ok(()) => Ok(()),
             Err(why) if why.is_transient() => Ok(()),
             Err(why) => Err(RenderError::Backend(why)),
@@ -447,7 +499,7 @@ impl Engine {
             // correct rather than an error: the world still ticks.
             return frame;
         };
-        let scale = Mat4::from_scale(Vec3::new(TRIANGLE_SCALE, TRIANGLE_SCALE, 1.0));
+        let scale = Mat4::from_scale(Vec3::new(self.scale, self.scale, 1.0));
         for handle in self.store.iter() {
             let position = self.positions[handle.index() as usize];
             frame.push(Draw {
@@ -737,16 +789,51 @@ mod tests {
     }
 
     #[test]
+    fn the_draw_count_is_what_was_presented_not_what_could_be() {
+        // A board whose paint lane has been cut still has eight entities the
+        // next frame *could* draw. A readout that reported the prediction would
+        // say "8 draws" over a black screen, which is an instrument saying
+        // "working" and "did nothing" the same way.
+        let mut e = Engine::new(100, 100);
+        e.triangle = Some(fake_pipeline());
+        e.spawn(0.0, 0.0, 0.0);
+
+        assert_eq!(e.build_frame().draws().len(), 1, "one *could* be drawn");
+        assert_eq!(
+            e.draw_count(),
+            0,
+            "but nothing has been presented, so nothing has been drawn"
+        );
+
+        // And a frame that never reached a surface has not been presented
+        // either — this engine has no renderer, so it cannot have drawn
+        // anything however many entities it holds.
+        let frame = e.build_frame();
+        // The internal form, not `present_cleared` — the exported one maps its
+        // error through `JsValue::from_str`, which panics off wasm.
+        assert!(e.present(&frame).is_err());
+        assert_eq!(e.draw_count(), 0);
+
+        // What the browser proves, and this cannot: after a real present the
+        // count is what was submitted, and after a cleared one it is zero.
+        // `cargo xtask render-test` is where that is held.
+    }
+
+    #[test]
     fn every_live_entity_becomes_one_triangle() {
         let mut e = Engine::new(100, 100);
         e.triangle = Some(fake_pipeline());
         e.spawn(0.0, 0.0, 0.0);
         let b = e.spawn(1.0, 0.0, 0.0);
         e.spawn(2.0, 0.0, 0.0);
-        assert_eq!(e.draw_count(), 3);
+        assert_eq!(e.build_frame().draws().len(), 3);
 
         assert!(e.despawn(b));
-        assert_eq!(e.draw_count(), 2, "a tombstoned slot is not drawn");
+        assert_eq!(
+            e.build_frame().draws().len(),
+            2,
+            "a tombstoned slot is not drawn"
+        );
 
         let frame = e.build_frame();
         for draw in frame.draws() {
@@ -774,6 +861,25 @@ mod tests {
     }
 
     #[test]
+    fn the_scale_a_board_sets_is_the_scale_a_draw_carries() {
+        // A `scale` param the engine ignored would be a control that looks live
+        // and changes nothing.
+        let mut e = Engine::new(100, 100);
+        e.triangle = Some(fake_pipeline());
+        e.spawn(0.0, 0.0, 0.0);
+        assert_eq!(
+            e.scale(),
+            TRIANGLE_SCALE,
+            "the default is what it always was"
+        );
+
+        e.set_scale(1.5);
+        let transform = e.build_frame().draws()[0].transform;
+        assert_eq!(transform.cols[0][0], 1.5);
+        assert_eq!(transform.cols[1][1], 1.5);
+    }
+
+    #[test]
     fn the_camera_widens_with_the_canvas_rather_than_stretching() {
         // A wide canvas shows more world sideways; the vertical extent is
         // fixed. If this inverted, a triangle would be visibly squashed at any
@@ -795,7 +901,10 @@ mod tests {
         // would leave a blank canvas and no explanation, which is the one thing
         // #812 says an instrument may never do.
         let mut e = Engine::default();
-        let why = e.render_frame().expect_err("a detached engine cannot draw");
+        let frame = e.build_frame();
+        let why = e
+            .present(&frame)
+            .expect_err("a detached engine cannot draw");
         assert!(matches!(why, RenderError::Detached));
         assert!(
             why.to_string().contains("canvas"),

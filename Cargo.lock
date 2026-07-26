@@ -320,6 +320,9 @@ dependencies = [
 [[package]]
 name = "krudd-world"
 version = "0.0.0"
+dependencies = [
+ "krudd-math",
+]
 
 [[package]]
 name = "libc"

@@ -12,7 +12,7 @@
   ;;! kgui_batch links libm for the vector primitives' sinf/cosf/sqrtf.
   (library "kgui_batch"
     (sources "kgui_batch.c")
-    (public (current))
+    (public ".")
     (link "m"))
   (executable "kgui_batch_test"
               (sources "kgui_batch_test.c")
@@ -21,7 +21,7 @@
 
   (library "kgui_input"
     (sources "kgui_input.c")
-    (public (current)))
+    (public "."))
   (executable "kgui_input_test"
               (sources "kgui_input_test.c")
               (link "kgui_input"))
@@ -29,7 +29,7 @@
 
   (library "kgui_text_edit"
     (sources "kgui_text_edit.c")
-    (public (current)))
+    (public "."))
   (executable "kgui_text_edit_test"
               (sources "kgui_text_edit_test.c")
               (link "kgui_text_edit"))
@@ -39,7 +39,7 @@
   ;;! (../third_party), which pulls in libm (floor/sqrt/pow/...).
   (library "kgui_font"
     (sources "kgui_font.c")
-    (public (current))
+    (public ".")
     (private (raw "../third_party"))
     (link "m"))
   (executable "kgui_font_test"

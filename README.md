@@ -191,8 +191,18 @@ cd engine
 `setup.sh` records the Qt flags in `.krudd-env`, which `krudd.sh` sources automatically — so
 after `./setup.sh` you do not even need the manual `KRUDD_QT_CFLAGS` export shown above.
 
-The complete setup — the Vulkan prerequisites, Wayland vs X11, and what you should see on
-screen — lives in [`docs/qt-editor-shell.md`](docs/qt-editor-shell.md).
+The editor picks up whichever Qt platform plugin is live — Wayland on the Deck, xcb under
+X11, or the Windows plugin — and prints which one it presented on at startup. Press `Esc`
+or close the window to quit.
+
+What you should see: the viewport currently renders the Vulkan backend's **animated clear**
+rather than the scene. That is expected — the backend stands up a validated Vulkan 1.3
+device, swapchain and present path, but does not yet translate the renderer's draw stream
+(see the `SCOPE` note atop
+[`renderer_vulkan.c`](krudd/engine/render/vulkan/renderer_vulkan.c) and #705). The chrome
+around it — the menu bar, toolbar and the Scene / Inspector / Assets / Console docks, all
+freely movable, floatable and tabbable — is the authoring surface. Panel contents are
+placeholders for now; filling them in is #793.
 
 The editor also ships as a self-hosted, GPG-signed Flatpak registry —
 `flatpak remote-add` a `.flatpakrepo` URL and get updates the normal Flatpak

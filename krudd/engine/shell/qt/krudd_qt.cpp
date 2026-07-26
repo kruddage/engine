@@ -2,7 +2,7 @@
 /*
  * krudd_qt — the native Vulkan backend, presenting into a Qt-hosted window.
  *
- * The native editor (see docs/qt-editor-shell.md and #675/#705): the engine's
+ * The native editor (#675/#705): the engine's
  * Vulkan backend, through the vulkan_platform.h seam, driving a QWindow
  * embedded in real editor chrome. A QMainWindow owns the window and hands the
  * backend its VkSurfaceKHR; the viewport is a QWindow embedded via
@@ -42,7 +42,8 @@
  *     (public, Qt >= 6.5) gives the wl_display. The per-window wl_surface has
  *     NO public API — QNativeInterface has no QWaylandWindow in any Qt 6
  *     release — so it comes from the QPA native-resource lookup, the one
- *     private header this file leans on. See docs/qt-editor-shell.md.
+ *     private header this file leans on — the include below carries the full
+ *     rationale for why no public API can replace it.
  *   - X11/XWayland: QNativeInterface::QX11Application::connection() gives the
  *     xcb_connection_t*, QWindow::winId() the window — vkCreateXcbSurfaceKHR.
  *   - Windows: QWindow::winId() is the HWND — vkCreateWin32SurfaceKHR.

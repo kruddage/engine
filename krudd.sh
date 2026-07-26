@@ -47,7 +47,7 @@ if [ -z "$cc" ]; then
 		krudd.sh:     distrobox create -i archlinux:latest krudd && distrobox enter krudd
 		krudd.sh:     cd $root && ./setup.sh && ./krudd.sh editor
 		krudd.sh:
-		krudd.sh: See docs/qt-editor-shell.md for the full walkthrough.
+		krudd.sh: See README.md, "Build from source", for the full walkthrough.
 		EOF
 	else
 		echo "krudd.sh: no C compiler found (set CC, or install cc/gcc/clang)" >&2

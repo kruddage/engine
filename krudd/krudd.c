@@ -101,8 +101,8 @@ static int cmd_build(void)
  * `krudd editor` — build the Qt editor shell and run it. The native editor:
  * the engine's Vulkan backend, presenting into a QWindow embedded in real Qt
  * chrome (menu bar, toolbar, Scene/Inspector/Assets/Console docks) on the
- * desktop (SteamOS / the Steam Deck / Windows), no browser in the path. See
- * docs/qt-editor-shell.md.
+ * desktop (SteamOS / the Steam Deck / Windows), no browser in the path. README's
+ * "Build from source" section has the distrobox + setup.sh recipe.
  *
  * The window target carries (vulkan) and (qt). This sets KRUDD_VULKAN and
  * KRUDD_QT for the build so the ordinary `krudd build` stays Vulkan- and
@@ -125,7 +125,9 @@ static int cmd_editor(void)
 			"Qt6Widgets Qt6Gui Qt6Core)\"\n"
 			"krudd:   KRUDD_QT_LIBS=\"$(pkg-config --libs "
 			"Qt6Widgets Qt6Gui Qt6Core)\"\n"
-			"krudd: see docs/qt-editor-shell.md for the recipe.\n");
+			"krudd: or run ./setup.sh once — it installs Qt6 and "
+			"records both in .krudd-env, which krudd.sh sources "
+			"for you.\n");
 		return -1;
 	}
 

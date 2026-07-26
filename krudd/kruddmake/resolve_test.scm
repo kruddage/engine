@@ -110,7 +110,7 @@
               '("core/version.h.in"
                 "shell/web/shell.html.in"
                 "core/runtime.scm"
-                "shell/qt/editor_layout.scm"
+                "core/editor_layout.scm"
                 "world/entity/entity_script.scm"
                 "world/entity/scene_script.scm"
                 "world/asset/mesh_script.scm"

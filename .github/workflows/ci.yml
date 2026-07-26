@@ -7,7 +7,8 @@ name: CI
 #
 # What it covers: the crate/package tier order, rustfmt, clippy with warnings
 # denied, the Rust test suite, the wasm build, wasm-bindgen, the TypeScript
-# bundle, tsc, and biome. See xtask/src/check.rs.
+# bundle, tsc, biome, and the boundary tests run against the built module under
+# Node. See xtask/src/check.rs.
 #
 # NOT covered, deliberately, until the hello-triangle chain lands (#818, #819):
 #   * the GitHub Pages deploy and the per-PR preview — #820. There is nothing
@@ -72,6 +73,18 @@ jobs:
       - name: cargo xtask check
         run: cargo xtask check
 
+      # The batching rule, measured. Its own step rather than part of `check`
+      # because it is a timing run on shared CI hardware: it asserts only that
+      # the batched path is still the fast one, by a margin far wider than the
+      # noise, and the numbers themselves are for reading rather than gating.
+      # See docs/boundary.md.
+      - name: Benchmark the boundary
+        run: cargo xtask bench
+
+      # Last before the upload, because every xtask build reassembles dist/ —
+      # a step after this one would replace the release build being published
+      # with its own.
+      #
       # Not a gate — a number worth being able to look at, since the wasm is
       # fetched before anything can run.
       - name: Report the release artifact sizes

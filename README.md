@@ -34,10 +34,14 @@ ships zero GC bytes of its own.
 
 The boundary between them is **batched, never per-object**: TypeScript reads
 typed-array views straight over wasm linear memory and calls into Rust once
-per phase. Getting that wrong looks like "wasm is slow" and is not.
+per phase. Getting that wrong looks like "wasm is slow" and is not — reading a
+world one call per entity measures ~36× more expensive than reading it through
+the view, which is what `cargo xtask bench` exists to keep true.
 
 See [`docs/architecture.md`](docs/architecture.md) for the tier order, what
-each crate and package owns, and what each may reach for.
+each crate and package owns, and what each may reach for, and
+[`docs/boundary.md`](docs/boundary.md) for the contract across the wasm
+boundary — ownership, what may be exported, and when a view goes stale.
 
 ## Building
 
@@ -58,6 +62,8 @@ cargo xtask build-web    # wasm + TypeScript into dist/
 cargo xtask serve        # build, then serve dist/ at http://127.0.0.1:8080/
 cargo xtask dist         # optimised build, with the artifact sizes
 cargo xtask check        # everything CI gates on
+cargo xtask test-web     # just the boundary tests, against the built wasm
+cargo xtask bench        # the batched boundary against the per-call one
 cargo xtask tiers        # just the crate/package tier check
 ```
 
@@ -83,6 +89,7 @@ crates/            The Rust half, in tier order
   shell/web/         The wasm module the browser loads
 packages/          The TypeScript half, same tier vocabulary
   base/boundary/     Loading the wasm and viewing its memory
+    harness/           node:test over the memory contract, and the benchmark
   shell/web/         The browser page
 xtask/             The build driver
 docs/              Architecture and toolchain decisions
@@ -97,7 +104,7 @@ violation fails the build, not review.
 
 | Workflow · job | What it does |
 |---|---|
-| **ci · check** | `cargo xtask check` — tiers, `rustfmt`, `clippy -D warnings`, `cargo test`, the wasm + TypeScript build, `tsc`, `biome ci` |
+| **ci · check** | `cargo xtask check` — tiers, `rustfmt`, `clippy -D warnings`, `cargo test`, the wasm + TypeScript build, `tsc`, `biome ci`, and the boundary tests against the built module |
 | **pr-title** | Checks the PR title is a valid Conventional Commit (it becomes the squashed commit) |
 | **release-please** | On push to `main`, maintains the release PR that versions, tags, and releases |
 

@@ -33,6 +33,14 @@ pub struct Artifacts {
     pub dist: PathBuf,
 }
 
+/// The wasm module the generated glue instantiates.
+///
+/// The harnesses in `harness.rs` hand this to Node, which has no `fetch` for
+/// a `file://` URL and so cannot take the path the page takes.
+pub fn wasm_path(root: &Path) -> PathBuf {
+    root.join(GLUE_DIR).join(format!("{GLUE_NAME}_bg.wasm"))
+}
+
 /// Builds the wasm module and the TypeScript bundle into `dist/`.
 pub fn build(opts: &Options) -> Result<Artifacts, String> {
     let root = sh::workspace_root();
@@ -229,10 +237,7 @@ fn assemble_dist(root: &Path, version: &str) -> Result<(), String> {
     let dist = root.join(DIST);
 
     // The glue fetches this by name, relative to the page.
-    sh::copy(
-        &root.join(GLUE_DIR).join(format!("{GLUE_NAME}_bg.wasm")),
-        &dist.join(format!("{GLUE_NAME}_bg.wasm")),
-    )?;
+    sh::copy(&wasm_path(root), &dist.join(format!("{GLUE_NAME}_bg.wasm")))?;
 
     let template = root.join("packages/shell/web/index.html");
     let html = sh::read(&template)?.replace("__KRUDD_VERSION__", version);

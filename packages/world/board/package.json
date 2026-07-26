@@ -1,0 +1,10 @@
+{
+	"name": "@krudd/board",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"description": "The board document: what a project is, as data. Tier: world.",
+	"exports": {
+		".": "./src/index.ts"
+	}
+}

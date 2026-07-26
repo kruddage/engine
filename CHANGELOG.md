@@ -1,5 +1,17 @@
 # Changelog
 
+## [18.8.3](https://github.com/kruddage/engine/compare/v18.8.2...v18.8.3) (2026-07-26)
+
+
+### Bug Fixes
+
+* **flatpak:** unwedge the registry publish so releases republish again ([#792](https://github.com/kruddage/engine/issues/792)) ([249a33c](https://github.com/kruddage/engine/commit/249a33c9524c06adae5bcbdbbf83afc87fa03021)), closes [#790](https://github.com/kruddage/engine/issues/790)
+
+
+### Refactoring
+
+* declare codegen embeds per-module in build.scm ([#788](https://github.com/kruddage/engine/issues/788)) ([851367a](https://github.com/kruddage/engine/commit/851367a7e60c028d09b8658d4cc4b1cb5f3c552a)), closes [#787](https://github.com/kruddage/engine/issues/787)
+
 ## [18.8.2](https://github.com/kruddage/engine/compare/v18.8.1...v18.8.2) (2026-07-26)
 
 

@@ -95,6 +95,120 @@
 (check "resolve-check-all over the real manifest"
        (not (expect-error (lambda () (resolve-check-all table)))))
 
+;;! The codegen declarations that used to be a literal in ninja.scm, written out
+;;! twice in two different shapes with nothing checking the two agreed (#787).
+;;! Both consumers now derive from the manifest, so the literal survives here
+;;! instead — as an oracle. Adding an embed has to touch this list, which is a
+;;! test failing loudly, not a build silently under-declaring its regen edge the
+;;! way #779 did.
+(display "codegen: declarations gathered from the manifest\n")
+
+(define codegen (resolve-codegen manifest))
+
+(check "every generated source is declared by the module that owns it"
+       (set=? (map rz-codegen-source codegen)
+              '("core/version.h.in"
+                "shell/web/shell.html.in"
+                "core/runtime.scm"
+                "shell/qt/editor_layout.scm"
+                "world/entity/entity_script.scm"
+                "world/entity/scene_script.scm"
+                "world/asset/mesh_script.scm"
+                "world/asset/texture_script.scm"
+                "world/asset/sound_script.scm"
+                "game/tictactoe/scene.scm"
+                "game/tictactoe/rules.scm"
+                "game/chess/scene.scm"
+                "game/chess/rules.scm"
+                "ui/kruddgui/kruddgui.scm"
+                "ui/kruddboard/md_parse.scm"
+                "base/math/math.scm"
+                "render/shader/shader.scm"
+                "render/renderer.scm")))
+
+(define (decl-for source)
+  (let loop ((l codegen))
+    (cond ((null? l) #f)
+          ((string=? (rz-codegen-source (car l)) source) (car l))
+          (else (loop (cdr l))))))
+
+(define (decl-check name source kind outputs)
+  (let ((d (decl-for source)))
+    (check name
+           (and d
+                (eq? (rz-codegen-kind d) kind)
+                (set=? (rz-codegen-outputs d) outputs)))))
+
+(decl-check "configure-file declares its substituted output"
+            "core/version.h.in" 'configure-file '("version.h"))
+(decl-check "embed declares one header, not its C symbol"
+            "core/runtime.scm" 'embed '("runtime_scm.h"))
+(decl-check "embed-scheme-module declares both of its outputs"
+            "ui/kruddboard/md_parse.scm" 'embed-scheme-module
+            '("md_parse.h" "md_parse.scm.c"))
+(decl-check "emit-math-module declares the C it lowers to"
+            "base/math/math.scm" 'emit-math-module '("math_gen.c"))
+(decl-check "emit-interface-header declares the header it emits"
+            "render/renderer.scm" 'emit-interface-header '("renderer.h"))
+
+(check "an embed's C symbol rides along as an argument, not an output"
+       (equal? (rz-codegen-args (decl-for "core/runtime.scm"))
+               '("runtime_scm.h" "RUNTIME_SCM")))
+
+(check "a declaration's input resolves against its own module"
+       (string=? (rz-codegen-source (decl-for "world/asset/mesh_script.scm"))
+                 "world/asset/mesh_script.scm"))
+
+(check "resolve-check-codegen passes over the real manifest"
+       (not (expect-error (lambda () (resolve-check-codegen manifest)))))
+
+(display "codegen: loud failures\n")
+
+;;! A form the emitter does not recognise renders nothing — which is exactly how
+;;! a mistyped declaration would embed nothing and take its regen input with it.
+(check "an unknown top-level form errors rather than rendering nothing"
+       (expect-error
+        (lambda ()
+          (resolve-check-codegen
+           (list (cons "d" '((embeds "a.scm" "a_scm.h" "A_SCM"))))))))
+
+(check "a declaration with the wrong argument count errors"
+       (expect-error
+        (lambda ()
+          (resolve-check-codegen
+           (list (cons "d" '((embed "a.scm" "a_scm.h"))))))))
+
+(check "two declarations writing the same generated file error"
+       (expect-error
+        (lambda ()
+          (resolve-check-codegen
+           (list (cons "d" '((embed "a.scm" "dup.h" "A_SCM")
+                             (embed "b.scm" "dup.h" "B_SCM"))))))))
+
+(check "a ${generated} source no declaration produces errors"
+       (expect-error
+        (lambda ()
+          (resolve-check-codegen
+           (list (cons "d" '((library "A"
+                               (sources (raw "${generated}/nobody.c"))))))))))
+
+(check "a declared ${generated} source is accepted"
+       (not (expect-error
+             (lambda ()
+               (resolve-check-codegen
+                (list (cons "d" '((emit-math-module "m.scm" "m_gen.c")
+                                  (library "A"
+                                    (sources (raw "${generated}/m_gen.c")))))))))))
+
+;;! A declaration nested in (native-only ...) is still a declaration — codegen
+;;! runs unconditionally, since the WASM and native builds share one generated/.
+(check "declarations inside native-only/wasm-only are gathered too"
+       (equal? (map rz-codegen-source
+                    (resolve-codegen
+                     (list (cons "d" '((native-only
+                                        (embed "a.scm" "a_scm.h" "A_SCM")))))))
+               '("d/a.scm")))
+
 (display "emitter: rendered build.ninja\n")
 
 (define (dirname path)
@@ -176,8 +290,18 @@
       (check "regen generator edge present"
              (and (contains? ninja-text "build build.ninja: regen ")
                   (contains? ninja-text "generator = 1")))
-      (check "regen edge lists an embedded .scm source as an input"
-             (contains? ninja-text "ui/kruddgui/kruddgui.scm"))))
+      ;;! Every declared codegen input, not a spot check: the regen edge is
+      ;;! derived from the same declarations, so this is the property #779
+      ;;! violated — an embedded source the build would not regenerate for.
+      (check "regen edge lists every declared codegen input"
+             (let loop ((l codegen))
+               (cond ((null? l) #t)
+                     ((contains? ninja-text
+                                 (string-append " " krudd-root "/krudd/engine/"
+                                                (rz-codegen-source (car l))
+                                                " "))
+                      (loop (cdr l)))
+                     (else #f))))))
 
 (if (and ninja-out (> (string-length ninja-out) 0))
     (begin

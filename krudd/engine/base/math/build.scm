@@ -1,5 +1,9 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
-((library "math"
+;;! math.scm is the source-of-truth for the scalar helpers: its (define-c-fn)
+;;! bodies are lowered to the C compiled into the library below.
+((emit-math-module "math.scm" "math_gen.c")
+
+ (library "math"
    (sources "math.c" "camera.c" (raw "${generated}/math_gen.c"))
    (public "include")
    (private (raw "${generated}"))

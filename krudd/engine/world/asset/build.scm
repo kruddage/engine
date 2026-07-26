@@ -1,5 +1,11 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
-((library "asset_plugin"
+;;! The three asset script sources, embedded into the s7 image: each is the
+;;! source-of-truth its `*_script.c` bridge below evaluates to bake a blob.
+((embed "mesh_script.scm" "mesh_script_scm.h" "MESH_SCRIPT_SCM")
+ (embed "texture_script.scm" "texture_script_scm.h" "TEXTURE_SCRIPT_SCM")
+ (embed "sound_script.scm" "sound_script_scm.h" "SOUND_SCRIPT_SCM")
+
+ (library "asset_plugin"
    (sources "asset_plugin.c" "asset_edit.c")
    (public "include" (root "abi") (root "base/math/include") (root "world/entity/include"))
    (link "log" "memory" "subsystem" "subsystem_manager" "m"))

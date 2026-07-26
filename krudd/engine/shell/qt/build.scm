@@ -1,5 +1,9 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
-((native-only
+;;! The editor's layout spec, embedded into the s7 image: editor_layout.c
+;;! evaluates it and krudd_qt.cpp renders the tree that walk returns.
+((embed "editor_layout.scm" "editor_layout_scm.h" "LAYOUT_SCM")
+
+ (native-only
   ;;! The render cluster boots a non-empty scene against the recording null
   ;;! backend — the GPU-free proof of editor_boot_cluster() (and thus the whole
   ;;! windowed scene path up to the backend boundary). No Dawn, no GPU, so it

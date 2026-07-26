@@ -1,5 +1,11 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
-((library "subsystem"
+;;! version.h.in is the header every binary reports itself by, substituted from
+;;! git. runtime.scm is the prelude script.c evaluates first into the s7 image —
+;;! embedded rather than loaded from disk, because in the browser there is none.
+((configure-file "version.h.in" "version.h")
+ (embed "runtime.scm" "runtime_scm.h" "RUNTIME_SCM")
+
+ (library "subsystem"
    (sources "subsystem.c")
    (public "include"))
 

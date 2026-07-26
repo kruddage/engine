@@ -1,5 +1,10 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
-((library "chess_game"
+;;! The game's scene and rules, embedded into the s7 image and evaluated by
+;;! chess.c — the Scheme is the game, the C is the plugin shell around it.
+((embed "scene.scm" "chess_scene_scm.h" "CHESS_SCENE_SCM")
+ (embed "rules.scm" "chess_rules_scm.h" "CHESS_RULES_SCM")
+
+ (library "chess_game"
    (sources "chess.c")
    (public "." (root "abi") (root "world/entity/include") (root "base/math/include") (root "core/include") (root "game/host"))
    (private (raw "${generated}"))

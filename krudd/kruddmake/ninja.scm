@@ -488,102 +488,45 @@
    (list "manifest.webmanifest" "sw.js" "icon-192.png" "icon-512.png"))
   (ninja-emit ""))
 
-(define (ninja-generate-codegen srcroot builddir)
-  (let ((gen      (string-append builddir "/generated"))
-        (mdscm    (string-append (krudd-repo-root)
-                                 "/krudd/engine/ui/kruddboard/md_parse.scm"))
-        (mathscm  (string-append (krudd-repo-root)
-                                 "/krudd/engine/base/math/math.scm"))
-        (shaderscm (string-append (krudd-repo-root)
-                                  "/krudd/engine/render/shader/shader.scm"))
-        (rendscm  (string-append (krudd-repo-root)
-                                 "/krudd/engine/render/renderer.scm")))
-    (system (string-append "mkdir -p \"" gen "\""))
-    (krudd-configure-file
-     (string-append srcroot "/core/version.h.in")
-     (string-append gen "/version.h"))
-    (krudd-configure-file
-     (string-append srcroot "/shell/web/shell.html.in")
-     (string-append gen "/shell.html"))
-    (krudd-embed-file
-     (string-append srcroot "/core/runtime.scm")
-     (string-append gen "/runtime_scm.h") "RUNTIME_SCM")
-    (krudd-embed-file
-     (string-append srcroot "/world/entity/entity_script.scm")
-     (string-append gen "/entity_script_scm.h") "ENTITY_SCRIPT_SCM")
-    (krudd-embed-file
-     (string-append srcroot "/world/asset/mesh_script.scm")
-     (string-append gen "/mesh_script_scm.h") "MESH_SCRIPT_SCM")
-    (krudd-embed-file
-     (string-append srcroot "/world/asset/texture_script.scm")
-     (string-append gen "/texture_script_scm.h") "TEXTURE_SCRIPT_SCM")
-    (krudd-embed-file
-     (string-append srcroot "/world/asset/sound_script.scm")
-     (string-append gen "/sound_script_scm.h") "SOUND_SCRIPT_SCM")
-    (krudd-embed-file
-     (string-append srcroot "/world/entity/scene_script.scm")
-     (string-append gen "/scene_script_scm.h") "SCENE_SCRIPT_SCM")
-    (krudd-embed-file
-     (string-append srcroot "/shell/qt/editor_layout.scm")
-     (string-append gen "/editor_layout_scm.h") "LAYOUT_SCM")
-    (krudd-embed-file
-     (string-append srcroot "/game/tictactoe/scene.scm")
-     (string-append gen "/tictactoe_scene_scm.h")
-     "TICTACTOE_SCENE_SCM")
-    (krudd-embed-file
-     (string-append srcroot "/game/tictactoe/rules.scm")
-     (string-append gen "/tictactoe_rules_scm.h")
-     "TICTACTOE_RULES_SCM")
-    (krudd-embed-file
-     (string-append srcroot "/game/chess/scene.scm")
-     (string-append gen "/chess_scene_scm.h")
-     "CHESS_SCENE_SCM")
-    (krudd-embed-file
-     (string-append srcroot "/game/chess/rules.scm")
-     (string-append gen "/chess_rules_scm.h")
-     "CHESS_RULES_SCM")
-    (krudd-embed-file
-     (string-append srcroot "/ui/kruddgui/kruddgui.scm")
-     (string-append gen "/kruddgui_scm.h") "KRUDDGUI_SCM")
-    (krudd-embed-scheme-module
-     mdscm
-     (string-append gen "/md_parse.h")
-     (string-append gen "/md_parse.scm.c"))
-    (krudd-emit-math-module
-     mathscm
-     (string-append gen "/math_gen.c"))
-    (krudd-embed-file
-     shaderscm
-     (string-append gen "/shader_scm.h") "SHADER_SCM")
-    (krudd-emit-interface-header
-     rendscm
-     (string-append gen "/renderer.h"))))
+(define (ninja-codegen-input srcroot decl)
+  (string-append srcroot "/" (rz-codegen-source decl)))
 
-;;! The `.scm`/`.in` inputs that feed code generation. When any of these change
-;;! the `regen` edge below re-runs the generator, which rewrites build.ninja and
-;;! the codegen outputs (`generated/*`). Kept a deliberate superset so a stale
-;;! header can never outlive an edit to its source.
+;;! Dispatch one declaration onto its introspect.scm generator. Outputs are
+;;! named relative to `generated/` in the declaration, since that is the one
+;;! directory codegen writes to and every consumer reaches it the one way, as
+;;! `(raw "${generated}")`.
+(define (ninja-run-codegen srcroot gen decl)
+  (let ((in   (ninja-codegen-input srcroot decl))
+        (args (rz-codegen-args decl)))
+    (define (out n) (string-append gen "/" n))
+    (case (rz-codegen-kind decl)
+      ((configure-file) (krudd-configure-file in (out (car args))))
+      ((embed) (krudd-embed-file in (out (car args)) (cadr args)))
+      ((embed-scheme-module)
+       (krudd-embed-scheme-module in (out (car args)) (out (cadr args))))
+      ((emit-math-module) (krudd-emit-math-module in (out (car args))))
+      ((emit-interface-header)
+       (krudd-emit-interface-header in (out (car args))))
+      (else (error 'ninja-unknown-codegen-kind (rz-codegen-kind decl))))))
+
+;;! Run the code generation each module declares in its own build.scm. Nothing
+;;! is listed here: what gets generated is exactly what the manifest declares,
+;;! which is also exactly what the `regen` edge below watches.
+(define (ninja-generate-codegen manifest srcroot builddir)
+  (let ((gen (string-append builddir "/generated")))
+    (system (string-append "mkdir -p \"" gen "\""))
+    (for-each (lambda (decl) (ninja-run-codegen srcroot gen decl))
+              (resolve-codegen manifest))))
+
+;;! The `.scm`/`.in` inputs that feed code generation, derived from the same
+;;! declarations that drive it. When any of these change the `regen` edge below
+;;! re-runs the generator, which rewrites build.ninja and the codegen outputs
+;;! (`generated/*`). A source can no longer be generated from but left unwatched:
+;;! it takes one declaration to be both, so the list cannot fall behind (#779).
 (define (ninja-generator-inputs manifest srcroot)
   (append
-   (map (lambda (p) (string-append srcroot "/" p))
-        (list "core/version.h.in"
-              "shell/web/shell.html.in"
-              "core/runtime.scm"
-              "shell/qt/editor_layout.scm"
-              "world/entity/entity_script.scm"
-              "world/entity/scene_script.scm"
-              "world/asset/mesh_script.scm"
-              "world/asset/texture_script.scm"
-              "world/asset/sound_script.scm"
-              "game/tictactoe/scene.scm"
-              "game/tictactoe/rules.scm"
-              "game/chess/scene.scm"
-              "game/chess/rules.scm"
-              "ui/kruddgui/kruddgui.scm"
-              "ui/kruddboard/md_parse.scm"
-              "base/math/math.scm"
-              "render/shader/shader.scm"
-              "render/renderer.scm"))
+   (map (lambda (decl) (ninja-codegen-input srcroot decl))
+        (resolve-codegen manifest))
    (map (lambda (p) (string-append (krudd-repo-root)
                                    "/krudd/kruddmake/" p))
         (list "ninja.scm" "introspect.scm" "resolve.scm"
@@ -616,6 +559,7 @@
     (let ((table (rz-target-table manifest))
           (libmap (ninja-build-libmap manifest)))
       (resolve-check-all table)
+      (resolve-check-codegen manifest)
       (ninja-emit* (ninja-preamble srcroot))
       (ninja-emit-regen manifest srcroot regen-cmd)
       (for-each
@@ -626,7 +570,7 @@
        manifest)
       (ninja-emit "# --- WASM (Emscripten) main module ---")
       (ninja-emit "")
-      (if builddir (ninja-generate-codegen srcroot builddir))
+      (if builddir (ninja-generate-codegen manifest srcroot builddir))
       (ninja-emit-static-assets srcroot)
       (ninja-emit-main-module table libmap)
       (ninja-emit (string-append "build native: phony "

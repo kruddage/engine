@@ -1,5 +1,10 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
-((library "entity_plugin"
+;;! The entity and scene script sources, embedded into the s7 image — the
+;;! source-of-truth for the entity_script.c / scene_script.c bridges below.
+((embed "entity_script.scm" "entity_script_scm.h" "ENTITY_SCRIPT_SCM")
+ (embed "scene_script.scm" "scene_script_scm.h" "SCENE_SCRIPT_SCM")
+
+ (library "entity_plugin"
    (sources "entity.c" "entity_plugin.c" "entity_script.c"
             "scene_script.c" "scene_edit.c")
    (public "include" (root "abi") (root "base/math/include")

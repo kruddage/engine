@@ -405,8 +405,16 @@ static VkSurfaceKHR window_create_surface(VkInstance instance, void *user)
 	}
 #endif
 
-#if defined(VK_USE_PLATFORM_WAYLAND_KHR) && \
-	defined(QT_FEATURE_wayland_client) && QT_FEATURE_wayland_client == 1
+/* Gate on QT_CONFIG(wayland) — the QtGui feature that guards
+ * QNativeInterface::QWaylandApplication in qguiapplication_platform.h, the only
+ * Qt facility this branch uses. It comes from QtGui/qtgui-config.h (pulled in by
+ * every QtGui header above) and needs no extra module. The earlier
+ * QT_FEATURE_wayland_client guard was wrong: that macro belongs to the
+ * QtWaylandClient module, which this file never includes, so it was always
+ * undefined and silently compiled the whole Wayland surface path out — the
+ * editor then fell through to "unsupported platform" and presented nothing
+ * under a Wayland session (e.g. the Flatpak on the Steam Deck). */
+#if defined(VK_USE_PLATFORM_WAYLAND_KHR) && QT_CONFIG(wayland)
 	if (platform == QLatin1String("wayland")) {
 		auto *wlapp =
 			qGuiApp->nativeInterface<QNativeInterface::QWaylandApplication>();
@@ -435,7 +443,7 @@ static VkSurfaceKHR window_create_surface(VkInstance instance, void *user)
 		}
 		return surface;
 	}
-#endif /* VK_USE_PLATFORM_WAYLAND_KHR && QT_FEATURE_wayland_client == 1 */
+#endif /* VK_USE_PLATFORM_WAYLAND_KHR && QT_CONFIG(wayland) */
 
 	fprintf(stderr,
 		"krudd_qt: unsupported Qt platform plugin '%s' "

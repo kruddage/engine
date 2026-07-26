@@ -44,6 +44,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <vulkan/vulkan.h>
@@ -157,8 +158,11 @@ static int has_name(const char *const *list, uint32_t count, const char *name)
 	return 0;
 }
 
-/* Is the Khronos validation layer installed? Enabling it blindly fails instance
- * creation on a machine without the validation-layer package, so probe first. */
+/* Is the Khronos validation layer installed? Checked only once validation has
+ * been opted into (KRUDD_VULKAN_VALIDATION), to skip the layer with a clear
+ * warning on a machine that lacks the validation-layer package rather than
+ * letting vkCreateInstance fail. Note this can still report true where only the
+ * layer's JSON manifest is present and its .so is not (see create_instance). */
 static int validation_available(void)
 {
 	VkLayerProperties props[64];
@@ -246,13 +250,24 @@ static int create_instance(void)
 	 * backend use 1.3 features (dynamic rendering) below. */
 	app.apiVersion         = VK_API_VERSION_1_3;
 
-	want_validation = validation_available();
-	if (!want_validation)
+	/* Validation layers are a debug facility, off by default: a release build
+	 * — the Flatpak, which runs against the org.kde.Platform runtime — must not
+	 * request them. That runtime ships the layer's JSON manifest but not its
+	 * .so, so validation_available() reports true (the manifest enumerates)
+	 * while vkCreateInstance still fails with VK_ERROR_LAYER_NOT_PRESENT when
+	 * the loader tries to dlopen the missing library. Gating on an explicit
+	 * opt-in avoids trusting that probe in the one place it lies. Set
+	 * KRUDD_VULKAN_VALIDATION=1 in a dev build to turn the layers on. */
+	want_validation = getenv("KRUDD_VULKAN_VALIDATION") != NULL;
+	if (want_validation && !validation_available()) {
+		want_validation = 0;
 		g_log->write(LOG_LEVEL_WARN,
-			     "renderer_vulkan: %s not installed — running "
-			     "without validation layers (install the Vulkan "
-			     "validation layers to get diagnostics)",
+			     "renderer_vulkan: %s requested via "
+			     "KRUDD_VULKAN_VALIDATION but not installed — "
+			     "running without validation layers (install the "
+			     "Vulkan validation layers to get diagnostics)",
 			     k_validation_layer);
+	}
 
 	debug_messenger_ci(&dbg);
 

@@ -14,6 +14,11 @@
  * file will keep doing once there is an editor above it: the chrome belongs in
  * data rather than here (#830).
  *
+ * It now also mounts the mode shell — the two panes the page swipes between,
+ * the game and the board. That stays here rather than moving up a tier
+ * because it is the *host's* job to composite: the canvas is booted once and
+ * never unmounted, and `shell.ts` is what guarantees it.
+ *
  * The loop exercises the boundary rule in both directions. Rust simulates and
  * draws; TypeScript reads the position column out of wasm memory with no copy,
  * and writes back into that same view to recycle entities that have drifted out
@@ -21,6 +26,7 @@
  */
 
 import { boot, fitCanvas, type World } from "@krudd/boundary";
+import { mountModeShell } from "./shell";
 
 /** How many entities the demo spawns. */
 const ENTITY_COUNT = 8;
@@ -66,6 +72,11 @@ async function main(): Promise<void> {
 	const krudd = await boot({ canvas });
 	const world = krudd.world;
 	populate(world);
+
+	// After `boot`, and exactly once. The shell composites the two modes over
+	// one canvas rather than routing between them, because the WebGL2 context
+	// is taken for the life of the engine — see `shell.ts`.
+	mountModeShell({ canvas, onFail: fail });
 
 	// Not debounced: `fitCanvas` returns false when nothing changed, so a resize
 	// storm costs a couple of property reads per event rather than a swapchain

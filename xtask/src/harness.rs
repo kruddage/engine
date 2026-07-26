@@ -25,10 +25,15 @@ use crate::Options;
 use crate::sh::{self, Run};
 use crate::web;
 
-/// The `node:test` suites over the boundary's contracts — one entry per
-/// contract, each bundled separately because esbuild bundles an entry point
-/// and `node --test` runs files.
-const TEST_ENTRIES: [(&str, &str); 2] = [
+/// The `node:test` suites — one entry per contract, each bundled separately
+/// because esbuild bundles an entry point and `node --test` runs files.
+///
+/// Not every suite here needs the wasm. The mode track is plain arithmetic
+/// over a pointer position and would run under
+/// `node --experimental-strip-types` on its own; it is listed with the rest
+/// because one command that runs every TypeScript test is worth more than a
+/// second command nobody remembers.
+const TEST_ENTRIES: [(&str, &str); 3] = [
     (
         "packages/base/boundary/harness/memory.test.ts",
         "memory.test",
@@ -37,6 +42,7 @@ const TEST_ENTRIES: [(&str, &str); 2] = [
         "packages/base/boundary/harness/viewport.test.ts",
         "viewport.test",
     ),
+    ("packages/shell/web/harness/track.test.ts", "track.test"),
 ];
 
 /// The batched-versus-per-call benchmark.

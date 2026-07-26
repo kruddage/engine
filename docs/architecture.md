@@ -113,8 +113,8 @@ packages/
     boundary/    @krudd/boundary    Loading the wasm and viewing its memory
       harness/                        node:test over the memory contract, and the benchmark
   shell/
-    web/         @krudd/shell-web   The browser page
-      harness/                        the screenshot-and-compare driver, over the DevTools Protocol
+    web/         @krudd/shell-web   The browser page, and the mode shell it composites
+      harness/                        node:test over the mode track, and the screenshot-and-compare driver
 ```
 
 | Package | Exports | May be imported by |

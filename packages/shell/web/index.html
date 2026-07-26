@@ -39,6 +39,56 @@
         overflow: hidden;
       }
       /*
+        The track holds both modes. Neither pane is ever removed and neither
+        is ever hidden: the board slides over the game, because `boot()` takes
+        the canvas for the life of the engine and a second boot against the
+        same canvas fails — the WebGL2 context is already taken. Mode
+        switching is compositing, never routing.
+      */
+      #track {
+        position: fixed;
+        inset: 0;
+        overflow: hidden;
+      }
+      .pane {
+        position: absolute;
+        inset: 0;
+      }
+      /*
+        The board rides on top and off to the right until it is asked for.
+        `transform` rather than `display` or `inset`, so the game pane keeps
+        its full size the whole time — `fitCanvas` reads `clientWidth`, and a
+        game pane measuring zero would collapse the drawing buffer to 1x1 and
+        bring it back a blurry mess.
+      */
+      #board {
+        transform: translateX(100%);
+        transition: transform 220ms ease;
+        background: #16161c;
+        pointer-events: none;
+        display: grid;
+        place-content: center;
+        gap: 0.5rem;
+        text-align: center;
+        color: color-mix(in srgb, var(--ink) 55%, transparent);
+        font-size: 0.8rem;
+      }
+      body[data-mode="board"] #board {
+        transform: translateX(0);
+        pointer-events: auto;
+      }
+      /*
+        No slide for anyone who has asked their system not to animate. It also
+        makes the screenshot harness deterministic without a test-only hook:
+        it emulates this media feature, so a mode switch has finished by the
+        time the next frame is captured rather than being caught mid-slide.
+      */
+      @media (prefers-reduced-motion: reduce) {
+        #board {
+          transition: none;
+        }
+      }
+      /*
         The canvas fills the window and is sized here in CSS pixels only. Its
         drawing buffer — canvas.width/height — is set from devicePixelRatio by
         `fitCanvas` in @krudd/boundary, which is the one place that knows the
@@ -49,8 +99,41 @@
       */
       #viewport {
         display: block;
-        width: 100vw;
-        height: 100vh;
+        width: 100%;
+        height: 100%;
+      }
+      /*
+        The rail: which mode you are in, and a tap to change it. Above the
+        readout, because the readout is a footnote and this is a control.
+      */
+      #modes {
+        position: fixed;
+        left: 50%;
+        bottom: 2.25rem;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 0.25rem;
+        padding: 0.25rem;
+        border-radius: 999px;
+        background: color-mix(in srgb, #101014 80%, transparent);
+      }
+      #modes button {
+        appearance: none;
+        border: 0;
+        border-radius: 999px;
+        /* Thumb-sized: the device this is designed for is held, not pointed at. */
+        min-width: 5rem;
+        min-height: 2.5rem;
+        padding: 0 1rem;
+        font: inherit;
+        font-size: 0.8rem;
+        color: color-mix(in srgb, var(--ink) 60%, transparent);
+        background: transparent;
+        cursor: pointer;
+      }
+      #modes button[aria-current="true"] {
+        color: #101014;
+        background: var(--ink);
       }
       /*
         The readout: a status line while booting, a debug line once running,
@@ -103,10 +186,24 @@
       }
     </style>
   </head>
-  <body>
+  <body data-mode="game">
     <noscript>krudd needs JavaScript and WebAssembly.</noscript>
-    <canvas id="viewport"></canvas>
+    <div id="track">
+      <section id="game" class="pane"><canvas id="viewport"></canvas></section>
+      <!--
+        The board pane, empty for now. What goes in it is @krudd/board-view,
+        which is a package of its own in the `ui` tier — this is the hole it
+        mounts into, and nothing more.
+      -->
+      <section id="board" class="pane" aria-label="board">
+        <p>the board goes here</p>
+      </section>
+    </div>
     <p id="status">loading krudd __KRUDD_VERSION__…</p>
+    <nav id="modes" aria-label="mode">
+      <button type="button" data-mode="game" aria-current="true">game</button>
+      <button type="button" data-mode="board" aria-current="false">board</button>
+    </nav>
     <script type="module" src="./index.js"></script>
   </body>
 </html>

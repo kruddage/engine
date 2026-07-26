@@ -10,13 +10,15 @@
 ;;!             paths and the browser/Qt shells.
 ;;!   base/     no engine concepts at all — logging, allocation, arithmetic.
 ;;!   world/    the scene and its data model: entities, assets, editing.
-;;!   render/   the backends and the passes that drive them.
+;;!   render/   the backends and the passes that drive them, plus the two
+;;!             Scheme sources the renderer generates from: renderer.scm (the
+;;!             backend interface header) and shader/ (the shader DSL and its
+;;!             GLSL/WGSL transpiler). Neither is a module — they have no
+;;!             sources to build — so neither is listed here.
 ;;!   audio/    the mixer and its device backends.
 ;;!   ui/       the editor chrome: immediate-mode gui, viewport, kruddboard.
 ;;!   game/     host/ is the launcher registry; its siblings are the games
 ;;!             that register with it.
-;;!   shader/   the shader DSL and its transpiler. Scheme only, so like abi/
-;;!             it is not a module and is not listed here.
 
 ("core"
  "base/log"

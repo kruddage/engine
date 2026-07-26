@@ -495,7 +495,7 @@
         (mathscm  (string-append (krudd-repo-root)
                                  "/krudd/engine/base/math/math.scm"))
         (shaderscm (string-append (krudd-repo-root)
-                                  "/krudd/engine/shader/shader.scm"))
+                                  "/krudd/engine/render/shader/shader.scm"))
         (rendscm  (string-append (krudd-repo-root)
                                  "/krudd/engine/render/renderer.scm")))
     (system (string-append "mkdir -p \"" gen "\""))
@@ -577,7 +577,7 @@
               "ui/kruddgui/kruddgui.scm"
               "ui/kruddboard/md_parse.scm"
               "base/math/math.scm"
-              "shader/shader.scm"
+              "render/shader/shader.scm"
               "render/renderer.scm"))
    (map (lambda (p) (string-append (krudd-repo-root)
                                    "/krudd/kruddmake/" p))

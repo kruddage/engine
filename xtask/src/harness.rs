@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! `test-web` and `bench` — the Node harnesses over the built boundary.
+//! `test-web` and `bench` — the Node harnesses over the TypeScript half.
 //!
 //! The Rust half is tested by `cargo test`, which runs on the host because
-//! only `krudd-web` knows wasm-bindgen exists. That leaves the boundary
-//! itself: the generated glue, the typed-array views over linear memory, and
-//! the rule that a view goes stale when memory grows. None of that exists
-//! until the wasm is built, and none of it can be asserted from Rust.
+//! only `krudd-web` knows wasm-bindgen exists. That leaves everything written
+//! in TypeScript: the boundary — the generated glue, the typed-array views
+//! over linear memory, and the rule that a view goes stale when memory grows
+//! — and the packages above it. None of the boundary exists until the wasm is
+//! built, and none of it can be asserted from Rust.
 //!
 //! So these run the real module — the one `cargo xtask build-web` produced,
 //! with the real glue and the real `@krudd/boundary` — under Node. Node
@@ -25,10 +26,14 @@ use crate::Options;
 use crate::sh::{self, Run};
 use crate::web;
 
-/// The `node:test` suites over the boundary's contracts — one entry per
-/// contract, each bundled separately because esbuild bundles an entry point
-/// and `node --test` runs files.
-const TEST_ENTRIES: [(&str, &str); 2] = [
+/// The `node:test` suites — one entry per contract, each bundled separately
+/// because esbuild bundles an entry point and `node --test` runs files.
+///
+/// Not every suite here needs the wasm. The board document is plain
+/// TypeScript and would run under `node --experimental-strip-types` on its
+/// own; it is listed with the rest because one command that runs every
+/// TypeScript test is worth more than a second command nobody remembers.
+const TEST_ENTRIES: [(&str, &str); 4] = [
     (
         "packages/base/boundary/harness/memory.test.ts",
         "memory.test",
@@ -36,6 +41,14 @@ const TEST_ENTRIES: [(&str, &str); 2] = [
     (
         "packages/base/boundary/harness/viewport.test.ts",
         "viewport.test",
+    ),
+    (
+        "packages/world/board/harness/document.test.ts",
+        "document.test",
+    ),
+    (
+        "packages/world/board/harness/validate.test.ts",
+        "validate.test",
     ),
 ];
 

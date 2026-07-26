@@ -1,0 +1,15 @@
+[package]
+name = "krudd-record"
+description = "A Commands recorder — the render test oracle. Tier: render."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints.rust]
+missing_docs = "warn"
+
+[dependencies]
+krudd-gpu.workspace = true
+krudd-render.workspace = true

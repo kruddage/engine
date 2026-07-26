@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[lints.clippy]
+pedantic = "warn"
+
 # No dependencies, on purpose. xtask is the first thing a clean checkout
 # builds, so every crate here is latency between `git clone` and a running
 # engine — and an argument parser and a static file server are each under a

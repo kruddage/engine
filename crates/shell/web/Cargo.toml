@@ -16,6 +16,9 @@ crate-type = ["cdylib", "rlib"]
 [lints.rust]
 missing_docs = "warn"
 
+[lints.clippy]
+pedantic = "warn"
+
 [dependencies]
 krudd-gpu.workspace = true
 krudd-math.workspace = true

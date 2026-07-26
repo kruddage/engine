@@ -113,8 +113,8 @@ packages/
     boundary/    @krudd/boundary    Loading the wasm and viewing its memory
       harness/                        node:test over the memory contract, and the benchmark
   world/
-    board/       @krudd/board       The board document: what a project is, as data
-      harness/                        node:test over the fixture and the validator
+    board/       @krudd/board       The board document, and the interpreter that runs it
+      harness/                        node:test over the fixture, the validator and the interpreter
   ui/
     board-view/  @krudd/board-view  The board, drawn: lanes, nodes, wires and ports
       harness/                        node:test over the layout geometry
@@ -126,9 +126,9 @@ packages/
 | Package | Exports | May be imported by |
 |---|---|---|
 | `@krudd/boundary` | `boot`, `World`, `BootOptions`, `Krudd` — via `"exports": { ".": "./src/index.ts" }`. Nothing else is reachable: a deep import is a resolution error, not a lint. | anything |
-| `@krudd/board` | The board document types, the node-kind registry, the triangles fixture, and `parseProject` / `validate`. A board is the scene data model, which is what puts it in `world` rather than in `ui`: the board is the source of truth and a board view is one way of looking at it. | `world` and above |
-| `@krudd/board-view` | `mountBoardView`, and the layout geometry beneath it. Read-only: it draws a board and lets you move around it, and never changes one. Reaches down to `@krudd/board` for what a board *is* and no further — the board is the source of truth and this is one way of looking at it. | `ui` and above |
-| `@krudd/shell-web` | nothing. Its `exports` map is empty, so importing it fails to resolve. | nothing |
+| `@krudd/board` | The board document types, the node-kind registry, the triangles fixture, `parseProject` / `validate`, and `Runner` — the interpreter that runs a document against a world. A board is the scene data model, which is what puts it in `world` rather than in `ui`: the board is the source of truth and a board view is one way of looking at it. It takes a *structural* view of the world rather than importing `@krudd/boundary`, so it depends on nothing and is testable without a wasm build. | `world` and above |
+| `@krudd/board-view` | `mountBoardView`, and the layout geometry beneath it. Read-only: it draws a board and lets you move around it, and never changes one. Reaches down to `@krudd/board` for what a board *is* and no further. | `ui` and above |
+| `@krudd/shell-web` | nothing. Its `exports` map is empty, so importing it fails to resolve. It boots the engine, runs the triangles board and draws it; what the demo *does* is the document's, not this package's. | nothing |
 
 `@krudd/boundary` is also the only module that imports wasm-bindgen's
 generated glue. Everything above it goes through the wrapper, so there is one

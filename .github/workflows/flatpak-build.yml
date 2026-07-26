@@ -30,10 +30,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    # One serial group for every gh-pages writer. ci.yml has no deploy job
-    # today (#820), but the group name is kept so that when it gets one back
-    # the two cannot push to gh-pages at the same time — a concurrent push is
-    # rejected non-fast-forward.
+    # One serial group for every gh-pages writer. ci.yml's deploy and preview
+    # jobs publish the site to the same branch (#820), so sharing this group
+    # name is what stops two jobs pushing to gh-pages at once — a concurrent
+    # push is rejected non-fast-forward. Both sides publish with keep_files, so
+    # the site never deletes the registry below and the registry never deletes
+    # the site.
     concurrency:
       group: gh-pages-deploy
       cancel-in-progress: false

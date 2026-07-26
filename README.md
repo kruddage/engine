@@ -13,11 +13,11 @@ Linux to follow via Tauri 2.
 > [#814](https://github.com/kruddage/engine/issues/814) for what left and why.
 > What is here now is the spine: a package boundary, a build driver, a
 > loadable wasm module, and **a triangle on screen** —
-> [#818](https://github.com/kruddage/engine/issues/818) and
-> [#819](https://github.com/kruddage/engine/issues/819). The live demo and the
-> Flatpak are still dark: republishing the site is
-> [#820](https://github.com/kruddage/engine/issues/820) and the Tauri shell is
-> [#821](https://github.com/kruddage/engine/issues/821). That window is the
+> [#818](https://github.com/kruddage/engine/issues/818),
+> [#819](https://github.com/kruddage/engine/issues/819) and
+> [#820](https://github.com/kruddage/engine/issues/820), which puts the live
+> demo back up. The Flatpak is still dark until the Tauri shell replaces it
+> ([#821](https://github.com/kruddage/engine/issues/821)). That window is the
 > accepted cost of delete-and-replace, not a regression.
 
 ## The shape of it
@@ -113,17 +113,25 @@ violation fails the build, not review.
 | Workflow · job | What it does |
 |---|---|
 | **ci · check** | `cargo xtask check` — tiers, `rustfmt`, `clippy -D warnings`, `cargo test`, the wasm + TypeScript build, `tsc`, `biome ci`, and the boundary tests against the built module |
+| **ci · deploy** | On push to `main`, publishes the release build to the live site |
+| **ci · preview** | Publishes each pull request to its own URL, and takes it down when the PR closes |
 | **pr-title** | Checks the PR title is a valid Conventional Commit (it becomes the squashed commit) |
 | **release-please** | On push to `main`, maintains the release PR that versions, tags, and releases |
+
+`check` is the only one of these that gates a merge. `deploy` and `preview`
+publish; a failed preview does not hold up an auto-merge.
+
+Both publish to the **`gh-pages` branch**, not through the Pages "GitHub
+Actions" source, and that is deliberate: a repository has one Pages source, and
+`flatpak-build` publishes the self-hosted Flatpak registry into
+`gh-pages/flatpak/`. One branch, several writers, serialised under a shared
+concurrency group. A preview build stamps its version `-pr<N>+<sha>`, so the
+version the page prints tells you which build you are looking at.
 
 `flatpak-build` is dispatch-only and cannot currently succeed — it packages the
 deleted C editor. It is kept rather than removed because
 [#821](https://github.com/kruddage/engine/issues/821) replaces its contents
 rather than the workflow.
-
-Publishing to GitHub Pages, and the per-PR preview deploys, are
-[#820](https://github.com/kruddage/engine/issues/820). The triangle has landed,
-so there is now something worth publishing; the deploy itself has not.
 
 ## Versioning and releases
 

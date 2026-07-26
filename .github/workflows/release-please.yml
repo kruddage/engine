@@ -39,8 +39,7 @@ jobs:
 
       # NOTE: release-please used to dispatch flatpak-build.yml at the tag it
       # had just cut, because a GITHUB_TOKEN-authored Release starts no
-      # workflow run of its own (#790). That dispatch is gone: #814 deleted the
-      # C editor the Flatpak packages, so the build cannot succeed and
-      # dispatching it would turn every release red. #821 rebuilds the
-      # packaging on Tauri 2 and puts the dispatch back — the recursion rule it
-      # worked around has not changed.
+      # workflow run of its own (#790). Both the dispatch and the workflow are
+      # gone — #845 dropped native packaging entirely, so a tag now releases
+      # nothing but the site ci.yml already published. The recursion rule
+      # still applies to anything dispatched from here later.

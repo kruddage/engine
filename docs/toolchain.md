@@ -58,8 +58,8 @@ wasm interface layer.
 | **Tests** | `node:test`, run over an esbuild bundle |
 
 **Why TypeScript at all** is [#812]'s call: the host JavaScript engine's
-collector is already present and already paid for, in the browser and in a
-Tauri webview alike, so the GC half of the engine ships zero GC bytes. Go via
+collector is already present and already paid for, so the GC half of the
+engine ships zero GC bytes. Go via
 TinyGo was the alternative and was the weaker half — its wasip2 target
 hardwires the `wasi:cli/command` world, so the custom WIT worlds it would have
 been brought in for are not yet expressible.
@@ -140,9 +140,12 @@ it.
 
 ## What is deliberately absent
 
-- **WebGPU.** Deferred entirely ([#812]). WebKitGTK ships no `navigator.gpu`
-  and Tauri uses WebKitGTK on Linux, so WebGL2-first removes the risk instead
-  of maintaining a fallback. Whether that is still true is [#822].
+- **WebGPU.** Deferred entirely ([#812]). WebGL2 runs in every browser the
+  engine ships to, and the browser is now the only place it ships ([#845]), so
+  a second backend buys nothing until there is something the first one cannot
+  draw. It was a risk when the plan included a WebKitGTK-based native shell,
+  which ships no `navigator.gpu`; dropping the native shells removed the risk
+  rather than deferring it.
 - **A test runner for TypeScript.** `node:test` is the runner, and it is not
   a dependency — see above. Vitest and friends buy watch mode, mocking and a
   browser environment; nothing here wants the first two, and the third is a
@@ -150,13 +153,14 @@ it.
 - **A benchmark library.** `cargo xtask bench` times two loops with
   `performance.now()` and prints a table. A statistical harness would be worth
   it for a 5% regression; the thing being measured here is a 36× cliff.
-- **A native build.** Tauri hosts the same web build; there is no separate
-  native render path ([#821]).
+- **A native build.** No Tauri, no Electron, no Flatpak, no Windows target
+  ([#845]). A native shell is a second platform to keep the renderer, the
+  packaging and the release working on, and the engine is not yet finished
+  being right on one.
 
 [#812]: https://github.com/kruddage/engine/issues/812
 [#818]: https://github.com/kruddage/engine/issues/818
 [#819]: https://github.com/kruddage/engine/issues/819
 [#820]: https://github.com/kruddage/engine/issues/820
-[#821]: https://github.com/kruddage/engine/issues/821
-[#822]: https://github.com/kruddage/engine/issues/822
 [#830]: https://github.com/kruddage/engine/issues/830
+[#845]: https://github.com/kruddage/engine/issues/845

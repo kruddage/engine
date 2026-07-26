@@ -14,12 +14,5 @@
 # definitions that can disagree.
 /packages/base/boundary/generated/
 
-# CI-staged Flatpak build context / output — see
-# packaging/flatpak/README.md and .github/workflows/flatpak-build.yml
-/packaging/flatpak/build-dir/
-/packaging/flatpak/export-repo/
-/packaging/flatpak/pages-out/
-*.flatpak
-
 # agent worktrees (isolated subagent checkouts)
 .claude/worktrees/

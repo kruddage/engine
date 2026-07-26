@@ -1,27 +1,34 @@
 name: CI
 
-# One job running one command. `cargo xtask check` is the whole gate, and it is
-# the same command a contributor runs locally — a gate that only exists in a
-# workflow file is a gate nobody can run before pushing, and the C tree
-# accumulated several of those.
+# One command is the whole gate. `cargo xtask check` is what CI runs and what a
+# contributor runs locally — a gate that only exists in a workflow file is a
+# gate nobody can run before pushing, and the C tree accumulated several of
+# those.
 #
 # What it covers: the crate/package tier order, rustfmt, clippy with warnings
 # denied, the Rust test suite, the wasm build, wasm-bindgen, the TypeScript
 # bundle, tsc, biome, and the boundary tests run against the built module under
 # Node. See xtask/src/check.rs.
 #
+# The other two jobs publish rather than gate. `deploy` puts main on the live
+# site; `preview` puts each pull request on its own URL and takes it down again
+# when the PR closes. Neither can fail the build.
+#
 # NOT covered, deliberately:
-#   * the GitHub Pages deploy and the per-PR preview — #820. The triangle
-#     (#818) and the shell around it (#819) have landed, so there is now
-#     something worth publishing; wiring the deploy is #820's own change.
 #   * the Flatpak — #821. flatpak-build.yml is dispatch-only and cannot
-#     currently succeed; it packages the deleted C editor.
+#     currently succeed; it packages the deleted C editor. It is the one
+#     workflow still naming the old tree, and #812's plan is that #821 fills it
+#     in rather than that the delete removes it.
 #   * sanitizers and gcov coverage — those gated the C build. Rust's own
 #     guarantees replace most of what ASan caught; a coverage report on the new
 #     tree is worth adding once there is enough of it to measure.
 
 on:
   pull_request:
+    # `closed` is on the list so `preview` can tear a PR's preview directory
+    # down when it merges. The default set is [opened, synchronize, reopened];
+    # naming it here keeps those and adds the one we need.
+    types: [opened, reopened, synchronize, closed]
   push:
     branches: [main]
 
@@ -32,6 +39,9 @@ concurrency:
 
 jobs:
   check:
+    # Nothing to build when a PR closes — `preview` only needs to remove a
+    # directory, and it lifts the `needs` gate itself to do that.
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -61,8 +71,10 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # A PR build stamps -pr<N>+<sha> so an artifact from one can never be
-      # mistaken for a release build. A main build stamps version.txt verbatim,
-      # which xtask reads on its own when KRUDD_VERSION is unset.
+      # mistaken for a release build. That version is what the page prints, so
+      # it is also how you tell which build a preview URL is serving. A main
+      # build stamps version.txt verbatim, which xtask reads on its own when
+      # KRUDD_VERSION is unset.
       - name: Determine the version
         if: github.event_name == 'pull_request'
         run: |
@@ -83,11 +95,9 @@ jobs:
 
       # Last before the upload, because every xtask build reassembles dist/ —
       # a step after this one would replace the release build being published
-      # with its own.
-      #
-      # Not a gate — a number worth being able to look at, since the wasm is
-      # fetched before anything can run.
-      - name: Report the release artifact sizes
+      # with its own. This is therefore also what makes the published site the
+      # optimised build rather than the debug one `check` leaves behind.
+      - name: Build the release artifact and report its sizes
         run: cargo xtask dist
 
       - name: Upload the build
@@ -95,3 +105,118 @@ jobs:
         with:
           name: dist
           path: dist
+
+  # ---------------------------------------------------------------------------
+  # Publishing.
+  #
+  # Both jobs below write to the `gh-pages` branch rather than using the Pages
+  # "GitHub Actions" source, and that is not a legacy detail. A repository has
+  # exactly one Pages source, and flatpak-build.yml publishes the self-hosted
+  # Flatpak registry into gh-pages/flatpak/ — the one a Steam Deck subscribes
+  # to. Switching the site to the Actions source would take that registry
+  # offline. So: one branch, several writers, serialised.
+  # ---------------------------------------------------------------------------
+
+  deploy:
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # Every gh-pages writer shares this group name, flatpak-build.yml included,
+    # so a push to main never has two jobs pushing to the branch at once — a
+    # concurrent push is rejected non-fast-forward. `cancel-in-progress: false`
+    # because a half-finished deploy should be allowed to finish rather than be
+    # replaced mid-push.
+    concurrency:
+      group: gh-pages-deploy
+      cancel-in-progress: false
+    steps:
+      # peaceiris/actions-gh-pages runs its git operations in the workspace, so
+      # the repository has to be there even though nothing in it is published —
+      # `dist` is gitignored and arrives from the artifact below.
+      - uses: actions/checkout@v7
+
+      - name: Download the build
+        uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+
+      # An empty or partial artifact publishes a blank site, and a blank site
+      # looks exactly like the demo still being dark — which is the state this
+      # issue exists to end. Check before pushing rather than discovering it by
+      # loading the page.
+      - name: Check the artifact is a whole site
+        run: |
+          for file in index.html index.js krudd_web_bg.wasm; do
+            if [ ! -s "dist/$file" ]; then
+              echo "::error::dist/$file is missing or empty — refusing to publish" >&2
+              exit 1
+            fi
+          done
+          if grep -q '__KRUDD_' dist/index.html; then
+            echo "::error::dist/index.html still has an unsubstituted placeholder" >&2
+            exit 1
+          fi
+          ls -l dist
+
+      - name: Publish to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          publish_branch: gh-pages
+          # Without this, publishing the site would delete gh-pages/flatpak/
+          # and every open PR's preview directory along with it — the action
+          # mirrors publish_dir by default. The cost is that a file we stop
+          # producing is never pruned from the site root; the three we do
+          # produce have fixed names and are overwritten in place, so nothing
+          # accumulates today.
+          keep_files: true
+
+  # Publishes each pull request to gh-pages/pr-preview/pr-<N>/, comments the
+  # URL on the PR, and removes the directory when the PR closes or merges.
+  #
+  # Same-repository pull requests only: the `pull_request` token is read-only
+  # for forks, so a fork PR cannot push to gh-pages. Supporting forks safely
+  # would need a separate pull_request_target/workflow_run job that deploys
+  # outside the untrusted build context, which is not worth it for a preview.
+  preview:
+    needs: check
+    # `!cancelled()` lifts the implicit "needs succeeded" gate so this still
+    # runs on the close event, where `check` is skipped. It deploys only when
+    # the build succeeded; the teardown path runs either way.
+    if: >-
+      ${{ !cancelled() && github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && (github.event.action == 'closed' || needs.check.result == 'success') }}
+    runs-on: ubuntu-latest
+    # A convenience deploy, not a correctness gate — `check` is the gate. A
+    # gh-pages push race should not hold up a merge, so this is allowed to fail
+    # without failing the run.
+    continue-on-error: true
+    permissions:
+      contents: write
+      pull-requests: write
+    # Serialised per PR, so rapid pushes to one branch do not race each other
+    # onto gh-pages, while different PRs stay independent.
+    concurrency:
+      group: preview-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download the build
+        if: github.event.action != 'closed'
+        uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist
+
+      - name: Deploy the preview
+        uses: rossjrw/pr-preview-action@v1
+        with:
+          source-dir: dist
+          preview-branch: gh-pages
+          umbrella-dir: pr-preview

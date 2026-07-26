@@ -17,7 +17,7 @@
 ;;! waveform at 44.1k or 48k: the host loop over frames is the only thing that
 ;;! changes. A 440 Hz tone is (snd-sine (* 440 t)) at any rate.
 ;;!
-;;! The engine's sound-script driver (asset/sound_script.c) reads a bound
+;;! The engine's sound-script driver (world/asset/sound_script.c) reads a bound
 ;;! ASSET_TYPE_SOUND asset's (duration ...) param, derives a frame count from
 ;;! the host's sample rate, calls sound-script-generate with the source text,
 ;;! resolved params, rate, and frame count, and marshals the returned

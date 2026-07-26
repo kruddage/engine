@@ -13,7 +13,7 @@
 ;;! 0, A to 1). Because shade never sees a resolution, the same script bakes at
 ;;! 256x256 or 2Kx2K: the host loop over x,y is the only thing that changes.
 ;;!
-;;! The engine's texture-script driver (asset/texture_script.c) calls
+;;! The engine's texture-script driver (world/asset/texture_script.c) calls
 ;;! texture-script-generate with the source text of a bound ASSET_TYPE_TEXTURE
 ;;! asset, its resolved params, and a width/height, and marshals the returned
 ;;! byte-vector (width*height RGBA8 texels) into a texture_blob. Unlike a mesh

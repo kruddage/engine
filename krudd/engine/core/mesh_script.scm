@@ -22,7 +22,7 @@
 ;;! different colors: the per-entity override lives in the world, the shape math
 ;;! lives here.
 ;;!
-;;! The engine's mesh-script driver (asset/mesh_script.c) calls
+;;! The engine's mesh-script driver (world/asset/mesh_script.c) calls
 ;;! mesh-script-generate with the source text of a bound ASSET_TYPE_MESH asset
 ;;! and that entity's resolved params, and marshals the (VERTS . INDICES) result
 ;;! into a mesh_blob. A param-less mesh is a pure function of nothing — no clock,

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * chess — a built-in game: the standard set (its meshes and PBR materials staged
- * by games/chess/scene.scm) made playable by games/chess/rules.scm. Like
+ * by game/chess/scene.scm) made playable by game/chess/rules.scm. Like
  * tictactoe the plugin stays thin — it owns no geometry and no rules, only the
  * wiring: at register time it loads the rules into the shared image and offers
  * "Chess" on the launcher; when chosen, chess_load clears the world, builds the

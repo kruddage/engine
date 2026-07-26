@@ -9,7 +9,7 @@
 ((wasm-only
   (library "viewport"
     (sources "viewport.c" "viewport_pick.c")
-    (private "." (root "abi") (root "core/include") (root "asset")
+    (private "." (root "abi") (root "core/include") (root "world/asset")
              (raw "${generated}"))
     (link "mesh_script" "script" "log" "memory"
           "subsystem" "subsystem_manager")))
@@ -23,7 +23,7 @@
   (library "viewport_pick"
     (sources "viewport_pick.c")
     (public "." (root "abi"))
-    (private (root "core/include") (root "asset") (raw "${generated}"))
+    (private (root "core/include") (root "world/asset") (raw "${generated}"))
     (link "mesh_script"))
 
   ;;! GPU-free unit test: boot the s7 image, pick the built-in box out of a
@@ -31,11 +31,11 @@
   ;;! straight in, the way entity_test and scene_renderer_test do.
   (executable "viewport_pick_test"
               (sources "viewport_pick_test.c" "viewport_pick.c"
-                       (root "entity/entity.c")
-                       (root "math/math.c") (root "math/camera.c")
+                       (root "world/entity/entity.c")
+                       (root "base/math/math.c") (root "base/math/camera.c")
                        (raw "${generated}/math_gen.c"))
               (private "." (root "abi") (root "core/include")
-                       (root "memory/include") (root "asset")
+                       (root "base/memory/include") (root "world/asset")
                        (raw "${generated}") (raw "../third_party"))
               (link "mesh_script" "script" "memory" "log" "m"))
   (test "viewport_pick" "viewport_pick_test")))

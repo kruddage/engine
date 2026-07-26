@@ -1,18 +1,18 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
 ((library "tictactoe_game"
    (sources "tictactoe.c")
-   (public "." (root "abi") (root "core/include") (root "game"))
+   (public "." (root "abi") (root "core/include") (root "game/host"))
    (private (raw "${generated}"))
    (link "subsystem_manager" "script" "game"))
  (native-only
   (executable "tictactoe_test"
               (sources "tictactoe_test.c"
-                       (root "entity/scene_script.c")
-                       (root "entity/entity.c"))
+                       (root "world/entity/scene_script.c")
+                       (root "world/entity/entity.c"))
               (private "." (root "abi")
-                       (root "entity")
+                       (root "world/entity")
                        (root "core/include")
-                       (root "memory/include")
+                       (root "base/memory/include")
                        (raw "../third_party")
                        (raw "${generated}"))
               (link "script" "memory"))

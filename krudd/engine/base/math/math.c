@@ -67,7 +67,7 @@ void mat4_clip_z01(struct mat4 *m)
 }
 
 /*
- * mat4_perspective is generated from krudd/engine/math/math.scm by krudd's
+ * mat4_perspective is generated from krudd/engine/base/math/math.scm by krudd's
  * monolang emitter (into ${generated}/math_gen.c) — it is intentionally not
  * hand-written here.
  */

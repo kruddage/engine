@@ -853,7 +853,7 @@ static void seed_script(const char *path, const char *src)
  * Seed one built-in mesh from NUL-terminated Scheme source, the same shape as
  * seed_script: the (mesh NAME (generate () ...)) text becomes the asset's
  * bytes, so a consumer resolves it to a real mesh_blob on demand via
- * mesh_script_generate() (asset/mesh_script.c) rather than at seed time —
+ * mesh_script_generate() (world/asset/mesh_script.c) rather than at seed time —
  * mirroring how a shader asset stores DSL source, not compiled GLSL. There is
  * no separate "mesh script" type: every ASSET_TYPE_MESH asset is one of
  * these, full stop.
@@ -881,12 +881,12 @@ static void seed_mesh(const char *path, const char *src)
 }
 
 /*
- * Seed one built-in texture from NUL-terminated Scheme source, the same shape as
- * seed_mesh: the (texture NAME (shade (u v) ...)) text becomes the asset's bytes,
- * so a consumer bakes it to a real texture_blob on demand via
- * texture_script_generate() (asset/texture_script.c) at whatever resolution it
- * asks for, rather than at seed time. There is no separate "texture script"
- * type: every ASSET_TYPE_TEXTURE asset is one of these.
+ * Seed one built-in texture from NUL-terminated Scheme source, the same shape
+ * as seed_mesh: the (texture NAME (shade (u v) ...)) text becomes the asset's
+ * bytes, so a consumer bakes it to a real texture_blob on demand via
+ * texture_script_generate() (world/asset/texture_script.c) at whatever
+ * resolution it asks for, rather than at seed time. There is no separate
+ * "texture script" type: every ASSET_TYPE_TEXTURE asset is one of these.
  */
 static uint32_t seed_texture(const char *path, const char *src)
 {
@@ -915,8 +915,8 @@ static uint32_t seed_texture(const char *path, const char *src)
  * Seed one built-in sound from NUL-terminated Scheme source, the same shape as
  * seed_texture: the (sound NAME (sample (t) ...)) text becomes the asset's
  * bytes, so a consumer bakes it to a real sound_blob on demand via
- * sound_script_generate() (asset/sound_script.c) at whatever sample rate its
- * audio context runs, rather than at seed time. There is no separate "sound
+ * sound_script_generate() (world/asset/sound_script.c) at whatever sample rate
+ * its audio context runs, rather than at seed time. There is no separate "sound
  * script" type: every ASSET_TYPE_SOUND asset is one of these.
  */
 static void seed_sound(const char *path, const char *src)
@@ -969,7 +969,7 @@ static void seed_builtins(void)
 
 	/*
 	 * The chess set — five lathed pieces plus the blocky knight (see
-	 * builtin_mesh_scripts.h). games/chess binds these by path; kept here
+	 * builtin_mesh_scripts.h). game/chess binds these by path; kept here
 	 * beside the other lathe built-ins since they showcase the same engine.
 	 */
 	seed_mesh("builtin://mesh/chess-pawn",   CHESS_PAWN_MESH_SCRIPT_SRC);
@@ -1057,7 +1057,7 @@ static void seed_builtins(void)
 		 * honest ceiling of a metallic-roughness BRDF — but the
 		 * saturated colour plus tight specular sells "ruby"/"sapphire"
 		 * well enough for a game piece. tictactoe's marks and its win
-		 * strike (games/tictactoe/rules.scm) bind these by winner.
+		 * strike (game/tictactoe/rules.scm) bind these by winner.
 		 */
 		{
 			static const float RUBY[4]     = { 0.55f, 0.02f, 0.06f, 1.0f };
@@ -1071,7 +1071,7 @@ static void seed_builtins(void)
 			/*
 			 * A calm, neutral dielectric for a game board's playing
 			 * squares — the "just one heightfield of texture, not
-			 * nine checkered pads" replacement (games/tictactoe/
+			 * nine checkered pads" replacement (game/tictactoe/
 			 * scene.scm): matte sandstone rather than a busy pattern.
 			 */
 			seed_pbr_material("builtin://material/pbr-stone", pshader,
@@ -1080,7 +1080,7 @@ static void seed_builtins(void)
 
 		/*
 		 * The chess set's four materials, all off the same pbr shader
-		 * (games/chess). The two piece materials are matte dielectrics
+		 * (game/chess). The two piece materials are matte dielectrics
 		 * (metallic 0): a warm near-white "ivory" for the white army and
 		 * a near-black "ebony" for the black, both at a low-ish roughness
 		 * so the analytic highlight gives turned pieces a soft sheen
@@ -1118,7 +1118,7 @@ static void seed_builtins(void)
 	 * sampler and a height-from-alpha normal bump; see PBR_TEXTURED_HEAD/_TAIL)
 	 * paired with the grass texture (GRASS_TEXTURE_SCRIPT_SRC), whose alpha
 	 * channel IS the bump's height field — the "substance-designer-style"
-	 * ground material games/tictactoe/scene.scm grounds its heightfield in.
+	 * ground material game/tictactoe/scene.scm grounds its heightfield in.
 	 * Baked at 512x512 (double the checker's 256) since grass tiles at a much
 	 * higher spatial frequency and reads muddy if undersampled. The shader is
 	 * assembled from its HEAD/TAIL and the shared helpers into a stack buffer
@@ -1584,7 +1584,7 @@ static const struct asset_decl_field orbit_camera_script_decl[] = {
 
 /*
  * chess-camera declares no (params ...): it reads its behaviour from
- * games/chess/rules.scm's own globals (turn, selection, last move) rather
+ * game/chess/rules.scm's own globals (turn, selection, last move) rather
  * than authored, editor-tunable fields.
  */
 static const struct asset_decl_field chess_camera_script_decl[] = {

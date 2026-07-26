@@ -7,11 +7,12 @@
  * asset_plugin.c). Each is a single (texture NAME (params ...) (shade (u v)
  * ...)) form in the same S7 Scheme the shader / entity / mesh DSLs use — the
  * runtime image's (texture ...) macro evaluates it to a shade procedure and
- * asset/texture_script.c bakes the result into a texture_blob on demand (see
- * core/texture_script.scm). There is no hardcoded C texture generator: every
- * built-in image, like these three, is authored the same way an editor-created
- * texture script is, and is resolution-independent — shade is a pure function of
- * the normalized coordinate u,v in [0,1), so the same source bakes at any size.
+ * world/asset/texture_script.c bakes the result into a texture_blob on demand
+ * (see core/texture_script.scm). There is no hardcoded C texture generator:
+ * every built-in image, like these three, is authored the same way an
+ * editor-created texture script is, and is resolution-independent — shade is a
+ * pure function of the normalized coordinate u,v in [0,1), so the same source
+ * bakes at any size.
  *
  * Kept here as one shared source of truth so the asset seeder and the native
  * texture_script oracle test can compile the exact same script text.

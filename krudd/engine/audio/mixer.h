@@ -9,11 +9,12 @@
 
 /*
  * mixer — the playback core: one baked sound_blob, many cheap voices. A blob is
- * a sound's identity (its baked waveform, see asset/sound_script.c); a voice is
- * one playing instance of it, carrying only the live variation — gain, pan, and
- * playback rate — that must never trigger a re-bake. The same beep blob feeds a
- * dozen voices at different volumes and pans for the cost of a dozen playheads,
- * exactly as one texture's baked texels feed many draws at different tints.
+ * a sound's identity (its baked waveform, see world/asset/sound_script.c); a
+ * voice is one playing instance of it, carrying only the live variation — gain,
+ * pan, and playback rate — that must never trigger a re-bake. The same beep
+ * blob feeds a dozen voices at different volumes and pans for the cost of a
+ * dozen playheads, exactly as one texture's baked texels feed many draws at
+ * different tints.
  *
  * The mixer sums its active voices into an interleaved stereo float buffer. It
  * is pure arithmetic over pre-baked samples — no Scheme, no allocation, no

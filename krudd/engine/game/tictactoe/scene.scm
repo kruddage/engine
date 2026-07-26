@@ -3,7 +3,7 @@
 ;;! The tic-tac-toe scene — the board and its nine empty cells, floating over a
 ;;! grassy heightfield. As of Slice 2 the game is playable, so the scene starts
 ;;! empty: no pre-placed marks. Clicking a cell runs the rules
-;;! (games/tictactoe/rules.scm), which spawns a mark there.
+;;! (game/tictactoe/rules.scm), which spawns a mark there.
 ;;!
 ;;! Each cell is a flat pickable pad named "cell-N" (row-major, N = row*3 + col).
 ;;! The engine's existing ray pick (kruddboard) already turns a viewport click
@@ -29,11 +29,11 @@
 ;;! substance-designer-style procedural texture whose alpha channel doubles as a
 ;;! per-texel height the pbr-textured shader reads back out to bump the surface
 ;;! normal (see GRASS_TEXTURE_SCRIPT_SRC / PBR_TEXTURED_SHADER_SRC in
-;;! asset/asset_plugin.c) — so the grass carries visible micro-detail beyond
-;;! just its own macro waviness. Scaled wide (14 units) and sunk to y = -0.75 so
-;;! its highest crest (default heightfield amp 0.15, scaled with it) still sits
-;;! well clear of the board's underside, reading as solid ground the platform
-;;! hovers over rather than a slab cutting through it.
+;;! world/asset/asset_plugin.c) — so the grass carries visible micro-detail
+;;! beyond just its own macro waviness. Scaled wide (14 units) and sunk to y =
+;;! -0.75 so its highest crest (default heightfield amp 0.15, scaled with it)
+;;! still sits well clear of the board's underside, reading as solid ground the
+;;! platform hovers over rather than a slab cutting through it.
 ;;!
 ;;! The "Camera" entity gives the scene its own eye: scene_renderer reads the
 ;;! world position of whatever entity is named "Camera" into the camera eye each

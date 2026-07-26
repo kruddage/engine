@@ -679,7 +679,7 @@ canvas {
 /* ── Scoreboard overlay ── */
 
 /*
- * A game's HUD, revealed by the tictactoe plugin (games/tictactoe/tictactoe.c)
+ * A game's HUD, revealed by the tictactoe plugin (game/tictactoe/tictactoe.c)
  * and hidden again on the way back to the menu. It floats just under the
  * toolbar, centred over the canvas; pointer-events:none so a click passes
  * through it to the board beneath.

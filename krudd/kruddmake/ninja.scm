@@ -493,7 +493,7 @@
         (mdscm    (string-append (krudd-repo-root)
                                  "/krudd/engine/ui/kruddboard/md_parse.scm"))
         (mathscm  (string-append (krudd-repo-root)
-                                 "/krudd/engine/math/math.scm"))
+                                 "/krudd/engine/base/math/math.scm"))
         (shaderscm (string-append (krudd-repo-root)
                                   "/krudd/engine/shader/shader.scm"))
         (rendscm  (string-append (krudd-repo-root)
@@ -527,19 +527,19 @@
      (string-append srcroot "/core/editor_layout.scm")
      (string-append gen "/editor_layout_scm.h") "LAYOUT_SCM")
     (krudd-embed-file
-     (string-append srcroot "/games/tictactoe/scene.scm")
+     (string-append srcroot "/game/tictactoe/scene.scm")
      (string-append gen "/tictactoe_scene_scm.h")
      "TICTACTOE_SCENE_SCM")
     (krudd-embed-file
-     (string-append srcroot "/games/tictactoe/rules.scm")
+     (string-append srcroot "/game/tictactoe/rules.scm")
      (string-append gen "/tictactoe_rules_scm.h")
      "TICTACTOE_RULES_SCM")
     (krudd-embed-file
-     (string-append srcroot "/games/chess/scene.scm")
+     (string-append srcroot "/game/chess/scene.scm")
      (string-append gen "/chess_scene_scm.h")
      "CHESS_SCENE_SCM")
     (krudd-embed-file
-     (string-append srcroot "/games/chess/rules.scm")
+     (string-append srcroot "/game/chess/rules.scm")
      (string-append gen "/chess_rules_scm.h")
      "CHESS_RULES_SCM")
     (krudd-embed-file
@@ -576,7 +576,7 @@
               "core/editor_layout.scm"
               "ui/kruddgui/kruddgui.scm"
               "ui/kruddboard/md_parse.scm"
-              "math/math.scm"
+              "base/math/math.scm"
               "shader/shader.scm"
               "render/renderer.scm"))
    (map (lambda (p) (string-append (krudd-repo-root)

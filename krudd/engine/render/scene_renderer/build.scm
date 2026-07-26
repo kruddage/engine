@@ -5,12 +5,12 @@
 ;;! is plain C, so "wasm-only" was a packaging accident, not a real constraint.
 ((library "scene_renderer"
    (sources "scene_renderer.c"
-            (root "math/math.c")
-            (root "math/camera.c")
+            (root "base/math/math.c")
+            (root "base/math/camera.c")
             (raw "${generated}/math_gen.c"))
    (private "." (raw "${generated}") (root "render/frame_graph")
             (root "render/particles")
-            (root "core/include") (root "abi") (root "asset")
+            (root "core/include") (root "abi") (root "world/asset")
             (raw "../third_party"))
    (link "mesh_script" "texture_script" "frame_graph" "particles"
          "log" "memory" "subsystem" "subsystem_manager" "script"
@@ -19,12 +19,12 @@
   (executable "scene_renderer_test"
               (sources "scene_renderer_test.c" "scene_renderer.c"
                        (root "render/particles/particles.c")
-                       (root "math/math.c")
-                       (root "math/camera.c")
+                       (root "base/math/math.c")
+                       (root "base/math/camera.c")
                        (raw "${generated}/math_gen.c"))
               (private "." (raw "${generated}")
                        (root "render/null")
-                       (root "render/frame_graph") (root "asset")
+                       (root "render/frame_graph") (root "world/asset")
                        (root "render/particles")
                        (root "core/include")
                        (root "abi") (raw "../third_party"))

@@ -105,6 +105,16 @@ void webgpu_platform_status(const char *msg);
 void webgpu_platform_announce_renderer(void);
 
 /*
+ * Tell the host WebGPU is not coming up, and why — no instance, no adapter, or
+ * no device. The counterpart to announce_renderer, and just as necessary: the
+ * device arrives through an async callback chain, so a host with no failure
+ * report cannot tell "still handshaking" from "never will". On the web the
+ * shell's badge says so and offers the WebGL switch; a no-op natively, where
+ * the same failure already goes to stderr and the process is about to bail.
+ */
+void webgpu_platform_announce_failed(const char *why);
+
+/*
  * Release any persistent resources this seam owns. Natively that is the
  * offscreen backbuffer texture (created lazily in webgpu_platform_backbuffer_view);
  * on the web there is nothing to free — the surface's textures belong to the

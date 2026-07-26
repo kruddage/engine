@@ -348,6 +348,17 @@ body {
 	border-color: #244a24;
 }
 
+/*
+ * The backend asked for a device and did not get one. Red rather than muted
+ * because this is a dead end, not a pending state: nothing will render and the
+ * badge would otherwise sit on "booting…" forever. The tooltip carries the
+ * reason and a click switches to WebGL, which is the way out.
+ */
+.renderer.failed {
+	color: #b95a4a;
+	border-color: #4a2422;
+}
+
 /* ── Editor body: docks around the canvas viewport ── */
 
 .editor-body {
@@ -1118,10 +1129,16 @@ canvas {
 	 * flags the upgrade. Clicking the badge switches renderers when the other
 	 * path is actually reachable (see switchRenderer below).
 	 *
+	 * Until a backend reports, the badge shows the path this shell chose (see
+	 * rendererBootLabel). That gap is real: WebGPU's adapter/device handshake
+	 * is async, so on Chrome the badge sits on its boot text for as long as the
+	 * browser takes to answer, and forever if it never does — which is what
+	 * kruddSetRendererFailed exists to say out loud.
+	 *
 	 * The badge element itself is the layout's toolbar "renderer" badge, built
-	 * by kruddBuildEditor — so it may not exist yet when the first
-	 * kruddSetRenderer arrives on a slow build. g_lastRenderer remembers the
-	 * last name so buildToolbar can re-apply it the moment the badge lands.
+	 * by kruddBuildEditor — so it may not exist yet when the first report
+	 * arrives on a slow build. g_lastRenderer remembers that report so
+	 * buildToolbar can re-apply it the moment the badge lands.
 	 */
 	var RENDERER_ICON =
 		'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor"' +
@@ -1131,10 +1148,36 @@ canvas {
 		'<path d="M6 4V2M10 4V2M6 14v-2M10 14v-2M4 6H2M4 10H2' +
 		'M14 6h-2M14 10h-2"/></svg>';
 
+	/* The last thing a backend reported: {name, failed, why}, or null before
+	 * any of them has spoken. */
 	var g_lastRenderer = null;
 
 	/* null = not probed yet, true/false once navigator.gpu has answered. */
 	window.kruddWebGPUAvailable = null;
+
+	function rendererLabel(name) {
+		return name === 'webgpu' ? 'WebGPU'
+		     : name === 'webgl'  ? 'WebGL'
+		     : String(name);
+	}
+
+	/*
+	 * What the badge says before any backend has reported. The layout seeds a
+	 * host-neutral "renderer — booting…" because that spec is shared with the
+	 * Qt host, which boots Vulkan; here the shell already picked the path
+	 * (kruddWantsWebGPU), so name it rather than leave the page vague — or,
+	 * worse, showing the other host's backend — for the whole handshake.
+	 */
+	function rendererBootLabel() {
+		var name;
+
+		try {
+			name = window.kruddWantsWebGPU() ? 'webgpu' : 'webgl';
+		} catch (e) {
+			name = 'webgpu';
+		}
+		return rendererLabel(name) + ' — booting…';
+	}
 
 	/* Whether clicking the badge could switch TO this renderer right now.
 	 * WebGL always works; WebGPU only if this isn't Firefox (locked off above)
@@ -1153,9 +1196,16 @@ canvas {
 			return;
 		var active = el.dataset.active || '';
 		var avail  = window.kruddWebGPUAvailable;
+		var other  = active === 'webgpu' ? 'webgl' : 'webgpu';
 		var t;
 
-		if (active === 'webgpu') {
+		if (el.dataset.failed) {
+			t = 'renderer: ' + rendererLabel(active) + ' failed to start';
+			if (g_lastRenderer && g_lastRenderer.why)
+				t += ' — ' + g_lastRenderer.why;
+			if (canSwitchTo(other))
+				t += ' · click to switch to ' + rendererLabel(other);
+		} else if (active === 'webgpu') {
 			t = 'renderer: WebGPU';
 			if (canSwitchTo('webgl')) t += ' · click to switch to WebGL';
 		} else if (active === 'webgl') {
@@ -1168,7 +1218,9 @@ canvas {
 				t += ' · WebGPU unavailable';
 			}
 		} else {
-			t = 'renderer: detecting…';
+			/* No backend has reported yet — name the path being booted, the
+			 * same one the badge itself is showing. */
+			t = 'renderer: ' + rendererBootLabel();
 		}
 		el.title = t;
 	}
@@ -1186,19 +1238,44 @@ canvas {
 		location.href = url.toString();
 	}
 
-	window.kruddSetRenderer = function (name) {
-		g_lastRenderer = name;
+	/* Paint the badge from the last report. Split out of kruddSetRenderer
+	 * because buildToolbar has to replay that report once the badge element
+	 * exists, and a failure has to replay exactly as a success does. */
+	function applyRendererBadge() {
 		var el = document.getElementById('renderer-badge');
-		if (!el)
+		if (!el || !g_lastRenderer)
 			return;
+		var name  = g_lastRenderer.name;
 		var known = name === 'webgl' || name === 'webgpu';
-		var label = name === 'webgpu' ? 'WebGPU'
-			  : name === 'webgl'  ? 'WebGL'
-			  : String(name);
-		el.className = known ? 'renderer ' + name : 'renderer';
+		var label = rendererLabel(name);
+
+		if (g_lastRenderer.failed)
+			label += ' — unavailable';
+		el.className = (known ? 'renderer ' + name : 'renderer') +
+			       (g_lastRenderer.failed ? ' failed' : '');
 		el.dataset.active = name;
+		el.dataset.failed = g_lastRenderer.failed ? '1' : '';
 		el.innerHTML = RENDERER_ICON + '<span>' + label + '</span>';
 		refreshRendererTitle();
+	}
+
+	window.kruddSetRenderer = function (name) {
+		g_lastRenderer = { name: name, failed: false, why: '' };
+		applyRendererBadge();
+	};
+
+	/*
+	 * The chosen backend gave up — no instance, no adapter, or no device. It
+	 * has nothing to draw with and no later callback is coming, so the badge
+	 * has to stop saying "booting…": a page frozen on that is indistinguishable
+	 * from a slow one, and on the WebGPU path it also means the render cluster
+	 * and the game never boot (finish_plugin_boot waits on the device). WHY is
+	 * the backend's own message; the tooltip carries it and offers the switch
+	 * to WebGL, which is the way out.
+	 */
+	window.kruddSetRendererFailed = function (name, why) {
+		g_lastRenderer = { name: name, failed: true, why: why || '' };
+		applyRendererBadge();
 	};
 
 	/* Attach the click-to-switch behaviour to the renderer badge. Called from
@@ -1558,10 +1635,14 @@ canvas {
 				var badge = document.createElement('span');
 				/* The "renderer" badge is the one the backend updates through
 				 * kruddSetRenderer, so it gets the id and class that logic keys
-				 * off; other badges are plain host-updatable labels by id. */
+				 * off; other badges are plain host-updatable labels by id. Its
+				 * seed comes from the shell rather than the spec: the spec is
+				 * shared with the Qt host and so names no backend, while here we
+				 * know which path was picked. */
 				if (id === 'renderer') {
 					badge.id = 'renderer-badge';
 					badge.className = 'renderer';
+					text = rendererBootLabel();
 				} else {
 					badge.id = 'badge-' + id;
 					badge.className = 'tool-badge';
@@ -1574,8 +1655,7 @@ canvas {
 		/* The renderer badge now exists: wire its click behaviour and re-apply
 		 * any renderer a backend already reported before the badge was built. */
 		wireRendererBadge();
-		if (g_lastRenderer)
-			window.kruddSetRenderer(g_lastRenderer);
+		applyRendererBadge();
 		refreshRendererTitle();
 	}
 

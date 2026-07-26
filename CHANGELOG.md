@@ -1,5 +1,19 @@
 # Changelog
 
+## [18.8.4](https://github.com/kruddage/engine/compare/v18.8.3...v18.8.4) (2026-07-26)
+
+
+### Bug Fixes
+
+* **editor:** boot the Flatpak editor to a window (validation opt-in + Wayland surface) ([#810](https://github.com/kruddage/engine/issues/810)) ([0741ad0](https://github.com/kruddage/engine/commit/0741ad05b778201588505f5dc2e082e1f3fa70b6))
+* **flatpak:** update icon path after core → shell/web refactor ([#804](https://github.com/kruddage/engine/issues/804)) ([ac4234d](https://github.com/kruddage/engine/commit/ac4234da09b66bbcb68b4094a2b792b92c2e6ab1))
+* **shell:** stop the browser badge claiming Vulkan while WebGPU boots ([#805](https://github.com/kruddage/engine/issues/805)) ([3099686](https://github.com/kruddage/engine/commit/3099686c767e931a33ab914f46bcdb09cc377802))
+
+
+### Refactoring
+
+* move the editor layout spec out of the Qt shell ([#807](https://github.com/kruddage/engine/issues/807)) ([ee79843](https://github.com/kruddage/engine/commit/ee798438efc87b136055190b408958831bd198d3)), closes [#791](https://github.com/kruddage/engine/issues/791)
+
 ## [18.8.3](https://github.com/kruddage/engine/compare/v18.8.2...v18.8.3) (2026-07-26)
 
 

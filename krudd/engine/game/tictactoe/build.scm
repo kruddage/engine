@@ -1,5 +1,10 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
-((library "tictactoe_game"
+;;! The game's scene and rules, embedded into the s7 image and evaluated by
+;;! tictactoe.c — the Scheme is the game, the C is the plugin shell around it.
+((embed "scene.scm" "tictactoe_scene_scm.h" "TICTACTOE_SCENE_SCM")
+ (embed "rules.scm" "tictactoe_rules_scm.h" "TICTACTOE_RULES_SCM")
+
+ (library "tictactoe_game"
    (sources "tictactoe.c")
    (public "." (root "abi") (root "world/entity/include") (root "base/math/include") (root "core/include") (root "game/host"))
    (private (raw "${generated}"))

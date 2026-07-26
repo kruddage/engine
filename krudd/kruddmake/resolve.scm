@@ -12,6 +12,10 @@
           (else (loop (cdr l) (cons (car l) seen)
                       (cons (car l) out))))))
 
+(define (rz-prefix? s pfx)
+  (let ((ls (string-length s)) (lp (string-length pfx)))
+    (and (>= ls lp) (string=? (substring s 0 lp) pfx))))
+
 (define (rz-clause head clauses)
   (cond ((null? clauses) #f)
         ((and (pair? (car clauses)) (eq? (caar clauses) head))
@@ -80,6 +84,78 @@
 (define (rz-target-table manifest)
   (apply append
          (map (lambda (pair) (rz-spec-targets (car pair) (cdr pair)))
+              manifest)))
+
+;;! Code generation is declared per-module, in the same build.scm as the rest of
+;;! that module's build facts, and both consumers derive from that one
+;;! declaration: ninja-generate-codegen runs the generators, and
+;;! ninja-generator-inputs lists the same sources on the `regen` edge so editing
+;;! one re-runs them. Neither carries a literal list, so the two cannot drift
+;;! apart the way the hand-maintained pair did (#779, #787).
+;;!
+;;! The five kinds map one-to-one onto the introspect.scm entry points and stay
+;;! distinct clauses rather than one clause with a mode argument, because they
+;;! take genuinely different arguments — an `(embed)` names a C symbol, an
+;;! `(embed-scheme-module)` writes two files, the rest write one:
+;;!
+;;!   (configure-file IN OUT)                @VAR@ substitution
+;;!   (embed IN OUT SYMBOL)                  the bytes as a C array
+;;!   (embed-scheme-module IN HEADER SHIM)   ABI header + s7 image shim
+;;!   (emit-math-module IN OUT)              (define-c-fn) bodies lowered to C
+;;!   (emit-interface-header IN OUT)         the backend interface header
+;;!
+;;! IN resolves against the declaring module like a source path; every output is
+;;! named relative to `generated/`. The number paired with each kind below is how
+;;! many arguments follow IN, which is what makes a typo'd declaration an arity
+;;! error rather than a silently different one.
+(define rz-codegen-kinds
+  '((configure-file . 1)
+    (embed . 2)
+    (embed-scheme-module . 2)
+    (emit-math-module . 1)
+    (emit-interface-header . 1)))
+
+(define (rz-codegen-arity kind)
+  (let ((c (assq kind rz-codegen-kinds))) (and c (cdr c))))
+
+(define (rz-codegen-form? form)
+  (and (pair? form) (symbol? (car form))
+       (rz-codegen-arity (car form)) #t))
+
+;;! A declaration is (kind dir input . args) — `dir` is kept so the input path
+;;! resolves against the declaring module the same way a source does.
+(define (rz-form->codegen dir form)
+  (let ((want (+ 1 (rz-codegen-arity (car form)))))
+    (if (not (= (length (cdr form)) want))
+        (error 'rz-codegen-arity (list dir form 'expects want 'arguments)))
+    (cons (car form) (cons dir (cdr form)))))
+
+(define (rz-codegen-kind decl) (car decl))
+(define (rz-codegen-source decl) (rz-path (cadr decl) (caddr decl)))
+(define (rz-codegen-args decl) (cdddr decl))
+
+;;! The generated/ files a declaration writes. For `embed` the second argument
+;;! is a C symbol rather than a file, so it is not an output.
+(define (rz-codegen-outputs decl)
+  (if (eq? (rz-codegen-kind decl) 'embed)
+      (list (car (rz-codegen-args decl)))
+      (rz-codegen-args decl)))
+
+(define (rz-spec-codegen dir spec)
+  (let loop ((forms spec) (out '()))
+    (cond ((null? forms) (reverse out))
+          ((memq (caar forms) '(native-only wasm-only))
+           (loop (cdr forms)
+                 (append (reverse (rz-spec-codegen dir (cdar forms)))
+                         out)))
+          ((rz-codegen-form? (car forms))
+           (loop (cdr forms)
+                 (cons (rz-form->codegen dir (car forms)) out)))
+          (else (loop (cdr forms) out)))))
+
+(define (resolve-codegen manifest)
+  (apply append
+         (map (lambda (pair) (rz-spec-codegen (car pair) (cdr pair)))
               manifest)))
 
 (define (rz-lookup table name) (assoc name table))
@@ -154,3 +230,63 @@
   (for-each (lambda (target) (resolve-includes table (car target)))
             table)
   #t)
+
+(define rz-target-forms
+  '(library interface-library executable test))
+
+;;! Every top-level form a build.scm may carry. The generator's emitter ignores
+;;! what it does not recognise (a `(test)` renders no ninja edge, for instance),
+;;! which is exactly what would let a mistyped `(embeds …)` declare nothing and
+;;! be absorbed in silence — the same failure mode #779 was. So the head of
+;;! every form is checked here, and an unknown one is a hard error.
+(define (rz-check-forms dir spec)
+  (for-each
+   (lambda (f)
+     (cond ((not (pair? f)) (error 'rz-bad-form (list dir f)))
+           ((memq (car f) '(native-only wasm-only))
+            (rz-check-forms dir (cdr f)))
+           ((memq (car f) rz-target-forms) #t)
+           ((rz-codegen-form? f) (rz-form->codegen dir f))
+           (else (error 'rz-unknown-form (list dir (car f))))))
+   spec))
+
+(define rz-generated-prefix "${generated}/")
+
+(define (rz-spec-source-paths dir spec)
+  (let loop ((forms spec) (out '()))
+    (cond ((null? forms) out)
+          ((memq (caar forms) '(native-only wasm-only))
+           (loop (cdr forms)
+                 (append (rz-spec-source-paths dir (cdar forms)) out)))
+          ((memq (caar forms) '(library executable))
+           (let ((c (rz-clause 'sources (cddar forms))))
+             (loop (cdr forms)
+                   (if c (append (rz-paths dir (cdr c)) out) out))))
+          (else (loop (cdr forms) out)))))
+
+;;! Two ways a declaration can be wrong that the build would otherwise absorb in
+;;! silence, so both are hard errors:
+;;!   - two declarations writing the same generated/ file: whichever runs last
+;;!     wins and the other's consumer compiles against a header it did not ask
+;;!     for;
+;;!   - a `(sources (raw "${generated}/x"))` no declaration produces: a renamed
+;;!     or deleted declaration whose consumer still expects the old output.
+(define (resolve-check-codegen manifest)
+  (let ((outs (apply append (map rz-codegen-outputs (resolve-codegen manifest)))))
+    (let loop ((l outs) (seen '()))
+      (cond ((null? l) #t)
+            ((member (car l) seen)
+             (error 'rz-codegen-duplicate-output (car l)))
+            (else (loop (cdr l) (cons (car l) seen)))))
+    (for-each
+     (lambda (pair)
+       (rz-check-forms (car pair) (cdr pair))
+       (for-each
+        (lambda (p)
+          (if (and (rz-prefix? p rz-generated-prefix)
+                   (not (member (substring p (string-length rz-generated-prefix))
+                                outs)))
+              (error 'rz-codegen-undeclared-source (list (car pair) p))))
+        (rz-spec-source-paths (car pair) (cdr pair))))
+     manifest)
+    #t))

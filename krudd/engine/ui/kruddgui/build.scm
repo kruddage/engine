@@ -1,5 +1,9 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
-((wasm-only
+;;! The immediate-mode gui's Scheme half, embedded into the s7 image that
+;;! kruddgui.cpp drives.
+((embed "kruddgui.scm" "kruddgui_scm.h" "KRUDDGUI_SCM")
+
+ (wasm-only
   (library "kruddgui"
     (wasm-flags "--std=c++17" "-fno-exceptions" "-fno-rtti")
     (sources "kruddgui.cpp" "kgui_batch.c" "kgui_input.c"

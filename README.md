@@ -56,7 +56,7 @@ krudd/
   krudd.c        The front door — boots s7, hands off to the build language
   kruddmake/     The build language (kruddmake): reads specs, emits C + build.ninja, runs ninja
     build.scm    Orchestrator — the entry point `krudd build` loads
-    manifest.scm The list of engine module directories
+    manifest.scm The list of directories carrying a build.scm, in tier order
     ninja.scm    The Ninja emitter — renders build.ninja from the directory specs
     resolve.scm  Transitive include/link resolver
     introspect.scm Codegen — reads a module's .scm spec, emits its .h/.c
@@ -78,7 +78,12 @@ The tiers are listed in dependency order: a module may only reach for one in a t
 it. `kruddmake/manifest.scm` is the authoritative list and explains what each tier is for.
 
 Each module owns its Scheme source-of-truth spec, the C it lowers to (or hand-written C for
-speed), its headers, and its tests. A module that other modules consume exports an
+speed), its headers, and its tests. A module whose Scheme is generated from — lowered to C,
+embedded into the s7 image, substituted into a header — says so in its own `build.scm`, with
+an `(embed …)` / `(emit-… )` / `(configure-file …)` declaration alongside its libraries. That
+one declaration is what the generator runs *and* what the build watches for changes, so a
+source can't be generated from without also being rebuilt for. A module that other modules
+consume exports an
 `include/` directory holding exactly what they consume; everything else stays private at
 the module root. `kruddmake/` is the thin build layer that reads those specs and emits +
 compiles them; it holds no engine domain logic.

@@ -15,6 +15,14 @@
 # checkout fetches them on the first build. This needs network the first time —
 # the download host is github.com, reachable from CI and normal dev machines.
 #
+# Set KRUDD_S7_OFFLINE=1 to run with no network at all: every artifact is then
+# taken from this directory and verified against the ".sha256" sidecar an
+# earlier online run cached beside it, and a missing or mismatched file is a
+# hard error rather than a re-download. That is what the Flatpak build uses —
+# flatpak-builder runs module builds in a sandbox with networking off, so the
+# workflow pre-fetches on the runner and the in-sandbox build verifies offline
+# (see .github/workflows/flatpak-build.yml and packaging/flatpak/README.md).
+#
 # Sourced (not executed) by krudd.sh and run-tests.sh, before the krudd host
 # tool exists to fetch anything for them — so this has to be plain POSIX shell.
 # Expects $root (the repo root) to already be set by the sourcing script. On
@@ -84,21 +92,32 @@ s7_sync_one() {
 	name=$1
 	dest="$s7_dir/$name"
 	url="$S7_BASE_URL/$name"
+	sidecar="$dest.sha256"
 	sidecar_url="$url.sha256"
 
 	# Read the pinned checksum from the sidecar. The sidecar is small and
 	# release-scoped, so re-fetching it to confirm a cached artifact is cheap;
-	# it is the integrity anchor for the (uncommitted) binary next to it.
-	tmp_sum="$dest.sha256.tmp.$$"
-	if ! s7_download "$sidecar_url" "$tmp_sum"; then
-		rm -f "$tmp_sum"
-		echo "krudd/third_party: failed to fetch checksum for $name from $sidecar_url" >&2
-		exit 1
+	# it is the integrity anchor for the (uncommitted) binary next to it. It
+	# is kept on disk next to the artifact it describes so an offline run has
+	# something to verify against.
+	if [ -n "${KRUDD_S7_OFFLINE:-}" ]; then
+		if [ ! -f "$dest" ] || [ ! -f "$sidecar" ]; then
+			echo "krudd/third_party: KRUDD_S7_OFFLINE is set but $name (or its cached $name.sha256) is missing from $s7_dir" >&2
+			echo "krudd/third_party: run sync.sh once with network access to populate it" >&2
+			exit 1
+		fi
+	else
+		tmp_sum="$sidecar.tmp.$$"
+		if ! s7_download "$sidecar_url" "$tmp_sum"; then
+			rm -f "$tmp_sum"
+			echo "krudd/third_party: failed to fetch checksum for $name from $sidecar_url" >&2
+			exit 1
+		fi
+		mv "$tmp_sum" "$sidecar"
 	fi
 	# GitHub publishes sidecars in "sha256sum" form ("<hash>  <filename>");
 	# take the first field so a differing filename column never trips us up.
-	want=$(cut -d ' ' -f 1 "$tmp_sum")
-	rm -f "$tmp_sum"
+	want=$(cut -d ' ' -f 1 "$sidecar")
 	if [ -z "$want" ]; then
 		echo "krudd/third_party: empty checksum in sidecar for $name" >&2
 		exit 1
@@ -107,6 +126,14 @@ s7_sync_one() {
 	if [ -f "$dest" ] && [ "$(s7_sha256 "$dest")" = "$want" ]; then
 		s7_asset_path="$dest"
 		return 0
+	fi
+
+	# Offline, the cached pair is all there is: a mismatch here means the
+	# cache is corrupt or half-updated, and there is no re-download to fall
+	# back on. Fail loudly rather than link bytes nothing vouches for.
+	if [ -n "${KRUDD_S7_OFFLINE:-}" ]; then
+		echo "krudd/third_party: cached $name does not match its cached checksum, and KRUDD_S7_OFFLINE forbids re-fetching" >&2
+		exit 1
 	fi
 
 	echo "krudd/third_party: fetching $name (latest kruddage/s7 release, s7 $S7_VERSION)" >&2

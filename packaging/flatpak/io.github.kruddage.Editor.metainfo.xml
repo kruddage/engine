@@ -44,12 +44,23 @@
   -->
   <content_rating type="oars-1.1"/>
 
+  <!--
+    The placeholders in the release entry below are substituted at build time
+    from version.txt and the build date — see the metainfo step in
+    io.github.kruddage.Editor.yml. Do not hand-edit a version in here: this
+    file is packaged for whatever engine release is being built, and a literal
+    number would go stale the moment the next release is cut (that is how the
+    published registry ended up advertising 18.3.1 long after main had moved
+    on).
+  -->
   <releases>
-    <release version="18.3.1" date="2026-07-21">
+    <release version="@VERSION@" date="@DATE@">
+      <url type="details">https://github.com/kruddage/engine/releases/tag/v@VERSION@</url>
       <description>
         <p>
-          First packaged Flatpak of the native Qt editor shell: QMainWindow with
-          Scene/Inspector/Assets/Console docks around a Vulkan viewport.
+          Native Qt editor shell for KRUDD engine @VERSION@ — a QMainWindow with
+          Scene/Inspector/Assets/Console docks around a Vulkan viewport. See the
+          linked release notes for what changed in this version.
         </p>
       </description>
     </release>

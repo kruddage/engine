@@ -38,8 +38,17 @@ anything that touches s7 — including the `krudd.sh` bootstrap itself, which ne
 the library before the `krudd` host tool exists. The artifacts are **not
 committed** (see the repo `.gitignore`), so a fresh checkout fetches them on the
 first build; `sync.sh` is idempotent, so once each artifact is present and
-matches its sidecar checksum, no network I/O happens on later runs. The download
-host is `github.com`, reachable from CI and normal dev machines.
+matches its sidecar checksum, no artifact is re-downloaded on later runs (the
+small `.sha256` sidecar still is, which is how a new release gets picked up).
+The download host is `github.com`, reachable from CI and normal dev machines.
+
+`KRUDD_S7_OFFLINE=1` drops the network entirely: every artifact is taken from
+this directory and verified against the sidecar a previous online run cached
+beside it, and a missing or mismatched file is a hard error instead of a
+re-download. That is for builds that run somewhere with no network at all —
+notably the Flatpak build, whose `flatpak-builder` sandbox has networking off,
+so `.github/workflows/flatpak-build.yml` pre-fetches on the runner and the
+in-sandbox build verifies offline.
 
 Because "latest" tracks `kruddage/s7`'s release-please automation, a fetch can
 briefly land in the gap between a new release being cut and its build workflow

@@ -52,7 +52,7 @@ export KRUDD_S7BIN="$s7bin"
 # Stage 1c: the shader DSL oracle — run shader.scm's transpiler in s7 and check
 # the GLSL it lowers the built-in shaders to, the same transpiler embedded into
 # the runtime image and exercised natively by engine/core/shader_transpile_test.c.
-"$s7bin" "$root/krudd/engine/shader/shader_test.scm"
+"$s7bin" "$root/krudd/engine/render/shader/shader_test.scm"
 
 # Stage 1d: the shader DSL's WGSL oracle — the same transpiler lowered to WGSL
 # for the WebGPU backend. When naga(1) (the wgpu WGSL front end) is installed,
@@ -63,7 +63,7 @@ if command -v naga >/dev/null 2>&1; then
 	rm -rf "$wgsldir"
 	mkdir -p "$wgsldir"
 	KRUDD_WGSL_DUMP="$wgsldir" \
-		"$s7bin" "$root/krudd/engine/shader/shader_wgsl_test.scm"
+		"$s7bin" "$root/krudd/engine/render/shader/shader_wgsl_test.scm"
 	echo "kruddmake: validating emitted WGSL with naga"
 	for f in "$wgsldir"/*.wgsl; do
 		naga "$f" >/dev/null
@@ -71,7 +71,7 @@ if command -v naga >/dev/null 2>&1; then
 	done
 	echo "kruddmake: WGSL naga validation OK"
 else
-	"$s7bin" "$root/krudd/engine/shader/shader_wgsl_test.scm"
+	"$s7bin" "$root/krudd/engine/render/shader/shader_wgsl_test.scm"
 	echo "kruddmake: naga(1) not found — WGSL structural oracle only"
 fi
 

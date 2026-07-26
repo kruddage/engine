@@ -2,7 +2,7 @@
 
 (define krudd-root (or (getenv "KRUDD_ROOT") "."))
 
-(load (string-append krudd-root "/krudd/engine/shader/shader.scm"))
+(load (string-append krudd-root "/krudd/engine/render/shader/shader.scm"))
 
 (define fail-count 0)
 

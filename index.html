@@ -136,6 +136,64 @@
         background: var(--ink);
       }
       /*
+        Save and open, beside the rail and only in board mode. A project is a
+        file, and which file the board came from is the host's business rather
+        than the board view's — the view draws a board wherever it is kept.
+      */
+      #project {
+        position: fixed;
+        left: 0.6rem;
+        bottom: 2.25rem;
+        display: flex;
+        gap: 0.25rem;
+        padding: 0.25rem;
+        border-radius: 999px;
+        background: color-mix(in srgb, #101014 80%, transparent);
+      }
+      body[data-mode="game"] #project {
+        /* Hidden rather than absent: a control that moves when you swipe is a
+           control you have to find again. */
+        visibility: hidden;
+      }
+      #project button {
+        appearance: none;
+        border: 0;
+        border-radius: 999px;
+        /* Thumb-sized, like the rail. */
+        min-width: 4rem;
+        min-height: 2.5rem;
+        padding: 0 0.9rem;
+        font: inherit;
+        font-size: 0.8rem;
+        color: color-mix(in srgb, var(--ink) 60%, transparent);
+        background: transparent;
+        cursor: pointer;
+      }
+      /*
+        What a save or a load had to say. Separate from the readout because the
+        readout is rewritten every frame, and a message the next frame paints
+        over is a message nobody read. Tap to dismiss.
+      */
+      #notice {
+        position: fixed;
+        left: 50%;
+        bottom: 5.5rem;
+        transform: translateX(-50%);
+        max-width: min(32rem, calc(100vw - 1.2rem));
+        margin: 0;
+        padding: 0.6rem 0.9rem;
+        border-radius: 0.6rem;
+        font-size: 0.75rem;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        color: var(--ink);
+        background: color-mix(in srgb, #16161c 92%, transparent);
+        cursor: pointer;
+      }
+      #notice[data-kind="bad"] {
+        color: var(--bad);
+      }
+      /*
         The readout: a status line while booting, a debug line once running,
         and a failure card if either goes wrong. One element in three states,
         because a page this small does not need three elements.
@@ -197,10 +255,23 @@
       -->
       <section id="board" class="pane" aria-label="board"></section>
     </div>
+    <p id="notice" hidden></p>
     <p id="status">loading krudd 18.8.4…</p>
     <nav id="modes" aria-label="mode">
       <button type="button" data-mode="game" aria-current="true">game</button>
       <button type="button" data-mode="board" aria-current="false">board</button>
+    </nav>
+    <!--
+      The project controls. The file input is hidden and clicked by the open
+      button: a bare file input is not thumb-sized and cannot be made to look
+      like the rail, and this is the one place the page needs the browser's own
+      picker. Its `accept` is set from @krudd/board, so what a project file is
+      named is decided once.
+    -->
+    <nav id="project" aria-label="project">
+      <button type="button" id="save">save</button>
+      <button type="button" id="open">open</button>
+      <input id="file" type="file" hidden />
     </nav>
     <script type="module" src="./index.js"></script>
   </body>

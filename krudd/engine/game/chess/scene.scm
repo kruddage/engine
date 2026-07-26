@@ -14,8 +14,8 @@
 ;;! square centre. a1 is dark: a square is dark when file+rank is even.
 ;;!
 ;;! The pieces are the six builtin://mesh/chess-* lathed/blocky meshes (see
-;;! abi/builtin_mesh_scripts.h), authored foot-on-y=0 so they sit at the board
-;;! top (y = 0.03). White wears builtin://material/chess-ivory, black
+;;! world/asset/builtin_mesh_scripts.h), authored foot-on-y=0 so they sit at the
+;;! board top (y = 0.03). White wears builtin://material/chess-ivory, black
 ;;! chess-ebony. Knights face the enemy: the mesh faces +Z, so white's knights
 ;;! (high Z) are turned 180 to face -Z while black's keep the default. Each king
 ;;! carries its cross as two small crossed boxes (children), the way tic-tac-toe

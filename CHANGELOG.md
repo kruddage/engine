@@ -1,5 +1,15 @@
 # Changelog
 
+## [18.8.2](https://github.com/kruddage/engine/compare/v18.8.1...v18.8.2) (2026-07-26)
+
+
+### Refactoring
+
+* give the engine tree one rule and make every directory follow it ([#786](https://github.com/kruddage/engine/issues/786)) ([2e93316](https://github.com/kruddage/engine/commit/2e93316b09cfbb2ff0c4c4ea1653817fb86c5e95))
+* group engine modules into base/, world/ and game/ tiers ([#774](https://github.com/kruddage/engine/issues/774)) ([b18918b](https://github.com/kruddage/engine/commit/b18918be6b9f854e4987995511083aa550c177e4))
+* move the built-in asset scripts out of abi/ and next to their seeder ([#778](https://github.com/kruddage/engine/issues/778)) ([56b4b0f](https://github.com/kruddage/engine/commit/56b4b0f8040cf1b411159678f08544c6880bcf11))
+* move the shader DSL under render/ ([#776](https://github.com/kruddage/engine/issues/776)) ([050dbc0](https://github.com/kruddage/engine/commit/050dbc09ee727f36e0433dfceff0af9e97503a63))
+
 ## [18.8.1](https://github.com/kruddage/engine/compare/v18.8.0...v18.8.1) (2026-07-23)
 
 

@@ -10,10 +10,10 @@ name: CI
 # bundle, tsc, biome, and the boundary tests run against the built module under
 # Node. See xtask/src/check.rs.
 #
-# NOT covered, deliberately, until the hello-triangle chain lands (#818, #819):
-#   * the GitHub Pages deploy and the per-PR preview — #820. There is nothing
-#     worth looking at to publish yet, and a deploy of a status line would only
-#     make the site look alive.
+# NOT covered, deliberately:
+#   * the GitHub Pages deploy and the per-PR preview — #820. The triangle
+#     (#818) and the shell around it (#819) have landed, so there is now
+#     something worth publishing; wiring the deploy is #820's own change.
 #   * the Flatpak — #821. flatpak-build.yml is dispatch-only and cannot
 #     currently succeed; it packages the deleted C editor.
 #   * sanitizers and gcov coverage — those gated the C build. Rust's own

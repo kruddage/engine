@@ -83,6 +83,7 @@ crates/
   render/
     gpu/         krudd-gpu     Typed, generational GPU resource handles
     renderer/    krudd-render  The Backend trait and the Frame it is handed
+    webgl/       krudd-webgl   The WebGL2 backend, on wgpu
   shell/
     web/         krudd-web     The wasm module the browser loads
 xtask/           xtask         The build driver — outside the tier order
@@ -95,6 +96,7 @@ xtask/           xtask         The build driver — outside the tier order
 | `krudd-asset` | The `Decode` trait, `DecodeError`, and `Reader` — the bounds-checked cursor every codec reads through, so the no-panic-on-hostile-input rule has one enforcement point. | `base` |
 | `krudd-gpu` | `Id<K>`: a typed, generational handle. A handle crosses a language boundary where a `WebGLTexture` cannot, and it can outlive its resource safely. | `base`, `world` |
 | `krudd-render` | `Viewport`, `Frame`, `Draw`, and the `Backend` trait — including the rule that `end_frame` is not `submit`. Holds no backend. | `base`, `world`, `render` |
+| `krudd-webgl` | The `Backend` implementation: wgpu with its WebGL2 backend and no WebGPU path at all, the pipeline slot table, and the per-draw uniform buffer. Takes a `wgpu::SurfaceTarget` rather than a canvas, so it compiles and tests on the host. | `base`, `world`, `render` |
 | `krudd-web` | The `#[wasm_bindgen]` surface. **The only crate that knows wasm-bindgen exists**, which is what keeps every crate below it host-compilable and `cargo test` a real test run rather than a browser harness. | anything |
 | `xtask` | The build. Not in the tier order and depends on no engine crate — it builds them, it is not built with them. | nothing |
 

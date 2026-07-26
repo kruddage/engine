@@ -17,7 +17,15 @@ crate-type = ["cdylib", "rlib"]
 missing_docs = "warn"
 
 [dependencies]
+krudd-gpu.workspace = true
 krudd-math.workspace = true
 krudd-render.workspace = true
+krudd-webgl.workspace = true
 krudd-world.workspace = true
 wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+web-sys.workspace = true
+# For `SurfaceTarget::Canvas` alone. Everything else about the GPU is
+# krudd-webgl's business — this crate names the canvas because it is the only
+# one allowed to know the browser exists.
+wgpu.workspace = true

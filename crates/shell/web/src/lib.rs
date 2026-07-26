@@ -23,18 +23,62 @@
 //! are the per-call path, kept so the benchmark there has something to
 //! measure the batched path against.
 //!
+//! ## Booting is async, and that is the renderer's fault
+//!
+//! Requesting a GPU adapter and a device are both async on the web, so a
+//! `#[wasm_bindgen(constructor)]` cannot do it — a constructor cannot return a
+//! promise. [`start`] is the real entry point: it takes the canvas, awaits the
+//! device, and hands back an [`Engine`] that is already drawing. [`Engine::new`]
+//! survives as the renderer-less form, which is what the host tests below
+//! construct.
+//!
 //! ## Scope
 //!
 //! This is the loadable artifact #815 asks for and the thing #816's TypeScript
-//! build links against, not the engine. It draws nothing — the WebGL2
-//! renderer is #818 and the HTML shell around it is #819. Generating both
-//! sides of this boundary from one spec, rather than hand-writing the pair,
-//! is #824.
+//! build links against, not the engine. It draws the triangle #818 asks for and
+//! nothing beyond it: no scene, no camera controls, no assets. Generating both
+//! sides of this boundary from one spec, rather than hand-writing the pair, is
+//! #824.
 
-use krudd_math::Vec3;
-use krudd_render::{Frame, Viewport};
+use krudd_gpu::PipelineId;
+use krudd_math::{Mat4, Vec3};
+use krudd_render::{Backend, Draw, Frame, Viewport};
+use krudd_webgl::Renderer;
 use krudd_world::{Handle, Store};
+use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::wasm_bindgen;
+
+/// Half the height of the visible world, in world units.
+///
+/// The camera is a fixed orthographic box this tall, widened by the canvas
+/// aspect so a triangle is a triangle rather than whatever shape the window
+/// happens to be.
+const VIEW_EXTENT: f32 = 2.0;
+
+/// How large one entity's triangle draws, in world units.
+const TRIANGLE_SCALE: f32 = 0.35;
+
+/// Boots an engine that draws into `canvas`.
+///
+/// The canvas is taken by value and kept by the surface for the lifetime of the
+/// engine, which is what lets the surface be `'static` — a borrowed canvas
+/// would put a lifetime on [`Engine`], and a `#[wasm_bindgen]` type cannot
+/// carry one.
+///
+/// The engine's viewport comes from `canvas.width`/`height`, the canvas's
+/// *drawing buffer* size in physical pixels — not its CSS size. The page is
+/// responsible for setting them from `devicePixelRatio`, because the page is
+/// the half that can read it.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub async fn start(canvas: web_sys::HtmlCanvasElement) -> Result<Engine, JsValue> {
+    let mut engine = Engine::new(canvas.width(), canvas.height());
+    engine
+        .attach(wgpu::SurfaceTarget::Canvas(canvas))
+        .await
+        .map_err(|why| JsValue::from_str(&why.to_string()))?;
+    Ok(engine)
+}
 
 /// The engine version, from `version.txt` by way of the build.
 ///
@@ -68,6 +112,12 @@ pub struct Engine {
     viewport: Viewport,
     frame_count: u32,
     elapsed: f32,
+    /// The backend, once a canvas has been attached. `None` in the host tests,
+    /// which have no canvas and want none — every method below works without
+    /// it except [`Engine::render`].
+    renderer: Option<Renderer>,
+    /// The one pipeline, compiled when the renderer is attached.
+    triangle: Option<PipelineId>,
 }
 
 impl Default for Engine {
@@ -78,8 +128,13 @@ impl Default for Engine {
 
 #[wasm_bindgen]
 impl Engine {
-    /// Boots an engine rendering into a canvas of the given size, in physical
+    /// An engine with no renderer, at a viewport of the given size in physical
     /// pixels.
+    ///
+    /// It ticks, spawns and hands out its columns; it cannot draw. [`start`] is
+    /// what attaches a canvas, and the page always goes through that — this is
+    /// the form the host tests and the Node harnesses build, neither of which
+    /// has a canvas to give it.
     #[wasm_bindgen(constructor)]
     pub fn new(width: u32, height: u32) -> Self {
         Self {
@@ -89,7 +144,42 @@ impl Engine {
             viewport: Viewport::new(width, height),
             frame_count: 0,
             elapsed: 0.0,
+            renderer: None,
+            triangle: None,
         }
+    }
+
+    /// Draws the world.
+    ///
+    /// Separate from [`Engine::tick`] on purpose: simulating and drawing are
+    /// different rates, and a page that wants to tick twice and draw once
+    /// should be able to. The page calls both once per animation frame today.
+    ///
+    /// A transient surface failure — a resize landing between frames, a
+    /// backgrounded tab — is a skipped frame and reports success. Anything else
+    /// is thrown, because the page's job is to put it on screen: a canvas that
+    /// silently stops drawing looks exactly like a canvas that was drawing
+    /// nothing all along.
+    pub fn render(&mut self) -> Result<(), JsValue> {
+        self.render_frame()
+            .map_err(|why| JsValue::from_str(&why.to_string()))
+    }
+
+    /// What the renderer picked — backend, adapter and surface format — or
+    /// `undefined` if no canvas is attached.
+    ///
+    /// The page shows this. "It says Gl" is the cheapest available check that
+    /// the thing under the canvas is WebGL2 and not something else.
+    pub fn renderer_description(&self) -> Option<String> {
+        self.renderer.as_ref().map(Renderer::description)
+    }
+
+    /// How many draws the last [`Engine::render`] would submit.
+    ///
+    /// For the page's debug readout, and for a test that wants to know the
+    /// world reached the frame without needing a GPU to ask.
+    pub fn draw_count(&self) -> u32 {
+        self.build_frame().draws().len() as u32
     }
 
     /// Spawns an entity and returns its slot index.
@@ -233,14 +323,87 @@ impl Engine {
 }
 
 impl Engine {
-    /// Builds the frame the backend would draw.
+    /// Boots a backend against a surface target and compiles the pipeline.
     ///
-    /// Not exported: a `Frame` is Rust's own value, and nothing on the page
-    /// can do anything with it until there is a backend to hand it to (#818).
-    /// It exists now so the tick path is exercised end to end rather than
-    /// stopping at the position column.
+    /// Takes a [`wgpu::SurfaceTarget`] rather than a canvas so that the async
+    /// plumbing is one function on every target, and only [`start`] — which is
+    /// wasm-only, because `SurfaceTarget::Canvas` is — has to know what kind of
+    /// surface this is.
+    ///
+    /// Not exported to JavaScript: an exported async method would have to hold
+    /// `&mut self` across an await, which wasm-bindgen cannot express. [`start`]
+    /// is the exported form, and it owns the engine while it awaits.
+    pub async fn attach(
+        &mut self,
+        target: wgpu::SurfaceTarget<'static>,
+    ) -> Result<(), krudd_webgl::Error> {
+        let mut renderer = Renderer::new(target, self.viewport).await?;
+        // Compiled once, off-frame, against the device — pipelines outlive the
+        // frame and must never be created through a lent frame context. See
+        // krudd-webgl's module docs.
+        self.triangle = Some(renderer.create_triangle_pipeline());
+        self.renderer = Some(renderer);
+        Ok(())
+    }
+
+    /// [`Engine::render`] without the `JsValue`.
+    ///
+    /// The exported method is a one-line wrapper around this so that the
+    /// decision of what is worth reporting is testable: `JsValue::from_str`
+    /// panics off wasm, so anything that touches it can only be exercised in a
+    /// browser.
+    fn render_frame(&mut self) -> Result<(), RenderError> {
+        let frame = self.build_frame();
+        let renderer = self.renderer.as_mut().ok_or(RenderError::Detached)?;
+        match draw(renderer, &frame) {
+            Ok(()) => Ok(()),
+            Err(why) if why.is_transient() => Ok(()),
+            Err(why) => Err(RenderError::Backend(why)),
+        }
+    }
+
+    /// Builds the frame the backend draws: one triangle per live entity.
+    ///
+    /// Not exported: a `Frame` is Rust's own value and there is nothing useful
+    /// the page could do with one. It is `pub` so [`Engine::draw_count`] and the
+    /// tests can read what the world would submit without a GPU in the room.
     pub fn build_frame(&self) -> Frame {
-        Frame::new(self.viewport)
+        let mut frame = Frame::new(self.viewport);
+        frame.view_projection = self.view_projection();
+        let Some(pipeline) = self.triangle else {
+            // No canvas attached, so no pipeline to name. An empty frame is
+            // correct rather than an error: the world still ticks.
+            return frame;
+        };
+        let scale = Mat4::from_scale(Vec3::new(TRIANGLE_SCALE, TRIANGLE_SCALE, 1.0));
+        for handle in self.store.iter() {
+            let position = self.positions[handle.index() as usize];
+            frame.push(Draw {
+                pipeline,
+                transform: Mat4::from_translation(position).mul(&scale),
+                first_vertex: 0,
+                vertex_count: 3,
+            });
+        }
+        frame
+    }
+
+    /// The camera: a fixed orthographic box [`VIEW_EXTENT`] tall, widened by
+    /// the canvas aspect.
+    ///
+    /// Widened rather than squashed, so resizing the window shows more world
+    /// instead of stretching what is already on screen — and a triangle stays
+    /// the shape the shader describes at any canvas size.
+    fn view_projection(&self) -> Mat4 {
+        let half_width = VIEW_EXTENT * self.viewport.aspect();
+        Mat4::orthographic(
+            -half_width,
+            half_width,
+            -VIEW_EXTENT,
+            VIEW_EXTENT,
+            -1.0,
+            1.0,
+        )
     }
 
     /// Resolves a slot index to a live handle, or `None` if the slot is
@@ -260,9 +423,57 @@ impl Engine {
     }
 }
 
+/// Why a frame did not draw.
+///
+/// Private, and deliberately not a `JsValue`: the page receives these as
+/// strings, and keeping the decision in Rust types is what lets the host tests
+/// assert on it.
+#[derive(Debug)]
+enum RenderError {
+    /// No canvas has been attached, so there is nothing to draw into.
+    Detached,
+    /// The backend refused the frame.
+    Backend(krudd_webgl::Error),
+}
+
+impl core::fmt::Display for RenderError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Detached => write!(
+                f,
+                "the engine has no renderer — it was built without a canvas"
+            ),
+            Self::Backend(why) => write!(f, "{why}"),
+        }
+    }
+}
+
+/// Draws one frame, keeping `begin_frame` / `end_frame` paired whatever
+/// happens in between.
+///
+/// `end_frame` runs even when `submit` failed, and that is the whole reason
+/// this is a function rather than three lines inlined into [`Engine::render`]:
+/// it is the only place that releases the frame's surface texture, so an early
+/// return past it leaves the surface holding a texture nobody presented and the
+/// next frame with nothing to acquire. `submit`'s error is the one reported —
+/// `end_frame`'s is usually a consequence of it.
+fn draw(renderer: &mut Renderer, frame: &Frame) -> Result<(), krudd_webgl::Error> {
+    renderer.begin_frame(frame.viewport)?;
+    let submitted = renderer.submit(frame);
+    let ended = renderer.end_frame();
+    submitted.and(ended)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A pipeline handle for the tests, which have no device to make a real one
+    /// with. The backend would reject it; `build_frame` only needs something to
+    /// name.
+    fn fake_pipeline() -> PipelineId {
+        PipelineId::new(0, 0)
+    }
 
     #[test]
     fn a_fresh_engine_has_no_entities_and_no_frames() {
@@ -384,6 +595,84 @@ mod tests {
         let mut e = Engine::new(320, 240);
         e.resize(640, 480);
         assert_eq!(e.build_frame().viewport, Viewport::new(640, 480));
+    }
+
+    #[test]
+    fn a_frame_without_a_pipeline_draws_nothing_rather_than_failing() {
+        // The host tests, and any page whose canvas has not been attached yet.
+        // The world still ticks; there is simply nothing to submit.
+        let mut e = Engine::default();
+        e.spawn(0.0, 0.0, 0.0);
+        assert_eq!(e.draw_count(), 0);
+        assert!(e.build_frame().draws().is_empty());
+    }
+
+    #[test]
+    fn every_live_entity_becomes_one_triangle() {
+        let mut e = Engine::new(100, 100);
+        e.triangle = Some(fake_pipeline());
+        e.spawn(0.0, 0.0, 0.0);
+        let b = e.spawn(1.0, 0.0, 0.0);
+        e.spawn(2.0, 0.0, 0.0);
+        assert_eq!(e.draw_count(), 3);
+
+        assert!(e.despawn(b));
+        assert_eq!(e.draw_count(), 2, "a tombstoned slot is not drawn");
+
+        let frame = e.build_frame();
+        for draw in frame.draws() {
+            assert_eq!(draw.vertex_count, 3, "a triangle is three vertices");
+            assert_eq!(draw.first_vertex, 0);
+        }
+    }
+
+    #[test]
+    fn a_draws_transform_carries_the_entitys_position() {
+        let mut e = Engine::new(100, 100);
+        e.triangle = Some(fake_pipeline());
+        e.spawn(3.0, -4.0, 0.0);
+
+        let frame = e.build_frame();
+        let transform = frame.draws()[0].transform;
+        // The translation column, and the scale on the diagonal: scale applied
+        // first, then the translation, which is what `translation * scale`
+        // means. Getting the order backwards would scale the position too, and
+        // it would present as entities clustered near the origin.
+        assert_eq!(transform.cols[3][0], 3.0);
+        assert_eq!(transform.cols[3][1], -4.0);
+        assert_eq!(transform.cols[0][0], TRIANGLE_SCALE);
+        assert_eq!(transform.cols[1][1], TRIANGLE_SCALE);
+    }
+
+    #[test]
+    fn the_camera_widens_with_the_canvas_rather_than_stretching() {
+        // A wide canvas shows more world sideways; the vertical extent is
+        // fixed. If this inverted, a triangle would be visibly squashed at any
+        // aspect but 1:1.
+        let square = Engine::new(400, 400).view_projection();
+        let wide = Engine::new(800, 400).view_projection();
+        assert_eq!(square.cols[1][1], wide.cols[1][1], "y scale is fixed");
+        assert!(
+            wide.cols[0][0] < square.cols[0][0],
+            "a wider canvas maps a wider box onto the same clip range"
+        );
+        // A square canvas is isotropic: x and y scale alike.
+        assert_eq!(square.cols[0][0], square.cols[1][1]);
+    }
+
+    #[test]
+    fn rendering_without_a_canvas_is_an_error_rather_than_a_silent_no_op() {
+        // The page turns this into text. A `render` that quietly did nothing
+        // would leave a blank canvas and no explanation, which is the one thing
+        // #812 says an instrument may never do.
+        let mut e = Engine::default();
+        let why = e.render_frame().expect_err("a detached engine cannot draw");
+        assert!(matches!(why, RenderError::Detached));
+        assert!(
+            why.to_string().contains("canvas"),
+            "the message reaches the page verbatim, so it has to say what is wrong"
+        );
+        assert!(e.renderer_description().is_none());
     }
 
     #[test]

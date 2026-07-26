@@ -25,8 +25,19 @@ use crate::Options;
 use crate::sh::{self, Run};
 use crate::web;
 
-/// The `node:test` suite over the memory contract.
-const TEST_ENTRY: &str = "packages/base/boundary/harness/memory.test.ts";
+/// The `node:test` suites over the boundary's contracts — one entry per
+/// contract, each bundled separately because esbuild bundles an entry point
+/// and `node --test` runs files.
+const TEST_ENTRIES: [(&str, &str); 2] = [
+    (
+        "packages/base/boundary/harness/memory.test.ts",
+        "memory.test",
+    ),
+    (
+        "packages/base/boundary/harness/viewport.test.ts",
+        "viewport.test",
+    ),
+];
 
 /// The batched-versus-per-call benchmark.
 const BENCH_ENTRY: &str = "packages/base/boundary/harness/bench.ts";
@@ -57,10 +68,11 @@ pub fn bench(opts: &Options) -> Result<(), String> {
 
 /// Runs the boundary tests against an already-built module.
 pub fn run_tests(root: &Path) -> Result<(), String> {
-    let bundle = sh::bundle_ts(root, TEST_ENTRY, "memory.test")?;
-    node(root)
-        .args(["--test".as_ref(), bundle.as_os_str()])
-        .check()
+    let mut args = vec![std::ffi::OsString::from("--test")];
+    for (entry, name) in TEST_ENTRIES {
+        args.push(sh::bundle_ts(root, entry, name)?.into_os_string());
+    }
+    node(root).args(args).check()
 }
 
 /// Runs the benchmark against an already-built module.

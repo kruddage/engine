@@ -61,6 +61,36 @@ impl Viewport {
     pub fn aspect(self) -> f32 {
         self.width as f32 / self.height as f32
     }
+
+    /// The largest viewport of this shape with neither dimension over `max`.
+    ///
+    /// Both dimensions scale by one factor rather than being clamped
+    /// independently, because the two are not interchangeable: the drawing
+    /// buffer is stretched back over the canvas's CSS box by the browser, so
+    /// an independent clamp of the taller side presents as a *squashed* image
+    /// rather than as a slightly softer one. Scaling keeps the aspect, and
+    /// with it the camera's — see `krudd-web`'s `view_projection`.
+    ///
+    /// A viewport that already fits is returned untouched, so the common case
+    /// is exact rather than rounded through a float.
+    pub fn fit_within(self, max: u32) -> Self {
+        // A zero maximum would scale everything to nothing; `new` would then
+        // clamp it back to 1x1 with the aspect gone. One is the smallest
+        // viewport there is, so it is the smallest limit worth honouring.
+        let max = max.max(1);
+        let longest = self.width.max(self.height);
+        if longest <= max {
+            return self;
+        }
+        let scale = f64::from(max) / f64::from(longest);
+        // Truncated rather than rounded: rounding up would put the longer side
+        // back over the limit for the sake of half a pixel, and the limit is
+        // the whole reason this is being called.
+        Self::new(
+            (f64::from(self.width) * scale) as u32,
+            (f64::from(self.height) * scale) as u32,
+        )
+    }
 }
 
 /// A linear, premultiplied RGBA colour.
@@ -438,6 +468,44 @@ mod tests {
     #[test]
     fn aspect_is_width_over_height() {
         assert_eq!(Viewport::new(16, 9).aspect(), 16.0 / 9.0);
+    }
+
+    #[test]
+    fn a_viewport_that_already_fits_is_left_alone() {
+        let v = Viewport::new(1920, 1080);
+        assert_eq!(v.fit_within(2048), v);
+        assert_eq!(v.fit_within(1920), v, "the limit itself still fits");
+    }
+
+    #[test]
+    fn fitting_scales_the_longer_side_onto_the_limit() {
+        // A portrait phone at its device pixel ratio, against the WebGL2
+        // floor of 2048: this is the size that made `Surface::configure`
+        // report a validation error rather than clamp.
+        let fitted = Viewport::new(1080, 2256).fit_within(2048);
+        assert_eq!(fitted.height, 2048);
+        assert!(fitted.width <= 2048);
+        // The same, on its side.
+        assert_eq!(Viewport::new(2256, 1080).fit_within(2048).width, 2048);
+    }
+
+    #[test]
+    fn fitting_keeps_the_aspect_rather_than_clamping_one_side() {
+        // The drawing buffer is stretched back over the canvas's CSS box, so
+        // an aspect that drifts here is an image that is visibly squashed
+        // there. Half a pixel of truncation is the whole budget.
+        let v = Viewport::new(1080, 2256);
+        let fitted = v.fit_within(2048);
+        assert!((fitted.aspect() - v.aspect()).abs() < 0.001);
+    }
+
+    #[test]
+    fn fitting_never_produces_a_zero_dimension() {
+        // A sliver of a canvas scaled down far enough would truncate to
+        // nothing, and a zero-sized framebuffer is a backend error.
+        let fitted = Viewport::new(4000, 1).fit_within(2);
+        assert_eq!(fitted, Viewport::new(2, 1));
+        assert_eq!(Viewport::new(4000, 1).fit_within(0), Viewport::new(1, 1));
     }
 
     #[test]

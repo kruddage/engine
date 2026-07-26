@@ -106,6 +106,19 @@ out. `fitCanvas` in `@krudd/boundary` is the only place that converts between
 them, and `World.resize` takes physical pixels so there is nowhere else for a
 second `devicePixelRatio` multiply to hide.
 
+The drawing buffer also has a ceiling, and it is lower than a phone. wgpu
+validates `Surface::configure` against the device's `max_texture_dimension_2d`,
+which the WebGL2 backend pins to that API's floor of 2048
+(`MAX_SURFACE_EXTENT`); a portrait Android canvas at `devicePixelRatio` asks
+for 1080x2256, and the answer is a validation error that takes the page down,
+not a clamp that costs resolution. So `fitCanvas` scales the buffer down to
+fit, both sides by one factor so the aspect — and with it the camera's —
+survives. The arithmetic is `fit_drawing_buffer` in the wasm module and is
+therefore the *same* arithmetic the renderer applies: two implementations that
+rounded differently would set the buffer back and forth at each other on every
+resize event. `World.viewport` reports what the engine settled on, which is
+what the status line shows.
+
 `render()` is a phase call like `tick()`: one crossing for the whole frame,
 whatever the draw count. The per-draw data goes into a uniform buffer written
 in one upload, for the same reason the position column exists.

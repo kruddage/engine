@@ -42,7 +42,10 @@
         The canvas fills the window and is sized here in CSS pixels only. Its
         drawing buffer — canvas.width/height — is set from devicePixelRatio by
         `fitCanvas` in @krudd/boundary, which is the one place that knows the
-        difference between the two sizes a canvas has.
+        difference between the two sizes a canvas has. The buffer is capped at
+        what the WebGL2 backend can present, so on a tall phone it is smaller
+        than this box and the browser stretches it: softer, rather than the
+        validation error a 2256-pixel-tall surface is.
       */
       #viewport {
         display: block;

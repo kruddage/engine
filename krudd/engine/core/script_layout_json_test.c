@@ -122,9 +122,14 @@ static void test_layout_json(void)
 	/* The View menu's dock-toggles expansion marker, a nullary form. */
 	must_contain(j, "[\"dock-toggles\"]");
 
-	/* The toolbar's live badge — em dash and ellipsis pass through. */
+	/*
+	 * The toolbar's live badge — em dash and ellipsis pass through. The seed
+	 * names no backend: both hosts read this one spec and each runs a
+	 * different GPU path, so a backend name here would be wrong on the other
+	 * host until its boot finishes.
+	 */
 	must_contain(j,
-		     "[\"badge\",\"renderer\",\"Vulkan — booting…\"]");
+		     "[\"badge\",\"renderer\",\"renderer — booting…\"]");
 
 	/* The Console dock: its area symbol as a string, and its tab group. */
 	must_contain(j, "[\"dock\",\"dock.console\",\"Console\",\"bottom\",");

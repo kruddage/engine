@@ -68,7 +68,15 @@
      (item "▶ Play" "play")
      (item "■ Stop" "stop")
      (separator)
-     (badge "renderer" "Vulkan — booting…")
+     ;;! The live backend badge. The seed names no backend on purpose: this
+     ;;! spec is shared by both hosts, and each one runs a different GPU path —
+     ;;! Vulkan under Qt, WebGPU or WebGL in the browser. A host-specific seed
+     ;;! here reaches the other host verbatim and lies to the user for as long
+     ;;! as the boot takes, which on the web's async device handshake is every
+     ;;! frame until the adapter answers. Each host overwrites it with the
+     ;;! backend that actually went live (krudd_qt.cpp; kruddSetRenderer on the
+     ;;! web, seeded with the chosen path by buildToolbar before that lands).
+     (badge "renderer" "renderer — booting…")
      (spacer)
      ;;! Right-aligned build identity. The host fills in the semver from
      ;;! ENGINE_VERSION_STRING, which only it knows — the spec seeds the name.

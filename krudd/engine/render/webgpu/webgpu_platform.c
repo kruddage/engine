@@ -31,6 +31,18 @@ EM_JS(void, webgpu_js_announce_renderer, (void), {
 })
 
 /*
+ * Tell the shell the WebGPU boot dead-ended, so the badge stops reading
+ * "booting…" and offers the WebGL switch instead. Without this a browser that
+ * hands back no adapter leaves the page indistinguishable from a slow one —
+ * and it stays that way, because the render cluster and the game only boot
+ * once the device lands (finish_plugin_boot in engine.c).
+ */
+EM_JS(void, webgpu_js_announce_failed, (const char *why), {
+	if (typeof window.kruddSetRendererFailed === 'function')
+		window.kruddSetRendererFailed('webgpu', UTF8ToString(why));
+})
+
+/*
  * Surface progress into the shell's scrolling WebGPU log panel (and the
  * console), so a browser without a working adapter/device reports where it
  * stopped, with full history, instead of just a blank canvas. Diagnostic
@@ -114,6 +126,11 @@ void webgpu_platform_status(const char *msg)
 void webgpu_platform_announce_renderer(void)
 {
 	webgpu_js_announce_renderer();
+}
+
+void webgpu_platform_announce_failed(const char *why)
+{
+	webgpu_js_announce_failed(why ? why : "");
 }
 
 void webgpu_platform_teardown(void)
@@ -359,6 +376,11 @@ void webgpu_platform_status(const char *msg)
 
 void webgpu_platform_announce_renderer(void)
 {
+}
+
+void webgpu_platform_announce_failed(const char *why)
+{
+	(void)why; /* already on stderr via webgpu_platform_status */
 }
 
 void webgpu_platform_teardown(void)

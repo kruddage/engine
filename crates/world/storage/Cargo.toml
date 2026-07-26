@@ -9,3 +9,6 @@ publish.workspace = true
 
 [lints.rust]
 missing_docs = "warn"
+
+[dependencies]
+krudd-math.workspace = true

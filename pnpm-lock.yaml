@@ -25,9 +25,14 @@ importers:
 
   packages/shell/web:
     dependencies:
+      '@krudd/board':
+        specifier: workspace:*
+        version: link:../../world/board
       '@krudd/boundary':
         specifier: workspace:*
         version: link:../../base/boundary
+
+  packages/world/board: {}
 
 packages:
 

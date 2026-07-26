@@ -56,6 +56,7 @@ export {
 	paramOf,
 } from "./document";
 export { KINDS, kindOf } from "./kinds";
+export { Runner } from "./run";
 export { FRAME_BOARD, PAINT_TO_DRAW, ROOT_BOARD, TRIANGLES } from "./triangles";
 export type { Problem } from "./validate";
 export {
@@ -66,3 +67,4 @@ export {
 	serializeProject,
 	validate,
 } from "./validate";
+export type { Run, RunContext, WorldView } from "./world";

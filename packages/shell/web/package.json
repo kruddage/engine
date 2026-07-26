@@ -6,6 +6,7 @@
 	"description": "The browser page. Tier: shell — nothing may import it.",
 	"exports": {},
 	"dependencies": {
+		"@krudd/board": "workspace:*",
 		"@krudd/boundary": "workspace:*"
 	}
 }

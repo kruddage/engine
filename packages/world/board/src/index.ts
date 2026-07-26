@@ -17,6 +17,8 @@
  * - `triangles` — that project, checked in.
  * - `validate` — reading a document off disk, and refusing one that does not
  *   hold together, by name.
+ * - `file` — what a project is called when it is saved, and what it is saved
+ *   as. The bytes are `validate`'s; this is the name around them.
  *
  * ## What is deliberately not here
  *
@@ -61,6 +63,12 @@ export {
 	setParam,
 	toggleWire,
 } from "./edit";
+export {
+	DEFAULT_PROJECT_NAME,
+	PROJECT_EXTENSION,
+	PROJECT_MEDIA_TYPE,
+	projectFileName,
+} from "./file";
 export { KINDS, kindOf } from "./kinds";
 export { Runner } from "./run";
 export { FRAME_BOARD, PAINT_TO_DRAW, ROOT_BOARD, TRIANGLES } from "./triangles";

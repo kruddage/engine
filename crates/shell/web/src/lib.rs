@@ -273,6 +273,30 @@ impl Engine {
         handle.index()
     }
 
+    /// Empties the world: no entities, no slots, both columns back to nothing.
+    ///
+    /// What opening a different project needs, and the reason it is one call
+    /// rather than a `despawn` per slot. A freed slot is a tombstone, and a
+    /// tombstone still occupies its index — so a world emptied one entity at a
+    /// time still reports the slot count it had, and anything that sizes
+    /// itself from that count would build the new scene on top of the old
+    /// one's shape. This is also the batched free `docs/boundary.md` asks for
+    /// on principle: one crossing for the whole world rather than one per
+    /// entity.
+    ///
+    /// The columns are emptied rather than merely resized, so a typed-array
+    /// view taken beforehand goes stale exactly as it does across a spawn —
+    /// same rule, same three ways to notice.
+    pub fn clear(&mut self) {
+        self.store.clear();
+        self.positions.clear();
+        self.velocities.clear();
+        // Not the frame count, the clock or the renderer: this empties the
+        // world, and an engine that also forgot how long it had been running
+        // would be reporting a page that had just booted when it had not.
+        self.last_draws = 0;
+    }
+
     /// Sets an entity's velocity, in units per second.
     ///
     /// Returns whether the slot was live.
@@ -676,6 +700,52 @@ mod tests {
         // valid.
         assert_eq!(e.positions_len(), 3);
         assert_eq!(e.positions[a as usize].x, 0.0);
+    }
+
+    #[test]
+    fn clearing_empties_the_world_and_both_columns() {
+        let mut e = Engine::default();
+        for _ in 0..8 {
+            let slot = e.spawn(1.0, 2.0, 3.0);
+            e.set_velocity(slot, 1.0, 0.0, 0.0);
+        }
+
+        e.clear();
+
+        assert_eq!(e.entity_count(), 0);
+        // The difference from despawning each one: a tombstone keeps its
+        // index, so a world emptied slot by slot still reports the width it
+        // had. Opening another project must not inherit that width.
+        assert_eq!(e.slot_count(), 0);
+        assert_eq!(e.positions_len(), 0);
+        assert_eq!(e.velocities_len(), 0);
+        assert_eq!(e.draw_count(), 0);
+    }
+
+    #[test]
+    fn a_world_spawned_after_a_clear_is_the_one_a_fresh_engine_builds() {
+        // What opening a project has to be worth: the same board, spawned into
+        // a used engine, is the board a fresh boot would have built — same
+        // slots, same order, same columns.
+        let mut used = Engine::default();
+        for _ in 0..3 {
+            used.spawn(9.0, 9.0, 9.0);
+        }
+        used.clear();
+
+        let mut fresh = Engine::default();
+        let mut used_slots = Vec::new();
+        let mut fresh_slots = Vec::new();
+        for i in 0..3 {
+            let x = i as f32;
+            used_slots.push(used.spawn(x, 0.0, 0.0));
+            fresh_slots.push(fresh.spawn(x, 0.0, 0.0));
+        }
+
+        assert_eq!(used_slots, fresh_slots);
+        assert_eq!(used.positions, fresh.positions);
+        assert_eq!(used.velocities, fresh.velocities);
+        assert_eq!(used.slot_count(), fresh.slot_count());
     }
 
     #[test]

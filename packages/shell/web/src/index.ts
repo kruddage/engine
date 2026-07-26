@@ -34,9 +34,17 @@
  * screen. Which is what it was before; there is simply less of it.
  */
 
+import type { Project } from "@krudd/board";
 import { cloneProject, Runner, TRIANGLES } from "@krudd/board";
 import { mountBoardView } from "@krudd/board-view";
 import { boot, fitCanvas, type World } from "@krudd/boundary";
+import {
+	loadFailure,
+	PROJECT_ACCEPT,
+	readProjectFile,
+	saveFailure,
+	saveProject,
+} from "./project-file";
 import { mountModeShell } from "./shell";
 
 /** Where the canvas is. */
@@ -45,8 +53,16 @@ const CANVAS_ID = "viewport";
 /** Where the readout goes. */
 const STATUS_ID = "status";
 
+/** Where a save or a load says what happened. */
+const NOTICE_ID = "notice";
+
 /** Where the board is drawn. */
 const BOARD_ID = "board";
+
+/** The save button, the open button, and the picker open hides behind. */
+const SAVE_ID = "save";
+const OPEN_ID = "open";
+const FILE_ID = "file";
 
 /**
  * Whether a failure has already been reported.
@@ -73,8 +89,13 @@ async function main(): Promise<void> {
 	// A copy, because the fixture is a module-level constant and editing the
 	// board edits the project — the board is the source of truth, and a source
 	// of truth shared with every other importer is not one.
-	const project = cloneProject(TRIANGLES);
-	const runner = new Runner(project, world);
+	//
+	// Both are `let` because a project can be opened from a file, which
+	// replaces the pair. Everything below reads them through the closure, so a
+	// load reaches the frame loop, the readout and the view without any of them
+	// being handed anything.
+	let project = cloneProject(TRIANGLES);
+	let runner = new Runner(project, world);
 	runner.start();
 
 	// The board pane, filled. Drawn when the pane comes into view rather than
@@ -92,7 +113,7 @@ async function main(): Promise<void> {
 	// After `boot`, and exactly once. The shell composites the two modes over
 	// one canvas rather than routing between them, because the WebGL2 context
 	// is taken for the life of the engine — see `shell.ts`.
-	mountModeShell({
+	const shell = mountModeShell({
 		canvas,
 		onFail: fail,
 		onChange: (mode) => {
@@ -106,6 +127,38 @@ async function main(): Promise<void> {
 			view.open(project);
 			drawn = true;
 		},
+	});
+
+	/**
+	 * Opens a project, in place of the one running.
+	 *
+	 * The order is the whole of it. `Runner` validates the document and refuses
+	 * a kind that cannot run, so it is built *before* anything is touched: a
+	 * file that does not hold together throws here, with the world still full
+	 * of the board that was already running and the frame loop still walking
+	 * it. Nothing is half-loaded, because nothing was loaded.
+	 */
+	const openProject = (next: Project): void => {
+		const opened = new Runner(next, world);
+		// Emptied, not stepped down entity by entity: a despawned slot is a
+		// tombstone that still counts, and a `Start` lane that sizes its world
+		// from `slotCount` — which `spawn ring` does — would find the old
+		// board's slots already there and spawn nothing into them.
+		world.clear();
+		project = next;
+		runner = opened;
+		// The new board's `Start`, which is what spawns its world. Without it a
+		// loaded project would be a board with nothing in front of it.
+		runner.start();
+		drawn = shell.mode === "board";
+		if (drawn) {
+			view.open(project);
+		}
+	};
+
+	mountProjectControls({
+		project: () => project,
+		open: openProject,
 	});
 
 	// Not debounced: `fitCanvas` returns false when nothing changed, so a resize
@@ -164,6 +217,91 @@ function report(
 		`frame ${runner.frameCount}`,
 		`${runner.elapsed.toFixed(1)}s`,
 	].join("  ·  ");
+}
+
+/** How the project controls reach the project that is running. */
+interface ProjectControls {
+	/** The project as it stands, read when a save happens rather than held. */
+	readonly project: () => Project;
+	/** Opens one that came out of a file. Throws if it does not hold together. */
+	readonly open: (project: Project) => void;
+}
+
+/** Binds save, open, the picker behind open, and dismissing what they said. */
+function mountProjectControls(controls: ProjectControls): void {
+	const chooser = required(FILE_ID);
+	if (!(chooser instanceof HTMLInputElement)) {
+		throw new Error(`#${FILE_ID} must be an <input type="file"> to open with`);
+	}
+	// From the package that decides what a project file is, rather than a
+	// second copy of `.krudd` written down here.
+	chooser.accept = PROJECT_ACCEPT;
+
+	required(SAVE_ID).addEventListener("click", () => {
+		try {
+			notice(`saved as ${saveProject(controls.project())}`);
+		} catch (error) {
+			// Noticed rather than latched: a download the browser would not take
+			// has not broken the engine, and stopping the frame loop over it
+			// would take the running board away too.
+			notice(saveFailure(error), "bad");
+		}
+	});
+
+	required(OPEN_ID).addEventListener("click", () => {
+		chooser.click();
+	});
+
+	chooser.addEventListener("change", () => {
+		const file = chooser.files?.[0];
+		// Cleared either way, so that picking the same file twice is two
+		// `change` events rather than one and then silence.
+		chooser.value = "";
+		if (file === undefined) {
+			return;
+		}
+		void readProjectFile(file)
+			.then((next) => {
+				controls.open(next);
+				notice(`opened ${file.name}`);
+			})
+			.catch((error: unknown) => {
+				// Everything that could refuse has refused by now and the board
+				// on screen is untouched, which is what the message says.
+				notice(loadFailure(file.name, error), "bad");
+			});
+	});
+
+	const said = required(NOTICE_ID);
+	said.addEventListener("click", () => {
+		said.hidden = true;
+	});
+}
+
+/**
+ * Says what a save or a load did.
+ *
+ * Its own element rather than the readout, which the frame loop rewrites sixty
+ * times a second — a message painted over before it can be read is a message
+ * that was never shown.
+ */
+function notice(message: string, kind: "good" | "bad" = "good"): void {
+	const element = document.getElementById(NOTICE_ID);
+	if (element === null) {
+		return;
+	}
+	element.textContent = message;
+	element.dataset.kind = kind;
+	element.hidden = false;
+}
+
+/** An element the page is required to have. */
+function required(id: string): HTMLElement {
+	const element = document.getElementById(id);
+	if (element === null) {
+		throw new Error(`the page has no #${id} element`);
+	}
+	return element;
 }
 
 /** The board pane, which the page is required to have. */

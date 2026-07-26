@@ -215,6 +215,22 @@ export class World {
 		return this.#engine.despawn(slot);
 	}
 
+	/**
+	 * Empties the world — every entity, and every slot they left behind.
+	 *
+	 * One call for the whole world, which is the point: `despawn` per slot
+	 * leaves a tombstone per slot, so a world emptied that way still reports
+	 * the `slotCount` it had and anything sizing itself from that count builds
+	 * the next scene on the last one's shape. Opening a different project is
+	 * what wants this.
+	 *
+	 * Invalidates every column view, the same way a `spawn` can — fetch them
+	 * again afterwards rather than reusing one taken before.
+	 */
+	clear(): void {
+		this.#engine.clear();
+	}
+
 	/** Advances the whole world by `dt` seconds — one call, not one per entity. */
 	tick(dt: number): void {
 		this.#engine.tick(dt);

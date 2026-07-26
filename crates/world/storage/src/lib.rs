@@ -80,6 +80,15 @@ pub struct Store {
     /// Indices of tombstoned slots, most recently freed first.
     free: Vec<u32>,
     live: usize,
+    /// The generation a slot index issued for the first time is born at.
+    ///
+    /// Zero for a fresh store, and raised past every generation the table
+    /// held by [`Store::clear`] — which is what keeps a handle taken before a
+    /// clear stale afterwards. Without it, clearing would hand index 0 back
+    /// out at generation 0 and a handle from the previous scene would answer
+    /// for whatever was allocated into it next, which is precisely what
+    /// generations exist to prevent.
+    next_generation: u32,
 }
 
 impl Store {
@@ -127,11 +136,9 @@ impl Store {
             }
             None => {
                 let index = self.slots.len() as u32;
-                self.slots.push(Slot::Live(0));
-                Handle {
-                    index,
-                    generation: 0,
-                }
+                let generation = self.next_generation;
+                self.slots.push(Slot::Live(generation));
+                Handle { index, generation }
             }
         }
     }
@@ -171,6 +178,33 @@ impl Store {
             Some(&Slot::Live(generation)) => Some(Handle { index, generation }),
             Some(&Slot::Dead(_)) | None => None,
         }
+    }
+
+    /// Empties the table: no live slots, no tombstones, no indices at all.
+    ///
+    /// The counterpart to freeing every handle one at a time, and different
+    /// from it in the way that matters: freeing leaves the tombstones behind,
+    /// so [`Store::capacity`] — which is what columns are sized to, and what
+    /// anything asking "how big is this world" reads — stays where it was.
+    /// A caller opening a *different* scene wants the table itself gone.
+    ///
+    /// Every handle issued before the clear is stale afterwards, exactly as
+    /// though each had been freed: the next index the table hands out is born
+    /// past every generation it held.
+    pub fn clear(&mut self) {
+        let highest = self
+            .slots
+            .iter()
+            .map(|slot| match *slot {
+                Slot::Live(generation) | Slot::Dead(generation) => generation,
+            })
+            .max();
+        if let Some(generation) = highest {
+            self.next_generation = generation.wrapping_add(1);
+        }
+        self.slots.clear();
+        self.free.clear();
+        self.live = 0;
     }
 
     /// Iterates the live handles in slot order.
@@ -622,6 +656,41 @@ mod tests {
             2,
             "the freed slot should have been reused"
         );
+    }
+
+    #[test]
+    fn clearing_takes_the_table_with_it() {
+        let mut store = Store::new();
+        store.alloc();
+        let b = store.alloc();
+        store.free(b);
+
+        store.clear();
+
+        assert_eq!(store.len(), 0);
+        assert_eq!(
+            store.capacity(),
+            0,
+            "freeing every slot leaves tombstones; clearing must not"
+        );
+        assert_eq!(store.iter().count(), 0);
+        assert_eq!(store.alloc().index(), 0, "and the table starts over");
+    }
+
+    #[test]
+    fn a_handle_from_before_a_clear_is_stale_after_it() {
+        let mut store = Store::new();
+        let old = store.alloc();
+        store.clear();
+
+        let new = store.alloc();
+        // The same slot, and it must not answer to the handle that used to
+        // hold it — the whole guarantee generations exist for, across a clear
+        // rather than across a free.
+        assert_eq!(old.index(), new.index());
+        assert_ne!(old.generation(), new.generation());
+        assert!(!store.contains(old));
+        assert!(store.contains(new));
     }
 
     #[test]

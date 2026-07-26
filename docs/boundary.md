@@ -147,7 +147,9 @@ silent.
    longer the column. It still reads plausible floats. This is the dangerous
    one.
 2. **The column resizes.** `positions_len()` changes and a view built at the
-   old length either misses entities or runs past the end.
+   old length either misses entities or runs past the end. `clear` — which
+   empties the world when a different project is opened — is this taken to
+   the end: both columns go to zero length in one call.
 3. **Linear memory grows.** Growing wasm memory *detaches* the underlying
    `ArrayBuffer`. Every view over it becomes zero-length **in place** — no
    exception, no warning. A detached view reads nothing, which is

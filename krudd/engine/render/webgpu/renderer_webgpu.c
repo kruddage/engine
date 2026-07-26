@@ -99,12 +99,14 @@ static uint32_t       g_surface_w, g_surface_h;
 static void ensure_depth_target(uint32_t w, uint32_t h);
 
 /*
- * Progress reporting and the renderer badge are host-specific — the shell's DOM
- * log panel on the web, stderr natively. Both live behind webgpu_platform.h;
- * these shorthands keep the call sites below reading the way they did.
+ * Progress reporting and the renderer badge — live or dead-ended — are
+ * host-specific: the shell's DOM log panel and badge on the web, stderr
+ * natively. All three live behind webgpu_platform.h; these shorthands keep the
+ * call sites below reading the way they did.
  */
 #define webgpu_status            webgpu_platform_status
 #define webgpu_announce_renderer webgpu_platform_announce_renderer
+#define webgpu_announce_failed   webgpu_platform_announce_failed
 
 /* A WGPUStringView over a NUL-terminated C string (the emdawnwebgpu string ABI). */
 static WGPUStringView str_view(const char *s)
@@ -1962,6 +1964,7 @@ static void on_device(WGPURequestDeviceStatus status, WGPUDevice device,
 	(void)ud2;
 	if (status != WGPURequestDeviceStatus_Success || !device) {
 		webgpu_status("webgpu: device request failed");
+		webgpu_announce_failed("the adapter refused a device");
 		g_log->write(LOG_LEVEL_ERROR,
 			     "renderer_webgpu: device request failed");
 		return;
@@ -2017,6 +2020,7 @@ static void on_adapter(WGPURequestAdapterStatus status, WGPUAdapter adapter,
 	(void)ud2;
 	if (status != WGPURequestAdapterStatus_Success || !adapter) {
 		webgpu_status("webgpu: no adapter (WebGPU unavailable?)");
+		webgpu_announce_failed("this browser returned no GPU adapter");
 		g_log->write(LOG_LEVEL_ERROR,
 			     "renderer_webgpu: adapter request failed");
 		return;
@@ -2037,6 +2041,7 @@ static void renderer_webgpu_init(void)
 	g_instance = wgpuCreateInstance(NULL);
 	if (!g_instance) {
 		webgpu_status("webgpu: no instance");
+		webgpu_announce_failed("no WebGPU instance");
 		g_log->write(LOG_LEVEL_ERROR, "renderer_webgpu: no instance");
 		return;
 	}

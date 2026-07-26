@@ -12,10 +12,9 @@
 //! wgpu is compiled with its `webgl` feature and *without* `webgpu`, so there
 //! is no second code path to keep working and no runtime backend choice to get
 //! wrong — [`wgpu::Backends::GL`] is the only backend the instance is even
-//! built with. That is #812's call, and it is not only about scope: Tauri uses
-//! WebKitGTK on Linux, WebKitGTK ships no WebGPU, and WebGL2 runs in every
-//! browser *and* in WebKitGTK. Deferring WebGPU removes the risk rather than
-//! maintaining a fallback for it.
+//! built with. That is #812's call: WebGL2 runs in every browser, and since
+//! #845 dropped the native shells the browser is the only place this backend
+//! has to work. WebGPU is deferred rather than designed around.
 //!
 //! wgpu rather than raw WebGL through `glow` is the other deliberate trade:
 //! shaders are WGSL and naga lowers them, so adding WebGPU later is a feature

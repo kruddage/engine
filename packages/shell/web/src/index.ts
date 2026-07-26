@@ -25,6 +25,8 @@
  * of frame — a whole-world edit with no call across the boundary at all.
  */
 
+import { type Board, TRIANGLES } from "@krudd/board";
+import { mountBoardView } from "@krudd/board-view";
 import { boot, fitCanvas, type World } from "@krudd/boundary";
 import { mountModeShell } from "./shell";
 
@@ -51,6 +53,9 @@ const CANVAS_ID = "viewport";
 /** Where the readout goes. */
 const STATUS_ID = "status";
 
+/** Where the board is drawn. */
+const BOARD_ID = "board";
+
 /**
  * Whether a failure has already been reported.
  *
@@ -76,7 +81,26 @@ async function main(): Promise<void> {
 	// After `boot`, and exactly once. The shell composites the two modes over
 	// one canvas rather than routing between them, because the WebGL2 context
 	// is taken for the life of the engine — see `shell.ts`.
-	mountModeShell({ canvas, onFail: fail });
+	// The board pane, filled. Drawn when the pane comes into view rather than
+	// at boot: the view measures its nodes, and a node inside a pane that has
+	// not been laid out yet measures zero.
+	const view = mountBoardView({ host: boardPane() });
+	let drawn = false;
+	mountModeShell({
+		canvas,
+		onFail: fail,
+		onChange: (mode) => {
+			if (mode !== "board") {
+				return;
+			}
+			if (drawn) {
+				view.refresh();
+				return;
+			}
+			view.show(rootBoard());
+			drawn = true;
+		},
+	});
 
 	// Not debounced: `fitCanvas` returns false when nothing changed, so a resize
 	// storm costs a couple of property reads per event rather than a swapchain
@@ -171,6 +195,28 @@ function report(version: string, world: World, dt: number): string {
 		`frame ${world.frameCount}`,
 		`${world.elapsed.toFixed(1)}s`,
 	].join("  ·  ");
+}
+
+/** The board pane, which the page is required to have. */
+function boardPane(): HTMLElement {
+	const element = document.getElementById(BOARD_ID);
+	if (element === null) {
+		throw new Error(
+			`the page has no #${BOARD_ID} element to draw the board in`,
+		);
+	}
+	return element;
+}
+
+/** The board the triangles project opens on. */
+function rootBoard(): Board {
+	const board = TRIANGLES.boards[TRIANGLES.root];
+	if (board === undefined) {
+		throw new Error(
+			`the project opens on board \`${TRIANGLES.root}\`, which it does not hold`,
+		);
+	}
+	return board;
 }
 
 /** The readout element, which the page is required to have. */

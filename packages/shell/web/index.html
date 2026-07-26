@@ -24,6 +24,12 @@
       not open with a 404 in the console that means nothing.
     -->
     <link rel="icon" href="data:," />
+    <!--
+      The board view's styles, from the package that owns them. A package that
+      wrote to document.head on import would be a package that cannot be
+      rendered anywhere else, so the page decides what it loads.
+    -->
+    <link rel="stylesheet" href="./index.css" />
     <style>
       :root {
         color-scheme: dark;
@@ -66,12 +72,6 @@
         transition: transform 220ms ease;
         background: #16161c;
         pointer-events: none;
-        display: grid;
-        place-content: center;
-        gap: 0.5rem;
-        text-align: center;
-        color: color-mix(in srgb, var(--ink) 55%, transparent);
-        font-size: 0.8rem;
       }
       body[data-mode="board"] #board {
         transform: translateX(0);
@@ -191,13 +191,11 @@
     <div id="track">
       <section id="game" class="pane"><canvas id="viewport"></canvas></section>
       <!--
-        The board pane, empty for now. What goes in it is @krudd/board-view,
-        which is a package of its own in the `ui` tier — this is the hole it
-        mounts into, and nothing more.
+        The board pane. @krudd/board-view draws into it; the styles for what it
+        draws are in that package's own stylesheet, bundled into index.css by
+        `cargo xtask build-web`.
       -->
-      <section id="board" class="pane" aria-label="board">
-        <p>the board goes here</p>
-      </section>
+      <section id="board" class="pane" aria-label="board"></section>
     </div>
     <p id="status">loading krudd __KRUDD_VERSION__…</p>
     <nav id="modes" aria-label="mode">

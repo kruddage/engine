@@ -34,7 +34,7 @@ use crate::web;
 /// `node --experimental-strip-types` on their own. They are listed with the
 /// rest because one command that runs every TypeScript test is worth more
 /// than a second command nobody remembers.
-const TEST_ENTRIES: [(&str, &str); 5] = [
+const TEST_ENTRIES: [(&str, &str); 6] = [
     (
         "packages/base/boundary/harness/memory.test.ts",
         "memory.test",
@@ -52,6 +52,10 @@ const TEST_ENTRIES: [(&str, &str); 5] = [
         "validate.test",
     ),
     ("packages/shell/web/harness/track.test.ts", "track.test"),
+    (
+        "packages/ui/board-view/harness/layout.test.ts",
+        "layout.test",
+    ),
 ];
 
 /// The batched-versus-per-call benchmark.

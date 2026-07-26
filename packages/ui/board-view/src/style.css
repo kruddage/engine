@@ -1,0 +1,145 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+
+/*
+  The board's look. Shipped as a file the page loads rather than injected on
+  import, so a package cannot write to a document nobody asked it to.
+
+  Colours come from the page's own custom properties where there is one, with
+  a fallback beside it — the view has to be legible dropped into a page that
+  has never heard of it.
+*/
+
+.board-view {
+	position: relative;
+	overflow: hidden;
+	/* The board is dragged, not scrolled: a touch that started a pan must not
+	   also be a scroll gesture the browser claims half way through. */
+	touch-action: none;
+	cursor: grab;
+	background: #16161c;
+	color: var(--ink, #e6e6ea);
+	font-size: 0.75rem;
+	line-height: 1.45;
+}
+
+.board-view:active {
+	cursor: grabbing;
+}
+
+.board-surface {
+	position: absolute;
+	inset: 0 auto auto 0;
+	transform-origin: 0 0;
+}
+
+.board-wires,
+.board-nodes {
+	position: absolute;
+	inset: 0 auto auto 0;
+}
+
+/* The wires sit under the boxes, so a curve passing behind a node reads as
+   passing behind it rather than through it. */
+.board-wires {
+	pointer-events: none;
+	overflow: visible;
+}
+
+.board-wire path {
+	fill: none;
+	stroke-width: 2;
+}
+
+.board-wire circle {
+	stroke: none;
+}
+
+/*
+  Execution order and data are told apart by more than hue. Roughly one man in
+  twelve cannot be relied on to see the difference between coral and teal, so
+  the data wire is dashed as well — the colour is the quick read and the dash
+  is the one that always works.
+*/
+.board-wire[data-kind="exec"] path,
+.board-wire[data-kind="exec"] circle {
+	stroke: #ff8a6b;
+	fill: #ff8a6b;
+}
+
+.board-wire[data-kind="data"] path {
+	stroke: #4fc9c0;
+	stroke-dasharray: 6 5;
+}
+
+.board-wire[data-kind="data"] circle {
+	fill: #4fc9c0;
+}
+
+.board-lane {
+	position: absolute;
+	inset: 0 auto auto 0;
+	border: 1px solid color-mix(in srgb, var(--ink, #e6e6ea) 12%, transparent);
+	border-radius: 12px;
+	background: color-mix(in srgb, var(--ink, #e6e6ea) 4%, transparent);
+}
+
+.board-lane > span {
+	position: absolute;
+	top: 6px;
+	left: 12px;
+	color: color-mix(in srgb, var(--ink, #e6e6ea) 55%, transparent);
+	font-size: 0.7rem;
+	white-space: nowrap;
+}
+
+.board-node {
+	position: absolute;
+	inset: 0 auto auto 0;
+	/* A width, never a height. The box is as tall as what is in it — a guessed
+	   height spills the text past the border and lands every wire off its port,
+	   because the ports are placed as fractions of the box. */
+	width: 13rem;
+	box-sizing: border-box;
+	padding: 0.5rem 0.65rem;
+	border: 1px solid color-mix(in srgb, var(--ink, #e6e6ea) 20%, transparent);
+	border-radius: 10px;
+	background: #1e1e26;
+}
+
+.board-node[data-entry="true"] {
+	border-color: #ff8a6b;
+	background: color-mix(in srgb, #ff8a6b 12%, #1e1e26);
+}
+
+.board-node h3 {
+	margin: 0;
+	font-size: 0.8rem;
+	font-weight: 600;
+}
+
+.board-node p {
+	margin: 0.25rem 0 0;
+}
+
+.board-param {
+	display: flex;
+	justify-content: space-between;
+	gap: 0.75rem;
+	color: color-mix(in srgb, var(--ink, #e6e6ea) 60%, transparent);
+}
+
+.board-param b {
+	font-weight: 600;
+	color: var(--ink, #e6e6ea);
+}
+
+.board-ports {
+	color: #4fc9c0;
+	font-size: 0.7rem;
+	overflow-wrap: anywhere;
+}
+
+.board-opens {
+	color: color-mix(in srgb, var(--ink, #e6e6ea) 55%, transparent);
+	font-size: 0.7rem;
+}

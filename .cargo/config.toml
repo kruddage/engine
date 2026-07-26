@@ -1,0 +1,5 @@
+# `cargo xtask` is the one build entry point — see xtask/src/main.rs. The
+# alias is what makes it spell like a Cargo subcommand without installing
+# anything.
+[alias]
+xtask = "run --package xtask --quiet --"

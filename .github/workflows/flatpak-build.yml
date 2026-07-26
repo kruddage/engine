@@ -1,63 +1,39 @@
-name: Flatpak build (editor, proof of life)
+name: Flatpak build (editor) — BLOCKED on #821
 
-# Builds the native Qt editor (`krudd editor-qt`, #675/#676) as a Flatpak and,
-# when a signing key is configured, publishes a self-hosted, GPG-signed
-# registry to this repo's gh-pages branch — see packaging/flatpak/README.md
-# for the full picture, including the editor's own proof-of-life caveat
-# (still an animated clear, not a real scene).
+# THIS WORKFLOW CANNOT CURRENTLY SUCCEED, AND THAT IS EXPECTED.
 #
-# Triggers, like every other native-editor target: left out of the default
-# per-PR CI (see the root README's CI table) since it needs a full Flatpak SDK
-# download. The editor itself compiles inside the sandbox against org.kde.Sdk's
-# Qt6 and Vulkan loader — nothing is prebuilt on the runner any more (the
-# native GPU path is Vulkan, not vendored Dawn). Three ways in:
+# It packaged the native Qt editor out of `krudd/`, which #814 deleted along
+# with the rest of the C and Scheme tree. The Tauri 2 shell that replaces it is
+# #821, and #812's plan is that #821 fills this workflow in rather than that
+# the delete removes it — so the file stays, with everything below the guard
+# step intact as the machinery #821 adapts: the signing opt-in, the export, the
+# bundle, and the self-hosted gh-pages registry that a Steam Deck subscribes to.
 #
-#   * workflow_dispatch at a vX.Y.Z tag — the release path. release-please
-#                        dispatches this itself right after it cuts a version
-#                        tag/GitHub Release (see the last step of
-#                        .github/workflows/release-please.yml), which is what
-#                        re-publishes the registry for a normal engine release
-#                        so `flatpak update` on a Steam Deck actually pulls the
-#                        new editor. The run checks out the dispatched tag, so
-#                        it packages exactly the released source. Dispatching
-#                        the same tag by hand re-publishes that release.
-#   * push to main     — path-scoped to the packaging files themselves, so a
-#                        change to how the Flatpak is built/packaged republishes
-#                        without waiting for the next release.
-#   * release          — kept because it is the obvious trigger, but it cannot
-#                        be relied on: release-please creates the Release with
-#                        GITHUB_TOKEN, and Actions does not start workflow runs
-#                        from GITHUB_TOKEN-authored events (the same recursion
-#                        rule release-please.yml already notes for its release
-#                        PR). workflow_dispatch/repository_dispatch are the
-#                        documented exceptions to that rule, which is why the
-#                        release path above dispatches instead of relying on
-#                        this. It does fire if release-please is ever switched
-#                        to a PAT or App token.
+# Two things changed here as part of the delete, both to stop it failing
+# noisily on its own:
 #
-# Signing + publish are opt-in per fork/checkout: they run only when
-# FLATPAK_GPG_PRIVATE_KEY is set as a repo secret (see the "signing" step and
-# packaging/flatpak/README.md's "hosting your own registry" section). Without
-# it, this still builds and validates the Flatpak (unsigned bundle, uploaded
-# as a workflow artifact) — it just doesn't publish anywhere.
+#   * The `release` and push-to-main triggers are gone. Only workflow_dispatch
+#     remains, so nothing starts this by accident.
+#   * release-please no longer dispatches it after cutting a tag (see the end
+#     of .github/workflows/release-please.yml). Dispatching a build that cannot
+#     succeed would have turned every release red.
+#
+# The consequence, stated rather than discovered: the self-hosted Flatpak
+# registry is frozen at whatever it last published, and `flatpak update` on a
+# Deck pulls nothing new until #821 lands. That is the accepted cost of
+# delete-and-replace over strangler-fig.
 on:
   workflow_dispatch:
-  release:
-    types: [published]
-  push:
-    branches: [main]
-    paths:
-      - packaging/flatpak/**
-      - .github/workflows/flatpak-build.yml
 
 jobs:
   flatpak-build:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    # Shared with ci.yml's deploy job: both push to gh-pages, and a main push
-    # fires both at once. One serial group across both workflows keeps their
-    # gh-pages pushes from racing (the loser is rejected non-fast-forward).
+    # One serial group for every gh-pages writer. ci.yml has no deploy job
+    # today (#820), but the group name is kept so that when it gets one back
+    # the two cannot push to gh-pages at the same time — a concurrent push is
+    # rejected non-fast-forward.
     concurrency:
       group: gh-pages-deploy
       cancel-in-progress: false
@@ -81,20 +57,15 @@ jobs:
           flatpak remote-add --if-not-exists --user flathub \
             https://flathub.org/repo/flathub.flatpakrepo
 
-      # The engine links prebuilt s7 artifacts fetched from the kruddage/s7
-      # release (krudd/third_party/sync.sh), but flatpak-builder runs module
-      # builds in a sandbox with networking off — in there the fetch dies on
-      # "Could not resolve host: github.com" and takes the whole build with it.
-      # So fetch them out here, where there is network, into the working tree
-      # the manifest copies in as `krudd-src`; the in-sandbox build runs with
-      # KRUDD_S7_OFFLINE=1 and verifies these against the .sha256 sidecars
-      # cached alongside them rather than re-downloading.
-      #
-      # sync.sh is normally sourced with $root preset by krudd.sh; running it
-      # directly with $root in its environment does the same fetch on its own,
-      # without needing a compiler or a full configure on the runner.
-      - name: Pre-fetch the s7 artifacts for the sandbox
-        run: root="$PWD" ./krudd/third_party/sync.sh
+      # The guard. Everything below this point is kept for #821 to adapt, but
+      # it cannot run today: the manifest copies in `krudd/`, and there is no
+      # `krudd/` any more. Failing here with the reason beats failing three
+      # minutes later inside flatpak-builder with "no such file or directory".
+      - name: This build is blocked on #821
+        run: |
+          echo "::error::The Flatpak packages the native Qt editor from krudd/," \
+               "which #814 deleted. #821 replaces it with the Tauri 2 shell." >&2
+          exit 1
 
       - name: flatpak-builder
         run: |

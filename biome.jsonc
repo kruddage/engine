@@ -1,0 +1,53 @@
+// Biome is the formatter and the linter for the TypeScript half. One tool for
+// both, on its recommended preset, chosen for the same reason the Rust side
+// takes rustfmt and clippy at their defaults: the point of a style gate is to
+// remove decisions, and two tools with overlapping opinions put one back.
+//
+// Run it through `cargo xtask check`, never directly.
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.5/schema.json",
+	"vcs": {
+		// Honour .gitignore, so the generated glue and dist/ are skipped
+		// without repeating them here.
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
+	},
+	"files": {
+		"includes": [
+			"**/*.ts",
+			"**/*.js",
+			"**/*.json",
+			"**/*.jsonc",
+			// Belt and braces alongside .gitignore: these are generated or
+			// vendored, and reformatting them would only produce churn.
+			"!**/packages/base/boundary/generated",
+			"!**/dist",
+			"!**/target",
+			// release-please rewrites these two itself, with its own
+			// formatting. Formatting them here would fight it every release.
+			"!release-please-config.json",
+			"!.release-please-manifest.json"
+		]
+	},
+	// No formatter block: Biome's defaults (tabs, 80 columns) are the
+	// settings, exactly as rustfmt's are on the Rust side. Overriding them
+	// would be a preference, and a preference is the thing this file exists
+	// to avoid needing.
+	"formatter": {
+		"enabled": true
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"preset": "recommended"
+		}
+	},
+	"assist": {
+		"actions": {
+			"source": {
+				"organizeImports": "on"
+			}
+		}
+	}
+}

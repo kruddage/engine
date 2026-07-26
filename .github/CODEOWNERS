@@ -3,21 +3,30 @@
 # See https://docs.github.com/articles/about-code-owners.
 
 # Default owner for everything not matched more specifically below.
-*                       @joshcoyne
+*                        @joshcoyne
 
-# /krudd/ below covers the whole tree — build language, specs, and the engine
-# module sources — but the plugin vtable headers ARE the engine ABI (see
-# CLAUDE.md), so guard them with their own explicit line: a change to an
-# exported signature is a breaking change.
-/krudd/engine/abi/      @joshcoyne
+# The engine. `crates/` is the Rust half and `packages/` the TypeScript half,
+# laid out by tier — see docs/architecture.md.
+/crates/                 @joshcoyne
+/packages/               @joshcoyne
 
-# Build and CI/release machinery. krudd renders build.ninja from the directory
-# specs (krudd/engine/**/build.scm) and drives ninja directly — no CMake.
-/krudd/                 @joshcoyne
-/.github/               @joshcoyne
+# The boundary between the two halves is the thing a change can break
+# invisibly, so guard both sides of it with their own lines: krudd-web's
+# exported surface and the wrapper over it are one contract in two files, and
+# they are hand-written until #817 generates them from one spec.
+/crates/shell/web/       @joshcoyne
+/packages/base/boundary/ @joshcoyne
+
+# Build and CI/release machinery. `cargo xtask` is the one build entry point;
+# there is no build step outside it.
+/xtask/                  @joshcoyne
+/Cargo.toml              @joshcoyne
+/rust-toolchain.toml     @joshcoyne
+/.cargo/                 @joshcoyne
+/.github/                @joshcoyne
 
 # Version source — maintained by release-please, but guard it so a manual edit
-# still routes a review. version.txt is what CI stamps into the build; the
+# still routes a review. version.txt is what xtask stamps into the build; the
 # manifest and config drive release-please itself.
 /version.txt                    @joshcoyne
 /.release-please-manifest.json  @joshcoyne

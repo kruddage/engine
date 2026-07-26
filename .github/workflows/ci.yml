@@ -1,353 +1,84 @@
 name: CI
 
+# One job running one command. `cargo xtask check` is the whole gate, and it is
+# the same command a contributor runs locally — a gate that only exists in a
+# workflow file is a gate nobody can run before pushing, and the C tree
+# accumulated several of those.
+#
+# What it covers: the crate/package tier order, rustfmt, clippy with warnings
+# denied, the Rust test suite, the wasm build, wasm-bindgen, the TypeScript
+# bundle, tsc, and biome. See xtask/src/check.rs.
+#
+# NOT covered, deliberately, until the hello-triangle chain lands (#818, #819):
+#   * the GitHub Pages deploy and the per-PR preview — #820. There is nothing
+#     worth looking at to publish yet, and a deploy of a status line would only
+#     make the site look alive.
+#   * the Flatpak — #821. flatpak-build.yml is dispatch-only and cannot
+#     currently succeed; it packages the deleted C editor.
+#   * sanitizers and gcov coverage — those gated the C build. Rust's own
+#     guarantees replace most of what ASan caught; a coverage report on the new
+#     tree is worth adding once there is enough of it to measure.
+
 on:
   pull_request:
-    # `closed` is included so the preview job can tear down a PR's preview
-    # directory when the PR is merged or closed. The default set is
-    # [opened, synchronize, reopened]; adding closed keeps those and adds it.
-    types: [opened, reopened, synchronize, closed]
   push:
     branches: [main]
 
+# A superseded run on the same branch is wasted CI; cancel it.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  lint:
-    # Skip on PR-close events — nothing to lint then.
-    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
-      - name: Lint .scm comments
-        run: python3 .github/scripts/lint-scm-comments.py $(git ls-files '*.scm')
+      # rust-toolchain.toml pins the channel and lists the wasm target plus
+      # rustfmt and clippy, so rustup installs everything on the first cargo
+      # invocation. Nothing to configure here.
+      - name: Show the toolchain
+        run: |
+          rustc --version
+          cargo --version
 
-      # .scm files are indented per CODING_STANDARD.md's Scheme section: spaces,
-      # call arguments aligned under the first argument — Emacs scheme-mode's
-      # stock indenter output, so there's a single mechanical arbiter instead of
-      # a per-line human judgment call.
-      - name: Install emacs for the .scm indent check
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends emacs-nox
-
-      - name: Check .scm indentation
-        run: python3 .github/scripts/indent-scm.py --check $(git ls-files '*.scm')
-
-  build:
-    # Skip the build on PR-close events — there is nothing to publish, the
-    # preview job only needs to remove the stale directory.
-    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
-    runs-on: ubuntu-latest
-    container: emscripten/emsdk:6.0.2
-    steps:
-      - uses: actions/checkout@v7
+      # Caches cargo's registry and the target directory, keyed on the
+      # lockfile. The expensive part of a cold run is `cargo install
+      # wasm-bindgen-cli`, which lands in ~/.cargo/bin and is cached with it.
+      - uses: Swatinem/rust-cache@v2
         with:
-          fetch-depth: 0
+          cache-all-crates: true
 
-      # The container runs as root, so git refuses to touch the checkout
-      # ("dubious ownership") and stage-site.sh would stamp "unknown" instead
-      # of the commit hash. Mark it safe first.
-      - name: Trust the workspace
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
 
-      # krudd.sh picks clang first if it's on PATH, falling back to gcc then
-      # cc, so installing clang here makes CI build with it by default while
-      # keeping gcc as the fallback compiler. curl is required by
-      # krudd/third_party/sync.sh to fetch the latest s7 release artifacts
-      # (header + static libs + CLI), which are not committed to the repo.
-      - name: Install a host compiler and ninja for krudd
-        run: apt-get update && apt-get install -y clang gcc ninja-build curl
+      - name: Install the TypeScript dependencies
+        run: pnpm install --frozen-lockfile
 
-      # The released version is the single line in version.txt, maintained by
-      # release-please (see .github/workflows/release-please.yml). A push/main
-      # build stamps that version verbatim. A PR build appends -pr<N>+<sha> so
-      # its preview is uniquely identifiable and can never be mistaken for a
-      # real release — mirroring the prerelease suffix the old label-fold job
-      # produced.
-      # This runs under `sh` (dash) inside the emsdk container, so keep it
-      # POSIX: printf '%.7s' truncates to 7 chars where bash would use the
-      # non-portable ${sha:0:7}.
-      - name: Determine version
-        id: version
+      # A PR build stamps -pr<N>+<sha> so an artifact from one can never be
+      # mistaken for a release build. A main build stamps version.txt verbatim,
+      # which xtask reads on its own when KRUDD_VERSION is unset.
+      - name: Determine the version
+        if: github.event_name == 'pull_request'
         run: |
           base=$(cat version.txt)
-          if [ "${{ github.event_name }}" = pull_request ]; then
-            short=$(printf '%.7s' "${{ github.event.pull_request.head.sha }}")
-            echo "version=${base}-pr${{ github.event.pull_request.number }}+${short}" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=${base}" >> "$GITHUB_OUTPUT"
-          fi
+          short=$(printf '%.7s' "${{ github.event.pull_request.head.sha }}")
+          echo "KRUDD_VERSION=${base}-pr${{ github.event.pull_request.number }}+${short}" >> "$GITHUB_ENV"
 
-      # krudd generates a build.ninja from the directory specs and drives ninja
-      # with emcc/em++ directly — no cmake, no emcmake. KRUDD_TARGET=wasm selects
-      # the WASM output (the single index.html/.js/.wasm module). KRUDD_VERSION
-      # comes from the version step above — see introspect.scm.
-      - name: Build
-        env:
-          KRUDD_TARGET: wasm
-          KRUDD_VERSION: ${{ steps.version.outputs.version }}
-        run: ./krudd.sh build
+      - name: cargo xtask check
+        run: cargo xtask check
 
-      - name: Stage site
-        run: sh .github/scripts/stage-site.sh build public
+      # Not a gate — a number worth being able to look at, since the wasm is
+      # fetched before anything can run.
+      - name: Report the release artifact sizes
+        run: cargo xtask dist
 
-      - name: Upload staged site
+      - name: Upload the build
         uses: actions/upload-artifact@v7
         with:
-          name: site
-          path: public
-  deploy:
-    needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    # Serialize every gh-pages writer under one group. The flatpak-build
-    # workflow shares this exact group name so a main push (which triggers both
-    # this deploy and the flatpak publish) never pushes to gh-pages from two
-    # jobs at once — a concurrent push is rejected non-fast-forward and, with
-    # keep_files, order between the two doesn't matter.
-    concurrency:
-      group: gh-pages-deploy
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Download staged site
-        uses: actions/download-artifact@v8
-        with:
-          name: site
-          path: public
-
-      - name: Publish to gh-pages
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./public
-          publish_branch: gh-pages
-          # keep_files preserves the pr-preview/ directory tree that the
-          # preview job writes into the same gh-pages branch; without it a
-          # main deploy would delete every open PR's preview. The trade-off is
-          # that old hash-named index.<hash>.{js,wasm} from previous main
-          # deploys are no longer pruned and accumulate at the site root.
-          keep_files: true
-
-  # Publishes each pull request's staged build to
-  # gh-pages/pr-preview/pr-<N>/ and comments the preview URL on the PR, then
-  # removes that directory when the PR is closed or merged. Scoped to
-  # same-repository PRs: the pull_request token is read-only for forks, so a
-  # fork PR cannot push to gh-pages. (Supporting forks safely would require a
-  # separate pull_request_target/workflow_run job that deploys outside the
-  # untrusted build context.)
-  preview:
-    needs: build
-    # !cancelled() lifts the implicit "needs succeeded" gate so this still runs
-    # on the close event (where build is skipped). Deploys only when the build
-    # succeeded; the close path tears down regardless of the build.
-    if: >-
-      ${{ !cancelled() && github.event_name == 'pull_request'
-      && github.event.pull_request.head.repo.full_name == github.repository
-      && (github.event.action == 'closed' || needs.build.result == 'success') }}
-    runs-on: ubuntu-latest
-    # This job only publishes a convenience preview deploy; it isn't a
-    # correctness gate (lint/build/sanitizers/coverage already cover that).
-    # A gh-pages push race or preview-action hiccup shouldn't hold up
-    # auto-merge, so let it fail without failing the job.
-    continue-on-error: true
-    permissions:
-      contents: write
-      pull-requests: write
-    # Serialize a single PR's preview runs so rapid pushes don't race each
-    # other pushing to gh-pages; keyed per-PR so different PRs stay independent.
-    concurrency:
-      group: preview-${{ github.event.pull_request.number }}
-      cancel-in-progress: true
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Download staged site
-        if: github.event.action != 'closed'
-        uses: actions/download-artifact@v8
-        with:
-          name: site
-          path: public
-
-      - name: Deploy preview
-        uses: rossjrw/pr-preview-action@v1
-        with:
-          source-dir: public
-          preview-branch: gh-pages
-          umbrella-dir: pr-preview
-
-  # Build and run the native test suite under AddressSanitizer + UBSan +
-  # LeakSanitizer. This is the memory-safety / undefined-behaviour gate: a
-  # detected leak, out-of-bounds access, or UB fails the job. It runs on a
-  # plain ubuntu-latest (no emsdk container) because sanitizers need a native
-  # host build — the CI `build` job only produces the WASM artifact. gcc is
-  # used because its libasan/libubsan runtimes ship with the runner image;
-  # the sanitizer flags ride in through kruddmake's KRUDD_EXTRA_* env hooks so
-  # this is the ordinary native build with instrumentation, not a fork of it.
-  sanitizers:
-    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install toolchain
-        run: sudo apt-get update && sudo apt-get install -y gcc g++ ninja-build curl
-
-      - name: Build + run native suite under ASan + UBSan + LeakSanitizer
-        env:
-          CC: gcc
-          KRUDD_CC: gcc
-          KRUDD_CXX: g++
-          KRUDD_BUILD_DIR: ${{ github.workspace }}/build-san
-          KRUDD_EXTRA_CFLAGS: >-
-            -fsanitize=address,undefined -fno-omit-frame-pointer
-            -fno-sanitize-recover=undefined -g -O1
-          KRUDD_EXTRA_LDFLAGS: -fsanitize=address,undefined
-          # Fail the run on the first leak / error rather than only printing it.
-          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:abort_on_error=1
-          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-        run: sh krudd/kruddmake/run-tests.sh
-
-  # Measure native line/function/branch coverage with gcov and post it as a
-  # sticky comment on the PR. This is REPORT-ONLY — it never fails the build;
-  # the floor gate is intentionally deferred until the baseline has been
-  # watched (see README). Coverage needs its own -O0 --coverage build, so it
-  # runs separately from the sanitizer job in its own build directory.
-  coverage:
-    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install toolchain
-        run: |
-          sudo apt-get update && sudo apt-get install -y gcc g++ ninja-build curl
-          pipx install gcovr
-
-      - name: Build + run native suite with gcov instrumentation
-        env:
-          CC: gcc
-          KRUDD_CC: gcc
-          KRUDD_CXX: g++
-          KRUDD_BUILD_DIR: ${{ github.workspace }}/build-cov
-          KRUDD_EXTRA_CFLAGS: --coverage -O0 -g -fprofile-abs-path
-          KRUDD_EXTRA_LDFLAGS: --coverage
-        run: sh krudd/kruddmake/run-tests.sh
-
-      # Scope to engine production code: test files and vendored third_party/
-      # are excluded so the number reflects code the suite is meant to cover.
-      - name: Generate coverage report
-        run: |
-          gcovr --root . --filter 'krudd/engine/' \
-            --exclude '.*_test\.c$' --exclude 'krudd/third_party/' \
-            --gcov-object-directory build-cov --gcov-ignore-parse-errors=all \
-            --json-summary coverage-summary.json --txt coverage.txt
-          cat coverage.txt
-          python3 .github/scripts/coverage-report.py \
-            coverage-summary.json coverage-comment.md
-
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v7
-        with:
-          name: coverage
-          path: |
-            coverage.txt
-            coverage-comment.md
-
-      # Only same-repo PRs: a fork PR's GITHUB_TOKEN is read-only, so the
-      # measurement still runs above but the comment post is skipped for forks.
-      - name: Post coverage comment
-        if: >-
-          github.event_name == 'pull_request'
-          && github.event.pull_request.head.repo.full_name == github.repository
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const fs = require('fs');
-            const body = fs.readFileSync('coverage-comment.md', 'utf8');
-            const marker = '<!-- krudd-coverage-report -->';
-            const { owner, repo } = context.repo;
-            const issue_number = context.payload.pull_request.number;
-            const comments = await github.paginate(
-              github.rest.issues.listComments, { owner, repo, issue_number });
-            const existing = comments.find(
-              c => c.body && c.body.includes(marker));
-            if (existing) {
-              await github.rest.issues.updateComment(
-                { owner, repo, comment_id: existing.id, body });
-            } else {
-              await github.rest.issues.createComment(
-                { owner, repo, issue_number, body });
-            }
-
-  # Build the native editor (krudd_qt) — the Qt shell on the native Vulkan
-  # backend (#705). COMPILE + LINK ONLY: it opens a window and needs a real GPU
-  # to run, so CI proves it builds, not that it renders. This is the gate that
-  # keeps the Vulkan backend and the Qt surface glue compiling as the tree
-  # moves. The web build (WebGL + WebGPU) is covered by the `build` job above and
-  # is untouched by this one — Vulkan is native only.
-  #
-  # Qt >= 6.5 is required: krudd_qt.cpp reaches the Wayland wl_display through
-  # QNativeInterface::QWaylandApplication, which became public in Qt 6.5. (The
-  # per-window wl_surface has no public API in any Qt 6 release, so that one
-  # comes from the QPA native-resource lookup — see krudd_qt.cpp's SURFACE
-  # CREATION note.) The Wayland branch itself is guarded by QT_CONFIG(wayland),
-  # so a Qt without it still compiles — #758 first guarded it on
-  # QT_FEATURE_wayland_client, which #810 corrected: that macro belongs to
-  # QtWaylandClient, which no included header defines, so the branch was
-  # compiling out unconditionally and the Flatpak editor could not present.
-  # ubuntu-latest ships Qt 6.4,
-  # so the Qt here comes from install-qt-action rather than apt; the Vulkan
-  # loader, headers, validation layers and glslang are ordinary apt packages.
-  editor-linux:
-    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install the Vulkan toolchain (loader, headers, validation, glslang)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            clang ninja-build curl \
-            libvulkan-dev vulkan-validationlayers glslang-tools
-
-      - name: Install Qt 6.8
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: '6.8.1'
-          cache: true
-
-      - name: Build krudd_qt (compile + link, no run)
-        env:
-          CC: clang
-          KRUDD_CC: clang
-          KRUDD_CXX: clang++
-          KRUDD_VULKAN: '1'
-          KRUDD_QT: '1'
-          # Generate build.ninja without driving ninja, so the next step can
-          # build only the editor binary rather than the whole native suite.
-          KRUDD_GENERATE_ONLY: '1'
-        run: |
-          # install-qt-action lays Qt out under $QT_ROOT_DIR in the standard
-          # shape; build the editor's Qt flags from it directly rather than rely
-          # on .pc files, which the aqt packages do not always ship.
-          #
-          # The Wayland surface lookup needs one QPA private header
-          # (QtGui/qpa/qplatformnativeinterface.h — see krudd_qt.cpp). Qt keeps
-          # those under a version-stamped directory beside the public ones;
-          # glob it rather than repeat the version pinned above, and fail loudly
-          # if this Qt has no private headers instead of falling through to a
-          # confusing "file not found" a minute later.
-          qtgui_private=$(echo "$QT_ROOT_DIR"/include/QtGui/[0-9]*)
-          if [ ! -f "$qtgui_private/QtGui/qpa/qplatformnativeinterface.h" ]; then
-            echo "no QtGui QPA private headers under $QT_ROOT_DIR/include/QtGui" >&2
-            exit 1
-          fi
-          export KRUDD_QT_CFLAGS="-fPIC -I$QT_ROOT_DIR/include -I$QT_ROOT_DIR/include/QtCore -I$QT_ROOT_DIR/include/QtGui -I$QT_ROOT_DIR/include/QtWidgets -I$qtgui_private"
-          export KRUDD_QT_LIBS="-L$QT_ROOT_DIR/lib -lQt6Widgets -lQt6Gui -lQt6Core"
-          ./krudd.sh build
-          ninja -C build -f build.ninja bin/krudd_qt
+          name: dist
+          path: dist

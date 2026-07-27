@@ -32,12 +32,22 @@
  * the document does, and `Runner` walks it. The page's job is to boot the
  * engine, run the board once at open and once a frame, and put a failure on
  * screen. Which is what it was before; there is simply less of it.
+ *
+ * ## The graph's first input
+ *
+ * `pointer.ts` turns raw `PointerEvent`s into one edge-triggered, viewport-
+ * relative sample a frame; `bindPointerSource`, below, is the only place that
+ * wires it to real DOM events. The sample reaches every `Runner.frame` call
+ * whether or not the running board asked for one — the triangles project
+ * never does, so nothing about what it draws changes. A project that wires a
+ * `pointer` node reads it from there on, with no change to this file.
  */
 
 import type { Project } from "@krudd/board";
 import { cloneProject, Runner, TRIANGLES } from "@krudd/board";
 import { mountBoardView } from "@krudd/board-view";
 import { boot, fitCanvas, type World } from "@krudd/boundary";
+import { PointerTrack } from "./pointer";
 import {
 	loadFailure,
 	PROJECT_ACCEPT,
@@ -97,6 +107,13 @@ async function main(): Promise<void> {
 	let project = cloneProject(TRIANGLES);
 	let runner = new Runner(project, world);
 	runner.start();
+
+	// The graph's pointer source. Collecting DOM events is this page's job;
+	// what a board does with them is the document's — the triangles project
+	// has no `pointer` node, so nothing above this line changes: `pointer`
+	// reaches every `runner.frame` call, and the demo simply never asks.
+	const pointer = new PointerTrack();
+	bindPointerSource(canvas, pointer);
 
 	// The board pane, filled. Drawn when the pane comes into view rather than
 	// at boot: the view measures its nodes, and a node inside a pane that has
@@ -180,9 +197,12 @@ async function main(): Promise<void> {
 		const dt = Math.min((now - previous) / 1000, 0.1);
 		previous = now;
 		try {
+			// One sample, taken exactly once a frame and handed to both lanes —
+			// `PointerTrack.sample` consumes the press edge, so calling it twice
+			// in one frame would read a real press as already spent.
 			// Step then paint, both from the document. Nothing about what
 			// happens in either is decided here.
-			runner.frame(dt);
+			runner.frame(dt, pointer.sample());
 		} catch (error) {
 			// Reported once and the loop stops. A frame that failed will fail
 			// again next frame, and a page reporting the same error sixty times a
@@ -293,6 +313,42 @@ function notice(message: string, kind: "good" | "bad" = "good"): void {
 	element.textContent = message;
 	element.dataset.kind = kind;
 	element.hidden = false;
+}
+
+/**
+ * Feeds real DOM pointer events into a [`PointerTrack`].
+ *
+ * Bound to the canvas: `index.css` sizes `#viewport` to fill its pane at
+ * 100% × 100%, the same box `#track` itself fills, so the canvas's own
+ * bounding rect is already the viewport `PointerTrack` normalises against —
+ * there is no separate element to measure.
+ *
+ * `pointerup` and `pointercancel` are bound on `window` rather than the
+ * canvas: a release is still a release even if the finger has drifted off the
+ * canvas by the time it lifts, and a press that only ever ends on-canvas would
+ * read as held forever the moment it does not.
+ */
+function bindPointerSource(
+	canvas: HTMLCanvasElement,
+	track: PointerTrack,
+): void {
+	const at = (event: PointerEvent): [number, number, number, number] => {
+		const rect = canvas.getBoundingClientRect();
+		return [
+			event.clientX - rect.left,
+			event.clientY - rect.top,
+			rect.width,
+			rect.height,
+		];
+	};
+	canvas.addEventListener("pointerdown", (event) => {
+		track.down(...at(event));
+	});
+	canvas.addEventListener("pointermove", (event) => {
+		track.move(...at(event));
+	});
+	window.addEventListener("pointerup", () => track.up());
+	window.addEventListener("pointercancel", () => track.up());
 }
 
 /** An element the page is required to have. */

@@ -84,4 +84,5 @@ export {
 	serializeProject,
 	validate,
 } from "./validate";
-export type { Run, RunContext, WorldView } from "./world";
+export type { PointerFrame, Run, RunContext, WorldView } from "./world";
+export { NO_POINTER } from "./world";

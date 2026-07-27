@@ -250,6 +250,30 @@ export const KINDS: Registry = {
 		outputs: [],
 		params: [{ name: "to", type: "surface", default: "surface" }],
 	},
+
+	// The first input of any kind to reach the graph. See `RunContext.pointer`
+	// in `./world` for what it carries and where the edge — the debounce that
+	// makes a held press place once, not every frame it stays down — is found.
+
+	pointer: {
+		title: "Pointer",
+		inputs: [],
+		outputs: [
+			{ name: "x", type: "f32" },
+			{ name: "y", type: "f32" },
+			{ name: "pressed", type: "u32" },
+		],
+		params: [],
+		run: () => {
+			// Nothing to compute. `x`, `y` and `pressed` are already resolved
+			// before any node runs — `c.pointer`, on every `RunContext` — so a
+			// kind downstream reads them straight off the context, the same way
+			// `integrate` reads `c.world.positions()` rather than a wire this
+			// interpreter evaluates. This kind exists so a document has
+			// something concrete to wire from: a name a wire leaves by, and a
+			// type the validator can check the far end against.
+		},
+	},
 };
 
 /**

@@ -42,7 +42,12 @@ import type {
 import { paramOf } from "./document";
 import { KINDS, kindOf } from "./kinds";
 import { BoardError, type Problem, validate } from "./validate";
-import type { RunContext, WorldView } from "./world";
+import {
+	NO_POINTER,
+	type PointerFrame,
+	type RunContext,
+	type WorldView,
+} from "./world";
 
 /** One node, resolved: what it is, and what it was set to. */
 interface Step {
@@ -114,13 +119,23 @@ export class Runner {
 		for (const column of this.#rootBoard().columns ?? []) {
 			this.#world.ensureColumn(column.name, column.kind);
 		}
-		this.#runLane("start", 0);
+		// No pointer: the start lane runs once as the board opens, before any
+		// press could have been collected, so there is nothing to hand it but
+		// the empty sample.
+		this.#runLane("start", 0, NO_POINTER);
 	}
 
-	/** Runs the step lane and then the paint lane. Once per frame. */
-	frame(dt: number): void {
-		this.#runLane("step", dt);
-		const painted = this.#runLane("paint", dt);
+	/**
+	 * Runs the step lane and then the paint lane. Once per frame.
+	 *
+	 * `pointer` defaults to [`NO_POINTER`] so that a caller which never
+	 * collects one — the triangles demo's, today — does not have to invent a
+	 * value it has nothing to put in. Passing one is what lets a node read it;
+	 * nothing here decides which nodes do.
+	 */
+	frame(dt: number, pointer: PointerFrame = NO_POINTER): void {
+		this.#runLane("step", dt, pointer);
+		const painted = this.#runLane("paint", dt, pointer);
 		if (!painted) {
 			// A board with nothing left in its paint lane has to leave the
 			// screen showing nothing. Without this the last frame it drew stays
@@ -215,7 +230,7 @@ export class Runner {
 	}
 
 	/** Runs one lane's chain, in order. Reports whether it ran anything. */
-	#runLane(lane: Lane, dt: number): boolean {
+	#runLane(lane: Lane, dt: number, pointer: PointerFrame): boolean {
 		const steps = this.#lanes.get(lane);
 		if (steps === undefined || steps.length === 0) {
 			return false;
@@ -224,7 +239,7 @@ export class Runner {
 			// Not `?.`: a step only reaches this list once its kind has been
 			// found to have an implementation.
 			(step.kind.run as NonNullable<NodeKind["run"]>)(
-				context(this.#world, dt, step),
+				context(this.#world, dt, pointer, step),
 			);
 		}
 		return true;
@@ -247,7 +262,12 @@ function settings(
 }
 
 /** What one node is handed. */
-function context(world: WorldView, dt: number, step: Step): RunContext {
+function context(
+	world: WorldView,
+	dt: number,
+	pointer: PointerFrame,
+	step: Step,
+): RunContext {
 	const read = (name: string): ParamValue => {
 		const value = step.params[name];
 		if (value === undefined) {
@@ -264,6 +284,7 @@ function context(world: WorldView, dt: number, step: Step): RunContext {
 	return {
 		world,
 		dt,
+		pointer,
 		number(name: string): number {
 			const value = read(name);
 			if (typeof value !== "number") {

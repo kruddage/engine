@@ -62,8 +62,8 @@ krudd/
     introspect.scm Codegen — reads a module's .scm spec, emits its .h/.c
   engine/        The engine — one folder per module, Scheme spec + C together
     abi/         The plugin vtables, and nothing else
-    core/        Engine heartbeat — init/tick/shutdown, subsystem manager, script host
     base/        No engine concepts — log/, memory/, math/ (incl. the spatial types)
+    core/        Engine heartbeat — init/tick/shutdown, subsystem manager, script host
     world/       The scene and its data model — entity/, asset/, edit/
     render/      Backends and the passes that drive them — webgl/, webgpu/,
                  null/, frame_graph/, particles/, scene_renderer/, plus renderer.scm
@@ -75,7 +75,11 @@ krudd/
 ```
 
 The tiers are listed in dependency order: a module may only reach for one in a tier above
-it. `kruddmake/manifest.scm` is the authoritative list and explains what each tier is for.
+it. `kruddmake/manifest.scm` is the authoritative list and explains what each tier is for,
+and the build reads that list back: generating `build.ninja` fails on any `(library …
+(link …))` edge that inverts it, naming both modules and their positions in the list.
+Executables are exempt — nothing links one, so `core`'s `index` reaching for every backend
+is the main module being assembled, not a tier reaching downward.
 
 Each module owns its Scheme source-of-truth spec, the C it lowers to (or hand-written C for
 speed), its headers, and its tests. A module whose Scheme is generated from — lowered to C,

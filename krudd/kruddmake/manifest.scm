@@ -5,6 +5,12 @@
 ;;! module sits in, so the layout on disk carries the same ordering this list
 ;;! does.
 ;;!
+;;! resolve-check-tiers reads this list and fails generation on any `(library
+;;! … (link …))` edge that inverts it, so the rule above is enforced rather
+;;! than remembered (#923). Executables are exempt: nothing links one, so
+;;! core's `index` linking every backend is the main-module link, not a tier
+;;! reaching downward.
+;;!
 ;;! Most entries are modules: Scheme spec + C, building libraries, executables
 ;;! and tests. A few build nothing and are listed only because they declare code
 ;;! generation — an `(embed)`, an `(emit-interface-header)`, a
@@ -19,12 +25,17 @@
 ;;!             includes no module's headers: where a vtable needs a type it
 ;;!             owns no definition of, it forward-declares the tag rather than
 ;;!             reaching down into the module that implements it.
-;;!   core/     the engine itself: subsystems, the s7 script host and image,
-;;!             and the boot path. Not the shells — see shell/ below.
 ;;!   base/     no engine concepts at all — logging, allocation, arithmetic.
 ;;!             Includes the spatial types (struct transform, struct mat4),
 ;;!             which are geometry rather than world data model, so base/ can
-;;!             stay strictly below world/.
+;;!             stay strictly below world/. It links nothing outside itself,
+;;!             which is what the bottom of the order looks like.
+;;!   core/     the engine itself: subsystems, the s7 script host and image,
+;;!             and the boot path. Not the shells — see shell/ below. Listed
+;;!             after base/ because `script` logs: 26 libraries link `log` and
+;;!             32 link `memory`, which is the fan-in of a tier below the
+;;!             engine core, not above it. core/ was first here until the check
+;;!             below had an opinion about it (#923).
 ;;!   world/    the scene and its data model: entities, assets, editing.
 ;;!   render/   the backends and the passes that drive them, plus the two
 ;;!             Scheme sources the renderer generates from: renderer.scm (the
@@ -42,10 +53,10 @@
 ;;!             targets — its assets are copied by the generator — but it is
 ;;!             listed, for the shell template it configures.
 
-("core"
- "base/log"
+("base/log"
  "base/memory"
  "base/math"
+ "core"
  "world/edit"
  "world/entity"
  "world/asset"

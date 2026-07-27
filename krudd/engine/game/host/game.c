@@ -55,6 +55,13 @@ EM_JS(void, game_launcher_hide, (void), {
 	if (el)
 		el.classList.add('hidden');
 })
+
+/* Show the "Play <name>" splash (see game_boot_default) that stands between
+ * a boot default and the board until the player taps it. */
+EM_JS(void, game_show_play_prompt, (const char *name), {
+	if (typeof window.kruddShowPlayPrompt === 'function')
+		window.kruddShowPlayPrompt(UTF8ToString(name));
+})
 #endif
 
 int game_register(const char *name, void (*load)(void))
@@ -139,6 +146,12 @@ int game_boot_default(const char *name)
 	 * menu button (shell.html.in) still reopens the launcher to pick another.
 	 */
 	game_launcher_hide();
+	/* A launcher pick is a deliberate choice; booting straight into a scene
+	 * isn't, so it gets a "Play <name>" splash in place of the launcher
+	 * click that never happened — and a place for the first user gesture to
+	 * land so the audio context can unlock (see the play-prompt handler in
+	 * shell.html.in). */
+	game_show_play_prompt(g_games[index].name);
 #endif
 	return index;
 }

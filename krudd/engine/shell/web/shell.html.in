@@ -712,6 +712,65 @@ canvas {
 	color: #fff;
 }
 
+/*
+ * ── Play prompt ──
+ *
+ * A one-tap splash that sits over the board the moment a game boots straight
+ * in (the default path — see game_boot_default in game.c, which shows this
+ * right where it used to just dismiss the launcher and leave bare canvas).
+ * Its Play button is also where the first user gesture lands, so the click
+ * handler below resumes the WebAudio context there rather than counting on
+ * whatever the player's first move happens to click.
+ */
+.play-prompt {
+	position: fixed;
+	inset: 0;
+	background: rgba(13, 13, 13, 0.96);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 5000;
+	padding: 20px;
+}
+
+.play-prompt.hidden { display: none; }
+
+.play-prompt-panel {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 18px;
+}
+
+.play-prompt-title {
+	font-size: 22px;
+	font-weight: bold;
+	letter-spacing: 0.2em;
+	text-transform: uppercase;
+	color: #fff;
+}
+
+.play-prompt-btn {
+	background: #141414;
+	border: 1px solid #333;
+	border-left: 3px solid #2d6a2d;
+	color: #ddd;
+	font-family: inherit;
+	font-size: 16px;
+	letter-spacing: 0.15em;
+	text-transform: uppercase;
+	padding: 12px 40px;
+	cursor: pointer;
+	transition: border-color 0.12s, background 0.12s;
+}
+
+.play-prompt-btn:hover {
+	background: #1c1c1c;
+	border-color: #555;
+	border-left-color: #4a9a4a;
+	color: #fff;
+}
+
 /* ── Error overlay ── */
 
 .error-backdrop {
@@ -936,6 +995,13 @@ canvas {
 	</div>
 </div>
 
+<div class="play-prompt hidden" id="play-prompt">
+	<div class="play-prompt-panel">
+		<div class="play-prompt-title" id="play-prompt-title">Play Chess</div>
+		<button class="play-prompt-btn" id="play-prompt-btn">Play</button>
+	</div>
+</div>
+
 <div class="error-backdrop" id="error-backdrop">
 	<div class="error-box">
 		<div class="error-header">
@@ -1046,6 +1112,36 @@ canvas {
 		if (el)
 			el.classList.remove('loading');
 	};
+
+	/*
+	 * Called by game_boot_default (game.c) right after it loads the boot scene
+	 * and dismisses the launcher, so a player who lands on the default chess
+	 * boot sees a "Play Chess" splash instead of the board cold. NAME is the
+	 * booted game's launcher label; an empty/missing one falls back to
+	 * "Play" so a future non-chess default still reads sensibly.
+	 */
+	window.kruddShowPlayPrompt = function (name) {
+		var el = document.getElementById('play-prompt');
+		if (!el)
+			return;
+		var title = document.getElementById('play-prompt-title');
+		if (title)
+			title.textContent = name ? 'Play ' + name : 'Play';
+		el.classList.remove('hidden');
+	};
+
+	document.getElementById('play-prompt-btn').addEventListener('click', function () {
+		document.getElementById('play-prompt').classList.add('hidden');
+		/*
+		 * Browsers only let an AudioContext leave 'suspended' from inside a
+		 * user-gesture handler, so this is the one guaranteed gesture every
+		 * player makes before hearing anything — resume it directly rather
+		 * than hope a later click (a board move, say) does the job.
+		 */
+		var ctx = window.Module && Module.__kruddAudioCtx;
+		if (ctx && ctx.state !== 'running' && ctx.resume)
+			ctx.resume();
+	});
 
 	/*
 	 * Show or hide the editor chrome (called from plugin_abi.c whenever the

@@ -14,6 +14,13 @@
  * `recycle` already exists in exactly this shape, hand-written, in
  * `packages/shell/web/src/index.ts` — it is a node nobody had drawn yet.
  *
+ * A node never hardcodes which column it walks — it resolves a name from a
+ * `column-name` param, once per phase, and asks the world for that column.
+ * `position` and `velocity` are only the defaults; they are what makes the
+ * triangles project keep running unchanged once the board declares them
+ * itself. See `document.ts`'s `BoardColumn` for why the declaration lives on
+ * the board rather than on whichever node happens to output the column.
+ *
  * The defaults here are the constants the engine runs today, not
  * placeholders: changing `radius` here is changing where the triangles
  * spawn.
@@ -23,6 +30,9 @@ import type { NodeKind, Registry } from "./document";
 
 /** A whole column of positions or velocities, three floats per slot. */
 const COLUMN: "column<vec3>" = "column<vec3>";
+
+/** The param type a column-name param declares itself with. */
+const COLUMN_NAME: "column-name" = "column-name";
 
 /**
  * The kinds, by name.
@@ -50,6 +60,8 @@ export const KINDS: Registry = {
 			{ name: "count", type: "u32", default: 8, min: 0, max: 65536 },
 			{ name: "radius", type: "f32", default: 0.4, min: 0 },
 			{ name: "speed", type: "f32", default: 0.25, min: 0 },
+			{ name: "position", type: COLUMN_NAME, default: "position" },
+			{ name: "velocity", type: COLUMN_NAME, default: "velocity" },
 		],
 		run: (c) => {
 			const count = c.number("count");
@@ -65,9 +77,11 @@ export const KINDS: Registry = {
 			}
 			// Fetched after the spawns, never before: a spawn can move the
 			// column, and a view taken first would be writing into memory that
-			// is no longer it.
-			const position = c.world.positions();
-			const velocity = c.world.velocities();
+			// is no longer it. Which column is this node's own business only in
+			// name — `validate` has already checked the board declares it at a
+			// matching kind.
+			const position = c.world.column(c.text("position")) as Float32Array;
+			const velocity = c.world.column(c.text("velocity")) as Float32Array;
 			for (let i = 0; i < count; i++) {
 				const angle = (i / count) * Math.PI * 2;
 				position[i * 3] = Math.cos(angle) * radius;
@@ -95,10 +109,13 @@ export const KINDS: Registry = {
 			{ name: "velocity", type: COLUMN },
 		],
 		outputs: [{ name: "position", type: COLUMN }],
-		params: [],
+		params: [
+			{ name: "position", type: COLUMN_NAME, default: "position" },
+			{ name: "velocity", type: COLUMN_NAME, default: "velocity" },
+		],
 		run: (c) => {
-			const position = c.world.positions();
-			const velocity = c.world.velocities();
+			const position = c.world.column(c.text("position")) as Float32Array;
+			const velocity = c.world.column(c.text("velocity")) as Float32Array;
 			// The whole column in one walk, tombstones included. A tombstoned
 			// slot has a zero velocity and so integrates to itself, which is
 			// cheaper than asking the engine which slots are live — and asking
@@ -122,11 +139,12 @@ export const KINDS: Registry = {
 			// screen rather than as a visible jump.
 			{ name: "limit", type: "f32", default: 3.2, min: 0 },
 			{ name: "radius", type: "f32", default: 0.4, min: 0 },
+			{ name: "position", type: COLUMN_NAME, default: "position" },
 		],
 		run: (c) => {
 			const limit = c.number("limit");
 			const radius = c.number("radius");
-			const position = c.world.positions();
+			const position = c.world.column(c.text("position")) as Float32Array;
 			for (let i = 0; i < position.length; i += 3) {
 				const x = position[i] as number;
 				const y = position[i + 1] as number;
@@ -162,6 +180,13 @@ export const KINDS: Registry = {
 			// what a board is.
 			{ name: "mesh", type: "mesh", default: "triangle" },
 			{ name: "scale", type: "f32", default: 0.35, min: 0 },
+			// Named so `validate` can check it against the board's declared
+			// columns like every other column-name param — but `render()` draws
+			// from the engine's own position column regardless of what this
+			// resolves to. Making the renderer take a column by name is a
+			// boundary change nothing in this PR needs; until then this param
+			// documents the dependency rather than redirecting it.
+			{ name: "position", type: COLUMN_NAME, default: "position" },
 		],
 		run: (c) => {
 			// Two crossings for the whole frame, whatever the draw count. The

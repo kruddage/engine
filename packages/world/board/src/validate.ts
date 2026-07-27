@@ -20,8 +20,10 @@
 
 import type {
 	Board,
+	BoardColumn,
 	BoardId,
 	BoardNode,
+	ColumnKind,
 	Lane,
 	NodeId,
 	NodeKind,
@@ -35,11 +37,13 @@ import type {
 	WireId,
 } from "./document";
 import {
+	COLUMN_KINDS,
 	DOCUMENT_VERSION,
 	EXEC_IN,
 	EXEC_OUT,
 	LANES,
 	PORT_TYPES,
+	paramOf,
 } from "./document";
 import { KINDS, kindOf } from "./kinds";
 
@@ -132,6 +136,8 @@ function checkBoard(
 	kinds: Registry,
 	problems: Problem[],
 ): void {
+	const columns = checkColumns(board, value, problems);
+
 	const nodes = new Map<NodeId, BoardNode>();
 	for (const node of value.nodes) {
 		if (nodes.has(node.id)) {
@@ -143,7 +149,7 @@ function checkBoard(
 			continue;
 		}
 		nodes.set(node.id, node);
-		checkNode(project, board, node, kinds, problems);
+		checkNode(project, board, node, kinds, columns, problems);
 	}
 
 	const seen = new Set<WireId>();
@@ -221,12 +227,38 @@ function checkBoard(
 	checkExecCycles(board, value, problems);
 }
 
+/**
+ * Everything wrong with a board's declared columns, and the columns
+ * themselves — by name, kind conflicts already resolved in favour of the
+ * first declaration — for [`checkParams`] to check a column-name param
+ * against.
+ */
+function checkColumns(
+	board: BoardId,
+	value: Board,
+	problems: Problem[],
+): ReadonlyMap<string, ColumnKind> {
+	const columns = new Map<string, ColumnKind>();
+	for (const column of value.columns ?? []) {
+		if (columns.has(column.name)) {
+			problems.push({
+				board,
+				message: `two columns share the name \`${column.name}\``,
+			});
+			continue;
+		}
+		columns.set(column.name, column.kind);
+	}
+	return columns;
+}
+
 /** Everything wrong with one node. */
 function checkNode(
 	project: Project,
 	board: BoardId,
 	node: BoardNode,
 	kinds: Registry,
+	columns: ReadonlyMap<string, ColumnKind>,
 	problems: Problem[],
 ): void {
 	const at = { board, node: node.id };
@@ -266,7 +298,7 @@ function checkNode(
 			});
 		}
 	}
-	checkParams(at, node, kind, problems);
+	checkParams(at, node, kind, columns, problems);
 }
 
 /** Everything wrong with what a node sets its params to. */
@@ -274,6 +306,7 @@ function checkParams(
 	at: { board: BoardId; node: NodeId },
 	node: BoardNode,
 	kind: NodeKind,
+	columns: ReadonlyMap<string, ColumnKind>,
 	problems: Problem[],
 ): void {
 	for (const [name, value] of Object.entries(node.params ?? {})) {
@@ -289,6 +322,70 @@ function checkParams(
 		if (wrong !== null) {
 			problems.push({ ...at, message: `param \`${name}\`: ${wrong}` });
 		}
+	}
+	// Every column-name param at its *effective* value — the node's own, or
+	// the kind's default — not only the ones a node happens to override. A
+	// node that never touches its `position` param still runs against
+	// whatever the board declares `position` to be, so a kind mismatch has to
+	// be caught there too, not only on a node that names a column explicitly.
+	for (const declared of kind.params) {
+		if (declared.type !== "column-name") {
+			continue;
+		}
+		const value = paramOf(node, kind, declared.name);
+		if (typeof value === "string") {
+			checkColumnNameParam(at, kind, declared.name, value, columns, problems);
+		}
+	}
+}
+
+/**
+ * Everything wrong with a param that names a column: that the board declares
+ * it, and that its kind is the one the port the param names actually feeds.
+ */
+function checkColumnNameParam(
+	at: { board: BoardId; node: NodeId },
+	kind: NodeKind,
+	name: string,
+	value: string,
+	columns: ReadonlyMap<string, ColumnKind>,
+	problems: Problem[],
+): void {
+	const declaredKind = columns.get(value);
+	if (declaredKind === undefined) {
+		problems.push({
+			...at,
+			message: `param \`${name}\` names column \`${value}\`, which this board does not declare`,
+		});
+		return;
+	}
+	// The port of the same name is the one this column-name param feeds, on
+	// whichever side the kind has it — `integrate`'s `position` param feeds a
+	// port of that name on both sides, because it reads and writes the same
+	// column.
+	const port = [...kind.inputs, ...kind.outputs].find((p) => p.name === name);
+	const fed = port === undefined ? undefined : columnKindOf(port.type);
+	if (fed !== undefined && fed !== declaredKind) {
+		problems.push({
+			...at,
+			message:
+				`param \`${name}\` names column \`${value}\`, declared as ` +
+				`${declaredKind}, but the port it feeds takes column<${fed}>`,
+		});
+	}
+}
+
+/** The element width a `column<...>` port type carries, or `undefined`. */
+function columnKindOf(type: PortType): ColumnKind | undefined {
+	switch (type) {
+		case "column<vec3>":
+			return "vec3";
+		case "column<f32>":
+			return "f32";
+		case "column<u32>":
+			return "u32";
+		default:
+			return undefined;
 	}
 }
 
@@ -519,6 +616,9 @@ export function serializeProject(project: Project): string {
 				title: board.title,
 				...(board.lanes === undefined ? {} : { lanes: board.lanes }),
 				...(board.pro === undefined ? {} : { pro: board.pro }),
+				...(board.columns === undefined
+					? {}
+					: { columns: board.columns.map(plainColumn) }),
 				nodes: board.nodes.map(plainNode),
 				wires: board.wires.map(plainWire),
 			};
@@ -549,6 +649,11 @@ function plainWire(wire: Wire): Record<string, unknown> {
 		kind: wire.kind,
 		...(wire.cut === undefined ? {} : { cut: wire.cut }),
 	};
+}
+
+/** One column declaration with its fields in the document's order. */
+function plainColumn(column: BoardColumn): Record<string, unknown> {
+	return { name: column.name, kind: column.kind };
 }
 
 /**
@@ -593,10 +698,16 @@ function asBoard(value: unknown, board: BoardId): Board {
 	if (raw.pro !== undefined && typeof raw.pro !== "boolean") {
 		throw one({ board }, "`pro` must be true or false");
 	}
+	if (raw.columns !== undefined && !Array.isArray(raw.columns)) {
+		throw one({ board }, "`columns` must be a list");
+	}
 	return {
 		title: raw.title,
 		...(raw.lanes === undefined ? {} : { lanes: asLanes(raw.lanes, board) }),
 		...(raw.pro === undefined ? {} : { pro: raw.pro }),
+		...(raw.columns === undefined
+			? {}
+			: { columns: raw.columns.map((column) => asColumn(column, board)) }),
 		nodes: raw.nodes.map((node) => asNode(node, board)),
 		wires: raw.wires.map((wire) => asWire(wire, board)),
 	};
@@ -620,6 +731,21 @@ function asLanes(
 	// third saying something about the game would be worse than one that
 	// labelled none.
 	return labels as Record<Lane, string>;
+}
+
+/** One column declaration, checked. */
+function asColumn(value: unknown, board: BoardId): BoardColumn {
+	const raw = asRecord(value, { board }, "a column");
+	if (typeof raw.name !== "string") {
+		throw one({ board }, "every column needs a `name`");
+	}
+	if (typeof raw.kind !== "string" || !isColumnKind(raw.kind)) {
+		throw one(
+			{ board },
+			`column \`${raw.name}\`: \`kind\` must be one of ${COLUMN_KINDS.join(", ")}`,
+		);
+	}
+	return { name: raw.name, kind: raw.kind };
 }
 
 /** One node, checked. */
@@ -734,6 +860,11 @@ function asRecord(
 /** Whether a string is one of the three lanes. */
 function isLane(value: string): value is (typeof LANES)[number] {
 	return (LANES as readonly string[]).includes(value);
+}
+
+/** Whether a string is one of the three column kinds. */
+function isColumnKind(value: string): value is ColumnKind {
+	return (COLUMN_KINDS as readonly string[]).includes(value);
 }
 
 /** One problem, as the error to throw. */

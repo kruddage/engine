@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+import type { ColumnKind } from "./document";
+
 /**
  * What a node needs from the world it runs against, and what it is handed.
  *
@@ -20,15 +22,23 @@ export interface WorldView {
 	/** Allocates one entity and returns its slot index. */
 	spawn(x: number, y: number, z: number): number;
 	/**
-	 * The position column: three floats per slot, over the engine's own
-	 * memory.
+	 * Creates a named column if it does not already exist, sized to the
+	 * current slot count. See `@krudd/boundary`'s `ensureColumn`.
+	 *
+	 * The `Runner` calls this once per column a board declares, before the
+	 * Start lane runs — a node's `run` never has to, which is what keeps a
+	 * node a function of the columns it is handed rather than of whether they
+	 * happen to exist yet.
+	 */
+	ensureColumn(name: string, kind: ColumnKind): void;
+	/**
+	 * A named column, over the engine's own memory: three floats per slot for
+	 * a `vec3` column, one for `f32`, one `u32` count for `u32`.
 	 *
 	 * Fetched where it is used and never stored, because a `spawn` can move it
 	 * and growing wasm memory detaches it silently. See `docs/boundary.md`.
 	 */
-	positions(): Float32Array;
-	/** The velocity column, laid out and invalidated exactly like positions. */
-	velocities(): Float32Array;
+	column(name: string): Float32Array | Uint32Array;
 	/** How many slots the columns cover, live and tombstoned alike. */
 	readonly slotCount: number;
 	/** Draws the world. One crossing for the whole frame. */

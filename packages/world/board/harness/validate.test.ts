@@ -250,6 +250,92 @@ test("a param the kind does not declare, or one out of range, is refused", () =>
 	only(project(fractional, [...root().wires]), "ring", "count");
 });
 
+test("a param naming a column the board does not declare is refused by name", () => {
+	const nodes = root().nodes.map((node) =>
+		node.id === "ring" ? { ...node, params: { position: "nonesuch" } } : node,
+	);
+	const line = names(project(nodes, [...root().wires]), "ring", "nonesuch");
+	assert.ok(line.includes("does not declare"), line);
+});
+
+test("a declared column whose kind does not match the port it feeds is refused", () => {
+	const mismatched: Project = {
+		...TRIANGLES,
+		boards: {
+			...TRIANGLES.boards,
+			[ROOT_BOARD]: {
+				...root(),
+				// `position` feeds a `column<vec3>` port on `ring` and on
+				// `integrate`; declaring it `f32` is the mismatch.
+				columns: [
+					{ name: "position", kind: "f32" },
+					{ name: "velocity", kind: "vec3" },
+				],
+			},
+		},
+	};
+	const line = names(mismatched, "ring", "position");
+	assert.ok(
+		line.includes("f32") && line.includes("vec3"),
+		`both kinds should be named: ${line}`,
+	);
+});
+
+test("two columns sharing a name are refused", () => {
+	const duplicated: Project = {
+		...TRIANGLES,
+		boards: {
+			...TRIANGLES.boards,
+			[ROOT_BOARD]: {
+				...root(),
+				columns: [
+					{ name: "position", kind: "vec3" },
+					{ name: "position", kind: "vec3" },
+					{ name: "velocity", kind: "vec3" },
+				],
+			},
+		},
+	};
+	const found = problems(duplicated);
+	assert.ok(
+		found.some((line) => line.includes("position")),
+		`the duplicated name should be reported: ${found.join("\n")}`,
+	);
+});
+
+test("a `__proto__` key inside a column entry cannot pollute", () => {
+	// Written as text rather than through `JSON.stringify`, for the same
+	// reason the node case below is: `{ __proto__: … }` in a literal sets the
+	// prototype instead of a key, and a document off disk has no such
+	// courtesy.
+	const text = `{
+		"version": ${DOCUMENT_VERSION},
+		"root": "a",
+		"boards": {
+			"a": {
+				"title": "a",
+				"columns": [{
+					"name": "mark", "kind": "u32",
+					"__proto__": { "polluted": true }
+				}],
+				"nodes": [],
+				"wires": []
+			}
+		}
+	}`;
+	const read = parseProject(text);
+	assert.deepEqual(
+		read.boards.a?.columns,
+		[{ name: "mark", kind: "u32" }],
+		"a key the schema does not name must not survive the read",
+	);
+	assert.equal(
+		({} as Record<string, unknown>).polluted,
+		undefined,
+		"reading a document must not touch Object.prototype",
+	);
+});
+
 test("a node opening into a board the project has not got is refused by name", () => {
 	const nodes = root().nodes.map((node) =>
 		node.id === "draw" ? { ...node, board: "elsewhere" } : node,

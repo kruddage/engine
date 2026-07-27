@@ -1,9 +1,9 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
 ((library "game"
    (sources "game.c")
-   (public "."))
+   (public "include"))
  (native-only
   (executable "game_test"
               (sources "game_test.c" "game.c")
-              (private "."))
+              (private "include"))
   (test "game" "game_test")))

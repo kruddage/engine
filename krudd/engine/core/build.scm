@@ -30,7 +30,7 @@
  (executable "index"
              (sources "engine.c")
              (private "include" (raw "${generated}")
-                      (root "abi") (root "world/entity/include") (root "base/math/include") (root "game/host"))
+                      (root "abi") (root "world/entity/include") (root "base/math/include") (root "game/host/include"))
              (link "subsystem" "subsystem_manager" "log" "memory" "script")
              (wasm-modules "asset_plugin" "edit_plugin" "entity_plugin"
                            "renderer_webgl" "renderer_webgpu" "frame_graph" "scene_renderer"

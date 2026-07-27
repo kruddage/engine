@@ -48,6 +48,14 @@ export const TRIANGLES: Project = {
 	boards: {
 		[ROOT_BOARD]: {
 			title: "triangles",
+			// Declared explicitly rather than left implicit in `spawn-ring`'s
+			// output ports: a column is shared state with a lifetime longer than
+			// any one wire, and cutting the wire out of `spawn-ring` must not
+			// take `position` or `velocity` down with it.
+			columns: [
+				{ name: "position", kind: "vec3" },
+				{ name: "velocity", kind: "vec3" },
+			],
 			nodes: [
 				{ id: "start", kind: "start", lane: "start", column: 0 },
 				{ id: "ring", kind: "spawn-ring", lane: "start", column: 1 },

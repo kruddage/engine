@@ -172,6 +172,26 @@ test("the execution port comes first on both sides", () => {
 	assert.deepEqual(ports(KINDS, integrate, "out"), ["out", "position"]);
 });
 
+test("an exec wire lands at the same fraction on both ends, whatever the data ports", () => {
+	// `step` has no data ports at all; `integrate` has two on its `in` side.
+	// Before EXEC_FRACTION, the exec port's position was spread evenly with
+	// whatever data ports rode along beside it, so the two ends landed at
+	// different fractions of the node's width and the straight wire between
+	// them bowed into a wobble. Down flow stacks every node at the same `x`,
+	// so an exec wire between aligned ends must be perfectly vertical.
+	const down = placed("down");
+	const wire = down.wires.find((w) => w.id === "exec-step-integrate");
+	assert.ok(wire !== undefined);
+	assert.equal(wire.from.x, wire.to.x, "the exec wire runs straight down");
+
+	// `integrate` (one data port out) and `recycle` (one data port in) also
+	// have to agree, and did even before the fix — this guards against a
+	// change that fixes `step`/`integrate` but breaks this pair.
+	const other = down.wires.find((w) => w.id === "exec-integrate-recycle");
+	assert.ok(other !== undefined);
+	assert.equal(other.from.x, other.to.x, "also runs straight down");
+});
+
 test("every wire in the document is drawn", () => {
 	const across = placed("across");
 	assert.equal(

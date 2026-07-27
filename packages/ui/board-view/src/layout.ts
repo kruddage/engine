@@ -56,6 +56,19 @@ const LANE_GAP = 18;
 /** How far a wire bows out of its port before heading for the other end. */
 const WIRE_BOW = 34;
 
+/**
+ * Where the execution port sits along a node's edge, as a fraction of its
+ * width or height.
+ *
+ * Fixed, rather than spread evenly across however many data ports the node
+ * happens to have alongside it: two nodes joined by an exec wire rarely have
+ * the same number of data ports, and spacing them together made the exec
+ * port land at a different fraction on each side of the wire, bowing a
+ * straight line into a wobble. Data ports fill the rest of the edge, after
+ * this point, so they never land on it.
+ */
+const EXEC_FRACTION = 0.25;
+
 /** Which way lanes run. */
 export type Flow = "across" | "down";
 
@@ -260,11 +273,12 @@ function columnWidths(
 /**
  * Where a wire attaches, in board pixels.
  *
- * Ports are spread evenly along the node's leading or trailing edge, which
- * edge depending on the flow — that is what makes a wire re-route when the
- * lanes turn a corner rather than pointing at where the node used to be. The
- * execution port comes first on both sides, so the exec chain runs along one
- * consistent line through a lane.
+ * Data ports are spread evenly along the node's leading or trailing edge,
+ * which edge depending on the flow — that is what makes a wire re-route when
+ * the lanes turn a corner rather than pointing at where the node used to be.
+ * The execution port comes first on both sides and sits at `EXEC_FRACTION`
+ * always, so the exec chain runs along one consistent line through a lane
+ * regardless of how many data ports ride along beside it.
  */
 function anchor(
 	board: Board,
@@ -284,7 +298,16 @@ function anchor(
 	if (index < 0) {
 		return undefined;
 	}
-	const fraction = (index + 1) / (order.length + 1);
+	// Index 0 is always the execution port (`ports` puts it first on both
+	// sides) — fixed at `EXEC_FRACTION` rather than sharing the evenly-spaced
+	// formula with the data ports after it. The data ports then fill the
+	// remaining edge, from `EXEC_FRACTION` to the far end, so they spread out
+	// exactly as before but never land on the exec port's own spot.
+	const dataLength = order.length - 1;
+	const fraction =
+		index === 0
+			? EXEC_FRACTION
+			: EXEC_FRACTION + (1 - EXEC_FRACTION) * (index / (dataLength + 1));
 	if (flow === "across") {
 		return {
 			x: side === "out" ? node.x + node.width : node.x,

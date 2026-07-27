@@ -303,16 +303,19 @@
 ;;! dismiss the soft keyboard on focus, see field_sync in kruddgui.cpp.) They lift
 ;;! here onto a persistent top-centre toolbar: always shown (unlike the selection-
 ;;! gated mode-bar), each control its own trapped tap, driven by the shared krudd-
-;;! can-undo / krudd-undo / krudd-sim-mode accessors kruddboard registers — so the
-;;! ImGui board window (and draw_undo_redo / draw_sim_mode) is gone. Geometry keys
-;;! off kruddgui-btn so the chips read as finger targets alongside the mode-bar.
+;;! can-undo / krudd-undo accessors kruddboard registers — so the ImGui board
+;;! window (and draw_undo_redo) is gone. Geometry keys off kruddgui-btn so the
+;;! chips read as finger targets alongside the mode-bar.
+;;!
+;;! There is no play/pause chip: the simulation now follows the GAME / EDITOR
+;;! switch itself — entering the editor pauses it, leaving resumes it (see
+;;! entity_plugin.c's scene_tick) — so a manual toggle in the toolbar would only
+;;! fight that.
 (define kruddgui-tool-h 44)
 (define kruddgui-tool-w 92)
 
-;;! Play (running -> green) / Pause (paused -> amber) tints, and the greyed
-;;! backing / label an undo or redo chip takes when its history is empty.
-(define kruddgui-tool-play-bg  '(0.22 0.55 0.28 0.95))
-(define kruddgui-tool-pause-bg '(0.70 0.50 0.16 0.95))
+;;! The greyed backing / label an undo or redo chip takes when its history is
+;;! empty.
 (define kruddgui-tool-dis-bg   '(0.12 0.13 0.15 0.85))
 (define kruddgui-tool-dis-fg   '(0.42 0.44 0.48 1.0))
 
@@ -328,30 +331,20 @@
     (thunk)))
 
 ;;! (kruddgui-toolbar-buttons) the visible controls left->right, each a
-;;! (label bg fg enabled thunk) descriptor: the play/pause chip first (only when
-;;! the scene supports pausing — krudd-sim-mode returns #f otherwise), then undo
-;;! and redo, each greyed when its history is empty. Built as data so the layout
-;;! loop and the tests share one source of truth.
+;;! (label bg fg enabled thunk) descriptor: undo then redo, each greyed when its
+;;! history is empty. Built as data so the layout loop and the tests share one
+;;! source of truth.
 (define (kruddgui-toolbar-buttons)
-  (let ((sim (krudd-sim-mode))
-        (cu  (krudd-can-undo))
-        (cr  (krudd-can-redo)))
-    (append
-     (cond ((eq? sim 'paused)
-            (list (list "PLAY" kruddgui-tool-play-bg kruddgui-idle-fg
-                        #t krudd-toggle-sim)))
-           ((eq? sim 'playing)
-            (list (list "PAUSE" kruddgui-tool-pause-bg kruddgui-idle-fg
-                        #t krudd-toggle-sim)))
-           (else '()))
-     (list (list "UNDO"
-                 (if cu kruddgui-idle-bg kruddgui-tool-dis-bg)
-                 (if cu kruddgui-idle-fg kruddgui-tool-dis-fg)
-                 cu krudd-undo)
-           (list "REDO"
-                 (if cr kruddgui-idle-bg kruddgui-tool-dis-bg)
-                 (if cr kruddgui-idle-fg kruddgui-tool-dis-fg)
-                 cr krudd-redo)))))
+  (let ((cu (krudd-can-undo))
+        (cr (krudd-can-redo)))
+    (list (list "UNDO"
+                (if cu kruddgui-idle-bg kruddgui-tool-dis-bg)
+                (if cu kruddgui-idle-fg kruddgui-tool-dis-fg)
+                cu krudd-undo)
+          (list "REDO"
+                (if cr kruddgui-idle-bg kruddgui-tool-dis-bg)
+                (if cr kruddgui-idle-fg kruddgui-tool-dis-fg)
+                cr krudd-redo))))
 
 ;;! (kruddgui-toolbar-draw vw vh) the toolbar: a centred row of chips at the top
 ;;! margin, over a translucent backing that doubles as the input region so a down
@@ -2974,7 +2967,7 @@
 ;;! (kruddgui-perf-hud-draw) the host's per-tick entry point, called every
 ;;! frame regardless of editor chrome. Docked top-right, inset by the safe
 ;;! area and dropped below the toolbar's band so it never overlaps the
-;;! top-centre undo/redo/play chips when chrome is on; an already-open board
+;;! top-centre undo/redo chips when chrome is on; an already-open board
 ;;! or assets console may still cover it, same tradeoff the toolbar itself
 ;;! makes against those consoles. A no-op when the stats subsystem is absent.
 (define (kruddgui-perf-hud-draw)
@@ -3007,7 +3000,7 @@
 
 ;;! (kruddgui-draw) the whole layer — the host's per-tick entry point, laid out
 ;;! through the dock shell. Off a safe frame it reserves the top toolbar band
-;;! (play/pause, undo, redo), then the bottom mode-bar band (only with a selection),
+;;! (undo, redo), then the bottom mode-bar band (only with a selection),
 ;;! then the tray row of console pills; whatever free rect is left is the main area,
 ;;! where the one active console (if any) draws. Each piece owns its input region.
 ;;! The arbiter keeps at most one console in main, so two near-full-width consoles

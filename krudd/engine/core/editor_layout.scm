@@ -70,9 +70,6 @@
      (menu "&Help"
            (action "&About krudd" none "about")))
     (toolbar
-     (item "▶ Play" "play")
-     (item "■ Stop" "stop")
-     (separator)
      ;;! The live backend badge. The seed names no backend on purpose: which
      ;;! one the page ends up on — WebGPU or WebGL — is not known when the
      ;;! chrome is built. A seed that guessed would lie to the user for as long

@@ -1,5 +1,75 @@
 # Changelog
 
+## [19.0.0](https://github.com/kruddage/engine/compare/v18.8.4...v19.0.0) (2026-07-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* go web-only — drop the native editor, Flatpak and Windows support ([#897](https://github.com/kruddage/engine/issues/897))
+* remove the tic-tac-toe built-in game ([#896](https://github.com/kruddage/engine/issues/896))
+* restore the C and Scheme tree, delete the Rust/TypeScript one ([#893](https://github.com/kruddage/engine/issues/893))
+* krudd/ is gone. The C engine, the s7 Scheme runtime, kruddmake, the Qt editor and the Vulkan/WebGPU backends are deleted rather than strangled. The live demo and the Flatpak are dark until the hello-triangle chain lands.
+
+### Features
+
+* add a Commands recorder as the render test oracle ([#848](https://github.com/kruddage/engine/issues/848)) ([ff7e9f5](https://github.com/kruddage/engine/commit/ff7e9f574f1c242f3b8f2f52ff13e054741c5fbc)), closes [#826](https://github.com/kruddage/engine/issues/826)
+* **board-view:** nested boards, a breadcrumb, and two detail levels ([#863](https://github.com/kruddage/engine/issues/863)) ([9ec11d1](https://github.com/kruddage/engine/commit/9ec11d19a708cecfe98caf186465b587be5bae84))
+* **board-view:** the board, drawn ([#862](https://github.com/kruddage/engine/issues/862)) ([de163c2](https://github.com/kruddage/engine/commit/de163c2385b2b04c33e0ee5b230697c2b5f54cd4))
+* **board:** a board declares its columns ([#875](https://github.com/kruddage/engine/issues/875)) ([dc4fdf3](https://github.com/kruddage/engine/commit/dc4fdf3994b56b2d8cf1811e93f794051ec1fcff))
+* **board:** grid picking — the engine exposes the unproject ([#866](https://github.com/kruddage/engine/issues/866) PR-4) ([#876](https://github.com/kruddage/engine/issues/876)) ([827b751](https://github.com/kruddage/engine/commit/827b751232ed98e76f41873b5e19e8aba7becc56))
+* **board:** pointer as a node — the graph's first input ([#866](https://github.com/kruddage/engine/issues/866) PR-3) ([#874](https://github.com/kruddage/engine/issues/874)) ([e6c2560](https://github.com/kruddage/engine/commit/e6c256053fcbcc4ec602566def3507fd062ade52))
+* **board:** run the board — the demo stops being code ([#861](https://github.com/kruddage/engine/issues/861)) ([a7651b9](https://github.com/kruddage/engine/commit/a7651b9b8ee3246fcd5b32424d02958e212b308e))
+* **board:** save projects as .json, not a bespoke extension ([#870](https://github.com/kruddage/engine/issues/870)) ([3fb3daa](https://github.com/kruddage/engine/commit/3fb3daa4d99c526bbc74419caba1a8ef91d7d3f5)), closes [#869](https://github.com/kruddage/engine/issues/869)
+* **board:** the board document — a project as a graph of nodes ([#858](https://github.com/kruddage/engine/issues/858)) ([75dab66](https://github.com/kruddage/engine/commit/75dab6671be1016c126d2db7c2166b2f1f29fab0))
+* **board:** tic-tac-toe rules — spawn-grid and place-mark ([#866](https://github.com/kruddage/engine/issues/866) PR-6) ([#877](https://github.com/kruddage/engine/issues/877)) ([eb9dc43](https://github.com/kruddage/engine/commit/eb9dc43c6d22de71b8b2e5387a8333a74a8780ec))
+* **boundary:** columns the engine holds by name ([#871](https://github.com/kruddage/engine/issues/871)) ([1db03d7](https://github.com/kruddage/engine/commit/1db03d7c2e035b2f01bbfe90152e0d68088bbf9d))
+* **boundary:** read and write the velocity column without crossing per entity ([#856](https://github.com/kruddage/engine/issues/856)) ([52d08b2](https://github.com/kruddage/engine/commit/52d08b2158365b41ed27545b6bc7f6720e8b2fd4))
+* carry the world's columnar storage layout with topological order ([#849](https://github.com/kruddage/engine/issues/849)) ([e15ec0a](https://github.com/kruddage/engine/commit/e15ec0aa4d1d01d13d32a44cd2ed4cdeea894ec4)), closes [#828](https://github.com/kruddage/engine/issues/828)
+* editing — cut a wire and the triangles stop ([#864](https://github.com/kruddage/engine/issues/864)) ([ecbc3cf](https://github.com/kruddage/engine/commit/ecbc3cf54c3023a4c9466249f377f1ce847785ac))
+* go web-only — drop the native editor, Flatpak and Windows support ([#897](https://github.com/kruddage/engine/issues/897)) ([227d384](https://github.com/kruddage/engine/commit/227d38465348b52946897f80af17f62308f71c37))
+* pin down the Rust/TypeScript boundary contract ([#838](https://github.com/kruddage/engine/issues/838)) ([13e53c3](https://github.com/kruddage/engine/commit/13e53c3560d51efb77fe9e94e54f6253698df7bd)), closes [#817](https://github.com/kruddage/engine/issues/817)
+* remove the tic-tac-toe built-in game ([#896](https://github.com/kruddage/engine/issues/896)) ([9cbd527](https://github.com/kruddage/engine/commit/9cbd5271628e5bfd078de9640ef1b68fa4d03e45))
+* **render:** draw a triangle with the WebGL2 backend ([#843](https://github.com/kruddage/engine/issues/843)) ([9d7c174](https://github.com/kruddage/engine/commit/9d7c1747990d368a317fb61a19c012768f69ff6b))
+* **render:** per-entity colour, multiplied into the vertex colour ([#866](https://github.com/kruddage/engine/issues/866) PR-5) ([#872](https://github.com/kruddage/engine/issues/872)) ([f01a47e](https://github.com/kruddage/engine/commit/f01a47e54a486039670cb89eddb461f497d9e615))
+* restore the C and Scheme tree, delete the Rust/TypeScript one ([#893](https://github.com/kruddage/engine/issues/893)) ([4992c20](https://github.com/kruddage/engine/commit/4992c2007c7e585625ddc441297dfec916ceafde))
+* rewrite the build and package spine in Rust and TypeScript ([#832](https://github.com/kruddage/engine/issues/832)) ([81619e5](https://github.com/kruddage/engine/commit/81619e5e981d66d96bb5c8f815da972677e29a5e))
+* save a project to a file and open it again ([#855](https://github.com/kruddage/engine/issues/855)) ([#867](https://github.com/kruddage/engine/issues/867)) ([d4a2f07](https://github.com/kruddage/engine/commit/d4a2f07f5dcfce0906d13eed5f2fd5fe848a699b))
+* **shell:** boot into game mode with a GAME / EDITOR slider ([#898](https://github.com/kruddage/engine/issues/898)) ([7522d9c](https://github.com/kruddage/engine/commit/7522d9c65e8af791d7ffd1b2d039048815f41c87))
+* **shell:** show a "Play &lt;name&gt;" splash on boot and unlock audio on tap ([#899](https://github.com/kruddage/engine/issues/899)) ([4692229](https://github.com/kruddage/engine/commit/46922297cf93bd4d7f94f4d7a5cc9f3a89764073))
+* **shell:** swipe between the game and the board ([#859](https://github.com/kruddage/engine/issues/859)) ([277db9a](https://github.com/kruddage/engine/commit/277db9a55f385f99e41bffd962d40bb7558755fd))
+
+
+### Bug Fixes
+
+* **board-view:** pin the exec port's position, independent of data ports ([#878](https://github.com/kruddage/engine/issues/878)) ([c6d27d2](https://github.com/kruddage/engine/commit/c6d27d2ffd6645322da56d763b846e4dc7d6d5c0))
+* **render:** fit the drawing buffer within the WebGL2 surface limit ([#852](https://github.com/kruddage/engine/issues/852)) ([a393959](https://github.com/kruddage/engine/commit/a39395973c21ed95b2e72d6d157d2c95f26479b9))
+
+
+### Build System
+
+* bump @types/node from 22.20.1 to 26.1.1 ([#879](https://github.com/kruddage/engine/issues/879)) ([4ce4037](https://github.com/kruddage/engine/commit/4ce4037d89b21553178f8af816aba53c86667a2f))
+* Bump typescript from 5.9.3 to 7.0.2 ([#835](https://github.com/kruddage/engine/issues/835)) ([0d44749](https://github.com/kruddage/engine/commit/0d447496d901d44c74e0faf8c6b5cc7a8edad80e))
+
+
+### CI
+
+* Bump actions/setup-node from 6 to 7 ([#834](https://github.com/kruddage/engine/issues/834)) ([7655962](https://github.com/kruddage/engine/commit/7655962c96c121d59f31da6aae616cf6110b7c49))
+* Bump crazy-max/ghaction-import-gpg from 6 to 7 ([#837](https://github.com/kruddage/engine/issues/837)) ([c99cd2f](https://github.com/kruddage/engine/commit/c99cd2f01f4578b6de4ce8445f581799d5e67bbc))
+* bump crazy-max/ghaction-import-gpg from 6 to 7 ([#895](https://github.com/kruddage/engine/issues/895)) ([14f551a](https://github.com/kruddage/engine/commit/14f551ae73dbf90e6ec8f9425f902969b5a2b021))
+* Bump pnpm/action-setup from 4 to 6 ([#836](https://github.com/kruddage/engine/issues/836)) ([5555112](https://github.com/kruddage/engine/commit/555511219e456424ea1bc1c5a9598a15fcc57b72))
+* publish the site and per-PR previews again ([#844](https://github.com/kruddage/engine/issues/844)) ([edfb505](https://github.com/kruddage/engine/commit/edfb505210933e19f37014c2ecdf1cd63a6037e4))
+* stop the merge close event from cancelling main's build ([#851](https://github.com/kruddage/engine/issues/851)) ([e8e8e88](https://github.com/kruddage/engine/commit/e8e8e88c35a4326e3de48e1b74f17269e560df4d))
+
+
+### Tests
+
+* add a screenshot-and-compare harness against the WebGL2 build ([#850](https://github.com/kruddage/engine/issues/850)) ([24512fe](https://github.com/kruddage/engine/commit/24512fe790c2edb53d2c4b5f34ce7dc0de3a8b3b)), closes [#827](https://github.com/kruddage/engine/issues/827)
+
+
+### Chores
+
+* drop the native shells and the Flatpak packaging ([#847](https://github.com/kruddage/engine/issues/847)) ([d12089d](https://github.com/kruddage/engine/commit/d12089dfc7135f961bf1350a176d20c44c924cf1)), closes [#845](https://github.com/kruddage/engine/issues/845)
+
 ## [18.8.4](https://github.com/kruddage/engine/compare/v18.8.3...v18.8.4) (2026-07-26)
 
 

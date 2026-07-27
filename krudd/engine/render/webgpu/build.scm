@@ -4,9 +4,10 @@
    ;;! and kept free of WebGPU types so it builds — and is tested — without
    ;;! Dawn: the `(dawn)` library below is skipped natively when no prefix
    ;;! is configured, which is every CI run, so logic left inside it is
-   ;;! logic CI never compiles.
-   (sources "texture_registry.c")
-   (public "."))
+   ;;! logic CI never compiles. No public surface: texture_registry.h is
+   ;;! included by renderer_webgpu.c and by this module's own test, both of
+   ;;! which sit beside it.
+   (sources "texture_registry.c"))
  (library "renderer_webgpu"
    (sources "renderer_webgpu.c" "webgpu_platform.c")
    (private (raw "${generated}") (root "core/include"))

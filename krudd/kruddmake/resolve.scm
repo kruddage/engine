@@ -290,3 +290,79 @@
         (rz-spec-source-paths (car pair) (cdr pair))))
      manifest)
     #t))
+
+;;! The tier rule manifest.scm opens with: the directories are listed in
+;;! dependency order, and a module may only reach for one listed above it. Until
+;;! now nothing read that back, so the one library link that inverted it —
+;;! core/script -> base/log — landed in a green build and stayed there, with no
+;;! way to tell from inside the tree whether the list was wrong or the link was
+;;! (#923).
+;;!
+;;! The check lives here rather than in scripts/check-barriers.mjs because
+;;! kruddmake already holds both halves of it: manifest.scm's order is the list
+;;! this very generator is driven by, and rz-target-table already records the
+;;! module each library was declared in. Reading them from JS would mean a
+;;! second Scheme reader for manifest.scm and 22 build.scm files, and would put
+;;! node in the path of a rule about C. It runs from ninja-synthesize, so it
+;;! fails at generation — before a compile, on every `krudd build` and every
+;;! run-tests.sh run — and there is still exactly one tier list in the repo.
+;;!
+;;! Only library links are walked. Nothing links an executable: it is where the
+;;! program is assembled, so `index` linking every backend is the main-module
+;;! link rather than a tier reaching downward. A library linking downward is the
+;;! edge that makes the order a fiction, and it is the only one flagged. Links
+;;! within one module are a module's own business, and a system lib ("m") has no
+;;! module at all.
+(define (rz-position dirs dir)
+  (let loop ((l dirs) (i 0))
+    (cond ((null? l) -1)
+          ((string=? (car l) dir) i)
+          (else (loop (cdr l) (+ i 1))))))
+
+(define (rz-library-target? target)
+  (and (memq (rz-field target 'kind) '(library interface-library)) #t))
+
+;;! One inversion, as (name dir dep-name dep-dir position dep-position).
+(define (rz-target-inversions dirs table target)
+  (if (not (rz-library-target? target))
+      '()
+      (let ((dir (rz-field target 'dir)))
+        (rz-filter
+         (lambda (x) x)
+         (map (lambda (link)
+                (let ((dep (rz-lookup table link)))
+                  (and dep
+                       (let* ((ddir (rz-field dep 'dir))
+                              (at (rz-position dirs dir))
+                              (dep-at (rz-position dirs ddir)))
+                         (and (not (string=? ddir dir))
+                              (>= dep-at at)
+                              (list (car target) dir link ddir at dep-at))))))
+              (rz-field target 'links))))))
+
+(define (rz-tier-inversions manifest)
+  (let ((dirs (map car manifest))
+        (table (rz-target-table manifest)))
+    (apply append
+           (map (lambda (target) (rz-target-inversions dirs table target))
+                table))))
+
+(define (rz-inversion-message inv)
+  (string-append
+   "  " (list-ref inv 1) "/" (list-ref inv 0) " links " (list-ref inv 2)
+   ", declared in " (list-ref inv 3) ".\n"
+   "    manifest.scm lists " (list-ref inv 1) " at position "
+   (number->string (list-ref inv 4)) " and " (list-ref inv 3) " at position "
+   (number->string (list-ref inv 5))
+   " — a module may only link one listed above it.\n"))
+
+(define (resolve-check-tiers manifest)
+  (let ((bad (rz-tier-inversions manifest)))
+    (if (pair? bad)
+        (error 'rz-tier-inversion
+               (string-append
+                "kruddmake/manifest.scm tier order violated by "
+                (number->string (length bad))
+                (if (= (length bad) 1) " library link:\n" " library links:\n")
+                (apply string-append (map rz-inversion-message bad))))
+        #t)))

@@ -475,6 +475,7 @@
           (libmap (ninja-build-libmap manifest)))
       (resolve-check-all table)
       (resolve-check-codegen manifest)
+      (resolve-check-tiers manifest)
       (ninja-emit* (ninja-preamble srcroot))
       (ninja-emit-regen manifest srcroot regen-cmd)
       (for-each

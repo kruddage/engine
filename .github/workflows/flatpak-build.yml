@@ -1,0 +1,180 @@
+name: Flatpak build (editor, proof of life)
+
+# Builds the native Qt editor (`krudd editor-qt`, #675/#676) as a Flatpak and,
+# when a signing key is configured, publishes a self-hosted, GPG-signed
+# registry to this repo's gh-pages branch — see packaging/flatpak/README.md
+# for the full picture, including the editor's own proof-of-life caveat
+# (still an animated clear, not a real scene).
+#
+# Triggers, like every other native-editor target: left out of the default
+# per-PR CI (see the root README's CI table) since it needs a full Flatpak SDK
+# download. The editor itself compiles inside the sandbox against org.kde.Sdk's
+# Qt6 and Vulkan loader — nothing is prebuilt on the runner any more (the
+# native GPU path is Vulkan, not vendored Dawn). Three ways in:
+#
+#   * workflow_dispatch at a vX.Y.Z tag — the release path. release-please
+#                        dispatches this itself right after it cuts a version
+#                        tag/GitHub Release (see the last step of
+#                        .github/workflows/release-please.yml), which is what
+#                        re-publishes the registry for a normal engine release
+#                        so `flatpak update` on a Steam Deck actually pulls the
+#                        new editor. The run checks out the dispatched tag, so
+#                        it packages exactly the released source. Dispatching
+#                        the same tag by hand re-publishes that release.
+#   * push to main     — path-scoped to the packaging files themselves, so a
+#                        change to how the Flatpak is built/packaged republishes
+#                        without waiting for the next release.
+#   * release          — kept because it is the obvious trigger, but it cannot
+#                        be relied on: release-please creates the Release with
+#                        GITHUB_TOKEN, and Actions does not start workflow runs
+#                        from GITHUB_TOKEN-authored events (the same recursion
+#                        rule release-please.yml already notes for its release
+#                        PR). workflow_dispatch/repository_dispatch are the
+#                        documented exceptions to that rule, which is why the
+#                        release path above dispatches instead of relying on
+#                        this. It does fire if release-please is ever switched
+#                        to a PAT or App token.
+#
+# Signing + publish are opt-in per fork/checkout: they run only when
+# FLATPAK_GPG_PRIVATE_KEY is set as a repo secret (see the "signing" step and
+# packaging/flatpak/README.md's "hosting your own registry" section). Without
+# it, this still builds and validates the Flatpak (unsigned bundle, uploaded
+# as a workflow artifact) — it just doesn't publish anywhere.
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+  push:
+    branches: [main]
+    paths:
+      - packaging/flatpak/**
+      - .github/workflows/flatpak-build.yml
+
+jobs:
+  flatpak-build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # Shared with ci.yml's deploy job: both push to gh-pages, and a main push
+    # fires both at once. One serial group across both workflows keeps their
+    # gh-pages pushes from racing (the loser is rejected non-fast-forward).
+    concurrency:
+      group: gh-pages-deploy
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+
+      # The editor compiles entirely inside the flatpak-builder sandbox against
+      # org.kde.Sdk's own Qt6 and Vulkan loader/headers, so the runner needs
+      # nothing but the Flatpak tooling — no toolchain, no prebuilt GPU library.
+      # elfutils provides eu-strip, which flatpak-builder invokes to split debug
+      # info off the built binary. Without it the build fails at the strip step
+      # ("Failed to execute child process eu-strip") after a clean compile, so
+      # nothing is ever exported or published.
+      - name: Install Flatpak tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder elfutils
+
+      - name: Add Flathub remote (org.kde.Platform/Sdk)
+        run: |
+          flatpak remote-add --if-not-exists --user flathub \
+            https://flathub.org/repo/flathub.flatpakrepo
+
+      # The engine links prebuilt s7 artifacts fetched from the kruddage/s7
+      # release (krudd/third_party/sync.sh), but flatpak-builder runs module
+      # builds in a sandbox with networking off — in there the fetch dies on
+      # "Could not resolve host: github.com" and takes the whole build with it.
+      # So fetch them out here, where there is network, into the working tree
+      # the manifest copies in as `krudd-src`; the in-sandbox build runs with
+      # KRUDD_S7_OFFLINE=1 and verifies these against the .sha256 sidecars
+      # cached alongside them rather than re-downloading.
+      #
+      # sync.sh is normally sourced with $root preset by krudd.sh; running it
+      # directly with $root in its environment does the same fetch on its own,
+      # without needing a compiler or a full configure on the runner.
+      - name: Pre-fetch the s7 artifacts for the sandbox
+        run: root="$PWD" ./krudd/third_party/sync.sh
+
+      - name: flatpak-builder
+        run: |
+          flatpak-builder --user --force-clean --install-deps-from=flathub \
+            packaging/flatpak/build-dir \
+            packaging/flatpak/io.github.kruddage.Editor.yml
+
+      # Signing is opt-in: forks/self-hosters that want their own signed
+      # registry set this secret (see packaging/flatpak/README.md); without
+      # it, the steps below still produce an unsigned bundle for local
+      # testing but skip publishing.
+      - name: Check for a configured signing key
+        id: signing
+        run: |
+          if [ -n "${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Import signing key
+        if: steps.signing.outputs.enabled == 'true'
+        id: gpg
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.FLATPAK_GPG_PASSPHRASE }}
+
+      - name: Export the repo (signed)
+        if: steps.signing.outputs.enabled == 'true'
+        run: |
+          flatpak build-export --gpg-sign="${{ steps.gpg.outputs.fingerprint }}" \
+            packaging/flatpak/export-repo packaging/flatpak/build-dir
+
+      - name: Export the repo (unsigned — local/test builds only)
+        if: steps.signing.outputs.enabled != 'true'
+        run: |
+          flatpak build-export packaging/flatpak/export-repo packaging/flatpak/build-dir
+
+      - name: Bundle a .flatpak for the workflow artifact
+        run: |
+          if [ "${{ steps.signing.outputs.enabled }}" = true ]; then
+            sign_arg="--gpg-sign=${{ steps.gpg.outputs.fingerprint }}"
+          else
+            sign_arg=""
+          fi
+          flatpak build-bundle $sign_arg packaging/flatpak/export-repo \
+            krudd-editor.flatpak io.github.kruddage.Editor
+
+      - name: Upload .flatpak artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: krudd-editor-flatpak
+          path: krudd-editor.flatpak
+
+      # Publish only the authoritative build: a signed export from a release
+      # tag or a packaging change on main. On a release build github.ref is the
+      # tag (refs/tags/vX.Y.Z), not refs/heads/main — true both for a `release`
+      # event and for the tag-ref workflow_dispatch release-please sends, which
+      # is the path that actually fires (see the header). A dispatch at some
+      # other ref, or a PR build, still signs nothing to gh-pages. A fork with
+      # its own FLATPAK_GPG_PRIVATE_KEY set gets its own registry published to
+      # *its own* gh-pages, at its own <owner>.github.io/<repo>/ URL — nothing
+      # here is kruddage-specific.
+      - name: Publish the signed registry to gh-pages
+        if: steps.signing.outputs.enabled == 'true' && (github.event_name == 'release' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        run: |
+          repo_url="https://${{ github.repository_owner }}.github.io/${GITHUB_REPOSITORY#*/}/flatpak/"
+          mkdir -p packaging/flatpak/pages-out
+          cp -r packaging/flatpak/export-repo/. packaging/flatpak/pages-out/
+          ./packaging/flatpak/make-flatpakrepo.sh "$repo_url" \
+            "${{ steps.gpg.outputs.fingerprint }}" \
+            packaging/flatpak/pages-out/krudd.flatpakrepo
+
+      - name: Deploy to gh-pages
+        if: steps.signing.outputs.enabled == 'true' && (github.event_name == 'release' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: packaging/flatpak/pages-out
+          publish_branch: gh-pages
+          destination_dir: flatpak
+          keep_files: true

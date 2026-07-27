@@ -73,7 +73,6 @@ void scene_renderer_plugin_entry(struct subsystem_manager *mgr);
 void viewport_plugin_entry(struct subsystem_manager *mgr);
 void kruddgui_plugin_entry(struct subsystem_manager *mgr);
 void audio_scriptnode_plugin_entry(struct subsystem_manager *mgr);
-void tictactoe_plugin_entry(struct subsystem_manager *mgr);
 void chess_plugin_entry(struct subsystem_manager *mgr);
 
 /*
@@ -106,7 +105,6 @@ static const struct {
 	 * asset plugin seeded, so both must already be up. Registration order is
 	 * launcher-button order.
 	 */
-	{ "tictactoe",      tictactoe_plugin_entry      },
 	{ "chess",          chess_plugin_entry          },
 };
 #endif

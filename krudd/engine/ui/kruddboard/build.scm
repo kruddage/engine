@@ -11,9 +11,11 @@
 ((embed-scheme-module "md_parse.scm" "md_parse.h" "md_parse.scm.c")
 
  (native-only
+  ;;! md_parse.h is generated, so `generated/` is the surface — there is no
+  ;;! header at the module root to export, and md_parse.c is private.
   (library "md_parse"
     (sources "md_parse.c")
-    (public "." (raw "${generated}")))
+    (public (raw "${generated}")))
   (executable "md_parse_test"
               (sources "md_parse_test.c")
               (link "md_parse"))

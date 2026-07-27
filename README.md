@@ -72,12 +72,20 @@ There is no second build system and no step that exists only inside a CI
 workflow: `ci.yml` runs `cargo xtask check`, so a green local run is a green
 CI run. `cargo xtask help` lists the flags.
 
-What you should see from `cargo xtask serve`: a dark page with **eight
-coloured triangles** drifting outward from the centre, and a line of readout
-along the bottom — the version, what the renderer actually picked, the drawing
-buffer size, the frame rate, and the draw count. Rust simulates and draws;
-TypeScript reads the world out of wasm memory with no copy and writes back into
-the same view to recycle the ones that drift off screen.
+What you should see from `cargo xtask serve`: a dark page with a **3×3 grid**
+you can play tic-tac-toe on — tap a cell for an X, tap another for an O, three
+in a row lights up, and any tap after that starts again — and a line of readout
+along the bottom: the version, what the renderer actually picked, the drawing
+buffer size, the frame rate, and the draw count. Swipe (or use the rail) to see
+the board that *is* the game: the nodes and wires it is made of, editable while
+it runs.
+
+The demo it replaced is still there, one link away, at
+[`?project=triangles`](http://localhost:8080/?project=triangles) — eight
+coloured triangles drifting outward from the centre. Neither is code: both are
+projects, documents `@krudd/board` interprets, and the page knows only how to
+open one. Rust simulates and draws; TypeScript reads the world out of wasm
+memory with no copy and writes back into the same view.
 
 If something is wrong you get a full-screen message instead, not a blank
 canvas. That is deliberate: a renderer that stops drawing leaves its last frame

@@ -26,12 +26,10 @@
 
 import type { Project } from "./document";
 import { DOCUMENT_VERSION } from "./document";
+import { FRAME, FRAME_BOARD } from "./frame";
 
 /** The board the project opens on. */
 export const ROOT_BOARD = "triangles";
-
-/** The frame, one level down: what `Draw Entities` opens into. */
-export const FRAME_BOARD = "frame";
 
 /**
  * The wire the proof of life cuts.
@@ -126,54 +124,9 @@ export const TRIANGLES: Project = {
 			],
 		},
 
-		[FRAME_BOARD]: {
-			title: "Draw Entities",
-			// One level down, the three lanes are stages of a frame rather than
-			// of the game. Saying "every frame, to the screen" in here would be
-			// telling somebody standing inside a frame about frames.
-			lanes: {
-				start: "set up the frame",
-				step: "draw into it",
-				paint: "hand it to the screen",
-			},
-			// The frame is the detail, and Simple is the level where the detail
-			// is not shown. Opening Draw Entities at Simple opens nothing.
-			pro: true,
-			nodes: [
-				{ id: "begin", kind: "begin-frame", lane: "start", column: 0 },
-				{ id: "clear", kind: "clear", lane: "start", column: 1 },
-
-				{ id: "camera", kind: "camera", lane: "step", column: 0 },
-				{ id: "draw", kind: "draw", lane: "step", column: 1 },
-
-				{ id: "present", kind: "present", lane: "paint", column: 0 },
-			],
-			wires: [
-				{
-					id: "exec-begin-clear",
-					from: { node: "begin", port: "out" },
-					to: { node: "clear", port: "in" },
-					kind: "exec",
-				},
-				{
-					id: "data-begin-clear",
-					from: { node: "begin", port: "frame" },
-					to: { node: "clear", port: "frame" },
-					kind: "data",
-				},
-				{
-					id: "exec-camera-draw",
-					from: { node: "camera", port: "out" },
-					to: { node: "draw", port: "in" },
-					kind: "exec",
-				},
-				{
-					id: "data-camera-draw",
-					from: { node: "camera", port: "viewProjection" },
-					to: { node: "draw", port: "viewProjection" },
-					kind: "data",
-				},
-			],
-		},
+		// The frame the engine builds, held by every project that draws — see
+		// `./frame`, which is where it lives now that there is more than one
+		// project to open into it.
+		[FRAME_BOARD]: FRAME,
 	},
 };

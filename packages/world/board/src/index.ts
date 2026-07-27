@@ -12,9 +12,14 @@
  *
  * - `document` — the types. What a board, a node, a wire, a port and a param
  *   are.
- * - `kinds` — the node kinds the triangles project is made of, with the
- *   engine's own constants as their defaults.
- * - `triangles` — that project, checked in.
+ * - `kinds` — the node kinds the projects are made of, with the engine's own
+ *   constants as their defaults.
+ * - `frame` — the frame the engine builds, as a board. What `Draw Entities`
+ *   opens into, in every project that draws.
+ * - `triangles` — the demo, checked in as a project.
+ * - `tictactoe` — the second project, and the one that proves a board can
+ *   hold a game the demo never asked it to hold.
+ * - `colour` — a `color` param as three floats, for the kind that tints.
  * - `validate` — reading a document off disk, and refusing one that does not
  *   hold together, by name.
  * - `file` — what a project is called when it is saved, and what it is saved
@@ -33,6 +38,8 @@
  * kind is hand-written TypeScript rather than a wiring of other nodes.
  */
 
+export type { Rgb } from "./colour";
+export { rgbOf, WHITE } from "./colour";
 export type {
 	Board,
 	BoardColumn,
@@ -76,11 +83,17 @@ export {
 	PROJECT_MEDIA_TYPE,
 	projectFileName,
 } from "./file";
+export { FRAME, FRAME_BOARD } from "./frame";
 export { KINDS, kindOf } from "./kinds";
 export type { GridPick } from "./pick";
 export { pickCell } from "./pick";
 export { Runner } from "./run";
-export { FRAME_BOARD, PAINT_TO_DRAW, ROOT_BOARD, TRIANGLES } from "./triangles";
+export {
+	PAINT_TO_COLOURS,
+	TICTACTOE,
+	TICTACTOE_BOARD,
+} from "./tictactoe";
+export { PAINT_TO_DRAW, ROOT_BOARD, TRIANGLES } from "./triangles";
 export type { Problem } from "./validate";
 export {
 	BoardError,

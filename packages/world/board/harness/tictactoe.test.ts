@@ -20,7 +20,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Board, Project } from "../src/index";
-import { DOCUMENT_VERSION, Runner, winnerOf } from "../src/index";
+import {
+	cloneProject,
+	DOCUMENT_VERSION,
+	KINDS,
+	PAINT_TO_COLOURS,
+	parseProject,
+	Runner,
+	rgbOf,
+	serializeProject,
+	TICTACTOE,
+	TICTACTOE_BOARD,
+	toggleWire,
+	validate,
+	winnerOf,
+} from "../src/index";
 import { TestWorld } from "./world";
 
 /** The frame length every test steps at. Only its sign and non-zero-ness matter. */
@@ -99,8 +113,7 @@ function projectWithNothingSpawned(): Project {
  * `position` and `pickCell` quantises against, restated here only so a test
  * can name a cell by number and get the point that lands on it.
  */
-function cellCentre(cell: number): { x: number; y: number } {
-	const size = 2;
+function cellCentre(cell: number, size = 2): { x: number; y: number } {
 	const half = size / 2;
 	const step = size / 3;
 	const row = Math.floor(cell / 3);
@@ -115,8 +128,11 @@ function cellCentre(cell: number): { x: number; y: number } {
  * node under test never sees this inversion; it is only how a test states
  * "the finger came down here" in the units a `RunContext` actually hands out.
  */
-function tapAt(cell: number): { x: number; y: number; pressed: number } {
-	const { x, y } = cellCentre(cell);
+function tapAt(
+	cell: number,
+	size = 2,
+): { x: number; y: number; pressed: number } {
+	const { x, y } = cellCentre(cell, size);
 	const camera = { halfWidth: 2, halfHeight: 2 };
 	return {
 		x: (x / camera.halfWidth + 1) / 2,
@@ -374,6 +390,156 @@ test("winnerOf finds a winner along each of the eight lines individually", () =>
 			assert.deepEqual(result.line, line);
 		}
 	}
+});
+
+// The project itself, from here down: the same rules, but through the board
+// that actually ships rather than through this file's minimal fixture. What
+// these add is everything the fixture leaves out — the paint lane, the colour
+// column, and the params the shipped board sets rather than defaults.
+
+/** The grid size the shipped project runs at, read from the document itself. */
+function shippedSize(): number {
+	const board = TICTACTOE.boards[TICTACTOE_BOARD];
+	assert.ok(board !== undefined);
+	const size = board.nodes.find((node) => node.id === "grid")?.params?.size;
+	assert.equal(typeof size, "number");
+	return size as number;
+}
+
+/** One cell's colour, as the three floats the column holds. */
+function tintOf(world: TestWorld, cell: number): [number, number, number] {
+	const colour = world.column("colour") as Float32Array;
+	return [
+		colour[cell * 3] as number,
+		colour[cell * 3 + 1] as number,
+		colour[cell * 3 + 2] as number,
+	];
+}
+
+/** One of `colour-marks`'s own colour params, resolved through the registry. */
+function tint(name: "empty" | "x" | "o" | "win"): [number, number, number] {
+	const declared = KINDS["colour-marks"]?.params.find((p) => p.name === name);
+	assert.ok(declared !== undefined, `colour-marks has no \`${name}\` param`);
+	return [...rgbOf(declared.default as string)] as [number, number, number];
+}
+
+/**
+ * That a cell holds a colour, to the precision the column actually keeps.
+ *
+ * The column is `f32` and `rgbOf` divides in double precision, so `#33384a`'s
+ * red is 0.2 on one side and 0.20000000298023224 on the other. Comparing
+ * exactly would be asserting that a `Float32Array` is not one.
+ */
+function hasTint(
+	world: TestWorld,
+	cell: number,
+	expected: readonly [number, number, number],
+	why: string,
+): void {
+	const held = tintOf(world, cell);
+	for (let channel = 0; channel < 3; channel++) {
+		assert.ok(
+			Math.abs((held[channel] as number) - (expected[channel] as number)) <
+				1e-6,
+			`${why}: channel ${channel} is ${held[channel]}, expected ${expected[channel]}`,
+		);
+	}
+}
+
+test("the shipped project holds together, and opens on the board it names", () => {
+	assert.deepEqual(validate(TICTACTOE), []);
+	assert.ok(Object.hasOwn(TICTACTOE.boards, TICTACTOE.root));
+	assert.equal(TICTACTOE.root, TICTACTOE_BOARD);
+});
+
+test("it survives the round trip a saved file takes, field for field", () => {
+	const reopened = parseProject(serializeProject(TICTACTOE));
+	assert.deepEqual(reopened, TICTACTOE, "the project did not survive the trip");
+	assert.equal(
+		serializeProject(reopened),
+		serializeProject(TICTACTOE),
+		"and saving what was opened gives the same bytes back",
+	);
+});
+
+test("the grid it draws is the grid it picks against", () => {
+	const board = TICTACTOE.boards[TICTACTOE_BOARD];
+	assert.ok(board !== undefined);
+	const sizes = board.nodes
+		.filter((node) => node.kind === "spawn-grid" || node.kind === "place-mark")
+		.map((node) => node.params?.size);
+	assert.equal(sizes.length, 2, "one node lays the cells out, one picks them");
+	assert.equal(
+		sizes[0],
+		sizes[1],
+		"a pick that disagrees with the draw lands a tap on the wrong cell",
+	);
+});
+
+test("it boots to nine cells, every one of them visible before anybody taps", () => {
+	const world = new TestWorld();
+	const runner = new Runner(TICTACTOE, world);
+	runner.start();
+	assert.equal(world.slotCount, 9);
+
+	// The paint lane, once — which is where the tint is written, so before this
+	// the colour column is whatever the engine filled it with.
+	runner.frame(1 / 60);
+	assert.equal(world.draws, 1, "the paint lane reached the renderer");
+	for (let cell = 0; cell < 9; cell++) {
+		hasTint(world, cell, tint("empty"), `cell ${cell} should read as empty`);
+	}
+});
+
+test("playing it: an X, an O, and a lit winning line", () => {
+	const world = new TestWorld();
+	const runner = new Runner(TICTACTOE, world);
+	const size = shippedSize();
+	runner.start();
+
+	runner.frame(1 / 60, tapAt(0, size));
+	hasTint(world, 0, tint("x"), "X's cell took X's colour");
+	hasTint(world, 1, tint("empty"), "and its neighbour did not");
+
+	runner.frame(1 / 60, tapAt(3, size));
+	hasTint(world, 3, tint("o"), "O's cell took O's colour");
+
+	runner.frame(1 / 60, tapAt(1, size)); // X
+	runner.frame(1 / 60, tapAt(4, size)); // O
+	runner.frame(1 / 60, tapAt(2, size)); // X completes row 0-1-2
+
+	const over = world.column("over") as Uint32Array;
+	assert.equal(over[0], 1, "X won");
+	for (const cell of [0, 1, 2]) {
+		hasTint(world, cell, tint("win"), `cell ${cell} is on the winning line`);
+	}
+	hasTint(world, 3, tint("o"), "and a losing cell is not lit");
+});
+
+test("cutting the paint wire blanks the screen and the game plays on beneath it", () => {
+	const world = new TestWorld();
+	const project = cloneProject(TICTACTOE);
+	assert.equal(toggleWire(project, TICTACTOE_BOARD, PAINT_TO_COLOURS), true);
+	const runner = new Runner(project, world);
+	const size = shippedSize();
+	runner.start();
+
+	runner.frame(1 / 60, tapAt(0, size));
+	assert.equal(world.draws, 0, "nothing drew");
+	assert.equal(
+		world.blanks,
+		1,
+		"the screen was presented empty rather than stale",
+	);
+
+	const mark = world.column("mark") as Uint32Array;
+	const turn = world.column("turn") as Uint32Array;
+	assert.equal(mark[0], 1, "the tap still landed");
+	assert.equal(
+		turn[0],
+		2,
+		"and the turn still passed — the step lane is untouched",
+	);
 });
 
 test("winnerOf reports no winner over an empty board or a board with no completed line", () => {

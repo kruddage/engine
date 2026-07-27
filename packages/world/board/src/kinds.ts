@@ -1,7 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 /**
- * The node kinds the triangles project is made of.
+ * The node kinds the projects are made of.
+ *
+ * Two projects now — the triangles demo and tic-tac-toe — and no kind here
+ * knows which one it is running in. That is #866's rule: a capability only one
+ * game can use has not proven anything, so `spawn-grid` lays out a grid,
+ * `place-mark` runs a turn-based placement over columns it is told the names
+ * of, and `colour-marks` tints one column by another. Which of them are wired
+ * together is the document's business.
  *
  * Every one of them is a pure function of (columns, params) — that is the
  * rule that keeps a later compile-to-TypeScript step a transform rather than
@@ -26,12 +33,16 @@
  * spawn.
  */
 
+import { rgbOf } from "./colour";
 import type { NodeKind, Registry } from "./document";
 import { pickCell } from "./pick";
 import { winnerOf } from "./win";
 
-/** A whole column of positions or velocities, three floats per slot. */
+/** A whole column of positions, velocities or colours, three floats per slot. */
 const COLUMN: "column<vec3>" = "column<vec3>";
+
+/** A whole column of counts — a mark, a flag — one `u32` per slot. */
+const COLUMN_U32: "column<u32>" = "column<u32>";
 
 /** The param type a column-name param declares itself with. */
 const COLUMN_NAME: "column-name" = "column-name";
@@ -173,7 +184,15 @@ export const KINDS: Registry = {
 
 	"draw-entities": {
 		title: "Draw Entities",
-		inputs: [{ name: "position", type: COLUMN }],
+		// Two columns in, and neither by name — see the note on the params
+		// below. `colour` is here for the same reason `position` is: it records
+		// what this draw depends on, so a board that tints its entities shows a
+		// wire arriving where the tint is used rather than a node writing a
+		// column nothing appears to read.
+		inputs: [
+			{ name: "position", type: COLUMN },
+			{ name: "colour", type: COLUMN },
+		],
 		outputs: [],
 		params: [
 			// One mesh so far, so `mesh` reports rather than decides. `scale`
@@ -378,7 +397,15 @@ export const KINDS: Registry = {
 	"place-mark": {
 		title: "Place Mark",
 		inputs: [],
-		outputs: [],
+		// The two columns a move leaves behind, so that whatever reads the
+		// result of a move — `colour-marks`, today — is wired to the node that
+		// produced it rather than silently sharing a column name with it. Both
+		// are also `column-name` params below, which is what makes `validate`
+		// check the board declares them at a matching width.
+		outputs: [
+			{ name: "mark", type: COLUMN_U32 },
+			{ name: "won", type: COLUMN_U32 },
+		],
 		params: [
 			// Kept equal to `spawn-grid`'s own default for the same reason
 			// `pick-grid`'s and `spawn-grid`'s are kept equal: a pick has to
@@ -477,6 +504,66 @@ export const KINDS: Registry = {
 				return;
 			}
 			turn[0] = player === 1 ? 2 : 1;
+		},
+	},
+
+	"colour-marks": {
+		title: "Colour Marks",
+		// A column in, a column out: this is the whole of what makes an X look
+		// different from an O. The renderer multiplies each entity's colour
+		// into the shader's own vertex colour (#866 PR-5), so writing this
+		// column is the only per-entity appearance there is — and nothing in
+		// this kind knows the marks are a game. It maps a count to a colour.
+		inputs: [
+			{ name: "mark", type: COLUMN_U32 },
+			{ name: "won", type: COLUMN_U32 },
+		],
+		outputs: [{ name: "colour", type: COLUMN }],
+		params: [
+			{ name: "mark", type: COLUMN_NAME, default: "mark" },
+			{ name: "won", type: COLUMN_NAME, default: "won" },
+			{ name: "colour", type: COLUMN_NAME, default: "colour" },
+			// An unplayed cell is dim rather than absent: the grid has to be
+			// visible before anybody has tapped it, or the first frame of the
+			// game is an empty screen with nothing to aim at.
+			{ name: "empty", type: "color", default: "#33384a" },
+			{ name: "x", type: "color", default: "#e2574c" },
+			{ name: "o", type: "color", default: "#4c9be2" },
+			// The win strike, as a highlight — #866 settled that the old
+			// game's rotated, stretched bar across the line becomes the three
+			// winning cells lit, because a bar needs per-entity rotation and a
+			// stretched quad while a light needs only this column. It replaces
+			// the player's colour rather than brightening it: the line is
+			// already the shape of who won.
+			{ name: "win", type: "color", default: "#f5d76e" },
+		],
+		run: (c) => {
+			const mark = c.world.column(c.text("mark")) as Uint32Array;
+			const won = c.world.column(c.text("won")) as Uint32Array;
+			const colour = c.world.column(c.text("colour")) as Float32Array;
+			// Nothing spawned yet — the same zero-length case `place-mark`
+			// guards, for the same reason: a column is sized to the world's
+			// slots, and a paint lane that ran before the start lane had
+			// anything to spawn must do nothing rather than throw.
+			const cells = Math.min(mark.length, won.length, colour.length / 3);
+			const empty = rgbOf(c.text("empty"));
+			const x = rgbOf(c.text("x"));
+			const o = rgbOf(c.text("o"));
+			const win = rgbOf(c.text("win"));
+			for (let i = 0; i < cells; i++) {
+				const held = mark[i] as number;
+				const tint =
+					(won[i] as number) !== 0
+						? win
+						: held === 1
+							? x
+							: held === 2
+								? o
+								: empty;
+				colour[i * 3] = tint[0];
+				colour[i * 3 + 1] = tint[1];
+				colour[i * 3 + 2] = tint[2];
+			}
 		},
 	},
 };

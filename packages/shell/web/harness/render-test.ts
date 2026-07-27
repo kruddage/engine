@@ -42,6 +42,18 @@
  * `CHANNEL_TOLERANCE` and `MAX_DIFF_FRACTION` that remain in `compare.ts` are
  * there only for rasteriser rounding noise, never for the animation.
  *
+ * ## Two projects, two captures
+ *
+ * The page holds more than one project now (`src/projects.ts`), so a run
+ * captures both. First the triangles, asked for by name — that is the
+ * reference this harness has always compared against, and it is a regression
+ * gate on the renderer that must not move. Then the page's default,
+ * tic-tac-toe, *played*: five presses dispatched through Chromium's own input
+ * pipeline, landing on the cells the engine's camera says they land on, and a
+ * screenshot of the round they win. What the second one proves that no unit
+ * test can is the whole path — a real press, unprojected by the real matrix,
+ * placed by `place-mark`, tinted by `colour-marks`, drawn by WebGL2.
+ *
  * ## Dependency-free
  *
  * Node's built-in `WebSocket` is the whole DevTools Protocol transport
@@ -65,6 +77,30 @@ import { ensureDisplay } from "./xvfb";
 
 /** Where the checked-in reference lives, relative to the workspace root — xtask always runs Node from there. */
 const REFERENCE_PATH = "packages/shell/web/harness/reference.png";
+
+/**
+ * The second reference: tic-tac-toe, mid-round, with a line completed.
+ *
+ * Its own image rather than a looser check on the first, because the two
+ * captures prove different things. The triangles reference is a regression
+ * gate on the renderer — it must not move, pixel for pixel. This one is what a
+ * *played* board looks like, and it moves whenever the game's own colours or
+ * layout intentionally do.
+ */
+const TICTACTOE_REFERENCE_PATH = "packages/shell/web/harness/tictactoe.png";
+
+/**
+ * Half the height of the world the camera shows, in world units — `VIEW_EXTENT`
+ * in `crates/shell/web/src/lib.rs`, and the `camera` kind's own default.
+ */
+const VIEW_EXTENT = 2;
+
+/**
+ * The width and height the tic-tac-toe project lays its grid out over —
+ * `GRID_SIZE` in `packages/world/board/src/tictactoe.ts`. Only `cellPoint`
+ * uses it, and only to know where to tap.
+ */
+const GRID_SIZE = 3;
 
 /**
  * The emulated viewport.
@@ -245,7 +281,7 @@ async function run(browser: Browser, baseUrl: string): Promise<void> {
 	await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
 		source: INIT_SCRIPT,
 	});
-	await cdp.send("Page.navigate", { url: baseUrl });
+	await cdp.send("Page.navigate", { url: triangles(baseUrl) });
 
 	await waitForBoot(cdp, pageErrors);
 
@@ -283,39 +319,183 @@ async function run(browser: Browser, baseUrl: string): Promise<void> {
 	// After waitForPaint, not before: the frame being screenshotted must be
 	// the one `FRAME_COUNT` steps actually produced, with the status text
 	// removed only for the capture itself rather than for the run.
+	const screenshot = await capture(cdp);
+	if (!(await settle(cdp, screenshot, REFERENCE_PATH, "the triangles"))) {
+		return;
+	}
+
+	await playTicTacToe(cdp, baseUrl, pageErrors);
+}
+
+/**
+ * The other project, played: five taps, a completed line, and a screenshot.
+ *
+ * This is the half of the acceptance that a unit test cannot reach.
+ * `tictactoe.test.ts` proves the rules and the tints against `TestWorld`, with
+ * pointer samples a test made up; here the presses are real browser input
+ * events dispatched at real viewport coordinates, unprojected by the engine's
+ * own camera matrix, quantised by `place-mark`, tinted by `colour-marks` and
+ * drawn by the WebGL2 backend. Everything between a finger and a lit cell is
+ * in the loop, and the reference image is what a won round looks like.
+ *
+ * It runs against the page's *default* URL — no `?project=`. So this also
+ * asserts what the page opens with: if the default moved back to the
+ * triangles, the taps would land on nothing and the capture would not match.
+ */
+async function playTicTacToe(
+	cdp: CdpClient,
+	baseUrl: string,
+	pageErrors: string[],
+): Promise<void> {
+	await cdp.send("Page.navigate", { url: baseUrl });
+	await waitForBoot(cdp, pageErrors);
+
+	// X takes the top row, O answers underneath: 0, 3, 1, 4, 2 — the same
+	// sequence `tictactoe.test.ts` plays, so the two suites are asserting the
+	// same game rather than two games that happen to both end.
+	for (const cell of [0, 3, 1, 4, 2]) {
+		await tap(cdp, cell);
+		// One stepped frame per tap, which is where the press is read: the
+		// sample is edge-triggered and consumed once a frame, so a second tap
+		// inside the same frame would be a press nobody ever saw.
+		await evaluate(cdp, `window.__kruddHarness.step(${FRAME_DT_MS});`, false);
+	}
+	await evaluate(cdp, "window.__kruddHarness.waitForPaint()", true);
+
+	if (pageErrors.length > 0) {
+		fail([
+			"the page reported errors while the game was played:",
+			...pageErrors,
+		]);
+		return;
+	}
+
+	const screenshot = await capture(cdp);
+	await settle(cdp, screenshot, TICTACTOE_REFERENCE_PATH, "a won round");
+}
+
+/**
+ * A press and a release at the centre of one cell, through the browser's own
+ * input pipeline.
+ *
+ * `Input.dispatchMouseEvent` rather than a synthetic `PointerEvent` from
+ * inside the page, for the reason the mode round trip clicks the real
+ * buttons: a page-side event is a second path that can work while the one a
+ * finger takes is broken. Released immediately, because the press is what is
+ * edge-triggered — holding it would change nothing.
+ */
+async function tap(cdp: CdpClient, cell: number): Promise<void> {
+	const { x, y } = cellPoint(cell);
+	for (const type of ["mousePressed", "mouseReleased"]) {
+		await cdp.send("Input.dispatchMouseEvent", {
+			type,
+			x,
+			y,
+			button: "left",
+			buttons: type === "mousePressed" ? 1 : 0,
+			clickCount: 1,
+		});
+	}
+}
+
+/**
+ * Where cell `cell` sits on screen, in the viewport's own pixels.
+ *
+ * This is the one place the harness does camera arithmetic, and it is worth
+ * saying why that is allowed here when `#866` refused it for `pick-grid`: a
+ * *node* that unprojected on its own could disagree with the draw and nobody
+ * would find out, whereas a driver that computes the wrong point taps the
+ * wrong cell and the capture does not match the reference. The test's own
+ * arithmetic is checked by the test failing.
+ *
+ * The camera shows `VIEW_EXTENT` world units above and below the centre, and
+ * widens by the aspect ratio rather than squashing — see the `camera` kind and
+ * `Engine::view_projection`. The grid's own size is the tic-tac-toe project's
+ * `GRID_SIZE`; row 0 is the top row and cell 0 is top-left, per `spawn-grid`.
+ */
+function cellPoint(cell: number): { x: number; y: number } {
+	const half = GRID_SIZE / 2;
+	const step = GRID_SIZE / 3;
+	const worldX = -half + ((cell % 3) + 0.5) * step;
+	const worldY = half - (Math.floor(cell / 3) + 0.5) * step;
+	const halfHeight = VIEW_EXTENT;
+	const halfWidth = (VIEW_EXTENT * VIEWPORT.width) / VIEWPORT.height;
+	return {
+		x: ((worldX / halfWidth + 1) / 2) * VIEWPORT.width,
+		y: ((1 - worldY / halfHeight) / 2) * VIEWPORT.height,
+	};
+}
+
+/** The page as it stands, with the debug text out of the way. */
+async function capture(cdp: CdpClient): Promise<string> {
 	await evaluate(cdp, HIDE_STATUS_EXPRESSION, false);
 	const screenshot = await cdp.send<{ data: string }>(
 		"Page.captureScreenshot",
-		{
-			format: "png",
-		},
+		{ format: "png" },
 	);
+	return screenshot.data;
+}
 
-	// A maintenance escape hatch, not a CLI flag: regenerating the reference
-	// is rare enough (only when the demo's own visuals intentionally change)
-	// that it does not need a place in `xtask`'s shared `Options`, which every
-	// other subcommand also parses.
+/**
+ * A capture against its reference: written, or compared and judged.
+ *
+ * Reports whether the run may carry on — a mismatch has already been printed
+ * by the time this returns false.
+ *
+ * A maintenance escape hatch, not a CLI flag: regenerating a reference is rare
+ * enough (only when a project's own visuals intentionally change) that it does
+ * not need a place in `xtask`'s shared `Options`, which every other subcommand
+ * also parses.
+ */
+async function settle(
+	cdp: CdpClient,
+	screenshot: string,
+	referencePath: string,
+	what: string,
+): Promise<boolean> {
 	if (process.env.KRUDD_UPDATE_REFERENCE === "1") {
-		writeFileSync(REFERENCE_PATH, Buffer.from(screenshot.data, "base64"));
-		console.log(`render-test: wrote ${REFERENCE_PATH}`);
-		return;
+		writeFileSync(referencePath, Buffer.from(screenshot, "base64"));
+		console.log(`render-test: wrote ${referencePath}`);
+		return true;
 	}
 
-	const referenceBase64 = readFileSync(REFERENCE_PATH).toString("base64");
-	const expression = buildCompareExpression(screenshot.data, referenceBase64);
+	const referenceBase64 = readFileSync(referencePath).toString("base64");
+	const expression = buildCompareExpression(screenshot, referenceBase64);
 	const stats = await evaluate<CompareStats>(cdp, expression, true);
 
-	const problems = judge(stats, REFERENCE_PATH);
+	const problems = judge(stats, referencePath);
 	if (problems.length > 0) {
-		fail(problems);
-		return;
+		fail([`${what}:`, ...problems]);
+		return false;
 	}
 
 	console.log(
-		`render-test: PASS — ${stats.width}x${stats.height}, ` +
+		`render-test: PASS (${what}) — ${stats.width}x${stats.height}, ` +
 			`${stats.diffPixels}/${stats.totalPixels} pixels differ ` +
 			`(${(stats.diffFraction * 100).toFixed(2)}%), within budget`,
 	);
+	return true;
+}
+
+/**
+ * The page, asked for the triangles by name.
+ *
+ * The page boots tic-tac-toe now (`packages/shell/web/src/projects.ts`), and
+ * this reference image is of the eight drifting triangles — so which project
+ * is captured has to be stated rather than inherited. Naming it here is also
+ * what keeps the reference meaning what it meant: the alternative, letting
+ * whatever the page defaults to be the thing compared, would silently
+ * repurpose the image the day the default moves again.
+ *
+ * A query string rather than a page-side hook, for the same reason the mode
+ * round trip clicks the real buttons: a hook is a second code path that can
+ * pass while the one people use is broken. This is the link a person would
+ * type.
+ */
+function triangles(baseUrl: string): string {
+	const url = new URL(baseUrl);
+	url.searchParams.set("project", "triangles");
+	return url.toString();
 }
 
 /**

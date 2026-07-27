@@ -33,18 +33,23 @@
  * engine, run the board once at open and once a frame, and put a failure on
  * screen. Which is what it was before; there is simply less of it.
  *
+ * Far enough that *which* board opens is now a URL parameter rather than a
+ * constant — see `projects.ts`. The page boots tic-tac-toe and keeps the
+ * triangles under `?project=triangles`; nothing below this line can tell the
+ * difference, which is the whole claim being made.
+ *
  * ## The graph's first input
  *
  * `pointer.ts` turns raw `PointerEvent`s into one edge-triggered, viewport-
  * relative sample a frame; `bindPointerSource`, below, is the only place that
  * wires it to real DOM events. The sample reaches every `Runner.frame` call
- * whether or not the running board asked for one — the triangles project
- * never does, so nothing about what it draws changes. A project that wires a
- * `pointer` node reads it from there on, with no change to this file.
+ * whether or not the running board asked for one — tic-tac-toe's `place-mark`
+ * reads it, the triangles project never does, and this file does not know
+ * which of those it is running.
  */
 
 import type { Project } from "@krudd/board";
-import { cloneProject, Runner, TRIANGLES } from "@krudd/board";
+import { cloneProject, Runner } from "@krudd/board";
 import { mountBoardView } from "@krudd/board-view";
 import { boot, fitCanvas, type World } from "@krudd/boundary";
 import { PointerTrack } from "./pointer";
@@ -55,6 +60,7 @@ import {
 	saveFailure,
 	saveProject,
 } from "./project-file";
+import { chosenProject } from "./projects";
 import { mountModeShell } from "./shell";
 
 /** Where the canvas is. */
@@ -104,14 +110,14 @@ async function main(): Promise<void> {
 	// replaces the pair. Everything below reads them through the closure, so a
 	// load reaches the frame loop, the readout and the view without any of them
 	// being handed anything.
-	let project = cloneProject(TRIANGLES);
+	let project = cloneProject(chosenProject(window.location.search));
 	let runner = new Runner(project, world);
 	runner.start();
 
 	// The graph's pointer source. Collecting DOM events is this page's job;
-	// what a board does with them is the document's — the triangles project
-	// has no `pointer` node, so nothing above this line changes: `pointer`
-	// reaches every `runner.frame` call, and the demo simply never asks.
+	// what a board does with them is the document's — `place-mark` reads the
+	// sample and the triangles project never asks for one, and neither fact is
+	// known here: `pointer` reaches every `runner.frame` call either way.
 	const pointer = new PointerTrack();
 	bindPointerSource(canvas, pointer);
 

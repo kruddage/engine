@@ -46,18 +46,63 @@ export interface WorldView {
 }
 
 /**
+ * One pointer sample, however it reached the graph.
+ *
+ * Viewport-relative and axis-independent: `x` is how far across the viewport
+ * the pointer sits, 0 at the left edge and 1 at the right; `y` is how far
+ * down, 0 at the top and 1 at the bottom. Each axis is divided by its own
+ * extent rather than by one shared scale, so a resize does not move where a
+ * tap lands and a non-square viewport does not skew it — the centre of the
+ * pane is always `(0.5, 0.5)`, phone or not.
+ *
+ * `pressed` is edge-triggered: 1 for exactly the one frame a press began on,
+ * 0 every other frame — held, released, or never touched. The pre-rewrite
+ * engine debounced on a `g_last_sel` comparison for exactly this reason, and
+ * without the edge a held press would place on every frame it stays down.
+ * Where the edge is found is `packages/shell/web/src/pointer.ts`'s job; this
+ * type only says what a node is handed once it has been.
+ */
+export interface PointerFrame {
+	/** Left-to-right across the viewport: 0 at the left edge, 1 at the right. */
+	readonly x: number;
+	/** Top-to-bottom down the viewport: 0 at the top, 1 at the bottom. */
+	readonly y: number;
+	/** 1 for the one frame a press began on; 0 otherwise. Carries `u32` on the wire. */
+	readonly pressed: number;
+}
+
+/**
+ * Nothing pressed, and nowhere in particular.
+ *
+ * What a board reads before any pointer event has reached it — including
+ * every board that never asks, like the triangles demo, which takes no input
+ * and must not start taking any.
+ */
+export const NO_POINTER: PointerFrame = { x: 0, y: 0, pressed: 0 };
+
+/**
  * What one node is handed when it runs.
  *
- * Columns and params, and nothing else — a node is a pure function of the
- * two. That is what keeps a later compile-to-TypeScript step a transform
- * rather than a redesign: a node that reached for anything wider would have
- * to have that thing invented for it in the generated code as well.
+ * Columns, params and the pointer, and nothing else — a node is a pure
+ * function of what is handed to it here. That is what keeps a later
+ * compile-to-TypeScript step a transform rather than a redesign: a node that
+ * reached for anything wider — the DOM included — would have to have that
+ * thing invented for it in the generated code as well.
  */
 export interface RunContext {
 	/** The world whose columns this node walks. */
 	readonly world: WorldView;
 	/** Seconds since the last frame, already clamped. Zero in the start lane. */
 	readonly dt: number;
+	/**
+	 * This frame's pointer sample.
+	 *
+	 * [`NO_POINTER`] outside a game that reads it — the demo included. A node
+	 * that wants pointer input reads this directly, the same way `integrate`
+	 * reads `world.positions()`, rather than through a wire this interpreter
+	 * evaluates.
+	 */
+	readonly pointer: PointerFrame;
 	/**
 	 * A numeric param, resolved from the node or its kind's default.
 	 *

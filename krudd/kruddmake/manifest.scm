@@ -32,7 +32,15 @@
 ;;!             GLSL/WGSL transpiler). Neither builds a target; both are listed,
 ;;!             for the one codegen declaration each.
 ;;!   audio/    the mixer and its device backends.
-;;!   ui/       the editor chrome: immediate-mode gui, viewport, kruddboard.
+;;!   ui/       what the engine draws over the game: the immediate-mode gui, the
+;;!             viewport bridge, kruddboard's markdown parser. Not the editor
+;;!             chrome, despite the name kruddgui — that is the page's,
+;;!             in HTML, under shell/web. The line (#902/#911) is: chrome is
+;;!             DOM, canvas is kruddgui. Anything around the viewport is chrome
+;;!             and belongs to the page; anything drawn over the game in play
+;;!             view, where there is no chrome and there must not be, belongs
+;;!             here. Something that is genuinely both is chrome. See
+;;!             ui/kruddgui/build.scm for what that leaves kruddgui owning.
 ;;!   game/     host/ is the launcher registry; its siblings are the games
 ;;!             that register with it.
 ;;!   shell/    the host the engine runs inside: web/, the browser page (PWA

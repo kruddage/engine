@@ -28,6 +28,7 @@ extern "C" {
 #include "kgui_input.h"
 #include "kgui_text_edit.h"
 #include "kgui_font.h"
+#include "kgui_stats.h"		/* (krudd-stats) — the perf HUD's one engine input */
 #include "kruddgui_api.h"
 #include "renderer.h"		/* gpu_api — the panel batch draws through the device */
 }
@@ -1374,8 +1375,31 @@ static s7_pointer sp_kgui_play_sound(s7_scheme *sc, s7_pointer args)
 	return s7_nil(sc);
 }
 
+/*
+ * The "stats" vtable, resolved per call rather than cached: it is registered by
+ * the engine itself (engine.c) so it is up before kruddgui, but a host that
+ * links no stats subsystem returns nullptr forever and (krudd-stats) stays #f —
+ * the HUD's documented silent no-op rather than an error.
+ */
+static const struct stats_api *resolve_stats(void)
+{
+	return g_mgr ? (const struct stats_api *)
+			       subsystem_manager_get_api(g_mgr, "stats")
+		     : nullptr;
+}
+
 static void register_primitives(s7_scheme *sc)
 {
+	/*
+	 * The one krudd-* accessor kruddgui defines. Every other one went with
+	 * kruddboard in #661 and is not coming back here — the DOM chrome's
+	 * panels get engine data over a typed JS bridge (#902/#910), not over a
+	 * revived s7 shim. This one stays because the perf HUD it feeds is
+	 * canvas, not chrome: it draws in a game's play view, where there is no
+	 * DOM chrome to ask.
+	 */
+	kgui_stats_register(sc, resolve_stats);
+
 	s7_define_function(sc, "kgui-image", sp_kgui_image, 5, 8, false,
 			   "(kgui-image x y w h tex [u0 v0 u1 v1] [r g b a])");
 	s7_define_function(sc, "kgui-rect", sp_kgui_rect, 8, 0, false,
@@ -1638,10 +1662,10 @@ static void kruddgui_tick(void)
 	 * It owns its own input region (kgui-panel-begin), so the tap that
 	 * flips it never falls through to the board underneath.
 	 *
-	 * The editor's own panel set (kruddgui-draw) is still parked: the
-	 * krudd-* accessors it reads went with kruddboard in #661 and have not
-	 * been rebuilt, so editor mode is the page's DOM chrome for now and
-	 * this is the switch that will drive both once they are back.
+	 * The editor's own panel set (kruddgui-draw) is parked, and stays that
+	 * way: the krudd-* accessors it reads went with kruddboard in #661, and
+	 * those panels are the page's DOM chrome now rather than something to
+	 * revive here (#902/#911). This switch drives both sides of the line.
 	 */
 	call_scm_panel("kruddgui-modeswitch-draw");
 

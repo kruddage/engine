@@ -2,6 +2,22 @@
 
 ;;! kruddgui — the Scheme-authored panels for krudd's own UI layer.
 ;;!
+;;! Chrome is DOM. Canvas is kruddgui. Anything around the viewport — menus,
+;;! toolbar, docks, panels, status bar — is the page's, in HTML. Anything drawn
+;;! over the game in play view, where there is no chrome and there must not be,
+;;! is this file's. Something that is genuinely both is chrome, and kruddgui
+;;! takes the smaller job. See ui/kruddgui/build.scm for the full statement and
+;;! for what it leaves kruddgui permanently owning.
+;;!
+;;! Only two panels below are on that side of the line and shipping: the GAME /
+;;! EDITOR slider and the perf HUD, both listed again further down. Everything
+;;! else here — the mode-bar, the log and board consoles, and the scene,
+;;! inspector and asset panels beneath them — is a *parked editor*, and it is
+;;! parked for good: those panels are the DOM chrome's now (#902). Their
+;;! krudd-* accessors went with kruddboard in #661 and are not being
+;;! re-registered. Nothing new goes in them; they are kept only because the two
+;;! shipping panels stand on their layout, widget and markdown code.
+;;!
 ;;! The C++ host (kruddgui.cpp) registers the kgui-* primitives against the
 ;;! shared s7 interpreter, loads this image once, then calls (kruddgui-draw)
 ;;! each tick after ImGui has rendered. A primitive only appends to the frame's
@@ -2971,6 +2987,27 @@
                           (kruddgui-perf-color ms))
           (loop (+ i 1)))))))
 
+;;! (kruddgui-perf-stats) -> (fps frame-ms frame-count), or #f when there is no
+;;! frame picture to draw. The guard is two-part and deliberate rather than
+;;! incidental:
+;;!
+;;!   - (defined? 'krudd-stats) — the host may not have registered the accessor
+;;!     at all. That is the shape of every native panel test, and it was the
+;;!     shape of the shipping WASM build for a whole release: the accessor went
+;;!     with kruddboard in #661, so this procedure's opening call raised on an
+;;!     unbound symbol, the host swallowed the error inside s7_call, and the HUD
+;;!     drew nothing every frame with no trace anywhere (#911).
+;;!   - (pair? s) — registered, but the stats subsystem is absent, so the
+;;!     accessor answers #f. A benign nullary stub answering unspecified or ()
+;;!     lands here too, rather than in a (cadr) on a non-pair.
+;;!
+;;! Either way the HUD is a silent no-op, which is what the host expects of it
+;;! off the browser. An error is not a no-op, and that is the whole bug.
+(define (kruddgui-perf-stats)
+  (and (defined? 'krudd-stats)
+       (let ((s (krudd-stats)))
+         (and (pair? s) s))))
+
 ;;! (kruddgui-perf-hud-draw) the host's per-tick entry point, called every
 ;;! frame regardless of editor chrome. Docked top-right, inset by the safe
 ;;! area and dropped below the toolbar's band so it never overlaps the
@@ -2978,7 +3015,7 @@
 ;;! or assets console may still cover it, same tradeoff the toolbar itself
 ;;! makes against those consoles. A no-op when the stats subsystem is absent.
 (define (kruddgui-perf-hud-draw)
-  (let ((s (krudd-stats)))
+  (let ((s (kruddgui-perf-stats)))
     (when s
       (kruddgui-perf-push! (cadr s))
       (let* ((vp    (kgui-viewport-size))

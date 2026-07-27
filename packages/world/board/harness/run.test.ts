@@ -13,12 +13,14 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { Project, Wire } from "../src/index";
+import type { PointerFrame, Project, Registry, Wire } from "../src/index";
 import {
 	BoardError,
 	cloneProject,
+	DOCUMENT_VERSION,
 	drivesTheGame,
 	FRAME_BOARD,
+	NO_POINTER,
 	PAINT_TO_DRAW,
 	ROOT_BOARD,
 	Runner,
@@ -298,4 +300,84 @@ test("editing the fixture's copy leaves the fixture alone", () => {
 		(wire) => wire.id === PAINT_TO_DRAW,
 	);
 	assert.notEqual(original?.cut, true);
+});
+
+test("a node reads this frame's pointer sample off RunContext, not off a wire", () => {
+	// PR-3's whole point: the graph's first input. `probe` has no input port at
+	// all — pointer data reaches a node through `RunContext.pointer`, the same
+	// way `integrate` reaches its columns through `c.world`, not through a data
+	// wire this interpreter evaluates.
+	const seen: PointerFrame[] = [];
+	const kinds: Registry = {
+		start: {
+			title: "Start",
+			entry: "start",
+			inputs: [],
+			outputs: [],
+			params: [],
+		},
+		step: { title: "Step", entry: "step", inputs: [], outputs: [], params: [] },
+		paint: {
+			title: "Paint",
+			entry: "paint",
+			inputs: [],
+			outputs: [],
+			params: [],
+		},
+		probe: {
+			title: "Probe",
+			inputs: [],
+			outputs: [],
+			params: [],
+			run: (c) => {
+				seen.push(c.pointer);
+			},
+		},
+	};
+	const project: Project = {
+		version: DOCUMENT_VERSION,
+		root: "root",
+		boards: {
+			root: {
+				title: "root",
+				nodes: [
+					{ id: "start", kind: "start", lane: "start", column: 0 },
+					{ id: "step", kind: "step", lane: "step", column: 0 },
+					{ id: "probe", kind: "probe", lane: "step", column: 1 },
+					{ id: "paint", kind: "paint", lane: "paint", column: 0 },
+				],
+				wires: [
+					{
+						id: "exec-step-probe",
+						from: { node: "step", port: "out" },
+						to: { node: "probe", port: "in" },
+						kind: "exec",
+					},
+				],
+			},
+		},
+	};
+
+	const runner = new Runner(project, new TestWorld(), kinds);
+	runner.start();
+	assert.equal(
+		seen.length,
+		0,
+		"probe sits in the step lane, not the start one",
+	);
+
+	runner.frame(1 / 60);
+	assert.deepEqual(
+		seen[0],
+		NO_POINTER,
+		"a caller that hands nothing over gets nothing pressed, nowhere in particular",
+	);
+
+	const pressed: PointerFrame = { x: 0.5, y: 0.25, pressed: 1 };
+	runner.frame(1 / 60, pressed);
+	assert.deepEqual(
+		seen[1],
+		pressed,
+		"and a caller that samples one gets it, whole",
+	);
 });

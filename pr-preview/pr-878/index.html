@@ -1,0 +1,278 @@
+<!doctype html>
+<!--
+  SPDX-License-Identifier: GPL-2.0-or-later
+
+  The page `cargo xtask build-web` stamps into dist/index.html.
+
+  Deliberately small, per #819: a canvas, a readout, and a module tag. The
+  editor's chrome is a later initiative and belongs in data rather than here
+  (#830), so there is nothing else to hand-write yet — and the generated
+  wasm-bindgen glue, which is most of the shipped bytes, is never hand-edited.
+
+  The version placeholder below is substituted at build time from version.txt.
+  The build fails if any placeholder of that shape survives, so a renamed one
+  cannot ship to the page as literal text.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>krudd 18.8.4-pr878+9933d90</title>
+    <!--
+      An empty icon rather than none. A browser requests /favicon.ico
+      regardless, and a page whose whole job is to make failures visible should
+      not open with a 404 in the console that means nothing.
+    -->
+    <link rel="icon" href="data:," />
+    <!--
+      The board view's styles, from the package that owns them. A package that
+      wrote to document.head on import would be a package that cannot be
+      rendered anywhere else, so the page decides what it loads.
+    -->
+    <link rel="stylesheet" href="./index.css" />
+    <style>
+      :root {
+        color-scheme: dark;
+        --ink: #e6e6ea;
+        --bad: #ff6b6b;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: #101014;
+        color: var(--ink);
+        overflow: hidden;
+      }
+      /*
+        The track holds both modes. Neither pane is ever removed and neither
+        is ever hidden: the board slides over the game, because `boot()` takes
+        the canvas for the life of the engine and a second boot against the
+        same canvas fails — the WebGL2 context is already taken. Mode
+        switching is compositing, never routing.
+      */
+      #track {
+        position: fixed;
+        inset: 0;
+        overflow: hidden;
+      }
+      .pane {
+        position: absolute;
+        inset: 0;
+      }
+      /*
+        The board rides on top and off to the right until it is asked for.
+        `transform` rather than `display` or `inset`, so the game pane keeps
+        its full size the whole time — `fitCanvas` reads `clientWidth`, and a
+        game pane measuring zero would collapse the drawing buffer to 1x1 and
+        bring it back a blurry mess.
+      */
+      #board {
+        transform: translateX(100%);
+        transition: transform 220ms ease;
+        background: #16161c;
+        pointer-events: none;
+      }
+      body[data-mode="board"] #board {
+        transform: translateX(0);
+        pointer-events: auto;
+      }
+      /*
+        No slide for anyone who has asked their system not to animate. It also
+        makes the screenshot harness deterministic without a test-only hook:
+        it emulates this media feature, so a mode switch has finished by the
+        time the next frame is captured rather than being caught mid-slide.
+      */
+      @media (prefers-reduced-motion: reduce) {
+        #board {
+          transition: none;
+        }
+      }
+      /*
+        The canvas fills the window and is sized here in CSS pixels only. Its
+        drawing buffer — canvas.width/height — is set from devicePixelRatio by
+        `fitCanvas` in @krudd/boundary, which is the one place that knows the
+        difference between the two sizes a canvas has. The buffer is capped at
+        what the WebGL2 backend can present, so on a tall phone it is smaller
+        than this box and the browser stretches it: softer, rather than the
+        validation error a 2256-pixel-tall surface is.
+      */
+      #viewport {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      /*
+        The rail: which mode you are in, and a tap to change it. Above the
+        readout, because the readout is a footnote and this is a control.
+      */
+      #modes {
+        position: fixed;
+        left: 50%;
+        bottom: 2.25rem;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 0.25rem;
+        padding: 0.25rem;
+        border-radius: 999px;
+        background: color-mix(in srgb, #101014 80%, transparent);
+      }
+      #modes button {
+        appearance: none;
+        border: 0;
+        border-radius: 999px;
+        /* Thumb-sized: the device this is designed for is held, not pointed at. */
+        min-width: 5rem;
+        min-height: 2.5rem;
+        padding: 0 1rem;
+        font: inherit;
+        font-size: 0.8rem;
+        color: color-mix(in srgb, var(--ink) 60%, transparent);
+        background: transparent;
+        cursor: pointer;
+      }
+      #modes button[aria-current="true"] {
+        color: #101014;
+        background: var(--ink);
+      }
+      /*
+        Save and open, beside the rail and only in board mode. A project is a
+        file, and which file the board came from is the host's business rather
+        than the board view's — the view draws a board wherever it is kept.
+      */
+      #project {
+        position: fixed;
+        left: 0.6rem;
+        bottom: 2.25rem;
+        display: flex;
+        gap: 0.25rem;
+        padding: 0.25rem;
+        border-radius: 999px;
+        background: color-mix(in srgb, #101014 80%, transparent);
+      }
+      body[data-mode="game"] #project {
+        /* Hidden rather than absent: a control that moves when you swipe is a
+           control you have to find again. */
+        visibility: hidden;
+      }
+      #project button {
+        appearance: none;
+        border: 0;
+        border-radius: 999px;
+        /* Thumb-sized, like the rail. */
+        min-width: 4rem;
+        min-height: 2.5rem;
+        padding: 0 0.9rem;
+        font: inherit;
+        font-size: 0.8rem;
+        color: color-mix(in srgb, var(--ink) 60%, transparent);
+        background: transparent;
+        cursor: pointer;
+      }
+      /*
+        What a save or a load had to say. Separate from the readout because the
+        readout is rewritten every frame, and a message the next frame paints
+        over is a message nobody read. Tap to dismiss.
+      */
+      #notice {
+        position: fixed;
+        left: 50%;
+        bottom: 5.5rem;
+        transform: translateX(-50%);
+        max-width: min(32rem, calc(100vw - 1.2rem));
+        margin: 0;
+        padding: 0.6rem 0.9rem;
+        border-radius: 0.6rem;
+        font-size: 0.75rem;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        color: var(--ink);
+        background: color-mix(in srgb, #16161c 92%, transparent);
+        cursor: pointer;
+      }
+      #notice[data-kind="bad"] {
+        color: var(--bad);
+      }
+      /*
+        The readout: a status line while booting, a debug line once running,
+        and a failure card if either goes wrong. One element in three states,
+        because a page this small does not need three elements.
+      */
+      #status {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        margin: 0;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.75rem;
+        line-height: 1.5;
+        color: color-mix(in srgb, var(--ink) 65%, transparent);
+        background: color-mix(in srgb, #101014 70%, transparent);
+        pointer-events: none;
+      }
+      /*
+        A failure takes the whole screen. Not decoration: a renderer that stops
+        drawing leaves the last frame on the canvas, so a failure shown as a
+        footnote under a picture that still looks fine is a failure nobody
+        reads. #812's rule is that an instrument may never report "broken" and
+        "fine" the same way.
+      */
+      #status.failed {
+        /*
+          Full-bleed, with only the text column capped — a card narrower than
+          the window would leave the last rendered frame showing down both
+          sides of the failure, which is precisely the mixed signal this is
+          here to avoid.
+        */
+        inset: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 40rem);
+        align-content: center;
+        justify-content: center;
+        padding: 2rem;
+        font-size: 0.9rem;
+        color: var(--bad);
+        background: #101014;
+        white-space: pre-wrap;
+        pointer-events: auto;
+      }
+      noscript {
+        display: block;
+        padding: 1rem;
+        color: var(--bad);
+      }
+    </style>
+  </head>
+  <body data-mode="game">
+    <noscript>krudd needs JavaScript and WebAssembly.</noscript>
+    <div id="track">
+      <section id="game" class="pane"><canvas id="viewport"></canvas></section>
+      <!--
+        The board pane. @krudd/board-view draws into it; the styles for what it
+        draws are in that package's own stylesheet, bundled into index.css by
+        `cargo xtask build-web`.
+      -->
+      <section id="board" class="pane" aria-label="board"></section>
+    </div>
+    <p id="notice" hidden></p>
+    <p id="status">loading krudd 18.8.4-pr878+9933d90…</p>
+    <nav id="modes" aria-label="mode">
+      <button type="button" data-mode="game" aria-current="true">game</button>
+      <button type="button" data-mode="board" aria-current="false">board</button>
+    </nav>
+    <!--
+      The project controls. The file input is hidden and clicked by the open
+      button: a bare file input is not thumb-sized and cannot be made to look
+      like the rail, and this is the one place the page needs the browser's own
+      picker. Its `accept` is set from @krudd/board, so what a project file is
+      named is decided once.
+    -->
+    <nav id="project" aria-label="project">
+      <button type="button" id="save">save</button>
+      <button type="button" id="open">open</button>
+      <input id="file" type="file" hidden />
+    </nav>
+    <script type="module" src="./index.js"></script>
+  </body>
+</html>

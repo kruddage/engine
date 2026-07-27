@@ -6,7 +6,7 @@
 ((wasm-only
   (library "scene_renderer"
     (sources "scene_renderer.c")
-    (private "." (raw "${generated}") (root "render/frame_graph")
+    (private "." (raw "${generated}") (root "render/frame_graph/include")
              (root "render/particles/include")
              (root "core/include") (root "abi") (root "world/entity/include") (root "base/math/include") (root "world/asset/include")
              (raw "../third_party"))
@@ -22,7 +22,7 @@
                        (raw "${generated}/math_gen.c"))
               (private "." (raw "${generated}")
                        (root "render/null/include")
-                       (root "render/frame_graph") (root "world/asset/include")
+                       (root "render/frame_graph/include") (root "world/asset/include")
                        (root "render/particles/include")
                        (root "core/include")
                        (root "abi") (root "world/entity/include") (root "base/math/include") (raw "../third_party"))

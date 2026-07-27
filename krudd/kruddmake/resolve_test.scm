@@ -57,7 +57,8 @@
            '("render/null" "render/null/include" "${generated}"
              "base/log/include"
              "abi" "core/include"))
-(inc-check "fg_test" '("render/frame_graph" "${generated}"
+(inc-check "fg_test" '("render/frame_graph" "render/frame_graph/include"
+                       "${generated}"
                        "render/null/include" "base/log/include"
                        "abi" "base/memory/include"
                        "core/include"))

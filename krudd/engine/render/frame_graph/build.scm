@@ -1,7 +1,7 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
 ((library "frame_graph"
    (sources "fg.c")
-   (public ".")
+   (public "include")
    (private (raw "${generated}"))
    (link "log" "memory" "subsystem" "subsystem_manager"))
  (native-only

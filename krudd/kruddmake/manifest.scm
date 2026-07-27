@@ -64,7 +64,6 @@
  "ui/kruddgui"
  "ui/viewport"
  "game/host"
- "game/tictactoe"
  "game/chess"
  "shell/qt"
  "shell/web")

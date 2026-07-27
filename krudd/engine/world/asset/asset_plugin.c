@@ -1057,8 +1057,7 @@ static void seed_builtins(void)
 		 * glossy stone rather than a faceted, light-bending gem — the
 		 * honest ceiling of a metallic-roughness BRDF — but the
 		 * saturated colour plus tight specular sells "ruby"/"sapphire"
-		 * well enough for a game piece. tictactoe's marks and its win
-		 * strike (game/tictactoe/rules.scm) bind these by winner.
+		 * well enough for a game piece.
 		 */
 		{
 			static const float RUBY[4]     = { 0.55f, 0.02f, 0.06f, 1.0f };
@@ -1070,10 +1069,9 @@ static void seed_builtins(void)
 			seed_pbr_material("builtin://material/pbr-sapphire", pshader,
 					  SAPPHIRE, 0.05f, 0.12f, 0.0f);
 			/*
-			 * A calm, neutral dielectric for a game board's playing
-			 * squares — the "just one heightfield of texture, not
-			 * nine checkered pads" replacement (game/tictactoe/
-			 * scene.scm): matte sandstone rather than a busy pattern.
+			 * A calm, neutral dielectric for a game's ground plane
+			 * (game/chess/scene.scm): matte sandstone rather than a
+			 * busy pattern.
 			 */
 			seed_pbr_material("builtin://material/pbr-stone", pshader,
 					  STONE, 0.0f, 0.75f, 0.0f);
@@ -1118,8 +1116,8 @@ static void seed_builtins(void)
 	 * Grass — the pbr-textured shader (metallic-roughness plus one albedo
 	 * sampler and a height-from-alpha normal bump; see PBR_TEXTURED_HEAD/_TAIL)
 	 * paired with the grass texture (GRASS_TEXTURE_SCRIPT_SRC), whose alpha
-	 * channel IS the bump's height field — the "substance-designer-style"
-	 * ground material game/tictactoe/scene.scm grounds its heightfield in.
+	 * channel IS the bump's height field — a "substance-designer-style"
+	 * ground material a heightfield scene can bump against.
 	 * Baked at 512x512 (double the checker's 256) since grass tiles at a much
 	 * higher spatial frequency and reads muddy if undersampled. The shader is
 	 * assembled from its HEAD/TAIL and the shared helpers into a stack buffer

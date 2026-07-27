@@ -27,7 +27,7 @@
  *   audio      — Web Audio; the scriptnode backend assumes an AudioContext.
  *   viewport   — click-to-pick + aspect sync, driven by the kruddgui pointer.
  *   kruddgui   — the canvas overlay UI.
- *   tictactoe / chess — the games, which register on the launcher.
+ *   chess      — the game, which registers on the launcher.
  * The camera-aspect half of the viewport bridge is done directly by the caller
  * (the "camera" api's set_viewport, once per frame with the window size), so a
  * native scene is framed correctly without the kruddgui pointer.

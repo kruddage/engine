@@ -116,8 +116,6 @@
                 "world/asset/mesh_script.scm"
                 "world/asset/texture_script.scm"
                 "world/asset/sound_script.scm"
-                "game/tictactoe/scene.scm"
-                "game/tictactoe/rules.scm"
                 "game/chess/scene.scm"
                 "game/chess/rules.scm"
                 "ui/kruddgui/kruddgui.scm"

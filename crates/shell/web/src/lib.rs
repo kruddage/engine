@@ -127,6 +127,20 @@ const POSITION: &str = "position";
 /// The velocity column's name: three `f32`s per slot, in units per second.
 const VELOCITY: &str = "velocity";
 
+/// The colour column's name: three `f32`s per slot, multiplied into the
+/// shader's own vertex colour rather than replacing it — see [`WHITE_FILL`].
+const COLOUR: &str = "colour";
+
+/// What a fresh or newly-grown slot of the colour column is filled with.
+///
+/// White, not the zero every other column grows into: the fragment shader
+/// multiplies its vertex colour by this column (see `triangle.wgsl`), and
+/// white is the multiplicative identity, so an entity nobody has coloured
+/// draws exactly as it always did. Zero would multiply every triangle to
+/// black — invisible, not merely uncoloured — which is the bug this constant
+/// exists to make impossible rather than merely tested against.
+const WHITE_FILL: f32 = 1.0;
+
 /// The element type a named column holds.
 ///
 /// A closed set rather than a generic type parameter — there is a handful of
@@ -224,25 +238,43 @@ enum ColumnData {
     U32(Vec<u32>),
 }
 
-/// One named column: its element kind and its storage, grown and cleared as
-/// a unit alongside every other column in [`Engine::columns`].
+/// One named column: its element kind, its storage, and the value a new slot
+/// is filled with — grown and cleared as a unit alongside every other column
+/// in [`Engine::columns`].
 struct Column {
     kind: ElementKind,
     data: ColumnData,
+    /// What [`Column::grow_to_fit`] fills a newly-covered slot with.
+    ///
+    /// Zero for `position`, `velocity` and anything `ensure_column` creates —
+    /// the ordinary zero value a `Vec::resize` would give anyway. `colour` is
+    /// the one column where zero is wrong: it is multiplied into the shader's
+    /// vertex colour, so a zero-filled ("black") default would make every
+    /// entity nobody has coloured invisible rather than merely white. See
+    /// [`WHITE_FILL`].
+    ///
+    /// Applied to `u32`-backed columns by truncation too, so the field stays
+    /// one `f32` rather than a kind-dependent enum — nothing today needs a
+    /// non-zero `u32` default, and the day something does, `0.0` truncates to
+    /// `0` exactly.
+    fill: f32,
 }
 
 impl Column {
-    /// An empty column of `kind`. The caller grows it to capacity —
-    /// `Engine::create_column` does, immediately.
-    fn new(kind: ElementKind) -> Self {
+    /// An empty column of `kind` whose new slots are filled with `fill` on
+    /// growth. `0.0` for the ordinary case — `Engine::create_column` always
+    /// passes that — and [`WHITE_FILL`] for `colour`. The caller grows it to
+    /// capacity; `Engine::create_column_with_fill` does, immediately.
+    fn with_fill(kind: ElementKind, fill: f32) -> Self {
         let data = match kind {
             ElementKind::Vec3 | ElementKind::F32 => ColumnData::F32(Vec::new()),
             ElementKind::U32 => ColumnData::U32(Vec::new()),
         };
-        Self { kind, data }
+        Self { kind, data, fill }
     }
 
-    /// Resizes the column to `capacity` slots, zero-filling any growth.
+    /// Resizes the column to `capacity` slots, filling any growth with
+    /// [`Column::fill`].
     ///
     /// Called for every column together from [`Engine::grow_columns_to_fit`].
     /// A column created after entities already exist starts this call behind
@@ -250,9 +282,10 @@ impl Column {
     /// way `position` and `velocity` always have.
     fn grow_to_fit(&mut self, capacity: usize) {
         let elements = capacity * self.kind.components();
+        let fill = self.fill;
         match &mut self.data {
-            ColumnData::F32(v) => v.resize(elements, 0.0),
-            ColumnData::U32(v) => v.resize(elements, 0),
+            ColumnData::F32(v) => v.resize(elements, fill),
+            ColumnData::U32(v) => v.resize(elements, fill as u32),
         }
     }
 
@@ -431,9 +464,11 @@ impl Engine {
         };
         // `position` and `velocity` are ordinary named columns, created
         // through the same path `ensure_column` uses — there is no bespoke
-        // field left for either of them.
+        // field left for either of them. `colour` joins them the same way,
+        // differing only in its fill: see `WHITE_FILL`.
         engine.create_column(POSITION, ElementKind::Vec3);
         engine.create_column(VELOCITY, ElementKind::Vec3);
+        engine.create_column_with_fill(COLOUR, ElementKind::Vec3, WHITE_FILL);
         engine
     }
 
@@ -529,7 +564,8 @@ impl Engine {
         handle.index()
     }
 
-    /// Empties the world: no entities, no slots, both columns back to nothing.
+    /// Empties the world: no entities, no slots, every column back to
+    /// nothing.
     ///
     /// What opening a different project needs, and the reason it is one call
     /// rather than a `despawn` per slot. A freed slot is a tombstone, and a
@@ -837,12 +873,18 @@ impl Engine {
             .column(POSITION)
             .expect("created in `Engine::new`")
             .as_f32();
+        let colour = self
+            .column(COLOUR)
+            .expect("created in `Engine::new`")
+            .as_f32();
         for handle in self.store.iter() {
             let i = handle.index() as usize * 3;
             let p = Vec3::new(position[i], position[i + 1], position[i + 2]);
+            let c = Vec3::new(colour[i], colour[i + 1], colour[i + 2]);
             frame.push(Draw {
                 pipeline,
                 transform: Mat4::from_translation(p).mul(&scale),
+                colour: c,
                 first_vertex: 0,
                 vertex_count: 3,
             });
@@ -908,14 +950,24 @@ impl Engine {
         Some(&mut self.columns[index].1)
     }
 
-    /// Appends a new column, sized to the current slot capacity.
+    /// Appends a new column, sized to the current slot capacity and
+    /// zero-filled on growth.
     ///
-    /// The one path that creates a column — [`Engine::new`] uses it for
-    /// `position` and `velocity`, [`Engine::ensure_column`] uses it for
-    /// everything else — so there is one place that has to remember to size
-    /// a fresh column to what the others already hold.
+    /// The common path — [`Engine::ensure_column`] uses it for every column a
+    /// board declares, and [`Engine::new`] uses it for `position` and
+    /// `velocity`, both of which want the ordinary zero. The `colour` column
+    /// wants white instead, so [`Engine::new`] creates it through
+    /// [`Engine::create_column_with_fill`] instead of this one.
     fn create_column(&mut self, name: &str, kind: ElementKind) {
-        let mut column = Column::new(kind);
+        self.create_column_with_fill(name, kind, 0.0);
+    }
+
+    /// [`Engine::create_column`], but new slots are filled with `fill` rather
+    /// than zero — the one path that creates a column, so there is one place
+    /// that has to remember to size a fresh column to what the others already
+    /// hold.
+    fn create_column_with_fill(&mut self, name: &str, kind: ElementKind, fill: f32) {
+        let mut column = Column::with_fill(kind, fill);
         column.grow_to_fit(self.store.capacity());
         self.columns.push((name.to_string(), column));
     }
@@ -1023,6 +1075,13 @@ mod tests {
         v[i + 2] = value.z;
     }
 
+    /// The colour counterpart to [`position_at`].
+    fn colour_at(e: &Engine, slot: u32) -> Vec3 {
+        let i = slot as usize * 3;
+        let c = e.column(COLOUR).unwrap().as_f32();
+        Vec3::new(c[i], c[i + 1], c[i + 2])
+    }
+
     #[test]
     fn a_fresh_engine_has_no_entities_and_no_frames() {
         let e = Engine::new(800, 600);
@@ -1040,6 +1099,39 @@ mod tests {
         assert_eq!(e.entity_count(), 1);
         assert_eq!(e.positions_len(), 3);
         assert_eq!(position_at(&e, 0), Vec3::new(1.0, 2.0, 3.0));
+    }
+
+    #[test]
+    fn a_fresh_colour_column_defaults_to_white_not_black() {
+        // The fragment shader multiplies its vertex colour by this column, so
+        // the zero value every other column grows into would render an
+        // uncoloured entity invisible rather than merely uncoloured. Assert
+        // the actual values rather than trusting the constant's name.
+        let mut e = Engine::default();
+        let a = e.spawn(0.0, 0.0, 0.0);
+        assert_eq!(colour_at(&e, a), Vec3::new(1.0, 1.0, 1.0));
+    }
+
+    #[test]
+    fn a_spawned_entitys_colour_survives_a_column_growth() {
+        // `grow_columns_to_fit` extends every column together whenever the
+        // store runs out of slots to recycle. If the colour column's fill
+        // were applied only at creation rather than on every growth, an
+        // entity spawned before the column last grew would end up reading
+        // whatever the *next* growth happened to zero-fill, not white.
+        let mut e = Engine::default();
+        let first = e.spawn(0.0, 0.0, 0.0);
+        assert_eq!(colour_at(&e, first), Vec3::new(1.0, 1.0, 1.0));
+
+        for i in 1..16 {
+            e.spawn(i as f32, 0.0, 0.0);
+        }
+
+        assert_eq!(
+            colour_at(&e, first),
+            Vec3::new(1.0, 1.0, 1.0),
+            "the first entity's colour must not have been disturbed by later growth"
+        );
     }
 
     #[test]
@@ -1103,7 +1195,7 @@ mod tests {
     }
 
     #[test]
-    fn clearing_empties_the_world_and_both_columns() {
+    fn clearing_empties_the_world_and_every_column() {
         let mut e = Engine::default();
         for _ in 0..8 {
             let slot = e.spawn(1.0, 2.0, 3.0);
@@ -1119,6 +1211,10 @@ mod tests {
         assert_eq!(e.slot_count(), 0);
         assert_eq!(e.positions_len(), 0);
         assert_eq!(e.velocities_len(), 0);
+        // `colour` is emptied the same way as `position` and `velocity` — a
+        // column that stayed sized after `clear` would answer with the last
+        // project's colours the moment the next one spawned into it.
+        assert_eq!(e.column_len(COLOUR), Some(0));
         assert_eq!(e.draw_count(), 0);
     }
 
@@ -1342,6 +1438,34 @@ mod tests {
     }
 
     #[test]
+    fn a_draws_colour_is_the_entitys_colour_column_not_a_constant() {
+        // `build_frame` has to read the column per entity, not stamp every
+        // draw with the same value — spawning two entities and giving only
+        // one of them a colour is what would catch a build that read slot 0
+        // for every draw.
+        let mut e = Engine::new(100, 100);
+        e.triangle = Some(fake_pipeline());
+        let a = e.spawn(0.0, 0.0, 0.0);
+        let b = e.spawn(1.0, 0.0, 0.0);
+        {
+            let colour = e.column_mut(COLOUR).unwrap().as_f32_mut();
+            let i = b as usize * 3;
+            colour[i] = 1.0;
+            colour[i + 1] = 0.0;
+            colour[i + 2] = 0.0;
+        }
+
+        let frame = e.build_frame();
+        assert_eq!(
+            colour_at(&e, a),
+            Vec3::new(1.0, 1.0, 1.0),
+            "still the default"
+        );
+        assert_eq!(frame.draws()[a as usize].colour, Vec3::new(1.0, 1.0, 1.0));
+        assert_eq!(frame.draws()[b as usize].colour, Vec3::new(1.0, 0.0, 0.0));
+    }
+
+    #[test]
     fn the_scale_a_board_sets_is_the_scale_a_draw_carries() {
         // A `scale` param the engine ignored would be a control that looks live
         // and changes nothing.
@@ -1443,8 +1567,8 @@ mod tests {
         );
         assert_eq!(
             e.columns.len(),
-            3,
-            "position, velocity, tag — re-ensuring must not append a duplicate entry"
+            4,
+            "position, velocity, colour, tag — re-ensuring must not append a duplicate entry"
         );
     }
 
@@ -1511,6 +1635,26 @@ mod tests {
         assert_eq!(e.positions_len(), 3);
         assert_eq!(e.velocities_len(), 3);
         assert_eq!(e.column("tag").unwrap().as_u32()[a as usize], 99);
+    }
+
+    #[test]
+    fn a_tombstoned_slot_keeps_its_width_in_the_colour_column() {
+        // Named separately from the generic column above: `colour` is the one
+        // column with a non-zero fill, and a despawn must not shrink it out
+        // from under an index another live entity still uses — the same
+        // tombstone guarantee `position` and `velocity` give, extended to a
+        // column whose default is not the zero a resize gives for free.
+        let mut e = Engine::default();
+        let a = e.spawn(1.0, 2.0, 3.0);
+
+        assert!(e.despawn(a));
+
+        assert_eq!(e.column_len(COLOUR), Some(3));
+        assert_eq!(
+            colour_at(&e, a),
+            Vec3::new(1.0, 1.0, 1.0),
+            "a tombstoned slot's colour is left exactly as it was, not reset"
+        );
     }
 
     #[test]

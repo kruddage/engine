@@ -13,13 +13,20 @@
 // anything checked in, which is the whole reason the old tree's shader DSL is
 // a `drop` verdict rather than a `carry`.
 
-/// The one uniform: model-view-projection, already composed on the CPU.
+/// The per-draw uniforms: model-view-projection, already composed on the
+/// CPU, and the entity's own colour.
 ///
 /// Per-*draw*, not per-frame — the buffer is bound with a dynamic offset and
 /// the renderer advances the offset for each draw in the frame. That keeps a
 /// frame with many draws to one buffer and one bind group.
+///
+/// `colour` **modulates** the vertex colour below, it does not replace it —
+/// see `fragment_main`. It defaults to `(1, 1, 1)`, the multiplicative
+/// identity, so an entity nobody has coloured draws exactly the gradient this
+/// shader always has.
 struct Uniforms {
 	mvp: mat4x4<f32>,
+	colour: vec3<f32>,
 }
 
 @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -63,5 +70,10 @@ fn vertex_main(@builtin(vertex_index) index: u32) -> VertexOut {
 
 @fragment
 fn fragment_main(in: VertexOut) -> @location(0) vec4<f32> {
-	return vec4<f32>(in.color, 1.0);
+	// Modulates the vertex colour rather than replacing it: this is the
+	// three-colour gradient #818 drew, tinted by whatever the entity's own
+	// colour is. At the uniform's default of white this is exactly the
+	// gradient alone, which is what keeps every triangle drawn before this
+	// field existed pixel-identical to what it always was.
+	return vec4<f32>(in.color * uniforms.colour, 1.0);
 }

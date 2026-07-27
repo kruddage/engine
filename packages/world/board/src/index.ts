@@ -19,6 +19,8 @@
  *   hold together, by name.
  * - `file` — what a project is called when it is saved, and what it is saved
  *   as. The bytes are `validate`'s; this is the name around them.
+ * - `pick` — quantising a world-space point to a grid cell, the arithmetic
+ *   behind `pick-grid`'s ports.
  *
  * ## What is deliberately not here
  *
@@ -70,6 +72,8 @@ export {
 	projectFileName,
 } from "./file";
 export { KINDS, kindOf } from "./kinds";
+export type { GridPick } from "./pick";
+export { pickCell } from "./pick";
 export { Runner } from "./run";
 export { FRAME_BOARD, PAINT_TO_DRAW, ROOT_BOARD, TRIANGLES } from "./triangles";
 export type { Problem } from "./validate";

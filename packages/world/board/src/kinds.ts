@@ -248,6 +248,45 @@ export const KINDS: Registry = {
 			// type the validator can check the far end against.
 		},
 	},
+
+	// Grid picking (#866 PR-4). Turns a pointer position into a tic-tac-toe
+	// cell, but does nothing with the answer yet — see `pick-grid` below for
+	// why, and `./pick` for the arithmetic itself.
+
+	"pick-grid": {
+		title: "Pick Grid",
+		inputs: [],
+		outputs: [
+			{ name: "cell", type: "u32" },
+			{ name: "hit", type: "u32" },
+		],
+		params: [
+			// The engine's own default box is `VIEW_EXTENT * 2` on a side; the
+			// grid does not have to fill it, so this is its own number rather
+			// than a read of that constant.
+			{ name: "size", type: "f32", default: 2.0, min: 0 },
+		],
+		run: () => {
+			// Nothing to compute here, and — unlike `pointer` — not because the
+			// answer is already sitting on `RunContext`. It is because nothing
+			// reads it yet: `place-mark` is PR-6's business, and this PR's scope
+			// stops at declaring the shape of a pick and proving the arithmetic
+			// correct in isolation. `./pick`'s `pickCell` is that arithmetic —
+			// pure, exported, and unit-tested there — ready for PR-6 to call
+			// once there is a `mark` column and a cell to write it into.
+			//
+			// This mirrors `pointer` more than it first looks: `pointer`'s own
+			// `run` does not compute `x`/`y`/`pressed` either — that happens in
+			// `packages/shell/web/src/pointer.ts`'s `PointerTrack`, entirely
+			// outside this kind. In both cases the kind exists to give a
+			// document a name to wire from and a type the validator can check,
+			// not to be where the arithmetic runs. What's different here is
+			// that nothing has wired the result anywhere yet — no `RunContext`
+			// field, no column — so there is nothing for this `run` to hand
+			// off to. Writing a column from here would be inventing the
+			// wire-value evaluator this board deliberately does not have.
+		},
+	},
 };
 
 /**

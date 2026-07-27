@@ -958,8 +958,8 @@ canvas {
 	<button class="menu-hamburger" id="menu-hamburger" aria-label="menus" aria-haspopup="true" aria-expanded="false">&#9776;</button>
 	<div class="menu-group" id="menu-group"></div>
 	<div class="menubar-right">
-		<span class="version " id="version" title="click for build info">19.1.0</span>
-		<span class="version-detail" id="version-detail">commit 712e34c &middot; built 2026-07-27</span>
+		<span class="version ahead" id="version" title="click for build info">19.1.0</span>
+		<span class="version-detail" id="version-detail">commit 590c7db &middot; built 2026-07-27 &middot; ahead of release</span>
 	</div>
 </div>
 
@@ -1969,13 +1969,13 @@ canvas {
 var Module = {
 	locateFile: function (path, prefix) {
 		if (path.endsWith('.wasm'))
-			return prefix + path.replace(/\.wasm$/, '.712e34c.wasm');
+			return prefix + path.replace(/\.wasm$/, '.590c7db.wasm');
 		return prefix + path;
 	}
 };
 </script>
 
-<script async type="text/javascript" src="index.712e34c.js"></script>
+<script async type="text/javascript" src="index.590c7db.js"></script>
 
 </body>
 </html>

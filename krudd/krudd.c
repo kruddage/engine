@@ -97,53 +97,6 @@ static int cmd_build(void)
 	return failed ? -1 : 0;
 }
 
-/*
- * `krudd editor` — build the Qt editor shell and run it. The native editor:
- * the engine's Vulkan backend, presenting into a QWindow embedded in real Qt
- * chrome (menu bar, toolbar, Scene/Inspector/Assets/Console docks) on the
- * desktop (SteamOS / the Steam Deck / Windows), no browser in the path. README's
- * "Build from source" section has the distrobox + setup.sh recipe.
- *
- * The window target carries (vulkan) and (qt). This sets KRUDD_VULKAN and
- * KRUDD_QT for the build so the ordinary `krudd build` stays Vulkan- and
- * Qt-free — both targets are opt-in, like the old (dawn) gate. The Vulkan
- * loader and headers are an ordinary system package (setup.sh installs them
- * with the validation layers); Qt, unlike a system library on a default include
- * path, needs KRUDD_QT_CFLAGS set (normally from pkg-config) before this runs.
- *
- * `editor-qt` is kept as a back-compat alias for this command.
- */
-static int cmd_editor(void)
-{
-	char path[1024];
-
-	if (!getenv("KRUDD_QT_CFLAGS")) {
-		fprintf(stderr,
-			"krudd: editor needs Qt6 — set KRUDD_QT_CFLAGS "
-			"(and usually KRUDD_QT_LIBS), e.g.:\n"
-			"krudd:   KRUDD_QT_CFLAGS=\"$(pkg-config --cflags "
-			"Qt6Widgets Qt6Gui Qt6Core)\"\n"
-			"krudd:   KRUDD_QT_LIBS=\"$(pkg-config --libs "
-			"Qt6Widgets Qt6Gui Qt6Core)\"\n"
-			"krudd: or run ./setup.sh once — it installs Qt6 and "
-			"records both in .krudd-env, which krudd.sh sources "
-			"for you.\n");
-		return -1;
-	}
-
-	/* Pull the (vulkan) backend and (qt) window targets into the native
-	 * graph for this build. Do not clobber an explicit value. */
-	setenv("KRUDD_VULKAN", "1", 0);
-	setenv("KRUDD_QT", "1", 0);
-
-	if (cmd_build() != 0)
-		return -1;
-
-	snprintf(path, sizeof path, "%s/build/bin/krudd_qt",
-		 getenv_or("KRUDD_ROOT", "."));
-	return run(path);
-}
-
 /* Serve the built site. Blocks until Ctrl-C — the interactive "run" tail. */
 static int cmd_serve(void)
 {
@@ -265,8 +218,6 @@ static void usage(void)
 		"  (no args)     resolve projects here: setup / run / pick\n"
 		"  build         configure + build (no prompts; used by CI)\n"
 		"  run           build, then serve the site\n"
-		"  editor        build + run the Qt editor shell (Vulkan; needs "
-		"KRUDD_QT_CFLAGS)\n"
 		"  new-project   scaffold a <name>.krudd-project\n");
 }
 
@@ -279,9 +230,6 @@ int main(int argc, char **argv)
 		return cmd_build() == 0 ? 0 : 1;
 	if (strcmp(argv[1], "run") == 0)
 		return (cmd_build() == 0 && cmd_serve() == 0) ? 0 : 1;
-	/* `editor-qt` is a back-compat alias; the editor is the Qt shell now. */
-	if (strcmp(argv[1], "editor") == 0 || strcmp(argv[1], "editor-qt") == 0)
-		return cmd_editor() == 0 ? 0 : 1;
 	if (strcmp(argv[1], "new-project") == 0)
 		return scaffold_project() == 0 ? 0 : 1;
 

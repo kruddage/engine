@@ -7,7 +7,7 @@
  * view·projection with the camera looking down the +Z axis at it. A ray through
  * the centre pixel must strike the box; the guard paths (NULL args, a ray off
  * the box, a tombstoned entity) must all return "no hit". This pins the raycast
- * the native Qt shell and the wasm overlay share, without a window or a GPU.
+ * the wasm overlay ships, without a browser or a GPU.
  */
 #include "viewport_pick.h"
 

@@ -65,8 +65,7 @@ const char *script_json(struct s7_cell *value);
 /*
  * Evaluate the embedded editor layout spec (core/editor_layout.scm) and
  * serialize (editor-layout) to JSON via script_json — the s7->JS transport the
- * Qt-free web editor renders its chrome from, the browser-side twin of the
- * native C-struct reader in shell/qt/editor_layout.c (#706 part B). The interpreter
+ * web editor renders its chrome from (#706 part B). The interpreter
  * starts on demand. Returns NULL if it is down, the spec is missing
  * editor-layout, the tree is not a list, or the JSON overflows.
  */

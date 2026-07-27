@@ -14,7 +14,7 @@
  *   2. script_layout_json() on the real embedded spec, asserting the evaluated
  *      (editor-layout) tree round-trips to the JSON shape the web chrome reads.
  *
- * No browser, no GPU, no Qt — just the shared s7 image, so a broken walk or a
+ * No browser, no GPU — just the shared s7 image, so a broken walk or a
  * malformed escape fails here long before it reaches a page.
  */
 #include "script.h"

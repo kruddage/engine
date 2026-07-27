@@ -93,61 +93,14 @@
       (string-append base " $dawnincludes")
       base))
 
-;;! Qt is the native windowing toolkit for the `(qt)` clause — a system
-;;! dependency (headers + libQt6Widgets/Gui/Core), never a target, so like
-;;! `(dawn)` it rides preamble variables rather than the `(link)` list
-;;! resolve.scm validates. Qt is never on a default include path (its headers
-;;! live in framework-style per-module directories), so there is no usable
-;;! cflags default — KRUDD_QT_CFLAGS must be set, normally from
-;;! `pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core`. Like `(dawn)`, it is
-;;! OPT-IN: a `(qt)` target is left out of the native graph unless KRUDD_QT is
-;;! set, so a plain build — and a KRUDD_DAWN_PREFIX build that only wants the
-;;! offscreen krudd_native — is byte-for-byte unchanged and needs no Qt
-;;! installed. `./krudd.sh editor` sets KRUDD_QT for you.
-(define (qt-configured?) (getenv "KRUDD_QT"))
-
-(define (ninja-qt? clauses) (if (rz-clause 'qt clauses) #t #f))
-
-(define (ninja-qt-skip? clauses)
-  (and (ninja-qt? clauses) (not (qt-configured?))))
-
-(define (ninja-qt-includes clauses base)
-  (if (ninja-qt? clauses)
-      (string-append base " $qtcflags")
-      base))
-
-;;! Vulkan is the native editor's GPU backend (SteamOS / the Deck / Windows).
-;;! Its loader and headers (<vulkan/vulkan.h>, -lvulkan) are a system
-;;! dependency, so — like `(dawn)` and `(qt)` — a `(vulkan)` target is OPT-IN:
-;;! without KRUDD_VULKAN in the environment it is left out of the native graph
-;;! entirely, so a plain `krudd build` is byte-for-byte unchanged and CI (which
-;;! installs no Vulkan) stays green. The WASM/web target never references a
-;;! `(vulkan)` library, so the browser keeps WebGL and WebGPU untouched.
-;;! `./krudd.sh editor` sets KRUDD_VULKAN for you. Vulkan headers are normally on
-;;! the default include path, so $vulkanincludes is empty unless
-;;! KRUDD_VULKAN_CFLAGS overrides it; $vulkanlibs defaults to -lvulkan.
-(define (vulkan-configured?) (getenv "KRUDD_VULKAN"))
-
-(define (ninja-vulkan? clauses) (if (rz-clause 'vulkan clauses) #t #f))
-
-(define (ninja-vulkan-skip? clauses)
-  (and (ninja-vulkan? clauses) (not (vulkan-configured?))))
-
-(define (ninja-vulkan-includes clauses base)
-  (if (ninja-vulkan? clauses)
-      (string-append base " $vulkanincludes")
-      base))
-
 (define (ninja-emit-library table dir form)
   (let* ((name (cadr form))
          (clauses (cddr form)))
-    (if (or (ninja-dawn-skip? clauses) (ninja-vulkan-skip? clauses))
+    (if (ninja-dawn-skip? clauses)
         #t
-        (let* ((includes (ninja-vulkan-includes
-                          clauses
-                          (ninja-dawn-includes clauses
-                                               (ninja-include-flags
-                                                (resolve-includes table name)))))
+        (let* ((includes (ninja-dawn-includes clauses
+                                              (ninja-include-flags
+                                               (resolve-includes table name))))
                (objs (map (lambda (s)
                             (ninja-emit-compile name dir includes s))
                           (ninja-sources clauses)))
@@ -160,19 +113,12 @@
 (define (ninja-emit-executable table dir form)
   (let* ((name (cadr form))
          (clauses (cddr form)))
-    (if (or (ninja-dawn-skip? clauses) (ninja-qt-skip? clauses)
-            (ninja-vulkan-skip? clauses))
+    (if (ninja-dawn-skip? clauses)
         #t
         (let* ((dawn (ninja-dawn? clauses))
-               (qt (ninja-qt? clauses))
-               (vulkan (ninja-vulkan? clauses))
-               (includes (ninja-vulkan-includes
-                          clauses
-                          (ninja-qt-includes
-                           clauses
-                           (ninja-dawn-includes clauses
-                                                (ninja-include-flags
-                                                 (resolve-includes table name))))))
+               (includes (ninja-dawn-includes clauses
+                                              (ninja-include-flags
+                                               (resolve-includes table name))))
                (objs (map (lambda (s)
                             (ninja-emit-compile name dir includes s))
                           (ninja-sources clauses)))
@@ -181,9 +127,7 @@
                (syslibs (resolve-syslibs table name))
                (ldlibs (append (map (lambda (l) (string-append "-l" l))
                                     syslibs)
-                               (if dawn (list "$dawnlibs") '())
-                               (if vulkan (list "$vulkanlibs") '())
-                               (if qt (list "$qtlibs") '())))
+                               (if dawn (list "$dawnlibs") '())))
                (bin (string-append "bin/" name)))
           ;;! s7 is a prebuilt archive (kruddage/s7 release, fetched by
           ;;! third_party/sync.sh) rather than an object baked into libscript.a.
@@ -192,7 +136,7 @@
           ;;! references, so binaries that never call s7 are byte-for-byte
           ;;! unchanged, and it must come last because libscript.a references it.
           (ninja-emit (string-append "build " bin ": "
-                                     (if (or dawn qt) "link_cxx" "link") " "
+                                     (if dawn "link_cxx" "link") " "
                                      (ninja-join " " (append objs libs
                                                              (list "$s7nativelib")))))
           (if (pair? ldlibs)
@@ -200,11 +144,11 @@
                                          (ninja-join " " ldlibs))))
           (ninja-emit "")
           ;;! Ordinary executables are pulled into the `native` target by the
-          ;;! (test ...) edge that runs them. A `(dawn)`, `(vulkan)` or `(qt)`
-          ;;! binary has none — it needs a real GPU adapter and/or a window to
-          ;;! open, so it must not become a CI test — and it is itself the
-          ;;! deliverable, so name it directly or nothing would ever build it.
-          (if (or dawn qt vulkan) (ninja-native! bin))))))
+          ;;! (test ...) edge that runs them. A `(dawn)` binary has none — it
+          ;;! needs a real GPU adapter, so it must not become a CI test — and it
+          ;;! is itself the deliverable, so name it directly or nothing would
+          ;;! ever build it.
+          (if dawn (ninja-native! bin))))))
 
 (define (ninja-emit-test form)
   (let* ((name (cadr form))
@@ -268,50 +212,21 @@
      ;;! linking requires.
      (string-append "dawnlibs = $dawnprefix/lib/libwebgpu_dawn.a "
                     "-lz -ldl -lpthread -lm")
-     ;;! Qt (the `(qt)` clause, the editor shell's windowing toolkit). Qt has
-     ;;! no default include/link path worth guessing at —
-     ;;! KRUDD_QT_CFLAGS is required, not optional, normally from
-     ;;!   KRUDD_QT_CFLAGS="$(pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core)"
-     ;;!   KRUDD_QT_LIBS="$(pkg-config --libs Qt6Widgets Qt6Gui Qt6Core)"
-     ;;! The libs default guesses the common `-lQt6Foo` shape so a system with
-     ;;! Qt on its default library search path only needs KRUDD_QT_CFLAGS.
-     ;;! Empty of consequence unless a `(qt)` target is in the graph, which
-     ;;! only happens when KRUDD_QT is set (see ninja-qt-skip?).
-     (string-append "qtcflags = " (or (getenv "KRUDD_QT_CFLAGS") ""))
-     (string-append "qtlibs = " (or (getenv "KRUDD_QT_LIBS")
-                                    "-lQt6Widgets -lQt6Gui -lQt6Core"))
-     ;;! Vulkan (the `(vulkan)` clause, the native editor's GPU backend). The
-     ;;! loader and headers are an ordinary system dependency: the headers are
-     ;;! on the default include path (so $vulkanincludes is empty unless
-     ;;! KRUDD_VULKAN_CFLAGS overrides it, e.g. for an SDK in a non-standard
-     ;;! prefix), and $vulkanlibs defaults to the loader, -lvulkan. Empty of
-     ;;! consequence unless a `(vulkan)` target is in the graph, which only
-     ;;! happens when KRUDD_VULKAN is set (see ninja-vulkan-skip?).
-     (string-append "vulkanincludes = " (or (getenv "KRUDD_VULKAN_CFLAGS") ""))
-     (string-append "vulkanlibs = " (or (getenv "KRUDD_VULKAN_LIBS")
-                                        "-lvulkan"))
      ;;! -fPIC on every object, because the SDK toolchain links executables as
      ;;! PIE by default. A non-PIC object that references an exported *data*
-     ;;! symbol from a shared library (e.g. QCoreApplication::self, or libc's
-     ;;! stdout/stderr) forces the linker to emit a COPY relocation: the symbol
-     ;;! is duplicated into the executable's .bss, and the shared library's own
-     ;;! internal reference no longer sees writes to the executable's copy. For
-     ;;! Qt that desyncs QCoreApplication::self — QApplication's ctor sets one
-     ;;! copy while screen setup reads the other (still null), a null-deref at
-     ;;! offset 8 deep in libQt6Core during construction (issue #715). -fPIC
-     ;;! routes the access through the GOT instead, so there is a single shared
-     ;;! copy and no crash. Cheap insurance for the C sources; mandatory once a
-     ;;! `(qt)` executable is in the graph.
+     ;;! symbol from a shared library (libc's stdout/stderr, say) forces the
+     ;;! linker to emit a COPY relocation: the symbol is duplicated into the
+     ;;! executable's .bss, and the shared library's own internal reference no
+     ;;! longer sees writes to the executable's copy. -fPIC routes the access
+     ;;! through the GOT instead, so there is a single shared copy and no
+     ;;! divergence. Cheap insurance for the C sources (issue #715).
      "cflags = -std=gnu11 -fPIC -Wall -Werror -Wpedantic"
      ;;! C++20 (not gnu11 — that was a stale copy of $cflags from before any
-     ;;! native .cpp source existed to compile with it) so a `(qt)` source can
-     ;;! use Qt6 (which requires C++17) and designated initializers (which,
-     ;;! in standard C++ rather than as a GNU extension, need C++20) — the
-     ;;! same `.field = value` struct init the engine's C sources use, kept
-     ;;! for krudd_qt.cpp so it reads as the same table as the engine's C
-     ;;! sources, not a differently-shaped one. -Wpedantic is unforgiving of
-     ;;! Qt's own headers on some toolchains; if a Qt roll ever trips it, narrow the
-     ;;! flag to the qt-only compile rule rather than loosening it globally.
+     ;;! native .cpp source existed to compile with it) so a C++ source can use
+     ;;! designated initializers, which in standard C++ rather than as a GNU
+     ;;! extension need C++20 — the same `.field = value` struct init the
+     ;;! engine's C sources use, so a .cpp reads as the same table as its C
+     ;;! neighbours rather than a differently-shaped one.
      "cxxflags = -std=c++20 -fPIC -Wall -Werror -Wpedantic"
      ;;! --use-port=emdawnwebgpu enables the WebGPU (Dawn) headers + JS glue;
      ;;! emscripten requires it at both compile and link, so it rides on the

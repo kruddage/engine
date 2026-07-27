@@ -214,12 +214,12 @@ EM_JS(int, krudd_wants_webgpu, (void), {
 
 /*
  * Hand the serialized editor layout to the shell so it can build its DOM
- * chrome — the browser-side twin of the native Qt reader (#706 part C). The
+ * chrome (#706 part C). The
  * layout is authored once in editor_layout.scm; script_layout_json() evaluates
  * it and serializes the tree, and window.kruddBuildEditor (shell.html) walks
- * that JSON into menus, toolbar, docks and status fields. Passing the data (not
- * host-specific literals) is what keeps both hosts in step: a menu or dock added
- * to the .scm reaches the web chrome here with no edit on this side.
+ * that JSON into menus, toolbar, docks and status fields. Passing the data
+ * rather than literals is what keeps the chrome declarative: a menu or dock
+ * added to the .scm reaches the page with no edit on this side.
  *
  * kruddBuildEditor is defined before main() runs, so a missing hook is only
  * possible if the shell has been swapped out — a safe no-op, like the other

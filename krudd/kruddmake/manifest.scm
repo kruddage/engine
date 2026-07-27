@@ -35,13 +35,12 @@
 ;;!   ui/       the editor chrome: immediate-mode gui, viewport, kruddboard.
 ;;!   game/     host/ is the launcher registry; its siblings are the games
 ;;!             that register with it.
-;;!   shell/    the hosts the engine runs inside: qt/ is the Qt-and-Vulkan
-;;!             native editor, web/ the browser page (PWA manifest, service
-;;!             worker, icons, the emscripten shell template). Last in the
-;;!             order on purpose — a shell may reach for anything, and nothing
-;;!             may reach for a shell. web/ builds no targets — its assets are
-;;!             copied by the generator — but it is listed, for the shell
-;;!             template it configures.
+;;!   shell/    the host the engine runs inside: web/, the browser page (PWA
+;;!             manifest, service worker, icons, the emscripten shell
+;;!             template). Last in the order on purpose — a shell may reach for
+;;!             anything, and nothing may reach for a shell. web/ builds no
+;;!             targets — its assets are copied by the generator — but it is
+;;!             listed, for the shell template it configures.
 
 ("core"
  "base/log"
@@ -55,7 +54,6 @@
  "render/null"
  "render/webgl"
  "render/webgpu"
- "render/vulkan"
  "render/frame_graph"
  "render/particles"
  "render/scene_renderer"
@@ -65,5 +63,4 @@
  "ui/viewport"
  "game/host"
  "game/chess"
- "shell/qt"
  "shell/web")

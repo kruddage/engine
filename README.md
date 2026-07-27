@@ -65,13 +65,13 @@ krudd/
     core/        Engine heartbeat — init/tick/shutdown, subsystem manager, script host
     base/        No engine concepts — log/, memory/, math/ (incl. the spatial types)
     world/       The scene and its data model — entity/, asset/, edit/
-    render/      Backends and the passes that drive them — webgl/, webgpu/, vulkan/,
+    render/      Backends and the passes that drive them — webgl/, webgpu/,
                  null/, frame_graph/, particles/, scene_renderer/, plus renderer.scm
                  (the backend interface spec) and shader/ (the shader DSL)
     audio/       The mixer and its device backends
     ui/          Editor chrome — kruddgui/, viewport/, kruddboard/
     game/        host/ is the launcher registry; its siblings register with it
-    shell/       The hosts the engine runs inside — qt/ and web/
+    shell/       The host the engine runs inside — web/
 ```
 
 The tiers are listed in dependency order: a module may only reach for one in a tier above
@@ -124,94 +124,16 @@ engine loop; the test stamps run the suite, so a green build is a green test run
 ./krudd.sh build
 ```
 
-### Native editor (SteamOS / Steam Deck)
+### The browser is the only target
 
-A native editor: the same C engine that ships to the browser as WebAssembly also runs
-natively on a **Vulkan** backend (Vulkan on the Deck's RDNA2, on Windows too) presenting
-into a real desktop window — no browser, no Emscripten in the path. The web build keeps
-its WebGL and WebGPU backends untouched; Vulkan is the native desktop GPU path.
+KRUDD ships one artifact: the WASM module and the static site around it. There is no
+desktop build, no installer, and no per-OS packaging — the authoring surface is the same
+page the game runs in, so "install" is a URL.
 
-The Vulkan backend brings up a **modern Vulkan 1.3 device with the Khronos validation
-layers on** and presents an animated clear into the window, and the editor still boots the
-engine's render cluster (asset → entity → frame graph → scene renderer) so the whole path
-up to the backend runs. Translating that draw stream to Vulkan — shaders to SPIR-V,
-pipelines, buffers and draws, so the demo scene renders in Vulkan — is the next step; the
-point of this stage is a validated Vulkan base you can diagnose against on real hardware
-(see [#705](https://github.com/kruddage/engine/issues/705)).
-
-The editor is the **Qt editor shell** — a `QMainWindow` with a menu bar, toolbar and
-Scene/Inspector/Assets/Console docks around the viewport. It is opt-in and left out of
-every default build and CI run:
-
-```sh
-KRUDD_QT_CFLAGS="$(pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core)" \
-./krudd.sh editor
-```
-
-#### Install the prebuilt Flatpak (Steam Deck)
-
-The fastest way onto a Deck: install the signed Flatpak from the self-hosted
-registry. In **Desktop Mode**, add the remote once and install — after that it
-shows up in Discover and updates the normal Flatpak way (`flatpak update`):
-
-```sh
-flatpak remote-add --user --if-not-exists krudd https://kruddage.github.io/engine/flatpak/krudd.flatpakrepo
-flatpak install --user krudd io.github.kruddage.Editor
-```
-
-See [`packaging/flatpak/`](packaging/flatpak/README.md) for the full Discover
-walkthrough and how to stand up your own signed registry on a fork.
-
-#### Build from source
-
-It needs the **Vulkan loader + headers + validation layers**, **glslang**, and **Qt6** —
-all ordinary system packages, no multi-gigabyte out-of-tree library to build.
-
-**On SteamOS / the Steam Deck** the root filesystem is immutable — no compiler lives there.
-Build and run inside an Arch [distrobox](https://distrobox.it/), which shares the Deck's
-Wayland socket and GPU. Create and enter the container first (this is a host-side step):
-
-```sh
-distrobox create -i archlinux:latest krudd && distrobox enter krudd
-```
-
-Then, inside the container (distrobox mounts your home directory, so an existing clone is
-already visible at the same path):
-
-```sh
-git clone https://github.com/kruddage/engine.git   # skip if you already cloned
-cd engine
-./setup.sh          # toolchain + Vulkan validation layers + Qt6 + .krudd-env
-./krudd.sh editor   # build and run the Qt editor shell
-```
-
-**On any other Linux box** the two container lines are not needed — just clone and run
-`./setup.sh` directly.
-
-`setup.sh` records the Qt flags in `.krudd-env`, which `krudd.sh` sources automatically — so
-after `./setup.sh` you do not even need the manual `KRUDD_QT_CFLAGS` export shown above.
-
-The editor picks up whichever Qt platform plugin is live — Wayland on the Deck, xcb under
-X11, or the Windows plugin — and prints which one it presented on at startup. Press `Esc`
-or close the window to quit.
-
-What you should see: the viewport currently renders the Vulkan backend's **animated clear**
-rather than the scene. That is expected — the backend stands up a validated Vulkan 1.3
-device, swapchain and present path, but does not yet translate the renderer's draw stream
-(see the `SCOPE` note atop
-[`renderer_vulkan.c`](krudd/engine/render/vulkan/renderer_vulkan.c) and #705). The chrome
-around it — the menu bar, toolbar and the Scene / Inspector / Assets / Console docks, all
-freely movable, floatable and tabbable — is the authoring surface. Panel contents are
-placeholders for now; filling them in is #793.
-
-The editor also ships as a self-hosted, GPG-signed Flatpak registry —
-`flatpak remote-add` a `.flatpakrepo` URL and get updates the normal Flatpak
-way, no Flathub submission. See
-[`packaging/flatpak/`](packaging/flatpak/README.md) for install instructions
-and how to stand up your own signed registry on a fork; it's the same
-`gh-pages` deploy the WASM site already uses, just published to a `/flatpak/`
-subpath. Wiring the editor's docks to the running scene (scene tree, inspector,
-REPL, project open/save) is tracked separately as the authoring surface.
+The native build above exists to run the test suite on a build host, not to host the
+engine: it compiles the modules and runs their tests, and never opens a window or drives
+the engine loop. WebGL and WebGPU are the renderer backends; the `null` backend is what
+the GPU-free tests record against.
 
 ## CI
 

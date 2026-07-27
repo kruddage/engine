@@ -8158,6 +8158,7 @@ function krudd_is_touch_device() { return (('ontouchstart' in window) || navigat
 function krudd_shell_editor_mode(on) { if (typeof window.kruddSetEditorMode === 'function') window.kruddSetEditorMode(!!on); }
 function game_launcher_add(name,idx) { var host = document.getElementById('launcher-games'); if (!host) return; var b = document.createElement('button'); b.className = 'launcher-btn'; b.textContent = UTF8ToString(name); b.onclick = function () { Module._krudd_load_game(idx); }; host.appendChild(b); }
 function game_launcher_hide() { var el = document.getElementById('launcher'); if (el) el.classList.add('hidden'); }
+function game_show_play_prompt(name) { if (typeof window.kruddShowPlayPrompt === 'function') window.kruddShowPlayPrompt(UTF8ToString(name)); }
 function krudd_sp_create_context() { var AC = window.AudioContext || window.webkitAudioContext; if (!AC) return 0; var ctx = new AC(); Module.__kruddAudioCtx = ctx; return ctx.sampleRate | 0; }
 function krudd_sp_attach(buf_size) { var ctx = Module.__kruddAudioCtx; if (!ctx) return; var node = ctx.createScriptProcessor(buf_size, 0, 2); node.onaudioprocess = function (e) { var out = e.outputBuffer; var n = out.length; var ptr = Module._audio_sp_render(n); var base = ptr >> 2; var heap = HEAPF32; var l = out.getChannelData(0); var r = out.getChannelData(1); for (var i = 0; i < n; i++) { l[i] = heap[base + 2 * i]; r[i] = heap[base + 2 * i + 1]; } }; node.connect(ctx.destination); Module.__kruddAudioNode = node; }
 function krudd_sp_resume() { var ctx = Module.__kruddAudioCtx; if (ctx && ctx.state !== 'running' && ctx.resume) ctx.resume(); }
@@ -8522,6 +8523,8 @@ var wasmImports = {
   game_launcher_add,
   /** @export */
   game_launcher_hide,
+  /** @export */
+  game_show_play_prompt,
   /** @export */
   get_device_pixel_ratio,
   /** @export */

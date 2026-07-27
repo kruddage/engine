@@ -1,5 +1,17 @@
 # Changelog
 
+## [19.1.0](https://github.com/kruddage/engine/compare/v19.0.0...v19.1.0) (2026-07-27)
+
+
+### Features
+
+* **editor:** auto-pause the sim in editor mode, drop manual play/stop ([#901](https://github.com/kruddage/engine/issues/901)) ([4744599](https://github.com/kruddage/engine/commit/47445991ded4aff1e191d2d666794fdab8e5537e))
+
+
+### Build System
+
+* drive the build through a pnpm workspace ([#914](https://github.com/kruddage/engine/issues/914)) ([5d68154](https://github.com/kruddage/engine/commit/5d6815453511e5fa5ac4b6332c4bd206d69a7c86))
+
 ## [19.0.0](https://github.com/kruddage/engine/compare/v18.8.4...v19.0.0) (2026-07-27)
 
 

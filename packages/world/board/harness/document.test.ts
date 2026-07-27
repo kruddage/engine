@@ -14,6 +14,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { Project } from "../src/index";
 import {
 	DOCUMENT_VERSION,
 	FRAME_BOARD,
@@ -46,6 +47,33 @@ test("a serialised document parses back to exactly what it was", () => {
 		text,
 		"writing it again produced different bytes — a save would show a diff " +
 			"nobody made",
+	);
+});
+
+test("a board declaring a u32 column round-trips byte-identically", () => {
+	// Nothing in the fixture reads this column — the point is the declaration
+	// itself, at the one kind `position` and `velocity` don't exercise.
+	const root = TRIANGLES.boards[ROOT_BOARD];
+	assert.ok(root !== undefined);
+	const withCount: Project = {
+		...TRIANGLES,
+		boards: {
+			...TRIANGLES.boards,
+			[ROOT_BOARD]: {
+				...root,
+				columns: [...(root.columns ?? []), { name: "count", kind: "u32" }],
+			},
+		},
+	};
+	assert.deepEqual(validate(withCount), []);
+
+	const text = serializeProject(withCount);
+	const read = parseProject(text);
+	assert.deepEqual(read, withCount, "the u32 column did not survive the trip");
+	assert.equal(
+		serializeProject(read),
+		text,
+		"writing it again produced different bytes",
 	);
 });
 
@@ -93,9 +121,21 @@ test("the fixture runs on the engine's own constants", () => {
 		count: 8,
 		radius: 0.4,
 		speed: 0.25,
+		position: "position",
+		velocity: "velocity",
 	});
-	assert.deepEqual(settings.get("recycle"), { limit: 3.2, radius: 0.4 });
-	assert.deepEqual(settings.get("draw"), { mesh: "triangle", scale: 0.35 });
+	assert.deepEqual(settings.get("recycle"), {
+		limit: 3.2,
+		radius: 0.4,
+		position: "position",
+	});
+	// No column-name param, unlike the three kinds above: `draw-entities`
+	// cannot redirect which column it draws from, so it does not offer a name
+	// that would be read and ignored.
+	assert.deepEqual(settings.get("draw"), {
+		mesh: "triangle",
+		scale: 0.35,
+	});
 });
 
 test("world state moves between nodes a column at a time", () => {

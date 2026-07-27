@@ -54,7 +54,7 @@ use std::num::NonZeroU64;
 use std::sync::{Arc, Mutex};
 
 use krudd_gpu::PipelineId;
-use krudd_math::Mat4;
+use krudd_math::{Mat4, Vec3};
 use krudd_render::{Backend, Color, Frame, Viewport};
 
 use crate::slots::Slots;
@@ -66,9 +66,22 @@ use crate::slots::Slots;
 /// to read it without reaching into this crate's source directory.
 pub const TRIANGLE_SHADER: &str = include_str!("triangle.wgsl");
 
-/// Bytes one `mat4x4<f32>` occupies — the whole of this backend's per-draw
-/// uniform block.
-const UNIFORM_BYTES: u64 = 64;
+/// Bytes one `mat4x4<f32>` occupies.
+const MVP_BYTES: u64 = 64;
+
+/// Bytes the colour occupies in the uniform block.
+///
+/// The column is three `f32`s, but WGSL's uniform-address-space layout
+/// aligns a `vec3<f32>` to 16 bytes — the same rule that gives it the size of
+/// a `vec4` for layout purposes even though only three components are read.
+/// Matching that here, rather than uploading 12 bytes and letting the last
+/// four land wherever, is what keeps this constant equal to what naga
+/// actually reserves for `Uniforms::colour` in `triangle.wgsl`.
+const COLOUR_BYTES: u64 = 16;
+
+/// Bytes this backend's whole per-draw uniform block occupies: the MVP
+/// matrix, then the colour.
+const UNIFORM_BYTES: u64 = MVP_BYTES + COLOUR_BYTES;
 
 /// The limits every device this backend asks for is held to.
 ///
@@ -531,7 +544,7 @@ impl Renderer {
         self.staging.clear();
         for draw in frame.draws() {
             let mvp = frame.view_projection.mul(&draw.transform);
-            self.staging.extend(uniform_bytes(&mvp));
+            self.staging.extend(uniform_bytes(&mvp, draw.colour));
             self.staging.extend(std::iter::repeat_n(0u8, padding));
         }
         if !self.staging.is_empty() {
@@ -684,7 +697,12 @@ impl Uniforms {
             label: Some("krudd uniforms"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                // The vertex stage reads `mvp`; the fragment stage now also
+                // reads `colour` to modulate the vertex colour with — both
+                // stages bind the same block, so both need visibility, or
+                // wgpu refuses the pipeline outright rather than let the
+                // fragment shader read a binding it was not granted.
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     // One buffer, one bind group, one offset per draw — rather
@@ -736,12 +754,20 @@ fn uniform_stride(alignment: u32) -> u64 {
     UNIFORM_BYTES.div_ceil(alignment) * alignment
 }
 
-/// One matrix as the bytes the shader reads.
+/// One draw's uniform block as the bytes the shader reads: the MVP matrix,
+/// then the colour padded to [`COLOUR_BYTES`] the way naga lays out a
+/// trailing `vec3<f32>`.
 ///
 /// Little-endian explicitly: that is what the GPU expects, whatever the host
-/// happens to be.
-fn uniform_bytes(mvp: &Mat4) -> impl Iterator<Item = u8> + use<'_> {
-    mvp.as_slice().iter().flat_map(|v| v.to_le_bytes())
+/// happens to be. The colour's fourth component is unread by the shader —
+/// `Uniforms::colour` in `triangle.wgsl` is a `vec3` — so it is padding, not
+/// an alpha channel, and its value does not matter; zero keeps it inert.
+fn uniform_bytes(mvp: &Mat4, colour: Vec3) -> impl Iterator<Item = u8> + use<'_> {
+    mvp.as_slice().iter().flat_map(|v| v.to_le_bytes()).chain(
+        [colour.x, colour.y, colour.z, 0.0]
+            .into_iter()
+            .flat_map(|v| v.to_le_bytes()),
+    )
 }
 
 /// A [`krudd_render::Color`] as wgpu's.
@@ -763,18 +789,18 @@ mod tests {
 
     #[test]
     fn the_uniform_stride_is_the_alignment_when_a_block_fits_in_one() {
-        // WebGL2's alignment. One 64-byte block per 256-byte slot: three
-        // quarters wasted, and unavoidable — a dynamic offset has to land on
-        // the alignment.
+        // WebGL2's alignment. One 80-byte block (the MVP matrix plus the
+        // colour) per 256-byte slot: well over half wasted, and unavoidable —
+        // a dynamic offset has to land on the alignment.
         assert_eq!(uniform_stride(256), 256);
     }
 
     #[test]
     fn the_uniform_stride_rounds_up_rather_than_down() {
         // A device with a tighter alignment packs blocks closer; one whose
-        // alignment does not divide 64 still has to clear the block.
-        assert_eq!(uniform_stride(64), 64);
-        assert_eq!(uniform_stride(32), 64);
+        // alignment does not divide the 80-byte block still has to clear it.
+        assert_eq!(uniform_stride(64), 128);
+        assert_eq!(uniform_stride(32), 96);
         assert_eq!(uniform_stride(48), 96);
         assert!(uniform_stride(48) >= UNIFORM_BYTES);
     }
@@ -788,20 +814,37 @@ mod tests {
     }
 
     #[test]
-    fn a_uniform_block_is_sixteen_little_endian_floats() {
-        let bytes: Vec<u8> = uniform_bytes(&Mat4::IDENTITY).collect();
+    fn a_uniform_block_is_the_matrix_then_the_colour() {
+        let white = Vec3::new(1.0, 1.0, 1.0);
+        let bytes: Vec<u8> = uniform_bytes(&Mat4::IDENTITY, white).collect();
         assert_eq!(bytes.len() as u64, UNIFORM_BYTES);
         assert_eq!(&bytes[0..4], &1.0f32.to_le_bytes());
         assert_eq!(&bytes[4..8], &0.0f32.to_le_bytes());
+        // The colour follows the 64-byte matrix, one float per component.
+        assert_eq!(&bytes[64..68], &1.0f32.to_le_bytes());
+        assert_eq!(&bytes[68..72], &1.0f32.to_le_bytes());
+        assert_eq!(&bytes[72..76], &1.0f32.to_le_bytes());
+    }
+
+    #[test]
+    fn a_non_white_colour_reaches_its_own_bytes_not_the_matrixs() {
+        // Distinct from white so a build that forgot to plumb `draw.colour`
+        // through and uploaded a constant instead would fail here rather than
+        // passing by coincidence.
+        let bytes: Vec<u8> = uniform_bytes(&Mat4::IDENTITY, Vec3::new(0.2, 0.4, 0.6)).collect();
+        assert_eq!(&bytes[64..68], &0.2f32.to_le_bytes());
+        assert_eq!(&bytes[68..72], &0.4f32.to_le_bytes());
+        assert_eq!(&bytes[72..76], &0.6f32.to_le_bytes());
     }
 
     #[test]
     fn a_uniform_block_is_column_major() {
         // A transposed upload is the classic silent renderer bug: geometry
         // still draws, in the wrong place. The translation column has to land
-        // in the last four floats, not strided through every fourth one.
+        // in the last four floats of the matrix, not strided through every
+        // fourth one.
         let m = Mat4::from_translation(krudd_math::Vec3::new(1.0, 2.0, 3.0));
-        let bytes: Vec<u8> = uniform_bytes(&m).collect();
+        let bytes: Vec<u8> = uniform_bytes(&m, Vec3::new(1.0, 1.0, 1.0)).collect();
         assert_eq!(&bytes[48..52], &1.0f32.to_le_bytes());
         assert_eq!(&bytes[52..56], &2.0f32.to_le_bytes());
         assert_eq!(&bytes[56..60], &3.0f32.to_le_bytes());

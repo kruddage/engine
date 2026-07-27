@@ -100,7 +100,16 @@ export type Lane = (typeof LANES)[number];
  *
  * `column<vec3>` is the one that matters and the reason this is a closed set:
  * world state moves between nodes a whole column at a time, and a port typed
- * `vec3` would be a port that had quietly gone per-entity.
+ * `vec3` would be a port that had quietly gone per-entity. `column<f32>` and
+ * `column<u32>` are the same idea at the other two element widths a column
+ * may hold — see [`ColumnKind`].
+ *
+ * `column-name` is different in kind from the rest: every other entry is
+ * something a *port* carries across a wire, but a column-name is something a
+ * *param* holds — the string a node resolves, once per phase, to the column
+ * it should read or write. It lives in this closed set anyway because
+ * `ParamDeclaration.type` is a `PortType`, the same way `mesh` and `surface`
+ * already are param-only entries here.
  *
  * The names are the boundary's names on purpose. The day a node kind is
  * generated from an engine export rather than written out here, the port
@@ -112,6 +121,9 @@ export const PORT_TYPES = [
 	"vec3",
 	"mat4",
 	"column<vec3>",
+	"column<f32>",
+	"column<u32>",
+	"column-name",
 	"frame",
 	"surface",
 	"mesh",
@@ -120,6 +132,17 @@ export const PORT_TYPES = [
 
 /** What a port carries. */
 export type PortType = (typeof PORT_TYPES)[number];
+
+/**
+ * The element widths a column may hold: three floats per slot, one float, or
+ * one count. The same three `@krudd/boundary`'s `ensureColumn` takes — a
+ * board's declaration and the engine's own column are the same shape on
+ * purpose, so there is nothing to translate between them.
+ */
+export const COLUMN_KINDS = ["vec3", "f32", "u32"] as const;
+
+/** What one slot of a column holds. */
+export type ColumnKind = (typeof COLUMN_KINDS)[number];
 
 /** One data port on a node kind. */
 export interface Port {
@@ -268,6 +291,30 @@ export interface Wire {
 	readonly cut?: boolean;
 }
 
+/**
+ * One column a board runs on: shared state that outlives any single wire.
+ *
+ * Board-level rather than owned by whichever node happens to output it, and
+ * that is the load-bearing decision. A column like `position` is written by
+ * one node and read by two or three others downstream — it has a lifetime of
+ * its own, longer than any wire that touches it. If a column belonged to the
+ * node that created it, cutting the wire into that node would take the
+ * column with it, and everything past the cut would fault instead of simply
+ * going quiet — the opposite of what a cut is supposed to mean. Declaring
+ * columns here, rather than deriving one from a node's output port, is what
+ * keeps **cutting a wire from ever destroying state**.
+ *
+ * It is also what is already true one level down: a column lives on the
+ * engine, not on a node, so this is the board describing the world it runs
+ * in rather than inventing a second place columns come from.
+ */
+export interface BoardColumn {
+	/** What `ensureColumn` and every node's column-name param name it by. */
+	readonly name: string;
+	/** What one slot holds. */
+	readonly kind: ColumnKind;
+}
+
 /** One canvas of nodes. */
 export interface Board {
 	/** What the breadcrumb shows. */
@@ -293,6 +340,15 @@ export interface Board {
 	 * present`. A node opening into one of these does not open at Simple.
 	 */
 	readonly pro?: boolean;
+	/**
+	 * The columns this board runs on. See [`BoardColumn`] for why this is
+	 * board-level rather than derived from a node.
+	 *
+	 * Absent on a board that declares none — the frame board is viewable
+	 * rather than runnable and touches no column at all, so restating an empty
+	 * list on it would be noise.
+	 */
+	readonly columns?: readonly BoardColumn[];
 	/** Its nodes, in no particular order — `lane` and `column` place them. */
 	readonly nodes: readonly BoardNode[];
 	/** Its wires. */

@@ -27,7 +27,7 @@
 //! `Backend`'s frame boundaries.
 
 use krudd_gpu::{BufferId, BufferUsage, IndexFormat, PipelineId, TextureFormat, TextureId};
-use krudd_math::Mat4;
+use krudd_math::{Mat4, Vec3};
 
 /// The rectangle a frame renders into, in physical pixels.
 ///
@@ -117,13 +117,21 @@ impl Color {
     }
 }
 
-/// One draw: a pipeline, a transform, and a range of a vertex buffer.
+/// One draw: a pipeline, a transform, a colour, and a range of a vertex
+/// buffer.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Draw {
     /// The pipeline to bind.
     pub pipeline: PipelineId,
     /// The model-to-world transform.
     pub transform: Mat4,
+    /// Multiplied into the pipeline's own vertex colour, not substituted for
+    /// it — `(1, 1, 1)` leaves whatever the shader already draws unchanged,
+    /// which is what lets an uncoloured entity look exactly as it did before
+    /// this field existed. A backend that instead replaced the vertex colour
+    /// would flatten every triangle to a solid fill and could never agree
+    /// pixel for pixel with a shader's own gradient.
+    pub colour: Vec3,
     /// The first vertex to draw.
     pub first_vertex: u32,
     /// How many vertices to draw.
@@ -523,6 +531,7 @@ mod tests {
             f.push(Draw {
                 pipeline: PipelineId::new(0, 0),
                 transform: Mat4::IDENTITY,
+                colour: Vec3::new(1.0, 1.0, 1.0),
                 first_vertex: i,
                 vertex_count: 3,
             });
@@ -539,6 +548,7 @@ mod tests {
         f.push(Draw {
             pipeline: PipelineId::new(0, 0),
             transform: Mat4::IDENTITY,
+            colour: Vec3::new(1.0, 1.0, 1.0),
             first_vertex: 0,
             vertex_count: 3,
         });

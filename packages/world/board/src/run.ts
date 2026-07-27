@@ -107,8 +107,21 @@ export class Runner {
 		return (this.#lanes.get(lane) ?? []).map((step) => step.node.id);
 	}
 
-	/** Runs the start lane. Once, when the board opens. */
+	/**
+	 * Runs the start lane. Once, when the board opens.
+	 *
+	 * Before it does, every column the root board declares is made to exist —
+	 * one `ensureColumn` per declared column, never per node — so a kind's
+	 * `run` can resolve a column-name param straight into a live column
+	 * without first asking whether it has been created yet.
+	 */
 	start(): void {
+		for (const column of this.#rootBoard().columns ?? []) {
+			this.#world.ensureColumn(column.name, column.kind);
+		}
+		// No pointer: the start lane runs once as the board opens, before any
+		// press could have been collected, so there is nothing to hand it but
+		// the empty sample.
 		this.#runLane("start", 0, NO_POINTER);
 	}
 

@@ -2,165 +2,272 @@
 
 [![License: GPL-2.0-or-later](https://img.shields.io/badge/License-GPL--2.0--or--later-blue.svg)](https://spdx.org/licenses/GPL-2.0-or-later.html)
 [![CI](https://github.com/kruddage/engine/actions/workflows/ci.yml/badge.svg)](https://github.com/kruddage/engine/actions/workflows/ci.yml)
+[![Live](https://img.shields.io/website?url=https%3A%2F%2Fkruddage.github.io%2Fengine&label=live)](https://kruddage.github.io/engine)
 
-A game engine written in **Rust** and **TypeScript**, compiled to WebAssembly
-and served as a static site. Web only, WebGL2 only — the browser is the
-platform, and there is no native build to keep in step with it.
+A game engine written in C, compiled to WebAssembly via Emscripten and served as a static site.
 
-> **krudd 2 is a rewrite in progress.** The C and Scheme engine that used to
-> live here has been deleted, not strangled — see
-> [#812](https://github.com/kruddage/engine/issues/812) for the plan and
-> [#814](https://github.com/kruddage/engine/issues/814) for what left and why.
-> What is here now is the spine: a package boundary, a build driver, a
-> loadable wasm module, and **a triangle on screen** —
-> [#818](https://github.com/kruddage/engine/issues/818),
-> [#819](https://github.com/kruddage/engine/issues/819) and
-> [#820](https://github.com/kruddage/engine/issues/820), which puts the live
-> demo back up. The native shells that used to be on the plan are gone rather
-> than pending — see
-> [#845](https://github.com/kruddage/engine/issues/845).
+**[Live demo →](https://kruddage.github.io/engine)**
 
-## The shape of it
+## Overview
 
-Rust owns the hot path; TypeScript owns everything else.
+KRUDD is a modular C game engine that targets the browser via WebAssembly. The core drives a
+fixed-timestep loop; subsystems (logging, memory, rendering) attach as plugins through a stable
+WASM ABI.
 
-| | Rust (`crates/`) | TypeScript (`packages/`) |
-|---|---|---|
-| **Runs as** | one wasm module | one ES module bundle |
-| **Memory** | no GC, manual lifetimes | the host engine's collector |
-| **Owns** | render graph, GPU resources, math, physics, asset decode, ECS storage | editor, gameplay, scene authoring, tooling |
+Current state: entity/scene runtime, asset pipeline with local IndexedDB persistence,
+WebGL rendering with a frame graph, and an in-browser authoring surface.
 
-TypeScript is the GC half because the browser's collector is already there and
-already paid for, so the engine ships zero GC bytes of its own.
+## Roadmap: Scheme as the build system and the game
 
-The boundary between them is **batched, never per-object**: TypeScript reads
-typed-array views straight over wasm linear memory and calls into Rust once
-per phase. Getting that wrong looks like "wasm is slow" and is not — reading a
-world one call per entity measures ~36× more expensive than reading it through
-the view, which is what `cargo xtask bench` exists to keep true.
+KRUDD is mid strangler-fig rewrite. The end state: one small embedded language describes
+both *how to build the game* and *what the game does*, so build rules and gameplay logic
+stop being two separate disciplines.
 
-See [`docs/architecture.md`](docs/architecture.md) for the tier order, what
-each crate and package owns, and what each may reach for, and
-[`docs/boundary.md`](docs/boundary.md) for the contract across the wasm
-boundary — ownership, what may be exported, and when a view goes stale.
+**`kruddmake`** is that language — [S7 Scheme](https://ccrma.stanford.edu/software/snd/snd/s7.html)
+embedded as the build driver. Scripts and scene/gameplay data authored in it use the
+`.scm` extension; the underlying language stays plain S7 Scheme, not a fork, so existing
+S7 docs and tooling keep applying.
+
+Planned rollout:
+
+1. **krudd drives the build.** The engine builds through krudd's own build (Ninja +
+   Emscripten) documented above, inside CI. The gates around it (`.scm` comment lint,
+   Conventional-Commit versioning via release-please, per-PR previews) still live as plain
+   YAML workflows (see below). The sanitizer gate (ASan + UBSan + LeakSanitizer over the
+   native suite) and a report-only coverage comment are wired up; a coverage *floor* gate
+   is still deferred. The direction is to move that scaffolding into Scheme as the tooling
+   exists, rather than growing it as a bolt-on to the old pipeline.
+2. **krudd eats the build graph, piece by piece.** Asset codecs, plugin registration,
+   and scene compilation move from C into Scheme one at a time — the C build tree shrinks
+   as the Scheme grows, rather than a rewrite landing in one PR.
+3. **The same S7 runtime ships in the engine** as the scripting layer for game logic, so a
+   build script and a gameplay script share one language and one mental model.
+
+Target experience: fork or clone this engine (or start from a release), push a branch,
+merge to `main`, and GitHub Pages is running your game — no separate toolchain to learn.
+Simple enough for a kid to poke at, deep enough not to be outgrown by someone who's shipped
+AAA titles and HL1/Duke3D mods. This is a direction, not a shipped feature, and will keep
+getting refined.
+
+## Architecture
+
+```
+krudd/
+  krudd.c        The front door — boots s7, hands off to the build language
+  kruddmake/     The build language (kruddmake): reads specs, emits C + build.ninja, runs ninja
+    build.scm    Orchestrator — the entry point `krudd build` loads
+    manifest.scm The list of directories carrying a build.scm, in tier order
+    ninja.scm    The Ninja emitter — renders build.ninja from the directory specs
+    resolve.scm  Transitive include/link resolver
+    introspect.scm Codegen — reads a module's .scm spec, emits its .h/.c
+  engine/        The engine — one folder per module, Scheme spec + C together
+    abi/         The plugin vtables, and nothing else
+    core/        Engine heartbeat — init/tick/shutdown, subsystem manager, script host
+    base/        No engine concepts — log/, memory/, math/ (incl. the spatial types)
+    world/       The scene and its data model — entity/, asset/, edit/
+    render/      Backends and the passes that drive them — webgl/, webgpu/, vulkan/,
+                 null/, frame_graph/, particles/, scene_renderer/, plus renderer.scm
+                 (the backend interface spec) and shader/ (the shader DSL)
+    audio/       The mixer and its device backends
+    ui/          Editor chrome — kruddgui/, viewport/, kruddboard/
+    game/        host/ is the launcher registry; its siblings register with it
+    shell/       The hosts the engine runs inside — qt/ and web/
+```
+
+The tiers are listed in dependency order: a module may only reach for one in a tier above
+it. `kruddmake/manifest.scm` is the authoritative list and explains what each tier is for.
+
+Each module owns its Scheme source-of-truth spec, the C it lowers to (or hand-written C for
+speed), its headers, and its tests. A module whose Scheme is generated from — lowered to C,
+embedded into the s7 image, substituted into a header — says so in its own `build.scm`, with
+an `(embed …)` / `(emit-… )` / `(configure-file …)` declaration alongside its libraries. That
+one declaration is what the generator runs *and* what the build watches for changes, so a
+source can't be generated from without also being rebuilt for. A module that other modules
+consume exports an
+`include/` directory holding exactly what they consume; everything else stays private at
+the module root. `kruddmake/` is the thin build layer that reads those specs and emits +
+compiles them; it holds no engine domain logic.
+
+Every module is compiled straight into the one WASM module; at boot `engine.c` calls each
+subsystem's `<name>_plugin_entry` in dependency order. A subsystem discovers engine services
+through `subsystem_manager_get_api()` and interacts via vtables — no direct named imports
+required.
 
 ## Building
 
 ### Prerequisites
 
-- **Rust** via [rustup](https://rustup.rs/) — `rust-toolchain.toml` pins the
-  channel and installs the wasm target and components on first use, so there
-  is nothing to add by hand.
-- **Node 22+** and **pnpm 10** — `npm install -g pnpm`, or `corepack enable pnpm`.
+- [Emscripten](https://emscripten.org/docs/getting_started/downloads.html) (emsdk) — WASM build
+- [Ninja](https://ninja-build.org/) plus a C compiler (`cc`/`gcc`/`clang`)
 
-`cargo xtask` installs the matching wasm-bindgen CLI itself the first time it
-needs one.
+krudd renders a `build.ninja` from the directory specs and drives `ninja`
+directly — there is no CMake in the build path.
 
-### One entry point
+### WASM build
 
 ```sh
-cargo xtask build-web    # wasm + TypeScript into dist/
-cargo xtask serve        # build, then serve dist/ at http://127.0.0.1:8080/
-cargo xtask dist         # optimised build, with the artifact sizes
-cargo xtask check        # everything CI gates on
-cargo xtask test-web     # just the boundary tests, against the built wasm
-cargo xtask bench        # the batched boundary against the per-call one
-cargo xtask tiers        # just the crate/package tier check
+KRUDD_TARGET=wasm ./krudd.sh build
 ```
 
-There is no second build system and no step that exists only inside a CI
-workflow: `ci.yml` runs `cargo xtask check`, so a green local run is a green
-CI run. `cargo xtask help` lists the flags.
+Then serve `build/` with any static file server:
 
-What you should see from `cargo xtask serve`: a dark page with **eight
-coloured triangles** drifting outward from the centre, and a line of readout
-along the bottom — the version, what the renderer actually picked, the drawing
-buffer size, the frame rate, and the draw count. Rust simulates and draws;
-TypeScript reads the world out of wasm memory with no copy and writes back into
-the same view to recycle the ones that drift off screen.
-
-If something is wrong you get a full-screen message instead, not a blank
-canvas. That is deliberate: a renderer that stops drawing leaves its last frame
-up, so a failure has to be louder than the picture it is hiding behind.
-
-## Layout
-
-```
-crates/            The Rust half, in tier order
-  base/math/         Vectors, matrices, the spatial types
-  world/storage/     Struct-of-arrays slots, generations, tombstones
-  world/asset/       Asset decoding: bytes in, engine data out
-  render/gpu/        Typed, generational GPU resource handles
-  render/renderer/   The Backend trait and the Frame it is handed
-  render/webgl/      The WebGL2 backend, on wgpu
-  shell/web/         The wasm module the browser loads
-packages/          The TypeScript half, same tier vocabulary
-  base/boundary/     Loading the wasm and viewing its memory
-    harness/           node:test over the memory contract, and the benchmark
-  shell/web/         The browser page
-xtask/             The build driver
-docs/              Architecture and toolchain decisions
+```sh
+python3 -m http.server -d build
 ```
 
-A crate or package may depend on its own tier or a lower one, never a higher
-one, and nothing may depend on a shell. `cargo xtask tiers` enforces it — a
-violation fails the build, not review.
+### Native build (tests only)
+
+The native build compiles the modules for unit testing. It does not run the
+engine loop; the test stamps run the suite, so a green build is a green test run.
+
+```sh
+./krudd.sh build
+```
+
+### Native editor (SteamOS / Steam Deck)
+
+A native editor: the same C engine that ships to the browser as WebAssembly also runs
+natively on a **Vulkan** backend (Vulkan on the Deck's RDNA2, on Windows too) presenting
+into a real desktop window — no browser, no Emscripten in the path. The web build keeps
+its WebGL and WebGPU backends untouched; Vulkan is the native desktop GPU path.
+
+The Vulkan backend brings up a **modern Vulkan 1.3 device with the Khronos validation
+layers on** and presents an animated clear into the window, and the editor still boots the
+engine's render cluster (asset → entity → frame graph → scene renderer) so the whole path
+up to the backend runs. Translating that draw stream to Vulkan — shaders to SPIR-V,
+pipelines, buffers and draws, so the demo scene renders in Vulkan — is the next step; the
+point of this stage is a validated Vulkan base you can diagnose against on real hardware
+(see [#705](https://github.com/kruddage/engine/issues/705)).
+
+The editor is the **Qt editor shell** — a `QMainWindow` with a menu bar, toolbar and
+Scene/Inspector/Assets/Console docks around the viewport. It is opt-in and left out of
+every default build and CI run:
+
+```sh
+KRUDD_QT_CFLAGS="$(pkg-config --cflags Qt6Widgets Qt6Gui Qt6Core)" \
+./krudd.sh editor
+```
+
+#### Install the prebuilt Flatpak (Steam Deck)
+
+The fastest way onto a Deck: install the signed Flatpak from the self-hosted
+registry. In **Desktop Mode**, add the remote once and install — after that it
+shows up in Discover and updates the normal Flatpak way (`flatpak update`):
+
+```sh
+flatpak remote-add --user --if-not-exists krudd https://kruddage.github.io/engine/flatpak/krudd.flatpakrepo
+flatpak install --user krudd io.github.kruddage.Editor
+```
+
+See [`packaging/flatpak/`](packaging/flatpak/README.md) for the full Discover
+walkthrough and how to stand up your own signed registry on a fork.
+
+#### Build from source
+
+It needs the **Vulkan loader + headers + validation layers**, **glslang**, and **Qt6** —
+all ordinary system packages, no multi-gigabyte out-of-tree library to build.
+
+**On SteamOS / the Steam Deck** the root filesystem is immutable — no compiler lives there.
+Build and run inside an Arch [distrobox](https://distrobox.it/), which shares the Deck's
+Wayland socket and GPU. Create and enter the container first (this is a host-side step):
+
+```sh
+distrobox create -i archlinux:latest krudd && distrobox enter krudd
+```
+
+Then, inside the container (distrobox mounts your home directory, so an existing clone is
+already visible at the same path):
+
+```sh
+git clone https://github.com/kruddage/engine.git   # skip if you already cloned
+cd engine
+./setup.sh          # toolchain + Vulkan validation layers + Qt6 + .krudd-env
+./krudd.sh editor   # build and run the Qt editor shell
+```
+
+**On any other Linux box** the two container lines are not needed — just clone and run
+`./setup.sh` directly.
+
+`setup.sh` records the Qt flags in `.krudd-env`, which `krudd.sh` sources automatically — so
+after `./setup.sh` you do not even need the manual `KRUDD_QT_CFLAGS` export shown above.
+
+The editor picks up whichever Qt platform plugin is live — Wayland on the Deck, xcb under
+X11, or the Windows plugin — and prints which one it presented on at startup. Press `Esc`
+or close the window to quit.
+
+What you should see: the viewport currently renders the Vulkan backend's **animated clear**
+rather than the scene. That is expected — the backend stands up a validated Vulkan 1.3
+device, swapchain and present path, but does not yet translate the renderer's draw stream
+(see the `SCOPE` note atop
+[`renderer_vulkan.c`](krudd/engine/render/vulkan/renderer_vulkan.c) and #705). The chrome
+around it — the menu bar, toolbar and the Scene / Inspector / Assets / Console docks, all
+freely movable, floatable and tabbable — is the authoring surface. Panel contents are
+placeholders for now; filling them in is #793.
+
+The editor also ships as a self-hosted, GPG-signed Flatpak registry —
+`flatpak remote-add` a `.flatpakrepo` URL and get updates the normal Flatpak
+way, no Flathub submission. See
+[`packaging/flatpak/`](packaging/flatpak/README.md) for install instructions
+and how to stand up your own signed registry on a fork; it's the same
+`gh-pages` deploy the WASM site already uses, just published to a `/flatpak/`
+subpath. Wiring the editor's docks to the running scene (scene tree, inspector,
+REPL, project open/save) is tracked separately as the authoring surface.
 
 ## CI
 
+`ci.yml` runs on every pull request and on push to `main`, alongside two release workflows:
+
 | Workflow · job | What it does |
 |---|---|
-| **ci · check** | `cargo xtask check` — tiers, `rustfmt`, `clippy -D warnings`, `cargo test`, the wasm + TypeScript build, `tsc`, `biome ci`, and the boundary tests against the built module |
-| **ci · deploy** | On push to `main`, publishes the release build to the live site |
-| **ci · preview** | Publishes each pull request to its own URL, and takes it down when the PR closes |
+| **ci · lint** | Style-checks `.scm` comments (`lint-scm-comments.py`) |
+| **ci · build** | Builds the WASM module via Emscripten (`emsdk` container) through krudd's own Ninja build |
+| **ci · deploy** | On push to `main`, publishes the staged site to GitHub Pages |
+| **ci · preview** | Deploys each PR's build to a `pr-preview/pr-<N>/` URL and tears it down on close |
+| **ci · sanitizers** | Builds + runs the native suite under ASan + UBSan + LeakSanitizer; fails on any leak, out-of-bounds, or UB |
+| **ci · coverage** | Measures native gcov coverage and posts it as a sticky PR comment (report-only, no floor gate) |
 | **pr-title** | Checks the PR title is a valid Conventional Commit (it becomes the squashed commit) |
 | **release-please** | On push to `main`, maintains the release PR that versions, tags, and releases |
 
-`check` is the only one of these that gates a merge. `deploy` and `preview`
-publish; a failed preview does not hold up an auto-merge.
-
-Both publish to the **`gh-pages` branch**, not through the Pages "GitHub
-Actions" source: the site and every open PR's preview live on the one branch,
-so they are serialised under a shared concurrency group and publish with
-`keep_files` rather than mirroring. A preview build stamps its version
-`-pr<N>+<sha>`, so the version the page prints tells you which build you are
-looking at.
+The `sanitizers` and `coverage` jobs both build natively through `kruddmake`, feeding the
+sanitizer / `--coverage` flags in via the generator's `KRUDD_CC` / `KRUDD_EXTRA_CFLAGS` /
+`KRUDD_EXTRA_LDFLAGS` environment hooks rather than as separate bolt-on build scripts. A
+coverage *floor* gate isn't wired up yet — the plan is to add one once the baseline has
+been watched for a while.
 
 ## Versioning and releases
 
 Versioning is handled by [release-please](https://github.com/googleapis/release-please),
-driven by [Conventional Commits](https://www.conventionalcommits.org/). We
-squash-merge, so a PR's title *is* its commit message and the **pr-title**
-check enforces the format:
+driven by [Conventional Commits](https://www.conventionalcommits.org/). We squash-merge, so a
+PR's title *is* its commit message and the **pr-title** check enforces the format:
 
 - `feat: …` → minor bump &nbsp;·&nbsp; `fix:`/`perf: …` → patch bump &nbsp;·&nbsp; `feat!:` or a `BREAKING CHANGE:` footer → major bump
 - `chore:`/`docs:`/`ci:`/`refactor:`/`test:`/`build: …` → no version bump, but still recorded in `CHANGELOG.md`
 
-On each push to `main`, release-please opens or updates a single **release PR**
-that rolls up the unreleased commits: it bumps [`version.txt`](version.txt),
-regenerates `CHANGELOG.md`, and updates `.release-please-manifest.json`.
-Merging that PR tags `vX.Y.Z` and cuts a GitHub Release.
+On each push to `main`, release-please opens or updates a single **release PR** that rolls up
+the unreleased commits: it bumps [`version.txt`](version.txt), regenerates `CHANGELOG.md`, and
+updates `.release-please-manifest.json`. Merging that PR tags `vX.Y.Z` and cuts a GitHub
+Release. CI reads `version.txt` and stamps it into the build (`KRUDD_VERSION`); PR/preview
+builds append a `-pr<N>+<sha>` suffix so they never collide with a real release.
 
-`cargo xtask` reads `version.txt` and stamps it into the wasm and the page;
-`KRUDD_VERSION` overrides it so a preview build can mark itself as one.
-
-The version number carries across the rewrite unbroken — the engine is the
-same project, not a new one. The Rust crates all sit at `0.0.0` and are
-`publish = false`, deliberately: two version numbers would drift, and nothing
-here goes to crates.io.
+> This replaced an earlier scheme that derived the version by folding per-PR `release:*`
+> labels on every build, with no tags or changelog. `version.txt` was seeded at the label-fold
+> value (`17.11.3`) as of the cutover commit so numbering continues unbroken, and
+> `bootstrap-sha` in the config keeps that pre-cutover history out of the first changelog.
 
 ## License
 
-GPL-2.0-or-later for open source and GPL-compliant use. Use in proprietary or
-commercial products requires a separate commercial license from the author.
+GPL-2.0-or-later for open source and GPL-compliant use. Use in proprietary or commercial products
+requires a separate commercial license from the author.
 
-External contributions require a CLA (copyright assignment). Contact the
-project maintainer for details.
+External contributions require a CLA (copyright assignment). Contact the project maintainer for
+details.
 
 ## Contributing
 
-See [`CODING_STANDARD.md`](CODING_STANDARD.md) before writing or reviewing
-anything. The short version: `rustfmt` and `clippy` at their defaults, Biome at
-its defaults, and when two forms are both correct the canonical one wins.
+Code follows the [Linux kernel coding style](https://kernel.org/doc/html/latest/process/coding-style.html).
+See [`CODING_STANDARD.md`](CODING_STANDARD.md) for the project-specific digest before writing or
+reviewing any C.
 
-Run `cargo xtask check` before pushing. It is the same command CI runs.
+Run `git config core.hooksPath .githooks` once to enable the tracked pre-commit hook, which mirrors
+`ci·lint`'s `.scm` comment and indentation checks against your staged files so a violation is caught
+locally instead of after a push.

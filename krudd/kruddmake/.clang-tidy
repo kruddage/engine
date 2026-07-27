@@ -1,0 +1,14 @@
+Checks: >-
+  bugprone-integer-division,
+  bugprone-macro-parentheses,
+  bugprone-misplaced-operator-in-strlen-in-alloc,
+  bugprone-misplaced-widening-cast,
+  bugprone-not-null-terminated-result,
+  bugprone-sizeof-expression,
+  bugprone-string-literal-with-embedded-nul,
+  bugprone-suspicious-string-compare,
+  bugprone-too-small-loop-variable,
+  clang-analyzer-*,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling
+WarningsAsErrors: '*'
+HeaderFilterRegex: '^.*(modules|plugins)/.*'

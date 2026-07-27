@@ -743,6 +743,56 @@ impl Engine {
         self.viewport.height
     }
 
+    /// World-space `x` for a normalised screen-space `x` in `[0, 1]`, 0 at the
+    /// viewport's left edge.
+    ///
+    /// Reads the scale and offset back out of [`Engine::view_projection`] —
+    /// the same matrix [`Engine::build_frame`] submits — rather than
+    /// recomputing `VIEW_EXTENT` and the viewport aspect independently. A
+    /// pick built from a second copy of the camera arithmetic is a pick that
+    /// can disagree with the draw at some aspect ratio, and the person who
+    /// finds that is tapping the screen, not running a test.
+    ///
+    /// This is one scalar call per axis rather than one call returning a
+    /// `[f32; 2]` pair: the latter is a `Box<[f32]>`, which allocates on both
+    /// sides of the boundary on every call — fine once at boot, not for
+    /// something a pointer move can trigger every frame. See
+    /// `docs/boundary.md`'s "what may be exported".
+    ///
+    /// It decomposes into independent per-axis calls **only because the
+    /// camera is orthographic and axis-aligned**: clip-space `x` here depends
+    /// on world `x` alone, with no `y` or `z` term to fold in. A camera that
+    /// rotated, or a perspective projection, would couple the axes through
+    /// the same row of the matrix, and unprojecting would need a matrix
+    /// inverse behind one call that returns both coordinates together —
+    /// not two calls that each pretend the other axis does not exist.
+    pub fn world_x_from_screen(&self, x: f32) -> f32 {
+        let clip_x = x * 2.0 - 1.0;
+        let m = self.view_projection();
+        (clip_x - m.cols[3][0]) / m.cols[0][0]
+    }
+
+    /// World-space `y` for a normalised screen-space `y` in `[0, 1]`, 0 at the
+    /// viewport's top edge.
+    ///
+    /// **Screen `y` runs down; world `y` runs up.** `y = 0`, the top of the
+    /// viewport, has to land at the *top* of the camera's box — clip-space
+    /// `+1` — and `y = 1`, the bottom, at clip-space `-1`. So the map from
+    /// screen to clip is `1.0 - 2.0 * y`, not `2.0 * y - 1.0`: the sign flip
+    /// is not a typo carried over from [`Engine::world_x_from_screen`], it is
+    /// the one place this function has to differ from it. Getting it backwards
+    /// would still compile, still return a plausible-looking number, and place
+    /// every tap on the wrong row.
+    ///
+    /// See [`Engine::world_x_from_screen`] for why this is a scalar call
+    /// rather than a heap-returning pair, and why the split into two calls
+    /// only holds together for an orthographic, axis-aligned camera.
+    pub fn world_y_from_screen(&self, y: f32) -> f32 {
+        let clip_y = 1.0 - y * 2.0;
+        let m = self.view_projection();
+        (clip_y - m.cols[3][1]) / m.cols[1][1]
+    }
+
     /// Despawns an entity. Returns whether the slot was live.
     pub fn despawn(&mut self, slot: u32) -> bool {
         match self.live_handle(slot) {
@@ -1498,6 +1548,125 @@ mod tests {
         );
         // A square canvas is isotropic: x and y scale alike.
         assert_eq!(square.cols[0][0], square.cols[1][1]);
+    }
+
+    /// Projects a world point through `m` by hand — the same four-term dot
+    /// product [`Mat4::orthographic`]'s own test uses — so the round-trip
+    /// tests below check the real matrix rather than the shortcut formula
+    /// [`Engine::world_x_from_screen`] and [`Engine::world_y_from_screen`]
+    /// happen to use internally.
+    fn project(m: &Mat4, p: [f32; 4]) -> [f32; 4] {
+        let mut out = [0.0f32; 4];
+        for (r, cell) in out.iter_mut().enumerate() {
+            *cell = (0..4).map(|k| m.cols[k][r] * p[k]).sum();
+        }
+        out
+    }
+
+    /// Round-trips a handful of world points through the real camera matrix
+    /// and back, at a given viewport, and asserts each lands where it started.
+    ///
+    /// This is the test that matters for `world_x_from_screen` and
+    /// `world_y_from_screen`: the two are only safe to keep separate from
+    /// `build_frame`'s own camera because something proves they read the
+    /// *same* matrix, every time this file changes. Without it, the pick and
+    /// the draw could drift apart silently at some aspect ratio, found by a
+    /// person tapping the screen rather than by CI.
+    fn assert_round_trips(e: &Engine, points: &[(f32, f32)]) {
+        let m = e.view_projection();
+        for &(wx, wy) in points {
+            let clip = project(&m, [wx, wy, 0.0, 1.0]);
+            // The inverse of the maps `world_x_from_screen`/`world_y_from_screen`
+            // apply going in: clip -1..1 back to screen 0..1, with the y flip
+            // undone the same way it was applied.
+            let screen_x = (clip[0] + 1.0) / 2.0;
+            let screen_y = (1.0 - clip[1]) / 2.0;
+            let got_x = e.world_x_from_screen(screen_x);
+            let got_y = e.world_y_from_screen(screen_y);
+            assert!(
+                (got_x - wx).abs() < 1e-4,
+                "x round-trip: {wx} -> screen {screen_x} -> {got_x}"
+            );
+            assert!(
+                (got_y - wy).abs() < 1e-4,
+                "y round-trip: {wy} -> screen {screen_y} -> {got_y}"
+            );
+        }
+    }
+
+    /// The points every round-trip test checks: the origin, all four corners
+    /// of the camera's box at this viewport, and one point off both axes so a
+    /// bug that only shows up away from the centreline is not missed.
+    fn probe_points(e: &Engine) -> Vec<(f32, f32)> {
+        let m = e.view_projection();
+        // Recover the box's half-extents from the matrix rather than
+        // hardcoding `VIEW_EXTENT`, so this stays correct if that constant
+        // ever moves.
+        let half_width = 1.0 / m.cols[0][0];
+        let half_height = 1.0 / m.cols[1][1];
+        vec![
+            (0.0, 0.0),
+            (-half_width, half_height),
+            (half_width, half_height),
+            (-half_width, -half_height),
+            (half_width, -half_height),
+            (half_width * 0.37, -half_height * 0.71),
+        ]
+    }
+
+    #[test]
+    fn world_from_screen_round_trips_through_the_real_camera_at_a_square_viewport() {
+        let e = Engine::new(400, 400);
+        let points = probe_points(&e);
+        assert_round_trips(&e, &points);
+    }
+
+    #[test]
+    fn world_from_screen_round_trips_through_the_real_camera_at_a_phone_shaped_viewport() {
+        // The #853 case: a portrait phone, much taller than it is wide. The
+        // widened-box camera is at its most anisotropic here, which is where a
+        // formula that quietly assumed a square viewport would show it first.
+        let e = Engine::new(1080, 2256);
+        let points = probe_points(&e);
+        assert_round_trips(&e, &points);
+    }
+
+    #[test]
+    fn screen_top_left_is_world_top_left_not_bottom_left() {
+        // The likeliest bug this pair of functions has: screen y runs down,
+        // world y runs up, and a naive port of the x formula would flip only
+        // one of the two axes it needed to.
+        let e = Engine::new(400, 400);
+        let half_height = VIEW_EXTENT;
+        let half_width = e.view_projection().cols[0][0].recip();
+
+        assert!(
+            (e.world_x_from_screen(0.0) - -half_width).abs() < 1e-4,
+            "screen x=0 is the left edge"
+        );
+        assert!(
+            (e.world_y_from_screen(0.0) - half_height).abs() < 1e-4,
+            "screen y=0 (the top of the viewport) must be the *top* of the \
+             world box, not the bottom"
+        );
+        assert!(
+            (e.world_y_from_screen(1.0) - -half_height).abs() < 1e-4,
+            "screen y=1 (the bottom of the viewport) is the bottom of the box"
+        );
+    }
+
+    #[test]
+    fn world_from_screen_matches_a_hand_worked_conversion_at_a_wide_viewport() {
+        // A worked example independent of `project`/`probe_points`, so a bug
+        // shared between the implementation and the round-trip helper above
+        // would not sail through both. `800x400` widens the box 2:1, so the
+        // left edge is world x = -4 rather than -2.
+        let e = Engine::new(800, 400);
+        assert!((e.world_x_from_screen(0.0) - -4.0).abs() < 1e-4);
+        assert!((e.world_x_from_screen(1.0) - 4.0).abs() < 1e-4);
+        assert!((e.world_x_from_screen(0.5) - 0.0).abs() < 1e-4);
+        assert!((e.world_y_from_screen(0.0) - VIEW_EXTENT).abs() < 1e-4);
+        assert!((e.world_y_from_screen(1.0) - -VIEW_EXTENT).abs() < 1e-4);
     }
 
     #[test]

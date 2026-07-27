@@ -1,0 +1,30 @@
+{
+	"name": "@kruddage/engine",
+	"version": "0.0.0",
+	"description": "The KRUDD engine as an npm package: builds the WASM module through krudd.sh and publishes the resulting artifacts behind a declared API.",
+	"license": "GPL-2.0-or-later",
+	"type": "module",
+	"engines": {
+		"node": ">=20.11"
+	},
+	"main": "./src/index.mjs",
+	"types": "./src/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./src/index.d.ts",
+			"default": "./src/index.mjs"
+		},
+		"./package.json": "./package.json"
+	},
+	"files": [
+		"src",
+		"dist",
+		"README.md"
+	],
+	"scripts": {
+		"build": "node scripts/build.mjs",
+		"test": "node --test test/*.test.mjs",
+		"test:native": "sh ../../krudd/kruddmake/run-tests.sh",
+		"clean": "node scripts/clean.mjs"
+	}
+}

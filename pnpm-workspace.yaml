@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# The workspace is the outer build system: it sequences the packages and
+# enforces the boundaries between them. It does not replace kruddmake — the
+# engine's C/WASM build stays in krudd/ and is driven by krudd.sh, which
+# @kruddage/engine wraps (see packages/engine/README.md).
+packages:
+  - packages/*
+  - tools/render-diff

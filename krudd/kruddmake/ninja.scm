@@ -390,10 +390,10 @@
     (ninja-wasm! "index.html")))
 
 ;;! PWA static assets served alongside index.html — plain copies from
-;;! core/ into the build root, so GitHub Pages (and stage-site.sh) can pick
-;;! them up next to the hashed JS/WASM outputs. Unlike those, these filenames
-;;! aren't content-hashed, so the service worker itself must tolerate that
-;;! (see sw.js).
+;;! core/ into the build root, so the staging step (packages/site, via
+;;! @kruddage/engine's artifact contract) can pick them up next to the hashed
+;;! JS/WASM outputs. Unlike those, these filenames aren't hashed, so the
+;;! service worker itself must tolerate that (see sw.js).
 (define (ninja-emit-static-assets srcroot)
   (for-each
    (lambda (name)

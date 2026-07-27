@@ -99,19 +99,65 @@ required.
 
 - [Emscripten](https://emscripten.org/docs/getting_started/downloads.html) (emsdk) — WASM build
 - [Ninja](https://ninja-build.org/) plus a C compiler (`cc`/`gcc`/`clang`)
+- [Node](https://nodejs.org/) 20.11+ and [pnpm](https://pnpm.io/) — the workspace layer
 
 krudd renders a `build.ninja` from the directory specs and drives `ninja`
 directly — there is no CMake in the build path.
 
+### The pnpm workspace
+
+The engine builds through a pnpm workspace that wraps kruddmake rather than
+replacing it. `@kruddage/engine` runs `krudd.sh` underneath and publishes the
+resulting artifacts behind a declared surface; everything downstream reads that
+surface instead of the build tree.
+
+```sh
+corepack enable
+pnpm install
+
+pnpm build   # engine (WASM) then site, in dependency order
+pnpm test    # the workspace's own suite — pure Node, no toolchain
+pnpm check   # package boundaries
+```
+
+The native C suite is unchanged and still runs through kruddmake; it is reachable
+from the workspace as `pnpm --filter @kruddage/engine run test:native`, and is
+what the sanitizer and coverage jobs build.
+
+| Package | What it is |
+|---|---|
+| [`@kruddage/engine`](packages/engine) | The engine's WASM build, harvested into `dist/` with a manifest describing it |
+| [`@kruddage/site`](packages/site) | Stages the deployable static site from those artifacts (replaces `stage-site.sh`) |
+| [`@kruddage/render-diff`](tools/render-diff) | Screenshot oracle for the WebGPU port |
+
+There are no third-party dependencies. `pnpm install` links the workspace and
+downloads nothing, matching how the rest of the repo treats its supply chain
+(vendored s7, a CDP client written against Node's built-in WebSocket, no CMake).
+
+The point of the split is the boundary, not the packaging. `pnpm check` fails
+the build when a package reaches into another by relative path — routing around
+the `exports` map — or when anything but `@kruddage/engine` drives the engine
+build directly. See [`packages/engine/README.md`](packages/engine/README.md) for
+what the barrier buys and where the next ones go.
+
 ### WASM build
 
 ```sh
-KRUDD_TARGET=wasm ./krudd.sh build
+pnpm --filter @kruddage/engine run build
 ```
 
-Then serve `build/` with any static file server:
+Then serve the staged site with any static file server:
 
 ```sh
+pnpm --filter @kruddage/site run build
+python3 -m http.server -d packages/site/dist
+```
+
+kruddmake is still reachable on its own, and the workspace changes nothing about
+what it does:
+
+```sh
+KRUDD_TARGET=wasm ./krudd.sh build   # -> build/
 python3 -m http.server -d build
 ```
 
@@ -119,10 +165,15 @@ python3 -m http.server -d build
 
 The native build compiles the modules for unit testing. It does not run the
 engine loop; the test stamps run the suite, so a green build is a green test run.
+It needs no emsdk and no Node.
 
 ```sh
 ./krudd.sh build
 ```
+
+`KRUDD_BUILD_DIR` points the generated `build.ninja` and its objects somewhere
+other than `build/` — the same knob the sanitizer and coverage jobs use to keep
+instrumented objects out of the plain build's tree.
 
 ### The browser is the only target
 
@@ -141,8 +192,8 @@ the GPU-free tests record against.
 
 | Workflow · job | What it does |
 |---|---|
-| **ci · lint** | Style-checks `.scm` comments (`lint-scm-comments.py`) |
-| **ci · build** | Builds the WASM module via Emscripten (`emsdk` container) through krudd's own Ninja build |
+| **ci · lint** | Style-checks `.scm` comments (`lint-scm-comments.py`) and indentation; runs the workspace suite and the package-boundary check |
+| **ci · build** | Builds the WASM module via Emscripten (`emsdk` container) through krudd's own Ninja build, then stages the site — both through the pnpm workspace |
 | **ci · deploy** | On push to `main`, publishes the staged site to GitHub Pages |
 | **ci · preview** | Deploys each PR's build to a `pr-preview/pr-<N>/` URL and tears it down on close |
 | **ci · sanitizers** | Builds + runs the native suite under ASan + UBSan + LeakSanitizer; fails on any leak, out-of-bounds, or UB |

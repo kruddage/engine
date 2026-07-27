@@ -31,8 +31,10 @@
 
 export type {
 	Board,
+	BoardColumn,
 	BoardId,
 	BoardNode,
+	ColumnKind,
 	Endpoint,
 	KindName,
 	Lane,
@@ -50,6 +52,7 @@ export type {
 	WireKind,
 } from "./document";
 export {
+	COLUMN_KINDS,
 	DOCUMENT_VERSION,
 	EXEC_IN,
 	EXEC_OUT,

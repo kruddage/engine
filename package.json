@@ -1,0 +1,19 @@
+{
+	"name": "@kruddage/workspace",
+	"version": "0.0.0",
+	"private": true,
+	"description": "pnpm workspace root for the KRUDD engine. The engine itself still builds through krudd.sh; this layer sequences packages and enforces the boundaries between them.",
+	"license": "GPL-2.0-or-later",
+	"packageManager": "pnpm@10.33.0",
+	"engines": {
+		"node": ">=20.11"
+	},
+	"type": "module",
+	"scripts": {
+		"build": "pnpm -r run build",
+		"test": "node --test scripts/test/*.test.mjs && pnpm -r run test",
+		"check": "node scripts/check-barriers.mjs",
+		"clean": "pnpm -r run clean",
+		"site": "pnpm --filter @kruddage/site run build"
+	}
+}

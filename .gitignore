@@ -21,3 +21,7 @@ public/
 
 # agent worktrees (isolated subagent checkouts)
 .claude/worktrees/
+
+# pnpm workspace
+node_modules/
+/packages/*/dist/

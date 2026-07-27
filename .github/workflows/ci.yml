@@ -20,6 +20,26 @@ jobs:
       - name: Lint .scm comments
         run: python3 .github/scripts/lint-scm-comments.py $(git ls-files '*.scm')
 
+      # The pnpm workspace's own suite: the artifact contract, the site staging
+      # rules, and the boundary check that keeps packages from reaching past
+      # each other's "exports" map. No compiler and no emsdk — this is all
+      # Node — so it rides along with the other lint steps rather than waiting
+      # on the WASM build.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install workspace
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      - name: Workspace tests
+        run: pnpm test
+
+      - name: Workspace boundaries
+        run: pnpm check
+
       # .scm files are indented per CODING_STANDARD.md's Scheme section: spaces,
       # call arguments aligned under the first argument — Emacs scheme-mode's
       # stock indenter output, so there's a single mechanical arbiter instead of
@@ -42,8 +62,10 @@ jobs:
           fetch-depth: 0
 
       # The container runs as root, so git refuses to touch the checkout
-      # ("dubious ownership") and stage-site.sh would stamp "unknown" instead
-      # of the commit hash. Mark it safe first.
+      # ("dubious ownership") and introspect.scm would bake "unknown" into the
+      # shell template's cache-busting hook instead of the commit hash — which
+      # the site staging step then reads back out and stages against. Mark it
+      # safe first.
       - name: Trust the workspace
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
@@ -75,24 +97,41 @@ jobs:
             echo "version=${base}" >> "$GITHUB_OUTPUT"
           fi
 
-      # krudd generates a build.ninja from the directory specs and drives ninja
-      # with emcc/em++ directly — no cmake, no emcmake. KRUDD_TARGET=wasm selects
-      # the WASM output (the single index.html/.js/.wasm module). KRUDD_VERSION
-      # comes from the version step above — see introspect.scm.
-      - name: Build
-        env:
-          KRUDD_TARGET: wasm
-          KRUDD_VERSION: ${{ steps.version.outputs.version }}
-        run: ./krudd.sh build
+      # The build now enters through the pnpm workspace. @kruddage/engine still
+      # runs ./krudd.sh underneath — kruddmake remains the build system for C
+      # and WASM, generating build.ninja from the directory specs and driving
+      # ninja with emcc/em++ directly, no cmake and no emcmake. What the package
+      # adds is the boundary: it harvests the outputs into a dist/ with a
+      # manifest describing them, and everything downstream reads that instead
+      # of the build tree. KRUDD_VERSION comes from the version step above —
+      # see introspect.scm.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
+      - name: Install workspace
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      - name: Build the engine
+        env:
+          KRUDD_VERSION: ${{ steps.version.outputs.version }}
+        run: pnpm --filter @kruddage/engine run build
+
+      # Replaces stage-site.sh. Same whitelist-only staging — the build tree
+      # carries objects and archives that must never reach the Pages branch —
+      # but the cache-busting hash now comes from the built index.html's
+      # Module.locateFile hook rather than a second, independent `git rev-parse`
+      # that merely had to agree with it. See packages/site/src/stage.mjs.
       - name: Stage site
-        run: sh .github/scripts/stage-site.sh build public
+        run: pnpm --filter @kruddage/site run build
 
       - name: Upload staged site
         uses: actions/upload-artifact@v7
         with:
           name: site
-          path: public
+          path: packages/site/dist
   deploy:
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

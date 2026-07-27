@@ -2,9 +2,13 @@
 //
 // Minimal service worker: caches the app shell and its hashed JS/WASM/asset
 // requests so the last-loaded build keeps working offline. Filenames for
-// index.js/index.wasm are content-hashed per commit (see stage-site.sh), so
-// there's no staleness to guard against — a fresh deploy simply requests
-// different URLs, which just populate new cache entries alongside the old.
+// index.js/index.wasm are hashed per commit (see packages/site), so there's no
+// staleness to guard against — a fresh deploy simply requests different URLs,
+// which just populate new cache entries alongside the old.
+//
+// This file's own name is never hashed, and must not be: the page registers it
+// by literal name. @kruddage/engine records that as `cacheBusting: false` in
+// its artifact contract, which is what stops the staging step renaming it.
 
 const CACHE_NAME = "krudd-shell-v1";
 

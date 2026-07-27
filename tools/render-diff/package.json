@@ -1,0 +1,18 @@
+{
+	"name": "@kruddage/render-diff",
+	"version": "0.0.0",
+	"private": true,
+	"description": "Screenshot oracle for the WebGPU port: drives Chrome over CDP, captures the engine canvas under each backend, and compares.",
+	"license": "GPL-2.0-or-later",
+	"type": "module",
+	"engines": {
+		"node": ">=20.11"
+	},
+	"bin": {
+		"render-diff": "./diff.mjs"
+	},
+	"scripts": {
+		"start": "node diff.mjs",
+		"test": "node --check diff.mjs && echo 'render-diff: syntax OK (the oracle itself needs a browser and a served build; see README.md)'"
+	}
+}

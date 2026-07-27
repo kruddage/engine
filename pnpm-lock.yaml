@@ -1,0 +1,19 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .: {}
+
+  packages/engine: {}
+
+  packages/site:
+    dependencies:
+      '@kruddage/engine':
+        specifier: workspace:*
+        version: link:../engine
+
+  tools/render-diff: {}

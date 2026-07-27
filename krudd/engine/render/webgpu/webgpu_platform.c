@@ -143,10 +143,12 @@ void webgpu_platform_teardown(void)
 #include <stdlib.h>
 
 /*
- * The windowing host, or NULL. NULL is the default and the only state the
- * offscreen harness and CI ever see; a windowed binary sets it before boot (see
- * webgpu_platform.h). Every branch below that changes behaviour keys off this
- * one pointer, so "no host" is provably the original offscreen seam.
+ * The windowing host, or NULL. NULL is the default, and today it is the only
+ * state anything reaches: the offscreen harness, the smoke tool and CI all leave
+ * it unset, and no in-tree binary owns a window to set it with. A binary that
+ * did would register before boot (see webgpu_platform.h). Every branch below
+ * that changes behaviour keys off this one pointer, so "no host" is provably the
+ * original offscreen seam.
  */
 static const struct webgpu_platform_host *g_host;
 
@@ -160,7 +162,9 @@ void webgpu_platform_set_host(const struct webgpu_platform_host *host)
  * a different Dawn backend from the canvas path — so a window could not
  * reproduce a canvas presentation bug even were one available, and returning
  * NULL is how the backend is told to configure an offscreen target. With a host
- * (krudd_qt), its window's real WGPUSurface is what the frame presents into.
+ * — a binary that owns a window and registered itself before boot, which nothing
+ * in this tree does today — its window's real WGPUSurface is what the frame
+ * presents into.
  */
 WGPUSurface webgpu_platform_create_surface(WGPUInstance instance)
 {

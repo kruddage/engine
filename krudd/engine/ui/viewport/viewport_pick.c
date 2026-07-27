@@ -4,16 +4,14 @@
  *
  * Lifted out of ui/viewport/viewport.c's pick_entity_at, which was fenced under
  * __EMSCRIPTEN__ behind the kruddgui pointer. The raycast itself is plain CPU
- * math over the entity world — nothing web-specific — so both the wasm viewport
- * overlay (which feeds it the kruddgui viewport + camera) and the native Qt
- * shell (which feeds it the window size + camera) call this one copy rather than
- * each hand-rolling — and drifting from — the same ray/triangle sweep.
+ * math over the entity world — nothing web-specific — so it stays a file of its
+ * own: the wasm viewport overlay feeds it the kruddgui viewport + camera, and
+ * viewport_pick_test drives the same entry point with no window and no GPU,
+ * against one copy rather than two that drift.
  *
  * The math it picks with (ray_from_screen / ray_tri_intersect / mat4_*) and
  * mesh_script_generate resolve against the single copies the renderer and the
- * mesh_script library already provide — for wasm at the final module link, for
- * native at the executable link (krudd_qt already links scene_renderer, which
- * carries the math).
+ * mesh_script library already provide, at the final wasm module link.
  */
 #include "viewport_pick.h"
 

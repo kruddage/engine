@@ -12,15 +12,13 @@ beside it in that release:
 | Artifact | Role |
 |---|---|
 | `s7.h` | public header — consumers `#include "s7.h"` (this dir is on their include path) |
-| `libs7-linux-x86_64.a` / `libs7-windows-x86_64.a` | native static library, linked into every native binary and the `krudd` host tool |
+| `libs7-linux-x86_64.a` | native static library, linked into every native binary and the `krudd` host tool |
 | `libs7-wasm32.a` | wasm static library (built with `emcc`/`emar`), linked into the single WASM module |
-| `krudds7-linux-x86_64` / `krudds7-windows-x86_64.exe` | standalone s7 CLI — the `kruddmake` bootstrap/oracle interpreter (`krudds7 FILE`) |
+| `krudds7-linux-x86_64` | standalone s7 CLI — the `kruddmake` bootstrap/oracle interpreter (`krudds7 FILE`) |
 
-`s7.h` and `libs7-wasm32.a` are target-independent and shared by every host.
-The native library and CLI are host-specific: `sync.sh` fetches the Linux pair
-by default and switches to the Windows (MinGW-w64) pair on a MINGW*/MSYS*
-`uname -s` (see `S7_NATIVE_LIB_ASSET_WINDOWS` / `S7_CLI_ASSET_WINDOWS` in
-`s7.artifact`).
+`libs7-wasm32.a` is what the engine's own output links; the Linux native library
+and CLI are build-host tooling — the `krudd` host tool and the bootstrap
+interpreter — not something the engine ships to a target.
 
 s7 keeps its upstream `0BSD` notice (see `LICENSE.s7`); none of these artifacts
 carry the project's `GPL-2.0-or-later` line — that marks our own files.
@@ -45,10 +43,9 @@ The download host is `github.com`, reachable from CI and normal dev machines.
 `KRUDD_S7_OFFLINE=1` drops the network entirely: every artifact is taken from
 this directory and verified against the sidecar a previous online run cached
 beside it, and a missing or mismatched file is a hard error instead of a
-re-download. That is for builds that run somewhere with no network at all —
-notably the Flatpak build, whose `flatpak-builder` sandbox has networking off,
-so `.github/workflows/flatpak-build.yml` pre-fetches on the runner and the
-in-sandbox build verifies offline.
+re-download. That is for builds that run somewhere with no network at all: a
+sandboxed or air-gapped build pre-fetches once where there is network, then
+verifies offline where there is none.
 
 Because "latest" tracks `kruddage/s7`'s release-please automation, a fetch can
 briefly land in the gap between a new release being cut and its build workflow
@@ -77,8 +74,8 @@ a new `kruddage/s7` release is picked up automatically the next time `sync.sh`
 (or `krudd.sh`) runs. Each download is still checksum-verified against its
 published sidecar, so a corrupted or truncated fetch fails loudly — but a
 *bad* `kruddage/s7` release (one that publishes broken artifacts with a
-matching sidecar, as v0.4.0's Windows build did) will now reach every build
-immediately instead of staying quarantined behind a pinned tag.
+matching sidecar, as v0.4.0 did) will now reach every build immediately instead
+of staying quarantined behind a pinned tag.
 
 [upstream]: https://ccrma.stanford.edu/software/snd/snd/s7.html
 

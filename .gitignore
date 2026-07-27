@@ -14,21 +14,10 @@ public/
 /krudd/third_party/libs7-linux-x86_64.a
 /krudd/third_party/libs7-wasm32.a
 /krudd/third_party/krudds7-linux-x86_64
-/krudd/third_party/libs7-windows-x86_64.a
-/krudd/third_party/krudds7-windows-x86_64.exe
 /krudd/third_party/*.sha256
 
-# local env written by setup.sh (machine-specific paths)
-.krudd-env
 /tools/render-diff/out/
 /tools/dawn-smoke/out/
-
-# CI-staged Flatpak build context / output — see
-# packaging/flatpak/README.md and .github/workflows/flatpak-build.yml
-/packaging/flatpak/build-dir/
-/packaging/flatpak/export-repo/
-/packaging/flatpak/pages-out/
-*.flatpak
 
 # agent worktrees (isolated subagent checkouts)
 .claude/worktrees/

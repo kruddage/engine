@@ -396,16 +396,18 @@ static void webgpu_frame_end(void)
 #ifndef __EMSCRIPTEN__
 	/*
 	 * Natively a real surface is presented by nobody on our behalf: the
-	 * windowed platform (Qt) owns the swapchain, so a drawn frame has to be
-	 * pushed to it explicitly, while its backbuffer texture is still the
-	 * surface's current one — hence before the release below.
+	 * swapchain belongs to whatever host injected the window through
+	 * webgpu_platform_set_host, so a drawn frame has to be pushed to it
+	 * explicitly, while its backbuffer texture is still the surface's current
+	 * one — hence before the release below.
 	 *
 	 * Guarded three ways so the two paths that must not change don't. The web
 	 * build never compiles it (the browser presents through the canvas/rAF,
 	 * and emdawnwebgpu ships no wgpuSurfacePresent). The offscreen native path
-	 * has no surface (g_surface NULL) and skips it. And a tick that acquired
-	 * no backbuffer this frame (g_surface_tex NULL) presented nothing, so it
-	 * has nothing to push.
+	 * — which is what every native build in this tree is, no host being
+	 * registered anywhere today — has no surface (g_surface NULL) and skips it.
+	 * And a tick that acquired no backbuffer this frame (g_surface_tex NULL)
+	 * presented nothing, so it has nothing to push.
 	 */
 	if (g_surface_tex && g_surface)
 		wgpuSurfacePresent(g_surface);

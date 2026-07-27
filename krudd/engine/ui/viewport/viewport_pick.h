@@ -25,9 +25,9 @@ struct memory_api;
  * per-click mesh gen. Brute force over every triangle of every render entity —
  * the world caps at WORLD_MAX_ENTITIES and the meshes are tiny.
  *
- * The shared copy of the raycast so the wasm viewport overlay (which passes the
- * kruddgui viewport + camera) and the native Qt shell (which passes the window
- * size + camera) never drift.
+ * The one copy of the raycast: the wasm viewport overlay passes the kruddgui
+ * viewport + camera, and the GPU-free unit test passes a synthetic pair, so the
+ * thing under test is the thing that ships.
  */
 int32_t viewport_pick_entity(const struct world *w,
 			     const struct mat4 *view_proj,

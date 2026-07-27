@@ -1,17 +1,18 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
-;;! The scene renderer library builds for BOTH targets. It was wasm-only when
-;;! only the web module linked it; the native editor (krudd_qt, #675) needs it
-;;! too, and scene_renderer.c already carries a native (#else) service path — it
-;;! is plain C, so "wasm-only" was a packaging accident, not a real constraint.
-((library "scene_renderer"
-   (sources "scene_renderer.c")
-   (private "." (raw "${generated}") (root "render/frame_graph")
-            (root "render/particles")
-            (root "core/include") (root "abi") (root "world/entity/include") (root "base/math/include") (root "world/asset/include")
-            (raw "../third_party"))
-   (link "math" "mesh_script" "texture_script" "frame_graph" "particles"
-         "log" "memory" "subsystem" "subsystem_manager" "script"
-         "m"))
+;;! The web module is the only thing that links this library, so it is
+;;! wasm-only. scene_renderer.c is plain C and carries a native (#else) service
+;;! path — the native test below compiles it straight in rather than linking the
+;;! library, the way every other GPU-free test here does.
+((wasm-only
+  (library "scene_renderer"
+    (sources "scene_renderer.c")
+    (private "." (raw "${generated}") (root "render/frame_graph")
+             (root "render/particles")
+             (root "core/include") (root "abi") (root "world/entity/include") (root "base/math/include") (root "world/asset/include")
+             (raw "../third_party"))
+    (link "math" "mesh_script" "texture_script" "frame_graph" "particles"
+          "log" "memory" "subsystem" "subsystem_manager" "script"
+          "m")))
  (native-only
   (executable "scene_renderer_test"
               (sources "scene_renderer_test.c" "scene_renderer.c"

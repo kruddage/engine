@@ -38,20 +38,27 @@ WGPUSurface webgpu_platform_create_surface(WGPUInstance instance);
  * The native seam above answers "offscreen" by default — NULL surface, a fixed
  * backbuffer size, a persistent readable texture — because that is what the CI
  * harness (krudd_native) and every headless render-diff need, and it must build
- * with no window library in the picture at all.
+ * with no window library in the picture at all. That default is also the only
+ * thing in use today: no in-tree binary owns a window, so nothing registers a
+ * host, and every native consumer — krudd_native and tools/dawn-smoke — runs
+ * the offscreen path.
  *
- * A windowed binary (krudd_qt) supplies the missing half at runtime instead
+ * A binary that does own a window supplies the missing half at runtime instead
  * of by a second #ifdef: it owns the window and the swapchain, and registers a
  * host here before the backend boots. With a host set, create_surface returns
  * that window's WGPUSurface, backbuffer_size reports the window's size, and the
  * offscreen backbuffer/readback path stays dark (there is a real swapchain now,
  * and the compositor owns those textures). With no host set — the default, and
- * the only state CI ever sees — the seam is byte-for-byte the offscreen one.
+ * the state every build in this tree is in — the seam is byte-for-byte the
+ * offscreen one.
  *
- * Kept out here rather than compiled into the renderer_webgpu library so the
- * window library (Qt, and its X11/Wayland surface types) links only into the
- * one executable that wants it, never into the shared backend or the offscreen
- * harness.
+ * Kept out here rather than compiled into the renderer_webgpu library so that a
+ * window library, and the X11/Wayland surface types it drags in behind it, would
+ * link only into the one executable that asked for it, never into the shared
+ * backend or the offscreen harness. That is also why the seam is worth keeping
+ * with no windowed consumer left: it costs two function pointers and no code on
+ * the offscreen path, whereas re-threading windowing through the backend later
+ * is exactly the entanglement this was written to avoid.
  */
 struct webgpu_platform_host {
 	/* Create the presentation surface for the host's window. */

@@ -41,10 +41,12 @@ body {
  * The DOM shell around the wasm canvas. Its whole structure — the menu bar's
  * entries, the toolbar, which docks sit on which edge — is built at runtime by
  * kruddBuildEditor from the layout the engine serializes out of
- * editor_layout.scm (the same spec the native Qt host reads). Nothing below
- * hard-codes a menu item or a dock; the CSS only dresses the containers the
- * builder fills. The canvas viewport is the one fixed element: it is the
- * editor's centre, with docks laid out around it.
+ * editor_layout.scm — the one description of the editor's chrome, which lives
+ * in core/ rather than beside this file precisely so the structure is stated
+ * once, as data, and not spelled out in the markup that happens to render it.
+ * Nothing below hard-codes a menu item or a dock; the CSS only dresses the
+ * containers the builder fills. The canvas viewport is the one fixed element:
+ * it is the editor's centre, with docks laid out around it.
  */
 
 .menubar {
@@ -82,10 +84,12 @@ body {
 
 /*
  * The app-menu hamburger. Hidden while the menu row fits inline; the narrow
- * media query reveals it and folds the whole row behind it. This is purely the
- * web host's own affordance — the native Qt shell keeps its real menu bar — and
- * being able to add it here alone is the point of driving both hosts from one
- * .scm layout rather than one shared widget.
+ * media query reveals it and folds the whole row behind it. It is purely a
+ * presentation choice of this chrome, and deliberately invisible to the spec:
+ * the .scm says which menus exist, never how they are surfaced, so a viewport
+ * affordance like this needs no new concept in the layout and no edit to the
+ * builder. That separation is the point of describing the shell as data rather
+ * than as one fixed widget arrangement.
  */
 .menu-hamburger {
 	display: none;
@@ -217,8 +221,9 @@ body {
  * the whole row behind the hamburger: the menu titles drop into a drawer under
  * the bar, and each menu's items open inline (an accordion) instead of as an
  * absolutely-positioned flyout that would spill past the screen edge. The
- * builder and the layout spec are untouched — this is only how the web host
- * dresses a narrow window, so the native Qt bar is unaffected.
+ * builder and the layout spec are untouched — this is only how the chrome
+ * dresses a narrow viewport; the same layout, given room, still renders the
+ * plain inline row above.
  */
 @media (max-width: 640px) {
 	.menu-hamburger { display: block; }
@@ -863,10 +868,11 @@ canvas {
 <!--
 	The editor chrome. The menu bar, toolbar and dock edges are empty
 	containers the engine fills at boot (kruddBuildEditor, below) from the
-	serialized editor_layout.scm — so the arrangement always matches the native
-	Qt shell with no host-specific markup here. Only the canvas viewport and the
-	shell chrome that pre-dates the layout (version, menu button, status pill)
-	are authored statically.
+	serialized editor_layout.scm — so the arrangement always follows the spec,
+	and no menu, dock or status field is spelled out in this markup where it
+	could drift from it. Only the canvas viewport and the shell chrome that
+	pre-dates the layout (version, menu button, status pill) are authored
+	statically.
 -->
 <div class="menubar" id="menubar">
 	<span class="wordmark">KRUDD</span>
@@ -874,7 +880,7 @@ canvas {
 	<div class="menu-group" id="menu-group"></div>
 	<div class="menubar-right">
 		<span class="version ahead" id="version" title="click for build info">18.8.4</span>
-		<span class="version-detail" id="version-detail">commit 9cbd527 &middot; built 2026-07-27 &middot; ahead of release</span>
+		<span class="version-detail" id="version-detail">commit 227d384 &middot; built 2026-07-27 &middot; ahead of release</span>
 	</div>
 </div>
 
@@ -1103,10 +1109,12 @@ canvas {
 
 	/*
 	 * What the badge says before any backend has reported. The layout seeds a
-	 * host-neutral "renderer — booting…" because that spec is shared with the
-	 * Qt host, which boots Vulkan; here the shell already picked the path
-	 * (kruddWantsWebGPU), so name it rather than leave the page vague — or,
-	 * worse, showing the other host's backend — for the whole handshake.
+	 * backend-neutral "renderer — booting…" because the spec describes the
+	 * chrome, not what ends up drawing into it, and naming a backend there
+	 * would be the spec asserting something it cannot know. The shell can:
+	 * it has already chosen the path (kruddWantsWebGPU) before wasm even
+	 * starts, so say which one rather than leave the page vague for the whole
+	 * handshake.
 	 */
 	function rendererBootLabel() {
 		var name;
@@ -1300,12 +1308,12 @@ canvas {
 	/*
 	 * ── The DOM editor chrome (#706 part C) ──
 	 *
-	 * kruddBuildEditor is the Qt-free twin of krudd_qt.cpp's build_editor_chrome:
-	 * it walks the layout the engine serializes out of editor_layout.scm and
-	 * emits the same menus, toolbar, docks and status fields the native shell
-	 * does. Nothing about the arrangement is authored here — a menu item or dock
-	 * added to the .scm shows up on this host with no edit below, which is the
-	 * whole point of driving both shells from one spec.
+	 * kruddBuildEditor walks the layout the engine serializes out of
+	 * editor_layout.scm and emits the menus, toolbar, docks and status fields it
+	 * describes. Nothing about the arrangement is authored here — a menu item or
+	 * dock added to the .scm shows up with no edit below, which is the whole
+	 * point of keeping the shell's structure in one declarative spec instead of
+	 * hand-writing the DOM for it.
 	 *
 	 * The engine hands us the layout as JSON (script_layout_json → EM_JS
 	 * krudd_build_editor) once, early in boot, before any backend reports its
@@ -1317,12 +1325,18 @@ canvas {
 	 *   ["action", "&Open Project…", "open", "open-project"]
 	 *   ["dock", "dock.console", "Console", "bottom", "Scheme REPL", "…",
 	 *    ["tabbed-with", "dock.assets"]]
-	 * Unknown tags are skipped, never fatal, matching the C readers.
+	 * Unknown tags are skipped, never fatal: the spec may grow a form this
+	 * builder has no case for yet, and a page that renders the rest of the
+	 * chrome beats one that dies on an unrecognized tag.
 	 */
 
-	/* Qt marks a menu mnemonic with '&' ("&File"); "&&" is a literal ampersand.
-	 * The web chrome has no mnemonics, so strip the markers but keep real
-	 * ampersands. */
+	/* The spec's labels carry mnemonic markers in the old widget-toolkit
+	 * convention it inherited its label format from: a '&' before the
+	 * accelerator letter ("&File"), and "&&" where the label wants a literal
+	 * ampersand. Nothing acts on them any more — the DOM chrome has no
+	 * mnemonics — but they are still in the .scm, so undo the convention here
+	 * rather than churn every label: drop the markers, and give back the
+	 * ampersands a label actually meant to show. */
 	function stripMnemonic(label) {
 		return String(label)
 			.replace(/&&/g, ' ')
@@ -1576,9 +1590,9 @@ canvas {
 				/* The "renderer" badge is the one the backend updates through
 				 * kruddSetRenderer, so it gets the id and class that logic keys
 				 * off; other badges are plain host-updatable labels by id. Its
-				 * seed comes from the shell rather than the spec: the spec is
-				 * shared with the Qt host and so names no backend, while here we
-				 * know which path was picked. */
+				 * seed comes from the shell rather than the spec: the spec
+				 * describes the chrome and names no backend, deliberately,
+				 * while the shell already knows which path was picked. */
 				if (id === 'renderer') {
 					badge.id = 'renderer-badge';
 					badge.className = 'renderer';
@@ -1824,13 +1838,13 @@ canvas {
 var Module = {
 	locateFile: function (path, prefix) {
 		if (path.endsWith('.wasm'))
-			return prefix + path.replace(/\.wasm$/, '.9cbd527.wasm');
+			return prefix + path.replace(/\.wasm$/, '.227d384.wasm');
 		return prefix + path;
 	}
 };
 </script>
 
-<script async type="text/javascript" src="index.9cbd527.js"></script>
+<script async type="text/javascript" src="index.227d384.js"></script>
 
 </body>
 </html>

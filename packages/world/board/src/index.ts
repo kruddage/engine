@@ -21,6 +21,8 @@
  *   as. The bytes are `validate`'s; this is the name around them.
  * - `pick` — quantising a world-space point to a grid cell, the arithmetic
  *   behind `pick-grid`'s ports.
+ * - `win` — tic-tac-toe win detection over nine marks, the arithmetic behind
+ *   `place-mark`'s resolution step.
  *
  * ## What is deliberately not here
  *
@@ -88,5 +90,7 @@ export {
 	serializeProject,
 	validate,
 } from "./validate";
+export type { Mark, WinResult } from "./win";
+export { winnerOf } from "./win";
 export type { PointerFrame, Run, RunContext, WorldView } from "./world";
 export { NO_POINTER } from "./world";

@@ -41,6 +41,23 @@ export interface WorldView {
 	column(name: string): Float32Array | Uint32Array;
 	/** How many slots the columns cover, live and tombstoned alike. */
 	readonly slotCount: number;
+	/**
+	 * World-space `x` for a normalised screen-space `x` in `[0, 1]`, 0 at the
+	 * viewport's left edge.
+	 *
+	 * The unprojection a picking node needs and must never redo itself: it
+	 * reads the same camera matrix the renderer draws with, in
+	 * `Engine::world_x_from_screen` (`crates/shell/web/src/lib.rs`), so a pick
+	 * can never disagree with the draw at some aspect ratio. `place-mark`
+	 * calls this rather than owning a second copy of the camera arithmetic.
+	 */
+	worldXFromScreen(x: number): number;
+	/**
+	 * World-space `y` for a normalised screen-space `y` in `[0, 1]`, 0 at the
+	 * viewport's top edge. See `worldXFromScreen` — same reasoning, and the
+	 * one place the two differ is the sign flip screen-down/world-up needs.
+	 */
+	worldYFromScreen(y: number): number;
 	/** Draws the world. One crossing for the whole frame. */
 	render(): void;
 	/**

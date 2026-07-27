@@ -27,6 +27,8 @@
  */
 
 import type { NodeKind, Registry } from "./document";
+import { pickCell } from "./pick";
+import { winnerOf } from "./win";
 
 /** A whole column of positions or velocities, three floats per slot. */
 const COLUMN: "column<vec3>" = "column<vec3>";
@@ -311,6 +313,170 @@ export const KINDS: Registry = {
 			// field, no column — so there is nothing for this `run` to hand
 			// off to. Writing a column from here would be inventing the
 			// wire-value evaluator this board deliberately does not have.
+		},
+	},
+
+	// Tic-tac-toe rules (#866 PR-6). The issue's criteria list three kinds —
+	// `spawn-grid`, `place-mark`, `detect-win` — and only two are built. Win
+	// detection is `./win`'s `winnerOf`: a plain exported function
+	// `place-mark` calls, not a node of its own.
+	//
+	// The reason, in one place rather than repeated at each call site: turn
+	// alternation depends on whether the move that just landed was terminal —
+	// a win or a draw does not flip the turn, anything else does — and the
+	// only moment that fact is known is right after the mark is placed. The
+	// pre-rewrite `ttt-place-move` (`krudd/engine/game/tictactoe/rules.scm`)
+	// checked the winner and flipped the turn in the same function for
+	// exactly that reason. A `place-mark` that only placed and a `detect-win`
+	// that only detected would need the first to tell the second "a mark
+	// landed this frame, here is where" — that is state passed *between*
+	// nodes, which invariant 3 (every node a pure function of its own columns
+	// and params) forbids outright. One node doing the whole move needs no
+	// such channel: it reads the columns, does the placement and the
+	// resolution, and writes the columns back, all in the one call.
+
+	"spawn-grid": {
+		title: "Spawn Grid",
+		inputs: [],
+		outputs: [{ name: "position", type: COLUMN }],
+		params: [
+			// The grid's full width/height in world units — the same
+			// convention `pick-grid` uses, and deliberately the same
+			// default, so a board that leaves both at their defaults keeps
+			// the cells it draws and the cells it picks lined up.
+			{ name: "size", type: "f32", default: 2.0, min: 0 },
+			{ name: "position", type: COLUMN_NAME, default: "position" },
+		],
+		run: (c) => {
+			const size = c.number("size");
+			// Slots first, and only as many as are missing — the same
+			// idempotency `spawn-ring`'s own loop gets for free from
+			// starting at `slotCount` rather than at 0. A second run against
+			// a world that already holds the nine cells spawns nothing more.
+			for (let slot = c.world.slotCount; slot < 9; slot++) {
+				c.world.spawn(0, 0, 0);
+			}
+			const position = c.world.column(c.text("position")) as Float32Array;
+			const half = size / 2;
+			const step = size / 3;
+			// Row 0 at the top, cell 0 top-left, index = row * 3 + col —
+			// exactly `pick.ts`'s own convention, and exactly what
+			// `pick.test.ts`'s `centre` helper computes. A pick that
+			// disagreed with where the cells were actually drawn is the bug
+			// this line-for-line match exists to avoid.
+			for (let row = 0; row < 3; row++) {
+				for (let col = 0; col < 3; col++) {
+					const i = row * 3 + col;
+					position[i * 3] = -half + (col + 0.5) * step;
+					position[i * 3 + 1] = half - (row + 0.5) * step;
+					position[i * 3 + 2] = 0;
+				}
+			}
+		},
+	},
+
+	"place-mark": {
+		title: "Place Mark",
+		inputs: [],
+		outputs: [],
+		params: [
+			// Kept equal to `spawn-grid`'s own default for the same reason
+			// `pick-grid`'s and `spawn-grid`'s are kept equal: a pick has to
+			// agree with where the cells it picks among were actually drawn.
+			{ name: "size", type: "f32", default: 2.0, min: 0 },
+			{ name: "mark", type: COLUMN_NAME, default: "mark" },
+			{ name: "won", type: COLUMN_NAME, default: "won" },
+			{ name: "turn", type: COLUMN_NAME, default: "turn" },
+			{ name: "over", type: COLUMN_NAME, default: "over" },
+		],
+		run: (c) => {
+			const size = c.number("size");
+			// Unprojected through the world's own camera arithmetic, not a
+			// second copy of it — see `./pick`'s module docs for why
+			// `pickCell` never does this itself.
+			const worldX = c.world.worldXFromScreen(c.pointer.x);
+			const worldY = c.world.worldYFromScreen(c.pointer.y);
+			const pick = pickCell(worldX, worldY, size, c.pointer.pressed);
+			// 1. No press this frame, or the pick missed the grid: nothing
+			// to do. `pickCell` already folds both conditions into `hit`, so
+			// one check covers both halves of the rule.
+			if (pick.hit !== 1) {
+				return;
+			}
+
+			const mark = c.world.column(c.text("mark")) as Uint32Array;
+			const won = c.world.column(c.text("won")) as Uint32Array;
+			const turn = c.world.column(c.text("turn")) as Uint32Array;
+			const over = c.world.column(c.text("over")) as Uint32Array;
+
+			// `turn` and `over` are scalars at slot 0 of a column sized to
+			// capacity — a wart the module docs above `KINDS` accept
+			// deliberately, in exchange for every node staying a pure
+			// function of (columns, params). Sized to capacity means
+			// zero-length before anything has been spawned, and every
+			// column grows together, so this one check also stands in for
+			// `mark` and `won` being empty. A tap that lands before
+			// `spawn-grid` has run must do nothing, not throw.
+			if (turn.length === 0 || over.length === 0) {
+				return;
+			}
+
+			// 2. The round is already over: any tap restarts it, clearing
+			// the board but not counting as a placement of its own.
+			if ((over[0] as number) !== 0) {
+				mark.fill(0);
+				won.fill(0);
+				turn[0] = 1;
+				over[0] = 0;
+				return;
+			}
+
+			// 3. The cell is already taken: a complete no-op — no mark, no
+			// turn change.
+			const cell = pick.cell;
+			if ((mark[cell] as number) !== 0) {
+				return;
+			}
+
+			// 4. Place. `turn` reads zero-filled the very first time this
+			// runs against a freshly spawned board — 0 is not one of the two
+			// legal values (1 or 2), because nothing else ever initialises
+			// it: there is no third "load" node the way the pre-rewrite
+			// Scheme had a module-level `(define *ttt-turn* 1)` that ran once
+			// when the image loaded. So an untouched column reads as X to
+			// move here, which is the same default the old global carried,
+			// rather than as a third, illegal mark value. Every write after
+			// this one puts an explicit 1 or 2 back, by a restart or by the
+			// flip below, so the fallback only ever matters for this first
+			// placement of a game that has never been played or restarted.
+			const player: 1 | 2 = (turn[0] as number) === 2 ? 2 : 1;
+			mark[cell] = player;
+
+			// 5. Resolve. Win is tested before draw — the move that
+			// completes a line and fills the board at once is a win, not a
+			// draw — and neither flips the turn; only an ordinary move does.
+			const result = winnerOf(mark);
+			if (result.winner !== 0) {
+				over[0] = result.winner;
+				if (result.line !== undefined) {
+					for (const i of result.line) {
+						won[i] = 1;
+					}
+				}
+				return;
+			}
+			let full = true;
+			for (let i = 0; i < 9; i++) {
+				if ((mark[i] as number) === 0) {
+					full = false;
+					break;
+				}
+			}
+			if (full) {
+				over[0] = 3;
+				return;
+			}
+			turn[0] = player === 1 ? 2 : 1;
 		},
 	},
 };

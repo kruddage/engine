@@ -58,6 +58,22 @@ export class TestWorld implements WorldView {
 	blanks = 0;
 	/** The scale the paint lane last asked for. */
 	scale = 0;
+	/**
+	 * The camera half-extents `worldXFromScreen`/`worldYFromScreen` unproject
+	 * through: world units from the centre to each edge.
+	 *
+	 * The real engine derives these from `Engine::view_projection`, which
+	 * itself derives them from the canvas's aspect ratio — there is no canvas
+	 * here, so this is a plain settable field rather than something computed.
+	 * That is what "configurable enough to test picking without wasm" means: a
+	 * suite that wants to prove a pick lands on the cell it should can set up
+	 * a known viewport without booting wasm or touching a canvas at all.
+	 * Defaults to a square viewport at `VIEW_EXTENT = 2`
+	 * (`crates/shell/web/src/lib.rs`), which is what `Engine::new(n, n)` gives
+	 * for any square canvas — and, not coincidentally, `pick-grid`'s and
+	 * `spawn-grid`'s own default `size`.
+	 */
+	camera = { halfWidth: 2, halfHeight: 2 };
 
 	constructor() {
 		// The real engine creates these two at boot, through the same path
@@ -126,6 +142,20 @@ export class TestWorld implements WorldView {
 
 	setScale(scale: number): void {
 		this.scale = scale;
+	}
+
+	worldXFromScreen(x: number): number {
+		// The exact per-axis formula `Engine::world_x_from_screen` uses: screen
+		// `[0, 1]` maps to clip `[-1, 1]`, scaled by the camera's half-width.
+		return (x * 2 - 1) * this.camera.halfWidth;
+	}
+
+	worldYFromScreen(y: number): number {
+		// Screen `y` runs down; world `y` runs up, so `y = 0` (the top of the
+		// viewport) has to land at `+halfHeight`, not `-halfHeight` — the same
+		// sign flip `Engine::world_y_from_screen`'s own docs call out as the
+		// one place this has to differ from the x formula.
+		return (1 - y * 2) * this.camera.halfHeight;
 	}
 
 	/** The position column, for suites that already assume it exists. */

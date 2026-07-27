@@ -47,7 +47,20 @@ body {
  * Nothing below hard-codes a menu item or a dock; the CSS only dresses the
  * containers the builder fills. The canvas viewport is the one fixed element:
  * it is the editor's centre, with docks laid out around it.
+ *
+ * All of it hangs off body.editor-mode, and the page loads without that class:
+ * the default state is game mode, the canvas alone with the scene it booted
+ * into, ready to play. The engine adds and removes the class through
+ * kruddSetEditorMode (below) as the GAME / EDITOR slider kruddgui draws over
+ * the viewport is flipped — the slider lives in the canvas rather than up here
+ * precisely so it is present in the mode that has no DOM chrome at all.
  */
+
+body:not(.editor-mode) .menubar,
+body:not(.editor-mode) .toolbar,
+body:not(.editor-mode) .dock-col,
+body:not(.editor-mode) .dock-row,
+body:not(.editor-mode) .statusbar { display: none; }
 
 .menubar {
 	display: flex;
@@ -650,6 +663,12 @@ canvas {
  * HTML) but not yet armed: the game list and its prompt are hidden and a
  * "loading" note stands in, so an impatient click has no button to hit. The
  * engine flips the .loading class off via kruddSetReady once it is live.
+ *
+ * The wordmark is hidden along with them, so the ordinary boot — which loads a
+ * game and dismisses this overlay the moment it is armed — shows a bare
+ * "loading" and then the board, never a splash screen standing between the
+ * player and the game. The title is back for ?game=none, where the overlay is
+ * the destination rather than something passed through.
  */
 .launcher-loading {
 	display: none;
@@ -661,6 +680,7 @@ canvas {
 
 .launcher.loading .launcher-loading { display: block; }
 
+.launcher.loading .launcher-title,
 .launcher.loading .launcher-sub,
 .launcher.loading .launcher-games { display: none; }
 
@@ -1025,6 +1045,21 @@ canvas {
 		var el = document.getElementById('launcher');
 		if (el)
 			el.classList.remove('loading');
+	};
+
+	/*
+	 * Show or hide the editor chrome (called from plugin_abi.c whenever the
+	 * GAME / EDITOR slider moves). One class on <body> is the whole handover:
+	 * the menu bar, toolbar, docks and status bar are all styled off it, so
+	 * the page has no second opinion about which mode it is in and nothing
+	 * here has to know what the layout put in those containers.
+	 *
+	 * The canvas is a flex child of the space they vacate, so dropping them
+	 * hands it the full viewport; the engine picks the new size up from its
+	 * usual per-tick measure (kruddgui.cpp) with no resize hook needed.
+	 */
+	window.kruddSetEditorMode = function (on) {
+		document.body.classList.toggle('editor-mode', !!on);
 	};
 
 	/*

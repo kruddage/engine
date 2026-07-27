@@ -116,6 +116,9 @@ static int32_t frame_count;
 /* Set while the WebGPU path waits on its device before finishing the boot. */
 static int g_webgpu_boot_pending;
 
+/* Latches once the launcher has been armed (see the tick's tail). */
+static int g_ready_signalled;
+
 #endif
 
 #ifdef __EMSCRIPTEN__
@@ -425,11 +428,24 @@ void engine_tick(void)
 			gpu->frame_end();
 	}
 #ifdef __EMSCRIPTEN__
-	/* The first tick has now rendered a frame: arm the launcher (see
-	 * krudd_signal_ready). Runs after the render so a click that follows
-	 * lands on a live, framed engine. */
-	if (frame_count == 1)
+	/*
+	 * A frame has rendered and the plugin boot has landed: arm the launcher
+	 * (see krudd_signal_ready). Runs after the render so a click that
+	 * follows lands on a live, framed engine.
+	 *
+	 * On the WebGPU path those two are not the same tick — the device
+	 * handshake spans however many frames the browser takes — and arming on
+	 * the first of them dropped the "choose a scene" menu over a page that
+	 * was seconds away from opening a game by itself, a banner between the
+	 * player and the board. Waiting for the boot means the overlay is
+	 * either already dismissed (finish_plugin_boot opened the boot game) or
+	 * the page really is staying on the menu, which is the only state worth
+	 * arming.
+	 */
+	if (!g_ready_signalled && !g_webgpu_boot_pending) {
+		g_ready_signalled = 1;
 		krudd_signal_ready();
+	}
 #endif
 }
 

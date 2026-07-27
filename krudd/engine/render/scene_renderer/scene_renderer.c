@@ -38,15 +38,16 @@ static const struct memory_api native_mem = {
 #endif
 
 /*
- * Editor-chrome toggle: there is no editor mode left (games/demo and the
- * editor-chrome plumbing in plugin_abi.c/game.c were removed), so a wasm
- * build always takes the in-game outline path below — the picked-piece
- * outline (entity_api's get_outline), not the editor selection. Native
- * builds host no games and no chrome switch, so they always outline via
- * the editor selection path.
+ * Editor mode (plugin_abi.c, main module): which half of kruddgui's GAME /
+ * EDITOR switch is lit. The selection outline is editor feedback, so in game
+ * mode it stands down in favour of the in-game path below — the picked-piece
+ * outline (entity_api's get_outline), which is what a player wants to see.
+ * Native builds host no games and no switch, so they always outline via the
+ * editor selection path.
  */
 #ifdef __EMSCRIPTEN__
-#define EDITOR_CHROME() 0
+int krudd_editor_mode(void);
+#define EDITOR_CHROME() krudd_editor_mode()
 #else
 #define EDITOR_CHROME() 1
 #endif

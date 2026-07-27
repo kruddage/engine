@@ -256,10 +256,10 @@ jobs:
 
       # Only same-repo PRs: a fork PR's GITHUB_TOKEN is read-only, so the
       # measurement still runs above but the comment post is skipped for forks.
+      # Temporarily disabled (comment posting only; report is still uploaded
+      # as a build artifact above).
       - name: Post coverage comment
-        if: >-
-          github.event_name == 'pull_request'
-          && github.event.pull_request.head.repo.full_name == github.repository
+        if: false
         uses: actions/github-script@v9
         with:
           script: |

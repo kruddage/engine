@@ -354,7 +354,7 @@ test("a board that opens into itself is refused", () => {
 test("a project opening on a board it does not hold is refused", () => {
 	const found = problems({ ...TRIANGLES, root: "nonesuch" });
 	assert.equal(found.length, 1);
-	assert.ok((found[0] as string).includes("nonesuch"), found[0]);
+	assert.ok((found[0] as string).includes("nonesuch"), found[0] as string);
 });
 
 test("a document from a newer version is refused rather than half-read", () => {

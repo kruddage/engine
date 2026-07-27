@@ -1,0 +1,1649 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+
+/*
+ * kruddgui — krudd's touch-first UI layer, now the whole of it.
+ *
+ * krudd is a mobile-first editor. Its debug UI began as Dear ImGui and was
+ * strangled onto kruddgui one panel at a time (#490–#492); with the last panel
+ * and the viewport gizmo moved over, ImGui is gone. kruddgui draws every panel
+ * with its own batched 2D quad primitives straight to WebGL, and the panels are
+ * authored in Scheme (kruddgui.scm) against the C primitives registered here.
+ *
+ * Loaded after renderer_webgl (the GL 2 context), it owns what imgui_plugin used
+ * to: it sizes the canvas each tick, holds the pointer / touch / wheel callbacks
+ * (routing gestures to panels, the rest to the viewport overlay seam), drives the
+ * hidden-<input> text bridge for its own fields, and composites over the 3D scene.
+ *
+ * Text stands on kruddgui's own baked SDF glyph atlas (kgui_font, JetBrains
+ * Mono): a code point outside it has no glyph and is skipped. No ImGui remains.
+ */
+
+extern "C" {
+#include "subsystem.h"
+#include "subsystem_manager.h"
+#include "log_api.h"
+#include "log_level.h"
+#include "audio_api.h"
+#include "kgui_batch.h"
+#include "kgui_input.h"
+#include "kgui_text_edit.h"
+#include "kgui_font.h"
+#include "kruddgui_api.h"
+#include "renderer.h"		/* gpu_api — the panel batch draws through the device */
+}
+
+#ifdef __EMSCRIPTEN__
+#include <emscripten/emscripten.h>
+#include <emscripten/html5.h>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+
+extern "C" {
+#include "s7.h"			/* self-guards for C++ linkage */
+#include "script.h"
+#include "kruddgui_scm.h"	/* KRUDDGUI_SCM — the panel image */
+
+double get_device_pixel_ratio(void);	/* plugin_abi.c (main module) */
+int    krudd_is_touch_device(void);
+
+/*
+ * The web text-input bridge (plugin_abi.c, main module) — the hidden <input>
+ * and its char/key queues. kruddgui owns it now that ImGui is gone: it creates
+ * it at init (krudd_text_input_init) and drives show/hide/drain for its own
+ * focused field. krudd_text_input_set_capture marks the frames a kruddgui field
+ * holds focus, which kruddboard's key handler reads to leave its edit-undo alone.
+ */
+void krudd_text_input_init(void);
+void krudd_text_input_show(void);
+void krudd_text_input_hide(void);
+int  krudd_text_input_drain_chars(char *buf, int cap);
+int  krudd_text_input_pop_key(void);
+void krudd_text_input_set_capture(int on);
+}
+#endif
+
+static const struct log_api           *g_log;
+static const struct subsystem_manager *g_mgr; /* resolves the renderer gpu_api */
+
+#ifdef __EMSCRIPTEN__
+
+/* ------------------------------------------------------------------ */
+/* Batch renderer — panels drawn through the renderer's gpu_api        */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The batch is built in CSS-pixel space (kgui_batch, GL-free) and this file
+ * uploads and draws it through the renderer's gpu_api — no direct GL. Device
+ * resources are created once in gpu_init: two pipelines sharing one vertex
+ * shader, differing only in fragment — s_pipe_sdf runs the SDF text/rect path,
+ * s_pipe_image the straight image passthrough (an interleaved image quad flips
+ * to it, then back). s_vbo streams the batch's vertices each frame; s_view_ubo
+ * carries the CSS-pixel viewport the vertex shader projects by; the sampled
+ * texture for the SDF path is kruddgui's own baked glyph atlas (s_font_tex).
+ */
+#define KGUI_MAX_VERTS 16384
+
+static const struct gpu_api *s_gpu;
+static gpu_pipeline_t         s_pipe_sdf;
+static gpu_pipeline_t         s_pipe_image;
+static gpu_buffer_t           s_vbo;
+static gpu_buffer_t           s_view_ubo;
+static bool                   s_gl_ready;
+
+static struct kgui_vertex s_verts[KGUI_MAX_VERTS];
+static struct kgui_batch  s_batch;
+
+/* Viewport for this tick, refreshed at the top of kruddgui_tick. */
+static float s_css_w, s_css_h;
+static int   s_phys_w, s_phys_h;
+/* Last size actually written to the canvas element — see kruddgui_tick. */
+static int   s_canvas_w, s_canvas_h;
+
+/*
+ * Safe-area insets (top right bottom left, CSS px) — the padding a notch, a
+ * rounded corner or the home indicator eats out of the viewport on a phone.
+ * Read from CSS env(safe-area-inset-*) through a hidden probe div whose padding
+ * resolves those keywords; the values only become non-zero when the page's
+ * viewport meta opts in with viewport-fit=cover. A cached probe element (kept on
+ * Module) is measured on demand, so this is a getComputedStyle read, not a DOM
+ * build, per query. The Scheme dock layer insets its safe frame by these so the
+ * bottom mode-bar clears the home indicator and the top bar clears the notch.
+ */
+EM_JS(void, kgui_read_safe_insets, (float *out), {
+	var probe = Module.__kgSafeProbe;
+	if (!probe) {
+		probe = document.createElement("div");
+		probe.style.cssText =
+			"position:fixed;top:0;left:0;width:0;height:0;" +
+			"visibility:hidden;pointer-events:none;" +
+			"padding-top:env(safe-area-inset-top);" +
+			"padding-right:env(safe-area-inset-right);" +
+			"padding-bottom:env(safe-area-inset-bottom);" +
+			"padding-left:env(safe-area-inset-left);";
+		document.body.appendChild(probe);
+		Module.__kgSafeProbe = probe;
+	}
+	var cs = getComputedStyle(probe);
+	HEAPF32[(out >> 2) + 0] = parseFloat(cs.paddingTop)    || 0;
+	HEAPF32[(out >> 2) + 1] = parseFloat(cs.paddingRight)  || 0;
+	HEAPF32[(out >> 2) + 2] = parseFloat(cs.paddingBottom) || 0;
+	HEAPF32[(out >> 2) + 3] = parseFloat(cs.paddingLeft)   || 0;
+});
+
+/*
+ * The owned glyph atlas and its device texture. s_font is baked once in
+ * kruddgui_init and uploaded to s_font_tex (via gpu_api texture_create);
+ * s_white_u/s_white_v (the solid texel a filled rect samples) and s_text_size
+ * are copied from it there.
+ */
+static struct kgui_font s_font;
+static gpu_texture_t    s_font_tex;
+static float            s_white_u, s_white_v;
+static float            s_text_size;
+
+/*
+ * The two panel shaders, in the krudd DSL rather than hand-written GLSL.
+ *
+ * They were GLSL ES 300 strings until the WebGPU backend arrived, which cannot
+ * consume GLSL at all — a GLSL-dialect pipeline is refused outright, which is
+ * why the editor UI was absent from every WebGPU frame. The DSL is the one
+ * source both backends lower from (GLSL via script_shader_transpile, WGSL via
+ * script_shader_transpile_wgsl), so writing them here is what puts kruddgui on
+ * both.
+ *
+ * They are two whole shaders rather than one with two fragment stages because a
+ * DSL form carries exactly one vertex and one fragment stage; the vertex half is
+ * therefore duplicated verbatim between them. Keep the two (vertex ...) bodies
+ * identical — they feed the same vertex buffer through the same layout, and a
+ * divergence would show up only as one pipeline's geometry drifting.
+ *
+ * Shared vertex half: u_viewport (the CSS-pixel canvas size the batch is laid
+ * out in) rides a std140 uniform block, since the gpu_api has no loose uniforms
+ * — it is bound once per frame from s_view_ubo. The block is the only one in
+ * either program, so it takes binding 0 (see cmd-bind-uniform-buffer); kruddgui
+ * binds s_view_ubo to that slot.
+ *
+ * (precision highp) is not decoration. The DSL defaults a fragment stage to
+ * mediump, which is right for scene shading, but the SDF path thresholds a
+ * signed distance and takes fwidth of it — mediump costs mantissa exactly where
+ * the antialiasing ramp needs it, and desktop GL hides that by promoting to
+ * highp while a mobile GPU does not. Both shaders declare it so the two paths
+ * cannot drift.
+ */
+
+/*
+ * The SDF path (s_pipe_sdf): glyphs and filled rects sample kruddgui's SDF
+ * atlas, whose alpha channel is a signed distance. Threshold it at 0.5 with a
+ * screen-space smoothstep (fwidth gives the per-pixel ramp) so text stays
+ * antialiased at any size; colour comes from the vertex. A filled rect
+ * point-samples the atlas's solid "inside" texel, so its distance is a constant
+ * 1.0 and it resolves to full coverage with no special case.
+ */
+static const char *k_sdf_src =
+	"(shader kruddgui-sdf\n"
+	"  (precision highp)\n"
+	"  (inputs\n"
+	"    (a_pos vec2 (location 0))\n"
+	"    (a_uv  vec2 (location 1))\n"
+	"    (a_col vec4 (location 2)))\n"
+	"  (uniforms\n"
+	"    (View (block 0) (layout std140)\n"
+	"      (u_viewport vec2))\n"
+	"    (u_tex sampler2D))\n"
+	"  (varyings\n"
+	"    (v_uv  vec2)\n"
+	"    (v_col vec4))\n"
+	"  (targets\n"
+	"    (frag vec4 (location 0)))\n"
+	"  (vertex\n"
+	"    (let* ((p (/ a_pos u_viewport))\n"           /* 0..1 in CSS space */
+	"           (q (- (* p 2.0) 1.0)))\n"             /* -1..1             */
+	"      (set v_uv a_uv)\n"
+	"      (set v_col a_col)\n"
+	"      (set position (vec4 (swizzle q x) (- 0.0 (swizzle q y))\n"
+	"                          0.0 1.0))))\n"         /* y down            */
+	"  (fragment\n"
+	"    (let* ((d   (swizzle (sample u_tex v_uv) a))\n"
+	"           (w   (max (fwidth d) 0.00390625))\n"  /* 1.0 / 256.0       */
+	"           (cov (smoothstep (- 0.5 w) (+ 0.5 w) d)))\n"
+	"      (set frag (vec4 (swizzle v_col rgb)\n"
+	"                      (* (swizzle v_col a) cov))))))\n";
+
+/*
+ * The image path (s_pipe_image): an image quad's sampled texture is a plain
+ * RGBA image (a kruddboard bake or scene preview), drawn as a straight
+ * tint * texel passthrough. Splitting this off from the SDF path lets u_sdf
+ * become a pipeline choice rather than a per-draw uniform the gpu_api can't set.
+ */
+static const char *k_image_src =
+	"(shader kruddgui-image\n"
+	"  (precision highp)\n"
+	"  (inputs\n"
+	"    (a_pos vec2 (location 0))\n"
+	"    (a_uv  vec2 (location 1))\n"
+	"    (a_col vec4 (location 2)))\n"
+	"  (uniforms\n"
+	"    (View (block 0) (layout std140)\n"
+	"      (u_viewport vec2))\n"
+	"    (u_tex sampler2D))\n"
+	"  (varyings\n"
+	"    (v_uv  vec2)\n"
+	"    (v_col vec4))\n"
+	"  (targets\n"
+	"    (frag vec4 (location 0)))\n"
+	"  (vertex\n"
+	"    (let* ((p (/ a_pos u_viewport))\n"
+	"           (q (- (* p 2.0) 1.0)))\n"
+	"      (set v_uv a_uv)\n"
+	"      (set v_col a_col)\n"
+	"      (set position (vec4 (swizzle q x) (- 0.0 (swizzle q y))\n"
+	"                          0.0 1.0))))\n"
+	"  (fragment\n"
+	"    (set frag (* v_col (sample u_tex v_uv)))))\n";
+
+/*
+ * Build one panel pipeline from a krudd DSL shader. One source carries both
+ * stages; the backend lowers each at pipeline-create (GLSL on WebGL, WGSL on
+ * WebGPU), which is the whole reason these are DSL and not GLSL.
+ */
+static gpu_pipeline_t make_pipeline(const char *shader_src)
+{
+	struct gpu_pipeline_desc pd;
+
+	memset(&pd, 0, sizeof(pd));
+	pd.color_formats[0]   = GPU_FORMAT_RGBA8_UNORM;
+	pd.color_format_count = 1;
+	/*
+	 * The overlay does not test or write depth (disable_depth_test below),
+	 * but it still has to *declare* the pass's depth format. WebGPU matches a
+	 * pipeline's whole attachment state against the pass's and rejects a
+	 * SetPipeline whose depth format disagrees — and a backbuffer pass always
+	 * carries depth, because the WebGPU backend attaches its own to emulate
+	 * the depth buffer GL's default framebuffer comes with. Declaring
+	 * UNKNOWN here made every overlay draw a validation error.
+	 *
+	 * This costs nothing on GL: the WebGL backend reads disable_depth_test
+	 * and ignores depth_format entirely.
+	 */
+	pd.depth_format       = GPU_FORMAT_DEPTH32_FLOAT;
+	pd.topology           = GPU_TOPOLOGY_TRIANGLE_LIST;
+
+	/* kgui_vertex: pos(vec2)@0, uv(vec2)@8, col(vec4)@16, stride 32. */
+	pd.vertex_layout.attr_count = 3;
+	pd.vertex_layout.stride     = (uint32_t)sizeof(struct kgui_vertex);
+	pd.vertex_layout.attrs[0]   = (struct gpu_vertex_attr){
+		0, (uint32_t)offsetof(struct kgui_vertex, x), GPU_FORMAT_RG32_FLOAT };
+	pd.vertex_layout.attrs[1]   = (struct gpu_vertex_attr){
+		1, (uint32_t)offsetof(struct kgui_vertex, u), GPU_FORMAT_RG32_FLOAT };
+	pd.vertex_layout.attrs[2]   = (struct gpu_vertex_attr){
+		2, (uint32_t)offsetof(struct kgui_vertex, r), GPU_FORMAT_RGBA32_FLOAT };
+
+	pd.vert.src     = shader_src;
+	pd.vert.stage   = GPU_SHADER_STAGE_VERTEX;
+	pd.vert.dialect = GPU_SHADER_DIALECT_KRUDD;
+	pd.frag.src     = shader_src;
+	pd.frag.stage   = GPU_SHADER_STAGE_FRAGMENT;
+	pd.frag.dialect = GPU_SHADER_DIALECT_KRUDD;
+
+	/* A 2D overlay: straight-alpha blend, and no depth test so later quads
+	 * draw over earlier ones. Both are pipeline state the backend applies. */
+	pd.blend_enable       = 1;
+	pd.disable_depth_test = 1;
+
+	return s_gpu->pipeline_create(&pd);
+}
+
+/*
+ * One-time device setup, through the renderer's gpu_api. Resolves the renderer
+ * subsystem (up before kruddgui, which loads after it), builds the two panel
+ * pipelines, the streamed vertex buffer, the viewport uniform buffer, and the
+ * baked SDF atlas texture. Leaves s_gl_ready false (a no-op draw) if anything is
+ * missing. s_font must already be baked (kruddgui_init does it first).
+ */
+static void gpu_init(void)
+{
+	struct gpu_buffer_desc  vbd, ubd;
+	struct gpu_texture_desc td;
+
+	s_gpu = g_mgr ? (const struct gpu_api *)
+		subsystem_manager_get_api(g_mgr, "renderer") : nullptr;
+	if (!s_gpu) {
+		if (g_log)
+			g_log->write(LOG_LEVEL_ERROR,
+				     "kruddgui: renderer subsystem unavailable");
+		return;
+	}
+
+	s_pipe_sdf   = make_pipeline(k_sdf_src);
+	s_pipe_image = make_pipeline(k_image_src);
+	if (!s_pipe_sdf || !s_pipe_image)
+		return;
+
+	/* One vertex buffer, re-uploaded each frame (buffer_update below). */
+	memset(&vbd, 0, sizeof(vbd));
+	vbd.size  = (size_t)KGUI_MAX_VERTS * sizeof(struct kgui_vertex);
+	vbd.usage = GPU_BUFFER_USAGE_VERTEX;
+	s_vbo = s_gpu->buffer_create(&vbd);
+
+	/* std140 vec2 viewport — the block rounds to 16 bytes. */
+	memset(&ubd, 0, sizeof(ubd));
+	ubd.size  = 16;
+	ubd.usage = GPU_BUFFER_USAGE_UNIFORM;
+	s_view_ubo = s_gpu->buffer_create(&ubd);
+	if (!s_vbo || !s_view_ubo)
+		return;
+
+	/*
+	 * Upload the baked SDF atlas. The backend's default sampler for a
+	 * procedural RGBA8 texture is LINEAR (the bilinear read the SDF smoothstep
+	 * relies on for antialiasing); the atlas bakes each glyph with padding, so
+	 * it never samples the atlas edge.
+	 */
+	memset(&td, 0, sizeof(td));
+	td.format       = GPU_FORMAT_RGBA8_UNORM;
+	td.width        = KGUI_FONT_ATLAS_W;
+	td.height       = KGUI_FONT_ATLAS_H;
+	td.mip_levels   = 1;
+	td.sample_count = 1;
+	td.initial_data = s_font.pixels;
+	s_font_tex = s_gpu->texture_create(&td);
+	if (!s_font_tex)
+		return;
+
+	s_gl_ready = true;
+}
+
+/*
+ * Upload and draw the accumulated batch through the gpu_api. Opens a backbuffer
+ * pass that loads (composites over) the 3D scene, streams the vertices, binds
+ * the viewport UBO, and issues one draw per clip command. Blend and depth-off
+ * are pipeline state; the SDF/image split is a pipeline choice (an image command
+ * flips to s_pipe_image, re-binding the vertex buffer for its VAO, then back). A
+ * command's CSS-pixel clip becomes a physical-pixel, y-up scissor.
+ */
+static void gpu_flush(void)
+{
+	const struct gpu_api        *gpu = s_gpu;
+	float  scale_x = (s_css_w > 0.0f) ? (float)s_phys_w / s_css_w : 1.0f;
+	float  scale_y = (s_css_h > 0.0f) ? (float)s_phys_h / s_css_h : 1.0f;
+	float  view[4] = { s_css_w, s_css_h, 0.0f, 0.0f }; /* std140 vec2 pad */
+	struct gpu_render_pass_desc  rp;
+	gpu_cmd_buf_t                cmd;
+	gpu_pipeline_t               cur;
+	int                          i;
+
+	if (!s_gl_ready || !gpu || s_batch.count <= 0)
+		return;
+
+	cmd = gpu->cmd_buf_begin();
+
+	/* Composite over the scene already in the backbuffer (load, don't clear). */
+	memset(&rp, 0, sizeof(rp));
+	rp.color_count       = 1;
+	rp.color[0].texture  = nullptr;            /* the canvas backbuffer */
+	rp.color[0].load_op  = GPU_LOAD_OP_LOAD;
+	rp.color[0].store_op = GPU_STORE_OP_STORE;
+	rp.depth             = nullptr;
+	rp.depth_load_op     = GPU_LOAD_OP_LOAD;
+	gpu->cmd_begin_render_pass(cmd, &rp);
+
+	gpu->buffer_update(s_vbo, 0, s_verts,
+			   (uint32_t)(s_batch.count * sizeof(struct kgui_vertex)));
+	gpu->buffer_update(s_view_ubo, 0, view, sizeof(view));
+
+	cur = s_pipe_sdf;
+	gpu->cmd_set_pipeline(cmd, cur);
+	gpu->cmd_bind_vertex_buffer(cmd, 0, s_vbo, 0);
+	gpu->cmd_bind_uniform_buffer(cmd, 0, s_view_ubo, 0, (uint32_t)sizeof(view));
+
+	for (i = 0; i < s_batch.cmd_count; i++) {
+		const struct kgui_clip_cmd *c = &s_batch.cmds[i];
+		gpu_pipeline_t              want;
+
+		if (c->count <= 0)
+			continue;
+		/*
+		 * An image command samples its own external texture through the
+		 * passthrough pipeline; every other command samples the SDF atlas
+		 * through the SDF pipeline. Switching pipelines binds a different VAO,
+		 * so re-specify the vertex buffer against it; the UBO binding is
+		 * global and survives the switch. Runs of same-kind commands don't
+		 * switch, so a panel's rects and glyphs still issue back-to-back.
+		 */
+		want = c->tex ? s_pipe_image : s_pipe_sdf;
+		if (want != cur) {
+			cur = want;
+			gpu->cmd_set_pipeline(cmd, cur);
+			gpu->cmd_bind_vertex_buffer(cmd, 0, s_vbo, 0);
+		}
+		if (c->tex)
+			gpu->cmd_bind_texture_handle(cmd, 0, (uint32_t)c->tex);
+		else
+			gpu->cmd_bind_texture(cmd, 0, s_font_tex);
+
+		if (c->clipped) {
+			int sx = (int)(c->x * scale_x + 0.5f);
+			int sw = (int)(c->w * scale_x + 0.5f);
+			int sh = (int)(c->h * scale_y + 0.5f);
+			int sy = s_phys_h - (int)((c->y + c->h) * scale_y + 0.5f);
+
+			gpu->cmd_set_scissor(cmd, sx, sy,
+					     (uint32_t)(sw < 0 ? 0 : sw),
+					     (uint32_t)(sh < 0 ? 0 : sh));
+		} else {
+			gpu->cmd_set_scissor(cmd, 0, 0, (uint32_t)s_phys_w,
+					     (uint32_t)s_phys_h);
+		}
+		gpu->cmd_draw(cmd, (uint32_t)c->count, 1, (uint32_t)c->first, 0);
+	}
+
+	gpu->cmd_end_render_pass(cmd);
+	gpu->cmd_buf_submit(cmd);
+}
+
+/* ------------------------------------------------------------------ */
+/* Pointer router — the multi-touch hit-test registry (#489)           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * kruddgui owns the Emscripten pointer callbacks and routes every event
+ * through kgui_input: a down that lands on a declared panel region is captured
+ * by that region for its whole gesture, and everything else is the viewport's —
+ * fed to the overlay seam's pointer for the gizmo. The router is GL-free (host-
+ * tested in kgui_input_test.c); this file is the thin Emscripten adapter over it.
+ *
+ * s_input's region set is (re)declared by the Scheme image each tick
+ * (kgui-panel-begin) and committed at the end of the tick; the async callbacks
+ * route against the committed set between ticks, safe because they never fire
+ * mid-tick (single-threaded).
+ */
+static struct kgui_input s_input;
+
+/* The region the image is currently drawing into (kgui-panel-begin/end). */
+static struct kgui_region_io *s_cur_io;
+
+static bool s_touch_device;
+
+/*
+ * The unclaimed (non-panel) pointer, tracked for the viewport overlay seam
+ * (kruddgui_api) — the gizmo's replacement for ImGuiIO. The unclaimed-pointer
+ * path (vp_pointer_button / the forwarded move branch) updates it; `clicked` /
+ * `released` are one-frame edges cleared after the overlays run each tick,
+ * mirroring IsMouseClicked / IsMouseReleased.
+ */
+static struct {
+	float x, y;
+	int   down;
+	int   clicked;
+	int   released;
+} s_vp_ptr;
+
+/* Registered viewport overlays, run each tick before the Scheme panels draw. */
+static struct {
+	void (*fn)(void *ud);
+	void *ud;
+} s_overlays[KRUDDGUI_MAX_OVERLAYS];
+static int s_overlay_count;
+
+/* A touch consumed by a field raises the keyboard from the gesture (below). */
+static int point_in_field(float x, float y);
+
+/* ------------------------------------------------------------------ */
+/* Input callbacks — route through the registry, forward the rest      */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The unclaimed-pointer path. A pointer whose down misses every panel region is
+ * the viewport's: its position (from targetX/targetY, element-relative CSS
+ * pixels — the deprecated canvasX/canvasY read 0 on current Emscripten) and its
+ * button edges feed the overlay seam's pointer (s_vp_ptr), which the transform
+ * gizmo reads. Nothing is forwarded to a host any more: ImGui is gone and the
+ * camera auto-orbits, so the viewport pointer's one consumer is the overlay.
+ */
+static void vp_pointer_button(float x, float y, bool down)
+{
+	s_vp_ptr.x = x;
+	s_vp_ptr.y = y;
+	if (down) {
+		s_vp_ptr.down    = 1;
+		s_vp_ptr.clicked = 1;
+	} else {
+		s_vp_ptr.down     = 0;
+		s_vp_ptr.released = 1;
+	}
+}
+
+static void pointer_down(int32_t id, float x, float y)
+{
+	if (kgui_input_pointer_down(&s_input, id, x, y) == KGUI_ROUTE_FORWARD)
+		vp_pointer_button(x, y, true);
+}
+
+static void pointer_move(int32_t id, float x, float y)
+{
+	if (kgui_input_pointer_move(&s_input, id, x, y) == KGUI_ROUTE_FORWARD) {
+		s_vp_ptr.x = x;
+		s_vp_ptr.y = y;
+	}
+}
+
+static void pointer_up(int32_t id, float x, float y, bool is_touch)
+{
+	if (kgui_input_pointer_up(&s_input, id, x, y) == KGUI_ROUTE_FORWARD) {
+		vp_pointer_button(x, y, false);
+	} else if (is_touch && point_in_field(x, y)) {
+		/*
+		 * A touch consumed by a kruddgui field: raise the soft keyboard
+		 * from inside this gesture handler, which iOS Safari requires —
+		 * field_sync's focus-driven show() runs in the later rAF tick,
+		 * outside the gesture, where iOS ignores it.
+		 */
+		krudd_text_input_show();
+	}
+}
+
+static EM_BOOL on_mouse_move(int /*type*/, const EmscriptenMouseEvent *e,
+			     void * /*ud*/)
+{
+	pointer_move(KGUI_MOUSE_ID, (float)e->targetX, (float)e->targetY);
+	return EM_FALSE;
+}
+
+static EM_BOOL on_mouse_button(int type, const EmscriptenMouseEvent *e,
+			       void * /*ud*/)
+{
+	bool  pressed = (type == EMSCRIPTEN_EVENT_MOUSEDOWN);
+	float x       = (float)e->targetX;
+	float y       = (float)e->targetY;
+
+	/* Only the left button drives panels and the viewport; ignore the rest. */
+	if ((int)e->button == 0) {
+		if (pressed)
+			pointer_down(KGUI_MOUSE_ID, x, y);
+		else
+			pointer_up(KGUI_MOUSE_ID, x, y, false);
+	}
+	return EM_FALSE;
+}
+
+/*
+ * Every changed touch point is routed by its identifier, so several fingers on
+ * different panels each drive their own region and one never steals another.
+ */
+static EM_BOOL on_touch(int type, const EmscriptenTouchEvent *e, void * /*ud*/)
+{
+	int i;
+
+	for (i = 0; i < e->numTouches; i++) {
+		const EmscriptenTouchPoint *t = &e->touches[i];
+		int32_t id = (int32_t)t->identifier;
+		float   x  = (float)t->targetX;
+		float   y  = (float)t->targetY;
+
+		if (!t->isChanged)
+			continue;
+
+		if (type == EMSCRIPTEN_EVENT_TOUCHSTART)
+			pointer_down(id, x, y);
+		else if (type == EMSCRIPTEN_EVENT_TOUCHEND ||
+			 type == EMSCRIPTEN_EVENT_TOUCHCANCEL)
+			pointer_up(id, x, y, true);
+		else
+			pointer_move(id, x, y);
+	}
+	return EM_TRUE;
+}
+
+/*
+ * Wheel routes to a panel region under the pointer as a scroll delta (a
+ * scrollable panel reads it via kgui-region-wheel). A wheel off every panel has
+ * no consumer now — ImGui is gone and the camera auto-orbits — so it is dropped.
+ */
+static EM_BOOL on_wheel(int /*type*/, const EmscriptenWheelEvent *e,
+			void * /*ud*/)
+{
+	kgui_input_wheel(&s_input, (float)e->mouse.targetX,
+			 (float)e->mouse.targetY, (float)e->deltaY);
+	return EM_TRUE;
+}
+
+/* ------------------------------------------------------------------ */
+/* Text field — the first interactive widget, backed by the soft keyboard */
+/* ------------------------------------------------------------------ */
+
+/*
+ * kruddgui's field is the touch-keyboard model ImGui never had: exactly one
+ * field owns focus and a caret at a time, and the hidden-<input> bridge feeds
+ * it. The editable buffer is the GL-free kgui_text_edit (host-tested); this
+ * layer adds focus, the per-tick char/key drain (field_pump), the show/hide +
+ * capture reconcile (field_sync), and the tap-to-focus / commit reported to the
+ * Scheme image through (kgui-field).
+ *
+ * Focus is keyed by the field's name hash, not its position, so a focused field
+ * keeps its buffer while the panel scrolls it off-screen. Committing (Enter,
+ * Tab, or focus moving to another field) latches the final text for one read;
+ * Escape abandons the edit. Only an actually-edited field reports committed?,
+ * so tapping in and out without typing records no undo step.
+ */
+static struct kgui_text_edit s_field_edit;
+static uint32_t s_field_id;           /* focused field's name hash, 0 = none */
+static int      s_field_numeric;      /* focused field filters to numeric input */
+static int      s_field_multi;        /* focused field is multiline (Enter = \n) */
+static int      s_field_dirty;        /* buffer edited since focus */
+static int      s_field_committed;    /* latched commit awaiting a Scheme read */
+static uint32_t s_field_committed_id; /* which field the latch is for */
+static char     s_field_commit_buf[KGUI_TEXT_EDIT_CAP]; /* the committed text */
+static int      s_field_shown;        /* the soft keyboard is up for our field */
+
+/*
+ * Field rects declared this tick, committed for the async touch callbacks (the
+ * same "built this tick, read between ticks" discipline as the input regions).
+ * A touch-up inside one raises the soft keyboard from within the gesture, which
+ * iOS Safari requires — focus() from the later rAF tick would be ignored.
+ */
+#define KGUI_MAX_FIELD_RECTS 48
+struct kgui_field_rect {
+	float x0, y0, x1, y1;
+};
+static struct kgui_field_rect s_fr_build[KGUI_MAX_FIELD_RECTS];
+static int                    s_fr_build_n;
+static struct kgui_field_rect s_fr_committed[KGUI_MAX_FIELD_RECTS];
+static int                    s_fr_committed_n;
+
+static void field_rect_add(float x, float y, float w, float h)
+{
+	struct kgui_field_rect *r;
+
+	if (s_fr_build_n >= KGUI_MAX_FIELD_RECTS)
+		return;
+	r     = &s_fr_build[s_fr_build_n++];
+	r->x0 = x;
+	r->y0 = y;
+	r->x1 = x + w;
+	r->y1 = y + h;
+}
+
+static void field_rects_commit(void)
+{
+	int i;
+
+	for (i = 0; i < s_fr_build_n; i++)
+		s_fr_committed[i] = s_fr_build[i];
+	s_fr_committed_n = s_fr_build_n;
+}
+
+static int point_in_field(float x, float y)
+{
+	int i;
+
+	for (i = 0; i < s_fr_committed_n; i++) {
+		const struct kgui_field_rect *r = &s_fr_committed[i];
+
+		if (x >= r->x0 && x <= r->x1 && y >= r->y0 && y <= r->y1)
+			return 1;
+	}
+	return 0;
+}
+
+/*
+ * Copy the focused field's final text into the commit slot and latch it for one
+ * Scheme read. Kept separate from the live edit buffer so moving focus to a new
+ * field (which re-seeds s_field_edit) does not clobber the text the old field is
+ * about to hand back.
+ */
+static void field_latch_commit(void)
+{
+	memcpy(s_field_commit_buf, s_field_edit.buf,
+	       (size_t)s_field_edit.len + 1);
+	s_field_committed    = 1;
+	s_field_committed_id = s_field_id;
+}
+
+/* Commit the focused field (only an actual edit latches) and drop focus. */
+static void field_commit(void)
+{
+	if (s_field_dirty)
+		field_latch_commit();
+	s_field_id    = 0;
+	s_field_multi = 0;
+}
+
+/*
+ * Measure the pixel width of a byte run in the panel font — the GL-free caret
+ * math (kgui_text_edit_up/down and the caret report) takes this as its
+ * kgui_text_measure callback. kgui_text_width wants a NUL-terminated string, so
+ * copy the run out first (the same trick as the caret-bar placement).
+ */
+static float host_measure(const char *s, int nbytes, void *ud)
+{
+	char tmp[KGUI_TEXT_EDIT_CAP];
+
+	(void)ud;
+	if (nbytes < 0)
+		nbytes = 0;
+	if (nbytes > (int)sizeof(tmp) - 1)
+		nbytes = (int)sizeof(tmp) - 1;
+	memcpy(tmp, s, (size_t)nbytes);
+	tmp[nbytes] = '\0';
+	return kgui_text_width(tmp, s_text_size, kgui_font_glyph, &s_font);
+}
+
+/* Keep only the bytes a numeric field admits (digits, sign, dot, exponent). */
+static int numeric_filter(char *buf, int n)
+{
+	int i, w = 0;
+
+	for (i = 0; i < n; i++) {
+		char c = buf[i];
+
+		if ((c >= '0' && c <= '9') || c == '.' || c == '-' ||
+		    c == '+' || c == 'e' || c == 'E')
+			buf[w++] = c;
+	}
+	buf[w] = '\0';
+	return w;
+}
+
+/*
+ * Drain the keyboard bridge into the focused field. Runs at the top of the tick
+ * (before the image reads the field) so a typed character shows the same frame.
+ * Only runs while a field is focused, which is exactly when kruddgui holds the
+ * text-input capture flag.
+ */
+static void field_pump(void)
+{
+	char buf[256];
+	int  n, k;
+
+	if (!s_field_id)
+		return;
+
+	n = krudd_text_input_drain_chars(buf, (int)sizeof(buf));
+	if (s_field_numeric)
+		n = numeric_filter(buf, n);
+	if (n > 0 && kgui_text_edit_insert(&s_field_edit, buf, n) > 0)
+		s_field_dirty = 1;
+
+	while ((k = krudd_text_input_pop_key()) != 0) {
+		switch (k) {
+		case 1: /* Backspace */
+			kgui_text_edit_backspace(&s_field_edit);
+			s_field_dirty = 1;
+			break;
+		case 4: /* Delete */
+			kgui_text_edit_delete_fwd(&s_field_edit);
+			s_field_dirty = 1;
+			break;
+		case 5: /* LeftArrow */
+			kgui_text_edit_left(&s_field_edit);
+			break;
+		case 6: /* RightArrow */
+			kgui_text_edit_right(&s_field_edit);
+			break;
+		case 7: /* Up: only a multiline field has a line above */
+			if (s_field_multi)
+				kgui_text_edit_up(&s_field_edit,
+						  host_measure, NULL);
+			break;
+		case 8: /* Down: only a multiline field has a line below */
+			if (s_field_multi)
+				kgui_text_edit_down(&s_field_edit,
+						    host_measure, NULL);
+			break;
+		case 9: /* Home: line start (multiline) or buffer start */
+			if (s_field_multi)
+				kgui_text_edit_line_home(&s_field_edit);
+			else
+				kgui_text_edit_home(&s_field_edit);
+			break;
+		case 10: /* End: line end (multiline) or buffer end */
+			if (s_field_multi)
+				kgui_text_edit_line_end(&s_field_edit);
+			else
+				kgui_text_edit_end(&s_field_edit);
+			break;
+		case 2: /* Enter: newline in a multiline field, else commit */
+			if (s_field_multi) {
+				if (kgui_text_edit_insert(&s_field_edit,
+							  "\n", 1) > 0)
+					s_field_dirty = 1;
+				break;
+			}
+			field_commit();
+			return;
+		case 3: /* Tab: commit + drop focus */
+			field_commit();
+			return;
+		case 11: /* Escape: abandon the edit */
+			s_field_id    = 0;
+			s_field_multi = 0;
+			return;
+		default:
+			break;
+		}
+	}
+}
+
+/* Reconcile the soft keyboard + capture flag with our focus, once per tick. */
+static void field_sync(void)
+{
+	int active = (s_field_id != 0);
+
+	krudd_text_input_set_capture(active);
+	if (active && !s_field_shown) {
+		krudd_text_input_show();
+		s_field_shown = 1;
+	} else if (!active && s_field_shown) {
+		krudd_text_input_hide();
+		s_field_shown = 0;
+	}
+}
+
+/*
+ * The shared body of (kgui-field) and (kgui-field-multi): declare the rect,
+ * resolve focus/commit against the one global focus (s_field_id), and report
+ * what the caller draws. `multi` marks the field multiline when this tap
+ * focuses it, so the key drain (field_pump) knows Enter means newline. Both
+ * primitives format their own return list from this.
+ */
+struct field_read {
+	const char *disp;       /* text to draw (live edit buffer or the value) */
+	int         active;     /* this field owns focus */
+	int         committed;  /* a commit is latched for this read */
+	float       caret_px;   /* caret x within its line (0 when inactive) */
+	int         caret_line; /* caret's line index (0 when inactive) */
+	int         nlines;     /* line count of `disp` (>= 1) */
+};
+
+static struct field_read field_focus(const char *id, double x, double y,
+				     double w, double h, const char *cur,
+				     double mode, int multi)
+{
+	uint32_t          hash = kgui_name_hash(id);
+	struct field_read r    = { cur, 0, 0, 0.0f, 0, 1 };
+	const char       *p;
+
+	field_rect_add((float)x, (float)y, (float)w, (float)h);
+
+	if (hash == s_field_id) {
+		r.active = 1;
+		r.disp   = s_field_edit.buf;
+	} else if (hash == s_field_committed_id) {
+		r.committed          = s_field_committed;
+		r.disp               = s_field_commit_buf;
+		s_field_committed    = 0;
+		s_field_committed_id = 0;
+	} else if (s_cur_io && s_cur_io->tapped &&
+		   s_cur_io->tap_x >= x && s_cur_io->tap_x <= x + w &&
+		   s_cur_io->tap_y >= y && s_cur_io->tap_y <= y + h) {
+		s_cur_io->tapped = 0; /* consume: the tap focuses this field */
+		/* Moving focus off an edited field commits it (read next frame). */
+		if (s_field_id && s_field_dirty)
+			field_latch_commit();
+		kgui_text_edit_set(&s_field_edit, cur);
+		s_field_id      = hash;
+		s_field_dirty   = 0;
+		s_field_numeric = (mode != 0.0);
+		s_field_multi   = multi;
+		r.active        = 1;
+		r.disp          = s_field_edit.buf;
+	}
+
+	if (r.active)
+		kgui_text_edit_caret(&s_field_edit, host_measure, NULL,
+				     &r.caret_line, NULL, &r.caret_px);
+	for (p = r.disp; *p; p++)
+		if (*p == '\n')
+			r.nlines++;
+	return r;
+}
+
+/* ------------------------------------------------------------------ */
+/* Scheme primitives — the panel-authoring seam                        */
+/* ------------------------------------------------------------------ */
+
+extern "C" {
+
+/* (kgui-rect x y w h r g b a) -> unspecified. Filled rectangle. */
+static s7_pointer sp_kgui_rect(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer p = args;
+	double x = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double y = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double w = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double h = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double r = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double g = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double b = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double a = s7_number_to_real(sc, s7_car(p));
+
+	kgui_batch_quad(&s_batch, (float)x, (float)y, (float)w, (float)h,
+			s_white_u, s_white_v, s_white_u, s_white_v,
+			(float)r, (float)g, (float)b, (float)a);
+	return s7_unspecified(sc);
+}
+
+/* (kgui-line x0 y0 x1 y1 width r g b a) -> unspecified. A thick flat segment. */
+static s7_pointer sp_kgui_line(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer p = args;
+	double x0 = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double y0 = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double x1 = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double y1 = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double wd = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double r  = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double g  = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double b  = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double a  = s7_number_to_real(sc, s7_car(p));
+
+	kgui_batch_line(&s_batch, (float)x0, (float)y0, (float)x1, (float)y1,
+			(float)wd, s_white_u, s_white_v,
+			(float)r, (float)g, (float)b, (float)a);
+	return s7_unspecified(sc);
+}
+
+/*
+ * Segment count for a circle / ring of radius rad — enough facets to read as
+ * round at handle sizes without flooding the batch: ~one segment per 2px of
+ * circumference, clamped to [12, 48].
+ */
+static int kgui_circle_segs(double rad)
+{
+	int segs = (int)(rad * 0.9) + 8;
+
+	if (segs < 12) segs = 12;
+	if (segs > 48) segs = 48;
+	return segs;
+}
+
+/* (kgui-circle cx cy rad r g b a) -> unspecified. A filled flat disc. */
+static s7_pointer sp_kgui_circle(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer p = args;
+	double cx  = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double cy  = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double rad = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double r   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double g   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double b   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double a   = s7_number_to_real(sc, s7_car(p));
+
+	kgui_batch_circle(&s_batch, (float)cx, (float)cy, (float)rad,
+			  kgui_circle_segs(rad), s_white_u, s_white_v,
+			  (float)r, (float)g, (float)b, (float)a);
+	return s7_unspecified(sc);
+}
+
+/* (kgui-ring cx cy rad width r g b a) -> unspecified. A circle outline. */
+static s7_pointer sp_kgui_ring(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer p = args;
+	double cx  = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double cy  = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double rad = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double wd  = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double r   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double g   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double b   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double a   = s7_number_to_real(sc, s7_car(p));
+
+	kgui_batch_ring(&s_batch, (float)cx, (float)cy, (float)rad, (float)wd,
+			kgui_circle_segs(rad), s_white_u, s_white_v,
+			(float)r, (float)g, (float)b, (float)a);
+	return s7_unspecified(sc);
+}
+
+/*
+ * (kgui-image x y w h tex [u0 v0 u1 v1] [r g b a]) -> unspecified. Draws the GL
+ * texture handle `tex` into the (x y w h) box. Omit the UVs to map the whole
+ * texture to the box; omit the tint to draw it unmodulated. The tint multiplies
+ * the sampled texel — an alpha below 1 fades the image, a colour shades it — so a
+ * baked texture / mesh preview blits straight in, and the whole thing honours the
+ * panel's current clip. The batch draws after the 3D scene, so it composites over
+ * the editor like every other kruddgui quad.
+ */
+static s7_pointer sp_kgui_image(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer p = args;
+	double x = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double y = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double w = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double h = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	s7_int tex = s7_integer(s7_car(p)); p = s7_cdr(p);
+	double u0 = 0.0, v0 = 0.0, u1 = 1.0, v1 = 1.0;
+	double r = 1.0, g = 1.0, b = 1.0, a = 1.0;
+
+	if (s7_is_pair(p)) {
+		u0 = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+		v0 = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+		u1 = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+		v1 = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	}
+	if (s7_is_pair(p)) {
+		r = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+		g = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+		b = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+		a = s7_number_to_real(sc, s7_car(p));
+	}
+
+	kgui_batch_image(&s_batch, (float)x, (float)y, (float)w, (float)h,
+			 (float)u0, (float)v0, (float)u1, (float)v1,
+			 (unsigned)tex, (float)r, (float)g, (float)b, (float)a);
+	return s7_unspecified(sc);
+}
+
+/*
+ * (kgui-text x y str r g b a [size]) -> unspecified. (x, y) is the text's
+ * top-left. The optional size overrides the default text size (s_text_size) —
+ * used by the markdown preview to scale headings; the SDF atlas stays crisp at
+ * any size, so headings need not be whole multiples of the bake size.
+ */
+static s7_pointer sp_kgui_text(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer p = args;
+	double x = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double y = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	s7_pointer str = s7_car(p); p = s7_cdr(p);
+	double r = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double g = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double b = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double a = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double size = s7_is_pair(p)
+		    ? s7_number_to_real(sc, s7_car(p)) : (double)s_text_size;
+
+	if (s7_is_string(str))
+		kgui_batch_text(&s_batch, (float)x, (float)y, s7_string(str),
+				(float)size, (float)r, (float)g, (float)b,
+				(float)a, kgui_font_glyph, &s_font);
+	return s7_unspecified(sc);
+}
+
+/* (kgui-text-metrics str [size]) -> (w h) in pixels, for centring a label. */
+static s7_pointer sp_kgui_text_metrics(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer str  = s7_car(args);
+	s7_pointer rest = s7_cdr(args);
+	float      size = s7_is_pair(rest)
+			? (float)s7_number_to_real(sc, s7_car(rest))
+			: s_text_size;
+	float      w    = 0.0f;
+
+	if (s7_is_string(str))
+		w = kgui_text_width(s7_string(str), size,
+				    kgui_font_glyph, &s_font);
+	return s7_list(sc, 2, s7_make_real(sc, (s7_double)w),
+		       s7_make_real(sc, (s7_double)size));
+}
+
+/*
+ * (kgui-panel-begin name x y w h) -> unspecified. Declare an input region and
+ * enter it: the region captures any gesture whose down lands inside its rect,
+ * and subsequent kgui-button / kgui-region-* calls read its trapped input.
+ * The rect must enclose the panel's buttons and scroll body so their gestures
+ * are captured. Panels are declared in draw order; a later one is on top.
+ */
+static s7_pointer sp_kgui_panel_begin(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer  p    = args;
+	s7_pointer  nm   = s7_car(p);                     p = s7_cdr(p);
+	double      x    = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double      y    = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double      w    = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double      h    = s7_number_to_real(sc, s7_car(p));
+	const char *name = s7_is_string(nm) ? s7_string(nm) : "";
+
+	s_cur_io = kgui_input_region(&s_input, kgui_name_hash(name),
+				     (float)x, (float)y, (float)w, (float)h);
+	return s7_unspecified(sc);
+}
+
+/* (kgui-panel-end) -> unspecified. Leave the current input region. */
+static s7_pointer sp_kgui_panel_end(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	s_cur_io = NULL;
+	return s7_unspecified(sc);
+}
+
+/*
+ * (kgui-button x y w h) -> #t if a tap landed in this rect this frame. A
+ * button is a hit-target inside the current panel region: the region captures
+ * the gesture and this reports and consumes its trapped tap when it falls in
+ * the rect, so one tap fires exactly one button. The button does not draw —
+ * the image draws its own background and label.
+ */
+static s7_pointer sp_kgui_button(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer p = args;
+	double x = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double y = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double w = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double h = s7_number_to_real(sc, s7_car(p));
+	bool   hit = false;
+
+	if (s_cur_io && s_cur_io->tapped &&
+	    s_cur_io->tap_x >= x && s_cur_io->tap_x <= x + w &&
+	    s_cur_io->tap_y >= y && s_cur_io->tap_y <= y + h) {
+		hit = true;
+		s_cur_io->tapped = 0; /* consume: one tap, one button */
+	}
+	return s7_make_boolean(sc, hit);
+}
+
+/*
+ * (kgui-field id x y w h text mode) -> (display active? committed? caret-px).
+ *
+ * The soft-keyboard text field. `text` is the caller's current value; `mode` is
+ * 0 for free text or 1 for numeric (the drain filters to numeric bytes). A tap
+ * in the rect focuses the field, seeding the edit buffer from `text`; while
+ * focused it returns the live edit buffer as `display`, `active?` #t, and the
+ * caret's pixel offset for drawing a caret bar. On the frame the edit commits
+ * (Enter / Tab / focus moving away), `committed?` is #t and `display` is the
+ * final text — the caller writes it back through its undo-recording setter. The
+ * field draws nothing itself; the image draws the box, text and caret.
+ */
+static s7_pointer sp_kgui_field(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer  p    = args;
+	s7_pointer  nm   = s7_car(p);                        p = s7_cdr(p);
+	double      x    = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double      y    = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double      w    = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double      h    = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	s7_pointer  txt  = s7_car(p);                        p = s7_cdr(p);
+	double      mode = s7_number_to_real(sc, s7_car(p));
+	const char *id   = s7_is_string(nm) ? s7_string(nm) : "";
+	const char *cur  = s7_is_string(txt) ? s7_string(txt) : "";
+	struct field_read r = field_focus(id, x, y, w, h, cur, mode, 0);
+
+	return s7_list(sc, 4, s7_make_string(sc, r.disp),
+		       s7_make_boolean(sc, r.active),
+		       s7_make_boolean(sc, r.committed),
+		       s7_make_real(sc, (s7_double)r.caret_px));
+}
+
+/*
+ * (kgui-field-multi id x y w h text) ->
+ *     (display active? committed? caret-px caret-line nlines).
+ *
+ * The multiline cousin of (kgui-field): the same single global focus and the
+ * same commit-on-blur, but Enter inserts a newline instead of committing, and
+ * Up/Down walk the caret between lines (preserving its pixel-x). The extra
+ * `caret-line` and `nlines` let the Scheme seam place the caret bar on the
+ * right visual line and size its scroll body. There is no `mode` — a multiline
+ * field is always free text. Commit happens on blur: tapping another field, or
+ * the seam's Done button calling (kgui-field-blur). The field draws nothing
+ * itself; the seam draws the clipped, scrolled lines and the caret.
+ */
+static s7_pointer sp_kgui_field_multi(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer  p   = args;
+	s7_pointer  nm  = s7_car(p);                        p = s7_cdr(p);
+	double      x   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double      y   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double      w   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double      h   = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	s7_pointer  txt = s7_car(p);
+	const char *id  = s7_is_string(nm) ? s7_string(nm) : "";
+	const char *cur = s7_is_string(txt) ? s7_string(txt) : "";
+	struct field_read r = field_focus(id, x, y, w, h, cur, 0.0, 1);
+
+	return s7_list(sc, 6, s7_make_string(sc, r.disp),
+		       s7_make_boolean(sc, r.active),
+		       s7_make_boolean(sc, r.committed),
+		       s7_make_real(sc, (s7_double)r.caret_px),
+		       s7_make_integer(sc, r.caret_line),
+		       s7_make_integer(sc, r.nlines));
+}
+
+/*
+ * (kgui-field-blur) -> #t if a field was focused. Commits the focused field
+ * (latching an edit for the next read) and drops focus — the Done-button path
+ * for a multiline field, whose Enter makes newlines and so cannot commit.
+ */
+static s7_pointer sp_kgui_field_blur(s7_scheme *sc, s7_pointer args)
+{
+	int was = (s_field_id != 0);
+
+	(void)args;
+	if (was)
+		field_commit();
+	return s7_make_boolean(sc, was);
+}
+
+/*
+ * (kgui-region-drag) -> (dx dy): the captured pointer motion in the current
+ * panel this frame (CSS px), or (0 0) outside a panel. A scroll body adds -dy
+ * to its offset each frame to drag its contents.
+ */
+static s7_pointer sp_kgui_region_drag(s7_scheme *sc, s7_pointer args)
+{
+	double dx = s_cur_io ? (double)s_cur_io->drag_dx : 0.0;
+	double dy = s_cur_io ? (double)s_cur_io->drag_dy : 0.0;
+
+	(void)args;
+	return s7_list(sc, 2, s7_make_real(sc, (s7_double)dx),
+		       s7_make_real(sc, (s7_double)dy));
+}
+
+/* (kgui-region-wheel) -> wheel delta over the current panel this frame. */
+static s7_pointer sp_kgui_region_wheel(s7_scheme *sc, s7_pointer args)
+{
+	double w = s_cur_io ? (double)s_cur_io->wheel : 0.0;
+
+	(void)args;
+	return s7_make_real(sc, (s7_double)w);
+}
+
+/* (kgui-region-pressed) -> #t while a pointer is held on the current panel. */
+static s7_pointer sp_kgui_region_pressed(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	return s7_make_boolean(sc, s_cur_io && s_cur_io->pressed);
+}
+
+/*
+ * (kgui-region name x y w h) -> (pressed press-x press-y): declare a per-widget
+ * drag-capture region and read its live captured-pointer state. Unlike
+ * kgui-panel-begin this does not change the current panel (s_cur_io) — it just
+ * appends one more region to this frame's z-stack and hands back that region's
+ * own result slot, so a widget (a slider track, a colour-picker square) can sit
+ * ON TOP of the enclosing scroll body: a down inside it is captured here (read
+ * press-x/press-y to map to a value) while a down anywhere else still reaches
+ * the body region underneath and scrolls. Declare it after the body draw so it
+ * wins the overlap, and only for on-screen widgets — regions are a fixed pool
+ * (KGUI_MAX_REGIONS). `press-x`/`press-y` are the live pointer position while
+ * `pressed`, updated on down and every captured move; they hold the down point
+ * until the first move.
+ */
+static s7_pointer sp_kgui_region(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer  p    = args;
+	s7_pointer  nm   = s7_car(p);                        p = s7_cdr(p);
+	double      x    = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double      y    = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double      w    = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double      h    = s7_number_to_real(sc, s7_car(p));
+	const char *name = s7_is_string(nm) ? s7_string(nm) : "";
+	struct kgui_region_io *io =
+		kgui_input_region(&s_input, kgui_name_hash(name),
+				  (float)x, (float)y, (float)w, (float)h);
+
+	return s7_list(sc, 3, s7_make_boolean(sc, io->pressed),
+		       s7_make_real(sc, (s7_double)io->press_x),
+		       s7_make_real(sc, (s7_double)io->press_y));
+}
+
+/*
+ * (kgui-clip x y w h) clip subsequent draws to a rect (CSS px);
+ * (kgui-clip-none) clears it. Used to scissor a scroll body to its viewport.
+ */
+static s7_pointer sp_kgui_clip(s7_scheme *sc, s7_pointer args)
+{
+	s7_pointer p = args;
+	double x = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double y = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double w = s7_number_to_real(sc, s7_car(p)); p = s7_cdr(p);
+	double h = s7_number_to_real(sc, s7_car(p));
+
+	kgui_batch_set_clip(&s_batch, (float)x, (float)y, (float)w, (float)h);
+	return s7_unspecified(sc);
+}
+
+static s7_pointer sp_kgui_clip_none(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	kgui_batch_clear_clip(&s_batch);
+	return s7_unspecified(sc);
+}
+
+/* (kgui-viewport-size) -> (w h) in CSS pixels, for responsive layout. */
+static s7_pointer sp_kgui_viewport_size(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	return s7_list(sc, 2, s7_make_real(sc, (s7_double)s_css_w),
+		       s7_make_real(sc, (s7_double)s_css_h));
+}
+
+/*
+ * (kgui-safe-insets) -> (top right bottom left) CSS px. Zero everywhere the
+ * platform reports no inset (all desktop browsers, and phones until the page
+ * opts into viewport-fit=cover). The Scheme fallback returns zeros too, so the
+ * dock layer works whether or not this primitive is registered.
+ */
+static s7_pointer sp_kgui_safe_insets(s7_scheme *sc, s7_pointer args)
+{
+	float v[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+	(void)args;
+	kgui_read_safe_insets(v);
+	return s7_list(sc, 4, s7_make_real(sc, (s7_double)v[0]),
+		       s7_make_real(sc, (s7_double)v[1]),
+		       s7_make_real(sc, (s7_double)v[2]),
+		       s7_make_real(sc, (s7_double)v[3]));
+}
+
+} /* extern "C" */
+
+/*
+ * (kgui-play-sound id) -> plays sound asset ID through the "audio" subsystem's
+ * play, resolved lazily (it boots before kruddgui, like the renderer). A no-op
+ * off the browser, where no audio backend registers. The tap that calls this is
+ * itself the user gesture that unlocks the audio context, so the first Play both
+ * enables audio and sounds.
+ */
+static const struct audio_api *s_audio;
+static s7_pointer sp_kgui_play_sound(s7_scheme *sc, s7_pointer args)
+{
+	if (!s_audio && g_mgr)
+		s_audio = (const struct audio_api *)
+			subsystem_manager_get_api(g_mgr, "audio");
+	if (s_audio && s7_is_integer(s7_car(args)))
+		s_audio->play((uint32_t)s7_integer(s7_car(args)),
+			      0.8f, 0.0f, 1.0f);
+	return s7_nil(sc);
+}
+
+static void register_primitives(s7_scheme *sc)
+{
+	s7_define_function(sc, "kgui-image", sp_kgui_image, 5, 8, false,
+			   "(kgui-image x y w h tex [u0 v0 u1 v1] [r g b a])");
+	s7_define_function(sc, "kgui-rect", sp_kgui_rect, 8, 0, false,
+			   "(kgui-rect x y w h r g b a) filled rectangle");
+	s7_define_function(sc, "kgui-line", sp_kgui_line, 9, 0, false,
+			   "(kgui-line x0 y0 x1 y1 width r g b a) thick segment");
+	s7_define_function(sc, "kgui-circle", sp_kgui_circle, 7, 0, false,
+			   "(kgui-circle cx cy rad r g b a) filled disc");
+	s7_define_function(sc, "kgui-ring", sp_kgui_ring, 8, 0, false,
+			   "(kgui-ring cx cy rad width r g b a) circle outline");
+	s7_define_function(sc, "kgui-text", sp_kgui_text, 7, 1, false,
+			   "(kgui-text x y str r g b a [size]) atlas text run");
+	s7_define_function(sc, "kgui-text-metrics", sp_kgui_text_metrics, 1, 1,
+			   false, "(kgui-text-metrics str [size]) -> (w h) px");
+	s7_define_function(sc, "kgui-button", sp_kgui_button, 4, 0, false,
+			   "(kgui-button x y w h) -> #t on tap this frame");
+	s7_define_function(sc, "kgui-field", sp_kgui_field, 7, 0, false,
+			   "(kgui-field id x y w h text mode) -> "
+			   "(display active? committed? caret-px)");
+	s7_define_function(sc, "kgui-field-multi", sp_kgui_field_multi, 6, 0,
+			   false, "(kgui-field-multi id x y w h text) -> "
+			   "(display active? committed? caret-px caret-line "
+			   "nlines)");
+	s7_define_function(sc, "kgui-field-blur", sp_kgui_field_blur, 0, 0,
+			   false, "(kgui-field-blur) -> #t if a field committed");
+	s7_define_function(sc, "kgui-panel-begin", sp_kgui_panel_begin, 5, 0,
+			   false, "(kgui-panel-begin name x y w h) input region");
+	s7_define_function(sc, "kgui-panel-end", sp_kgui_panel_end, 0, 0, false,
+			   "(kgui-panel-end) leave the current input region");
+	s7_define_function(sc, "kgui-region-drag", sp_kgui_region_drag, 0, 0,
+			   false, "(kgui-region-drag) -> (dx dy) this frame");
+	s7_define_function(sc, "kgui-region-wheel", sp_kgui_region_wheel, 0, 0,
+			   false, "(kgui-region-wheel) -> wheel delta");
+	s7_define_function(sc, "kgui-region-pressed", sp_kgui_region_pressed, 0,
+			   0, false, "(kgui-region-pressed) -> #t while held");
+	s7_define_function(sc, "kgui-region", sp_kgui_region, 5, 0, false,
+			   "(kgui-region name x y w h) -> "
+			   "(pressed press-x press-y) drag-capture region");
+	s7_define_function(sc, "kgui-clip", sp_kgui_clip, 4, 0, false,
+			   "(kgui-clip x y w h) clip subsequent draws");
+	s7_define_function(sc, "kgui-clip-none", sp_kgui_clip_none, 0, 0, false,
+			   "(kgui-clip-none) clear the clip");
+	s7_define_function(sc, "kgui-viewport-size", sp_kgui_viewport_size, 0, 0,
+			   false, "(kgui-viewport-size) -> (w h) CSS px");
+	s7_define_function(sc, "kgui-safe-insets", sp_kgui_safe_insets, 0, 0,
+			   false,
+			   "(kgui-safe-insets) -> (top right bottom left) CSS px");
+	s7_define_function(sc, "kgui-play-sound", sp_kgui_play_sound, 1, 0,
+			   false, "(kgui-play-sound id) play sound asset id");
+}
+
+/*
+ * Register the primitives and load the panel image once, lazily, when the s7
+ * runtime is up. Mirrors kruddboard's ensure_panel_scm.
+ */
+static s7_scheme *ensure_panel_scm(void)
+{
+	static bool ready;
+	s7_scheme  *sc = script_s7();
+
+	if (ready || !sc)
+		return sc;
+	register_primitives(sc);
+	script_eval(KRUDDGUI_SCM);
+	ready = true;
+	return sc;
+}
+
+static void call_scm_panel(const char *proc)
+{
+	s7_scheme *sc = ensure_panel_scm();
+	s7_pointer fn;
+
+	if (!sc)
+		return;
+	fn = s7_name_to_value(sc, proc);
+	if (s7_is_procedure(fn))
+		s7_call(sc, fn, s7_nil(sc));
+}
+
+/* ------------------------------------------------------------------ */
+/* Viewport overlay seam (kruddgui_api) — a C subsystem's gizmo draw   */
+/* ------------------------------------------------------------------ */
+
+static void kga_register_overlay(void (*fn)(void *ud), void *ud)
+{
+	if (s_overlay_count < KRUDDGUI_MAX_OVERLAYS) {
+		s_overlays[s_overlay_count].fn = fn;
+		s_overlays[s_overlay_count].ud = ud;
+		s_overlay_count++;
+	}
+}
+
+static void kga_line(float x0, float y0, float x1, float y1, float width,
+		     float r, float g, float b, float a)
+{
+	kgui_batch_line(&s_batch, x0, y0, x1, y1, width, s_white_u, s_white_v,
+			r, g, b, a);
+}
+
+static void kga_rect(float x, float y, float w, float h,
+		     float r, float g, float b, float a)
+{
+	kgui_batch_quad(&s_batch, x, y, w, h, s_white_u, s_white_v,
+			s_white_u, s_white_v, r, g, b, a);
+}
+
+static void kga_circle(float cx, float cy, float rad,
+		       float r, float g, float b, float a)
+{
+	kgui_batch_circle(&s_batch, cx, cy, rad, kgui_circle_segs(rad),
+			  s_white_u, s_white_v, r, g, b, a);
+}
+
+static void kga_ring(float cx, float cy, float rad, float width,
+		     float r, float g, float b, float a)
+{
+	kgui_batch_ring(&s_batch, cx, cy, rad, width, kgui_circle_segs(rad),
+			s_white_u, s_white_v, r, g, b, a);
+}
+
+static void kga_viewport(float *w, float *h)
+{
+	if (w) *w = s_css_w;
+	if (h) *h = s_css_h;
+}
+
+static void kga_pointer(float *x, float *y)
+{
+	if (x) *x = s_vp_ptr.x;
+	if (y) *y = s_vp_ptr.y;
+}
+
+static int kga_pointer_down(void)     { return s_vp_ptr.down; }
+static int kga_pointer_clicked(void)  { return s_vp_ptr.clicked; }
+static int kga_pointer_released(void) { return s_vp_ptr.released; }
+
+static int kga_over_ui(float x, float y)
+{
+	return kgui_input_hit_region(&s_input, x, y) != 0;
+}
+
+static const struct kruddgui_api g_kruddgui_api = {
+	kga_register_overlay,
+	kga_line, kga_rect, kga_circle, kga_ring,
+	kga_viewport,
+	kga_pointer, kga_pointer_down, kga_pointer_clicked, kga_pointer_released,
+	kga_over_ui,
+};
+
+#endif /* __EMSCRIPTEN__ */
+
+/* ------------------------------------------------------------------ */
+/* Subsystem lifecycle                                                 */
+/* ------------------------------------------------------------------ */
+
+static void kruddgui_init(void)
+{
+#ifdef __EMSCRIPTEN__
+	kgui_batch_init(&s_batch, s_verts, KGUI_MAX_VERTS);
+	kgui_input_init(&s_input);
+
+	/* Bake the owned glyph atlas before gpu_init uploads it to a texture. */
+	kgui_font_init(&s_font);
+	s_white_u   = s_font.white_u;
+	s_white_v   = s_font.white_v;
+	s_text_size = s_font.size;
+	gpu_init();
+
+	/*
+	 * Create the hidden <input> and its listeners for the text-input bridge,
+	 * which imgui_plugin set up before it was removed (#492). kruddgui's fields
+	 * are its only consumer now — show/hide/drain all route through it.
+	 */
+	krudd_text_input_init();
+
+	/* Own the pointer callbacks (imgui_plugin owned them before #489). */
+	emscripten_set_mousemove_callback("#canvas", nullptr, 0, on_mouse_move);
+	emscripten_set_mousedown_callback("#canvas", nullptr, 0, on_mouse_button);
+	emscripten_set_mouseup_callback("#canvas",   nullptr, 0, on_mouse_button);
+	emscripten_set_touchstart_callback("#canvas",  nullptr, 0, on_touch);
+	emscripten_set_touchmove_callback("#canvas",   nullptr, 0, on_touch);
+	emscripten_set_touchend_callback("#canvas",    nullptr, 0, on_touch);
+	emscripten_set_touchcancel_callback("#canvas", nullptr, 0, on_touch);
+	emscripten_set_wheel_callback("#canvas",       nullptr, 0, on_wheel);
+
+	s_touch_device = krudd_is_touch_device() != 0;
+#endif
+	if (g_log)
+		g_log->write(LOG_LEVEL_INFO, "kruddgui: init");
+}
+
+static void kruddgui_tick(void)
+{
+#ifdef __EMSCRIPTEN__
+	double css_w, css_h, dpr;
+
+	emscripten_get_element_css_size("#canvas", &css_w, &css_h);
+	dpr      = get_device_pixel_ratio();
+	s_css_w  = (float)css_w;
+	s_css_h  = (float)css_h;
+	s_phys_w = (int)(css_w * dpr + 0.5);
+	s_phys_h = (int)(css_h * dpr + 0.5);
+
+	/*
+	 * Own the canvas's device-pixel size, which imgui_plugin sized before it
+	 * was removed (#492): the renderer and gpu_flush draw into a framebuffer at
+	 * this resolution while the panels lay out in the CSS pixels above.
+	 *
+	 * Only when it actually changed. Assigning canvas.width/height resets the
+	 * canvas's backing store even when the value written is identical to the
+	 * current one, which throws away whatever the renderer just presented.
+	 * Under GL that was survivable and this ran unconditionally for years;
+	 * under WebGPU it wiped the frame the backend had just drawn, every frame —
+	 * the pass cleared and submitted correctly and the canvas still came back
+	 * pure black, because this ran after it.
+	 */
+	if (s_phys_w != s_canvas_w || s_phys_h != s_canvas_h) {
+		s_canvas_w = s_phys_w;
+		s_canvas_h = s_phys_h;
+		emscripten_set_canvas_element_size("#canvas", s_phys_w, s_phys_h);
+	}
+
+	/*
+	 * Apply this tick's typed input to the focused field before the image
+	 * reads it, so a keystroke shows the same frame. No-op unless a field
+	 * holds focus (and thus kruddgui holds the keyboard-capture flag).
+	 */
+	field_pump();
+
+	kgui_batch_reset(&s_batch);
+	kgui_input_frame_begin(&s_input);
+	s_cur_io     = NULL;
+	s_fr_build_n = 0;
+
+	/*
+	 * Viewport overlays (the transform gizmo) draw first, so the Scheme
+	 * panels compose over them, and read the unclaimed pointer accumulated
+	 * since the last tick. Their one-frame click/release edges are cleared
+	 * once consumed here, before the panels draw.
+	 */
+	{
+		int i;
+
+		for (i = 0; i < s_overlay_count; i++)
+			s_overlays[i].fn(s_overlays[i].ud);
+		s_vp_ptr.clicked  = 0;
+		s_vp_ptr.released = 0;
+	}
+
+	/*
+	 * The perf HUD is not editor chrome: it draws every tick regardless of
+	 * krudd_editor_chrome(), so a hitch is visible in a game's play view
+	 * (chess, tic-tac-toe, ...) as well as the editor. It owns its own
+	 * input region (kgui-panel-begin), so it traps its own small corner
+	 * rather than leaking a tap through to the game underneath.
+	 */
+	call_scm_panel("kruddgui-perf-hud-draw");
+
+	/*
+	 * Commit the regions the image just declared as the set the async
+	 * callbacks route against, and clear the one-frame results (taps, drag,
+	 * wheel) the image consumed. Doing it after the eval — which is what
+	 * reads them — stops an unclaimed tap lingering into a later frame.
+	 */
+	s_cur_io = NULL;
+	kgui_input_frame_commit(&s_input);
+	field_rects_commit();
+
+	/* Reconcile the soft keyboard + capture flag with the field focus. */
+	field_sync();
+
+	gpu_flush();
+#endif
+}
+
+static void kruddgui_shutdown(void)
+{
+	if (g_log)
+		g_log->write(LOG_LEVEL_INFO, "kruddgui: shutdown");
+}
+
+static const struct subsystem desc = {
+	"kruddgui",
+	&g_kruddgui_api,
+	kruddgui_init,
+	kruddgui_tick,
+	kruddgui_shutdown,
+};
+
+extern "C" void kruddgui_plugin_entry(struct subsystem_manager *mgr)
+{
+	g_mgr = mgr;
+#ifdef __EMSCRIPTEN__
+	g_log = (const struct log_api *)
+		subsystem_manager_get_api(mgr, "log");
+#endif
+	subsystem_manager_register(mgr, &desc);
+}

@@ -1,0 +1,22 @@
+#!/bin/sh
+# Local mirror of the ci·lint job's .scm checks (.github/workflows/ci.yml),
+# run against staged files before the commit lands so a bad indent/comment
+# is caught here instead of round-tripping through CI. Enable with:
+#   git config core.hooksPath .githooks
+
+set -e
+
+scm_files=$(git diff --cached --name-only --diff-filter=ACM -- '*.scm')
+if [ -z "$scm_files" ]; then
+    exit 0
+fi
+
+python3 .github/scripts/lint-scm-comments.py $scm_files
+
+# indent-scm.py shells out to emacs; skip rather than block commits on
+# machines without it — CI still enforces this for everyone.
+if command -v emacs >/dev/null 2>&1; then
+    python3 .github/scripts/indent-scm.py --check $scm_files
+else
+    echo "pre-commit: emacs not on PATH, skipping .scm indent check (CI will still enforce it)" >&2
+fi

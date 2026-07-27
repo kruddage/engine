@@ -11,7 +11,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
-import { findViolations } from "../check-barriers.mjs";
+import { findViolations, packageDirs } from "../check-barriers.mjs";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -144,4 +144,15 @@ test("a package with no readable manifest is reported", () => {
 
 test("this workspace has no boundary violations", () => {
 	assert.deepEqual(findViolations(REPO), []);
+});
+
+/* The check discovers C packages the same way pnpm does — by finding a manifest
+ * in the tree — so a module that joins the workspace cannot skip the boundary
+ * check by not being added to a second list. */
+test("packages in the C tree are discovered, not listed", () => {
+	const dirs = packageDirs(REPO);
+
+	assert.ok(dirs.includes("krudd/engine/abi"));
+	assert.ok(dirs.includes("packages/engine"));
+	assert.ok(!dirs.includes("krudd/engine/base"));
 });

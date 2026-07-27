@@ -8,6 +8,8 @@ importers:
 
   .: {}
 
+  krudd/engine/abi: {}
+
   packages/engine: {}
 
   packages/site:

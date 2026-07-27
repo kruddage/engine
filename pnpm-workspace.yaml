@@ -4,6 +4,14 @@
 # enforces the boundaries between them. It does not replace kruddmake — the
 # engine's C/WASM build stays in krudd/ and is driven by krudd.sh, which
 # @kruddage/engine wraps (see packages/engine/README.md).
+#
+# krudd/engine/** is the C tree. Those packages carry no build or test script —
+# a C module's build is one edge in one ninja graph and cannot be driven per
+# module — so they are here as names, dependency lists and surfaces, which is
+# what #917 is for. The glob matches directories that hold a package.json and
+# ignores the rest, so a module joins the workspace by gaining a manifest beside
+# its build.scm rather than by being added to a list here (#918, Q1).
 packages:
   - packages/*
   - tools/render-diff
+  - krudd/engine/**

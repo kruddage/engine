@@ -79,9 +79,10 @@ This is the first membrane, not the finished shape. In rough order of value:
    living inside the C tree because the emcc link needs the shell template as an
    input. Splitting it into `@kruddage/shell-web` — with the template staying an
    engine build input — would let the page evolve without touching kruddmake.
-3. **Split the ABI.** `krudd/engine/abi/` is already the one tree with no build
-   spec and no dependencies: the plugin vtables every tier includes. It is the
-   natural next thing to describe as a package boundary rather than a directory
-   convention.
+3. ~~**Split the ABI.**~~ Done. `krudd/engine/abi/` is `@kruddage/abi`: an
+   `interface-library` in `manifest.scm` and a workspace package beside it, with
+   an empty dependency list and the module root as its surface. It compiles
+   nothing and it is the first C module in the workspace — the shape the rest of
+   the tree copies (#919). The next of these is the build system itself (#920).
 
 Each step is independently useful, and none of them require porting the engine.

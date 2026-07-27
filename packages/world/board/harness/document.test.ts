@@ -129,10 +129,12 @@ test("the fixture runs on the engine's own constants", () => {
 		radius: 0.4,
 		position: "position",
 	});
+	// No column-name param, unlike the three kinds above: `draw-entities`
+	// cannot redirect which column it draws from, so it does not offer a name
+	// that would be read and ignored.
 	assert.deepEqual(settings.get("draw"), {
 		mesh: "triangle",
 		scale: 0.35,
-		position: "position",
 	});
 });
 

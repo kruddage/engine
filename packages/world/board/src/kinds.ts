@@ -180,13 +180,14 @@ export const KINDS: Registry = {
 			// what a board is.
 			{ name: "mesh", type: "mesh", default: "triangle" },
 			{ name: "scale", type: "f32", default: 0.35, min: 0 },
-			// Named so `validate` can check it against the board's declared
-			// columns like every other column-name param — but `render()` draws
-			// from the engine's own position column regardless of what this
-			// resolves to. Making the renderer take a column by name is a
-			// boundary change nothing in this PR needs; until then this param
-			// documents the dependency rather than redirecting it.
-			{ name: "position", type: COLUMN_NAME, default: "position" },
+			// No column-name param here, unlike every other kind that walks a
+			// column. `render()` builds its draw list inside the engine from the
+			// engine's own position column, so a name offered here could only be
+			// read and ignored — the settings sheet would show a control that
+			// edits the document and changes nothing on screen. The input port
+			// above already records which column this depends on. When the
+			// renderer can take a column by name, the param arrives with the
+			// behaviour rather than ahead of it.
 		],
 		run: (c) => {
 			// Two crossings for the whole frame, whatever the draw count. The

@@ -1,7 +1,12 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
+;;! No public surface of its own: mixer.h and audio_core.h are included only
+;;! from inside this module, so what the three libraries below export is the
+;;! abi and asset headers their vtables and blob types come from — a
+;;! re-export, not a surface. The device backend is reached through
+;;! subsystem_manager, never by including a header from here.
 ((library "mixer"
    (sources "mixer.c")
-   (public "." (root "abi") (root "world/asset/include"))
+   (public (root "abi") (root "world/asset/include"))
    (link "m"))
  ;;! The thread seam: mixer + a lock-free SPSC command ring between bake and
  ;;! render. Pure C, no browser deps, so it links into the native audio_core_test
@@ -10,7 +15,7 @@
  ;;! core shared with the AudioWorklet variant.)
  (library "audio_core"
    (sources "audio_core.c")
-   (public "." (root "abi") (root "world/asset/include"))
+   (public (root "abi") (root "world/asset/include"))
    (link "mixer" "m"))
  ;;! The ScriptProcessorNode device backend (main-thread onaudioprocess ->
  ;;! audio_core -> mixer). Browser only; a native no-op stub keeps the tree
@@ -19,7 +24,7 @@
  ;;! variant over the AudioWorklet backend.
  (library "audio_scriptnode"
    (sources "audio_scriptnode.c")
-   (public "." (root "abi") (root "world/asset/include"))
+   (public (root "abi") (root "world/asset/include"))
    (private (root "world/asset/include") (root "core/include"))
    (link "audio_core" "mixer" "sound_script" "log" "memory"
          "subsystem" "subsystem_manager"))

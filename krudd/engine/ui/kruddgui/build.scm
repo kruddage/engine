@@ -12,11 +12,15 @@
     (link "script" "log" "memory" "subsystem"
           "subsystem_manager")))
 
+ ;;! None of the four native libraries below has a public surface: the kgui_*
+ ;;! headers are included by kruddgui.cpp and by this module's own tests, all of
+ ;;! which sit beside them. They are split out as separate libraries so each
+ ;;! piece is testable on its own natively, not so anything outside can include
+ ;;! them.
  (native-only
   ;;! kgui_batch links libm for the vector primitives' sinf/cosf/sqrtf.
   (library "kgui_batch"
     (sources "kgui_batch.c")
-    (public ".")
     (link "m"))
   (executable "kgui_batch_test"
               (sources "kgui_batch_test.c")
@@ -24,16 +28,14 @@
   (test "kgui_batch" "kgui_batch_test")
 
   (library "kgui_input"
-    (sources "kgui_input.c")
-    (public "."))
+    (sources "kgui_input.c"))
   (executable "kgui_input_test"
               (sources "kgui_input_test.c")
               (link "kgui_input"))
   (test "kgui_input" "kgui_input_test")
 
   (library "kgui_text_edit"
-    (sources "kgui_text_edit.c")
-    (public "."))
+    (sources "kgui_text_edit.c"))
   (executable "kgui_text_edit_test"
               (sources "kgui_text_edit_test.c")
               (link "kgui_text_edit"))
@@ -43,7 +45,6 @@
   ;;! (../third_party), which pulls in libm (floor/sqrt/pow/...).
   (library "kgui_font"
     (sources "kgui_font.c")
-    (public ".")
     (private (raw "../third_party"))
     (link "m"))
   (executable "kgui_font_test"

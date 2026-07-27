@@ -51,7 +51,7 @@
   (test "asset_mut" "asset_mut_test")
   (executable "asset_edit_test"
               (sources "asset_edit_test.c" (root "world/edit/edit.c"))
-              (private (root "world/edit"))
+              (private (root "world/edit/include"))
               (link "asset_plugin" "log" "memory"))
   (test "asset_edit" "asset_edit_test")
   (executable "asset_shader_test" (sources "asset_shader_test.c")

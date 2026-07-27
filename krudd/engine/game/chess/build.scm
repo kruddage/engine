@@ -6,7 +6,11 @@
 
  (library "chess_game"
    (sources "chess.c")
-   (public "." (root "abi") (root "world/entity/include") (root "base/math/include") (root "core/include") (root "game/host"))
+   ;;! No public surface of its own — chess.c carries no header, and the game
+   ;;! is reached through the registry it registers with rather than by
+   ;;! including anything from here. What is listed is the re-export of what
+   ;;! the plugin's own signatures are written in.
+   (public (root "abi") (root "world/entity/include") (root "base/math/include") (root "core/include") (root "game/host/include"))
    (private (raw "${generated}"))
    (link "subsystem_manager" "script" "game"))
  (native-only

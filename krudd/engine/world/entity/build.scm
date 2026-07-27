@@ -23,7 +23,7 @@
               (sources "scene_edit_test.c" "scene_edit.c" "entity.c"
                        (root "world/edit/edit.c"))
               (private "." "include" (root "abi") (root "base/math/include")
-                       (root "world/edit")
+                       (root "world/edit/include")
                        (root "core/include")
                        (root "base/memory/include"))
               (link "memory"))

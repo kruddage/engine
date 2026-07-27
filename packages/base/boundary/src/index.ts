@@ -274,6 +274,35 @@ export class World {
 	}
 
 	/**
+	 * World-space `x` for a normalised screen-space `x` in `[0, 1]`, 0 at the
+	 * viewport's left edge.
+	 *
+	 * One scalar call — the same shape as `setVelocity`, and for the same
+	 * reason: a picking node calls this once per axis per frame, never once
+	 * per entity, so the per-call cost `docs/boundary.md` warns about is not
+	 * in play. Reads the *same* camera matrix `render()` draws with (see
+	 * `Engine::world_x_from_screen` in `crates/shell/web/src/lib.rs`), so a
+	 * pick built from this can never disagree with the draw at some aspect
+	 * ratio the way a second, TypeScript-side copy of the camera arithmetic
+	 * could.
+	 */
+	worldXFromScreen(x: number): number {
+		return this.#engine.world_x_from_screen(x);
+	}
+
+	/**
+	 * World-space `y` for a normalised screen-space `y` in `[0, 1]`, 0 at the
+	 * viewport's top edge. See `worldXFromScreen` for why this is a scalar
+	 * call and why it reads the render camera rather than a second copy of it.
+	 *
+	 * Screen `y` runs down; world `y` runs up — `Engine::world_y_from_screen`
+	 * carries the sign flip that makes that true, not this wrapper.
+	 */
+	worldYFromScreen(y: number): number {
+		return this.#engine.world_y_from_screen(y);
+	}
+
+	/**
 	 * Draws the world.
 	 *
 	 * Throws if the frame failed for a reason worth knowing about. A skipped

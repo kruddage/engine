@@ -34,7 +34,7 @@ use crate::web;
 /// and would each run under `node --experimental-strip-types` on its own.
 /// They are listed with the rest because one command that runs every
 /// TypeScript test is worth more than a second command nobody remembers.
-const TEST_ENTRIES: [(&str, &str); 12] = [
+const TEST_ENTRIES: [(&str, &str); 13] = [
     (
         "packages/base/boundary/harness/memory.test.ts",
         "memory.test",
@@ -54,6 +54,10 @@ const TEST_ENTRIES: [(&str, &str); 12] = [
     ("packages/world/board/harness/run.test.ts", "run.test"),
     ("packages/world/board/harness/file.test.ts", "file.test"),
     ("packages/world/board/harness/pick.test.ts", "pick.test"),
+    (
+        "packages/world/board/harness/tictactoe.test.ts",
+        "tictactoe.test",
+    ),
     ("packages/shell/web/harness/track.test.ts", "track.test"),
     ("packages/shell/web/harness/pointer.test.ts", "pointer.test"),
     (

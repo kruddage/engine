@@ -21,7 +21,7 @@
                        (root "base/math/camera.c")
                        (raw "${generated}/math_gen.c"))
               (private "." (raw "${generated}")
-                       (root "render/null")
+                       (root "render/null/include")
                        (root "render/frame_graph") (root "world/asset/include")
                        (root "render/particles/include")
                        (root "core/include")

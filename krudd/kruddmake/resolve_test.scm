@@ -50,13 +50,15 @@
 (display "resolver: include sets vs CMake ground truth\n")
 (inc-check "log" '("base/log/include" "abi"))
 (inc-check "log_test" '("base/log/include" "abi"))
-(inc-check "renderer_null" '("${generated}" "base/log/include"
+(inc-check "renderer_null" '("render/null/include" "${generated}"
+                             "base/log/include"
                              "abi" "core/include"))
 (inc-check "renderer_null_test"
-           '("render/null" "${generated}" "base/log/include"
+           '("render/null" "render/null/include" "${generated}"
+             "base/log/include"
              "abi" "core/include"))
 (inc-check "fg_test" '("render/frame_graph" "${generated}"
-                       "render/null" "base/log/include"
+                       "render/null/include" "base/log/include"
                        "abi" "base/memory/include"
                        "core/include"))
 (inc-check "asset_plugin" '("world/asset/include" "abi" "base/math/include"

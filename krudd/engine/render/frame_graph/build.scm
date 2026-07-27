@@ -8,7 +8,7 @@
   (executable "fg_test"
               (sources "fg_test.c")
               (private "." (raw "${generated}")
-                       (root "render/null"))
+                       (root "render/null/include"))
               (link "frame_graph" "renderer_null" "log" "memory"
                     "subsystem_manager"))
   (test "fg" "fg_test")))

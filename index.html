@@ -687,55 +687,6 @@ canvas {
 	color: #fff;
 }
 
-/* ── Scoreboard overlay ── */
-
-/*
- * A game's HUD, revealed by the tictactoe plugin (game/tictactoe/tictactoe.c)
- * and hidden again on the way back to the menu. It floats just under the
- * toolbar, centred over the canvas; pointer-events:none so a click passes
- * through it to the board beneath.
- */
-.scoreboard {
-	position: fixed;
-	top: 84px;
-	left: 50%;
-	transform: translateX(-50%);
-	display: flex;
-	gap: 10px;
-	z-index: 400;
-	pointer-events: none;
-}
-
-.scoreboard.hidden { display: none; }
-
-.score-side {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: 2px;
-	min-width: 74px;
-	padding: 8px 16px;
-	background: rgba(20, 20, 20, 0.85);
-	border: 1px solid #333;
-}
-
-/* The accent bar matches each mark: X is the red plastic, O the gold metal. */
-.score-x { border-top: 3px solid #c0392b; }
-.score-o { border-top: 3px solid #e0a05a; }
-
-.score-label {
-	font-size: 11px;
-	color: #888;
-	letter-spacing: 0.12em;
-}
-
-.score-value {
-	font-size: 24px;
-	font-weight: bold;
-	color: #fff;
-	line-height: 1;
-}
-
 /* ── Error overlay ── */
 
 .error-backdrop {
@@ -923,7 +874,7 @@ canvas {
 	<div class="menu-group" id="menu-group"></div>
 	<div class="menubar-right">
 		<span class="version ahead" id="version" title="click for build info">18.8.4</span>
-		<span class="version-detail" id="version-detail">commit 14f551a &middot; built 2026-07-27 &middot; ahead of release</span>
+		<span class="version-detail" id="version-detail">commit 9cbd527 &middot; built 2026-07-27 &middot; ahead of release</span>
 	</div>
 </div>
 
@@ -948,17 +899,6 @@ canvas {
 </div>
 
 <div class="webgpu-log" id="webgpu-log"></div>
-
-<div class="scoreboard hidden" id="ttt-scoreboard">
-	<div class="score-side score-x">
-		<span class="score-label">1P &times;</span>
-		<span class="score-value" id="ttt-score-x">0</span>
-	</div>
-	<div class="score-side score-o">
-		<span class="score-label">2P &#9711;</span>
-		<span class="score-value" id="ttt-score-o">0</span>
-	</div>
-</div>
 
 <div class="launcher loading" id="launcher">
 	<button class="launcher-close" id="launcher-close" title="close menu">&times;</button>
@@ -1884,13 +1824,13 @@ canvas {
 var Module = {
 	locateFile: function (path, prefix) {
 		if (path.endsWith('.wasm'))
-			return prefix + path.replace(/\.wasm$/, '.14f551a.wasm');
+			return prefix + path.replace(/\.wasm$/, '.9cbd527.wasm');
 		return prefix + path;
 	}
 };
 </script>
 
-<script async type="text/javascript" src="index.14f551a.js"></script>
+<script async type="text/javascript" src="index.9cbd527.js"></script>
 
 </body>
 </html>

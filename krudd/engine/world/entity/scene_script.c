@@ -138,6 +138,43 @@ static s7_pointer sp_scene_xform(s7_scheme *sc, s7_pointer args)
 	return s7_unspecified(sc);
 }
 
+/*
+ * (scene-rotq! id qx qy qz qw): overwrite id's authored rotation with a
+ * quaternion, leaving position and scale as scene-xform! left them.
+ *
+ * The counterpart to the `(quat ...)` clause, and it exists for saving rather
+ * than for authoring (#947, scene_save.h). `(rotate ...)` is Euler degrees and
+ * the world stores a quaternion, so a saved-then-loaded rotation that went
+ * through Euler would not be the rotation that was saved — ambiguous at gimbal
+ * lock, and quietly lossy everywhere else. A generated scene writes the stored
+ * value and gets it back exactly; a hand-authored one keeps degrees.
+ *
+ * A zero-length quaternion is ignored rather than normalized to identity: it
+ * means the caller's four numbers were not a rotation, and silently spinning
+ * the entity to identity would hide that.
+ */
+static s7_pointer sp_scene_rotq(s7_scheme *sc, s7_pointer args)
+{
+	int32_t id = arg_id(args);
+
+	if (id_ok(id)) {
+		struct transform t = g_w->local[id];
+		double x = arg_real(sc, args, 1);
+		double y = arg_real(sc, args, 2);
+		double z = arg_real(sc, args, 3);
+		double wq = arg_real(sc, args, 4);
+
+		if (x * x + y * y + z * z + wq * wq > 0.0) {
+			t.rotation[0] = (float)x;
+			t.rotation[1] = (float)y;
+			t.rotation[2] = (float)z;
+			t.rotation[3] = (float)wq;
+			world_set_transform(g_w, id, &t);
+		}
+	}
+	return s7_unspecified(sc);
+}
+
 /* (scene-mesh! id "path"): bind id's mesh by catalog path (sets COMPONENT_RENDER). */
 static s7_pointer sp_scene_mesh(s7_scheme *sc, s7_pointer args)
 {
@@ -271,6 +308,8 @@ void scene_script_init(void)
 			   "(scene-spawn [parent]) -> new entity id under parent");
 	s7_define_function(sc, "scene-xform!", sp_scene_xform, 10, 0, false,
 			   "(scene-xform! id px py pz rx ry rz sx sy sz)");
+	s7_define_function(sc, "scene-rotq!", sp_scene_rotq, 5, 0, false,
+			   "(scene-rotq! id qx qy qz qw) set rotation exactly");
 	s7_define_function(sc, "scene-mesh!", sp_scene_mesh, 2, 0, false,
 			   "(scene-mesh! id path) bind mesh by catalog path");
 	s7_define_function(sc, "scene-material!", sp_scene_material, 2, 0, false,

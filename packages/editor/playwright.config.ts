@@ -17,6 +17,10 @@ import { defineConfig, devices } from "@playwright/test";
 
 const PORT = 4173;
 
+/* One address, used by both the server and the client that waits for it. See
+ * the note on webServer.command below for why this is not simply "localhost". */
+const HOST = "127.0.0.1";
+
 export default defineConfig({
 	testDir: "./e2e",
 	/* A WASM engine booting a renderer is not a 5-second operation on a cold CI
@@ -29,7 +33,7 @@ export default defineConfig({
 	retries: process.env["CI"] ? 2 : 0,
 	reporter: process.env["CI"] ? [["github"], ["list"]] : [["list"]],
 	use: {
-		baseURL: `http://127.0.0.1:${PORT}`,
+		baseURL: `http://${HOST}:${PORT}`,
 		trace: "on-first-retry",
 		video: "retain-on-failure",
 	},
@@ -37,8 +41,16 @@ export default defineConfig({
 		{ name: "chromium", use: { ...devices["Desktop Chrome"] } },
 	],
 	webServer: {
-		command: `pnpm exec vite preview --port ${PORT} --strictPort`,
-		url: `http://127.0.0.1:${PORT}`,
+		/* --host is explicit, and it is load-bearing rather than tidiness.
+		 * Without it `vite preview` binds whatever `localhost` resolves to,
+		 * which is 127.0.0.1 on a typical dev box and ::1 inside the emsdk
+		 * container CI runs this job in. Playwright then polls the IPv4 address
+		 * below, nothing is listening on it, and the run dies after 60s of
+		 * waiting on a server that started fine — a failure that reproduces
+		 * only in CI and blames the wrong thing when it does. Naming one
+		 * address in both places is what makes them agree. */
+		command: `pnpm exec vite preview --host ${HOST} --port ${PORT} --strictPort`,
+		url: `http://${HOST}:${PORT}`,
 		reuseExistingServer: !process.env["CI"],
 		stdout: "pipe",
 		stderr: "pipe",

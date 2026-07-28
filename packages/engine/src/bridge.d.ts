@@ -100,6 +100,11 @@ export interface QueryValues {
 	entity: EntityDetail;
 	selection: SelectionState;
 	history: HistoryState;
+	/**
+	 * The whole world as a `(scene ...)` form, or null when this build
+	 * cannot write one. Asked through ask(), never watched — see there.
+	 */
+	"scene.text": string | null;
 }
 
 export type QueryKind = keyof QueryValues;
@@ -152,6 +157,15 @@ export interface Bridge {
 	/** The last value the engine gave for a watched query, or null. */
 	read<K extends QueryKind>(kind: K, id?: number): QueryValues[K] | null;
 
+	/**
+	 * Ask a query once and resolve with its answer on the next flush.
+	 *
+	 * The cold-path escape hatch: use it for anything a reader asks for by
+	 * pressing a key, and watch() for anything a panel renders. Rejects if
+	 * the flush it rode on never reached the engine.
+	 */
+	ask<K extends QueryKind>(kind: K, id?: number): Promise<QueryValues[K] | null>;
+
 	beginGesture(label: string): Bridge;
 	commitGesture(): Bridge;
 	abortGesture(): Bridge;
@@ -159,6 +173,8 @@ export interface Bridge {
 	redo(): Bridge;
 	select(id: number): Bridge;
 	setPaused(paused: boolean): Bridge;
+	/** Replace the document with a `(scene ...)` form. Clears the history. */
+	loadScene(text: string): Bridge;
 	createEntity(
 		parent: number,
 		transform: TransformLike,

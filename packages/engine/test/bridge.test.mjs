@@ -557,3 +557,221 @@ test("the heap view is re-read on every flush", () => {
 	assert.equal(module.tapes.length, 2);
 	assert.equal(payloadReader(module.tapes[1][0].payload).i32(), 2);
 });
+
+/* ------------------------------------------------------------------ *
+ * One-shot queries, and the document
+ * ------------------------------------------------------------------ */
+
+test("loadScene writes the form as a length-prefixed string", () => {
+	const module = fakeModule();
+	const bridge = createBridge(module);
+
+	bridge.loadScene("(scene a (entity))");
+	bridge.flush();
+
+	const [record] = module.tapes[0];
+	assert.equal(record.op, OP.SCENE_LOAD);
+	assert.equal(payloadReader(record.payload).str(), "(scene a (entity))");
+});
+
+test("ask sends the query with generation 0 and resolves with the value", async () => {
+	const module = fakeModule();
+	const bridge = createBridge(module);
+
+	module.willAnswer(
+		reply({
+			results: [
+				{
+					kind: "scene.text",
+					generation: 4,
+					fresh: false,
+					value: "(scene saved)",
+				},
+			],
+		})
+	);
+
+	const answer = bridge.ask("scene.text");
+	bridge.flush();
+
+	const [record] = module.tapes[0];
+	assert.equal(record.op, OP.QUERY_SCENE_TEXT);
+	/*
+	 * 0, never the generation we hold. A one-shot wants the answer, not
+	 * confirmation that a cache it does not keep is still good.
+	 */
+	assert.equal(payloadReader(record.payload).u32(), 0);
+	assert.equal(await answer, "(scene saved)");
+});
+
+test("a one-shot answer is not left in the cache", async () => {
+	const module = fakeModule();
+	const bridge = createBridge(module);
+
+	module.willAnswer(
+		reply({
+			results: [
+				{ kind: "scene.text", generation: 1, fresh: false, value: "(scene x)" },
+			],
+		})
+	);
+	const answer = bridge.ask("scene.text");
+	bridge.flush();
+	await answer;
+
+	/*
+	 * Nothing watches scene.text, so a lingering entry would be a whole
+	 * scene from whenever the last save happened, handed to whoever read
+	 * next as though it were current.
+	 */
+	assert.equal(bridge.read("scene.text"), null);
+});
+
+test("watched queries keep their cache while one-shots ride along", async () => {
+	const module = fakeModule();
+	const bridge = createBridge(module);
+
+	bridge.watch("selection");
+	module.willAnswer(
+		reply({
+			results: [
+				{ kind: "selection", generation: 2, fresh: false, value: { id: 7 } },
+				{ kind: "scene.text", generation: 2, fresh: false, value: "(scene y)" },
+			],
+		})
+	);
+	const answer = bridge.ask("scene.text");
+	bridge.flush();
+
+	assert.equal(await answer, "(scene y)");
+	/* The watched one survives; the one-shot does not. */
+	assert.deepEqual(bridge.read("selection"), { id: 7 });
+	assert.equal(bridge.read("scene.text"), null);
+});
+
+test("the watched set is written before the one-shots", () => {
+	const module = fakeModule();
+	const bridge = createBridge(module);
+
+	bridge.watch("history");
+	/* Nothing answers it here; the ordering of the tape is the assertion. */
+	bridge.ask("scene.text").catch(() => {});
+	bridge.flush();
+
+	assert.deepEqual(
+		module.tapes[0].map((r) => r.op),
+		[OP.QUERY_HISTORY, OP.QUERY_SCENE_TEXT]
+	);
+});
+
+test("two asks in one frame are two records and two answers", async () => {
+	const module = fakeModule();
+	const bridge = createBridge(module);
+
+	module.willAnswer(
+		reply({
+			results: [
+				{ kind: "scene.text", generation: 1, fresh: false, value: "first" },
+				{ kind: "scene.text", generation: 1, fresh: false, value: "second" },
+			],
+		})
+	);
+	const a = bridge.ask("scene.text");
+	const b = bridge.ask("scene.text");
+	bridge.flush();
+
+	assert.equal(module.tapes[0].length, 2);
+	assert.deepEqual([await a, await b], ["first", "second"]);
+});
+
+test("an ask made while the reply is handled belongs to the next flush", async () => {
+	const module = fakeModule();
+	const bridge = createBridge(module);
+	let second = null;
+
+	bridge.subscribe(() => {
+		second ??= bridge.ask("scene.text");
+	});
+	module.willAnswer(
+		reply({
+			events: [{ type: "log", code: 0, text: "hi" }],
+			results: [
+				{ kind: "scene.text", generation: 1, fresh: false, value: "one" },
+			],
+		})
+	);
+	const first = bridge.ask("scene.text");
+	bridge.flush();
+
+	assert.equal(await first, "one");
+	assert.equal(module.tapes.length, 1);
+
+	module.willAnswer(
+		reply({
+			results: [
+				{ kind: "scene.text", generation: 2, fresh: false, value: "two" },
+			],
+		})
+	);
+	bridge.flush();
+	assert.equal(await second, "two");
+});
+
+test("a null answer resolves as null rather than rejecting", async () => {
+	const module = fakeModule();
+	const bridge = createBridge(module);
+
+	/*
+	 * The engine's way of saying it could not write a scene. It is an
+	 * answer, not a transport failure, and the caller distinguishes them.
+	 */
+	module.willAnswer(
+		reply({
+			results: [
+				{ kind: "scene.text", generation: 1, fresh: false, value: null },
+			],
+		})
+	);
+	const answer = bridge.ask("scene.text");
+	bridge.flush();
+
+	assert.equal(await answer, null);
+});
+
+test("an ask the engine did not answer rejects", async () => {
+	const module = fakeModule();
+	const bridge = createBridge(module);
+
+	module.willAnswer(reply({ results: [] }));
+	const answer = bridge.ask("scene.text");
+	bridge.flush();
+
+	await assert.rejects(answer, /did not answer scene\.text/);
+});
+
+test("an ask on a flush that never crossed rejects", async () => {
+	const module = fakeModule({ capacity: 16 });
+	const bridge = createBridge(module);
+
+	/* Too big for the engine's buffer, so the whole tape is dropped. */
+	bridge.loadScene("x".repeat(64));
+	const answer = bridge.ask("scene.text");
+	bridge.flush();
+
+	await assert.rejects(answer, /bytes and the engine's buffer holds/);
+});
+
+test("an ask alone is enough to make a flush happen", () => {
+	const module = fakeModule();
+	const bridge = createBridge(module);
+
+	assert.ok(bridge.idle);
+	bridge.ask("scene.text").catch(() => {});
+	assert.ok(!bridge.idle);
+	assert.ok(bridge.flush() !== null);
+});
+
+test("ask refuses a query kind that does not exist", () => {
+	const bridge = createBridge(fakeModule());
+	assert.throws(() => bridge.ask("nonsense"), /unknown query kind/);
+});

@@ -1,0 +1,2611 @@
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>KRUDD map editor — layout mockup</title>
+
+<style>
+/* ══════════════════════════════════════════════════════════════════════
+ * KRUDD map editor — layout mockup (#886)
+ *
+ * NOT A WORKING EDITOR. No engine, no wasm, no state that survives a
+ * reload. Every number is a plausible lie. The point is the *layout*:
+ * which surfaces exist, what they are called, where they sit, and what
+ * happens to each one when the screen is a phone instead of a 27".
+ *
+ * One visual world, deliberately: this is chrome for a dark tool, so it
+ * does not flip to a light theme. A light-mode map editor would be a
+ * different product, not the same one in different paint.
+ * ══════════════════════════════════════════════════════════════════════ */
+
+:root {
+	/* Ground: near-black with a green bias — the solid the level is
+	 * carved out of, not a neutral grey borrowed from a dashboard. */
+	--void:   #0a0b0a;
+	--sunk:   #0e100e;
+	--panel:  #141613;
+	--raised: #1b1e19;
+	--line:   #262a22;
+	--line-2: #343a2e;
+
+	--ink:      #d9dcd3;
+	--ink-mid:  #99a091;
+	--ink-dim:  #6c7266;
+
+	/* CSG is the engine's central verb, so add/subtract own the two
+	 * loudest hues and nothing else is allowed to use them. */
+	--add: #5faa3f;
+	--sub: #c8503f;
+	/* Build is slow and occasionally angry: amber, its own channel. */
+	--warm: #d9a520;
+	--cool: #4f8fb0;
+
+	--mono: ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, Consolas,
+	        'Courier New', monospace;
+	--sans: system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+	--tap: 44px;   /* the phone's minimum touch target */
+}
+
+* , *::before, *::after { box-sizing: border-box; }
+
+html { color-scheme: dark; }
+
+body {
+	margin: 0;
+	background: #060706;
+	color: var(--ink);
+	font-family: var(--mono);
+	font-size: 13px;
+	line-height: 1.45;
+	-webkit-text-size-adjust: 100%;
+}
+
+button, input, select { font: inherit; color: inherit; }
+
+:focus-visible {
+	outline: 2px solid var(--add);
+	outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	* { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* ── The rig around the mockup ────────────────────────────────────────
+ * Everything in .rig is scaffolding for looking at the mockup. None of
+ * it is part of the editor. On a real phone it collapses to the banner
+ * and the frame goes full-bleed, so what you hold is the phone layout
+ * at its true size rather than a phone drawn inside a phone. */
+
+.rig {
+	display: flex;
+	flex-direction: column;
+	min-height: 100dvh;
+}
+
+.banner {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 10px 16px;
+	padding: 9px 16px;
+	background: repeating-linear-gradient(
+		-45deg, #1a1408 0 12px, #141005 12px 24px);
+	border-bottom: 1px solid #3a2f10;
+	font-size: 11px;
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	color: var(--warm);
+}
+
+.banner b { color: #f0d68a; letter-spacing: 0.16em; }
+
+.banner .note {
+	color: #8d7a45;
+	text-transform: none;
+	letter-spacing: 0.02em;
+	font-family: var(--sans);
+	font-size: 12px;
+}
+
+.devices {
+	display: flex;
+	gap: 4px;
+	padding: 10px 16px;
+	border-bottom: 1px solid var(--line);
+	background: var(--void);
+	align-items: center;
+	flex-wrap: wrap;
+}
+
+.devices .lbl {
+	font-size: 10px;
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
+	color: var(--ink-dim);
+	margin-right: 6px;
+}
+
+.dev-btn {
+	background: var(--panel);
+	border: 1px solid var(--line-2);
+	color: var(--ink-mid);
+	font-size: 11px;
+	letter-spacing: 0.08em;
+	padding: 7px 13px;
+	cursor: pointer;
+	min-height: 34px;
+}
+
+.dev-btn:hover { color: var(--ink); border-color: #4a5240; }
+
+.dev-btn[aria-pressed="true"] {
+	color: #eef1e9;
+	border-color: var(--add);
+	background: #17210f;
+}
+
+.dev-size {
+	margin-left: auto;
+	font-size: 11px;
+	color: var(--ink-dim);
+	font-variant-numeric: tabular-nums;
+}
+
+.stage {
+	display: flex;
+	justify-content: center;
+	padding: 0;
+	background:
+		radial-gradient(ellipse at 50% 0%, #101210 0%, #060706 70%);
+	min-height: 0;
+	overflow: auto;
+}
+
+/* Unframed, the editor claims a viewport-sized block and the written
+ * note scrolls underneath it, so the chrome is never squeezed by the
+ * prose sitting below it. */
+.stage:not(.framed) { height: min(88dvh, 940px); min-height: 460px; }
+
+.stage.framed { padding: 22px 16px 40px; }
+
+/* The container every @container rule below measures. */
+.frame {
+	container-type: inline-size;
+	width: 100%;
+	background: var(--void);
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	flex: 1;
+}
+
+.stage.framed .frame {
+	flex: none;
+	border: 1px solid var(--line-2);
+	box-shadow: 0 24px 70px rgba(0, 0, 0, 0.65);
+	max-width: 100%;
+}
+
+/* ══ EDITOR ══════════════════════════════════════════════════════════ */
+
+.editor {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-height: 0;
+	background: var(--void);
+	overflow: hidden;
+	position: relative;   /* the sheet, its scrim and the graph anchor here */
+}
+
+/* ── Command bar ───────────────────────────────────────────────────── */
+
+.commandbar {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	height: 38px;
+	flex-shrink: 0;
+	padding: 0 10px 0 14px;
+	border-bottom: 1px solid var(--line);
+	background: var(--sunk);
+	position: relative;
+	z-index: 60;
+}
+
+.wordmark {
+	font-weight: 700;
+	letter-spacing: 0.26em;
+	font-size: 14px;
+	color: #fff;
+	margin-right: 14px;
+	user-select: none;
+	white-space: nowrap;
+}
+
+.mapname {
+	font-size: 12px;
+	color: var(--ink-mid);
+	margin-right: 12px;
+	white-space: nowrap;
+}
+
+.mapname .dirty { color: var(--warm); }
+
+.menus { display: flex; gap: 1px; }
+
+.menu { position: relative; }
+
+.menu > button {
+	background: none;
+	border: 0;
+	color: var(--ink-mid);
+	font-size: 12px;
+	letter-spacing: 0.04em;
+	padding: 7px 10px;
+	cursor: pointer;
+}
+
+.menu > button:hover,
+.menu.open > button { background: var(--raised); color: #fff; }
+
+.dropdown {
+	display: none;
+	position: absolute;
+	top: 100%;
+	left: 0;
+	min-width: 232px;
+	background: #171a15;
+	border: 1px solid var(--line-2);
+	box-shadow: 0 12px 34px rgba(0, 0, 0, 0.75);
+	padding: 4px 0;
+	z-index: 80;
+}
+
+.menu.open .dropdown { display: block; }
+
+.dropdown .row {
+	display: flex;
+	justify-content: space-between;
+	gap: 26px;
+	padding: 6px 14px;
+	font-size: 12px;
+	color: var(--ink-mid);
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.dropdown .row:hover { background: #1f2a19; color: #fff; }
+.dropdown .row .key { color: #5c6355; font-size: 11px; }
+.dropdown .sep { height: 1px; background: var(--line); margin: 4px 0; }
+
+.cmd-spacer { flex: 1; }
+
+.cmd-group { display: flex; align-items: center; gap: 6px; }
+
+.chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	background: var(--panel);
+	border: 1px solid var(--line-2);
+	color: var(--ink-mid);
+	font-size: 11px;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	padding: 5px 10px;
+	cursor: pointer;
+	white-space: nowrap;
+	min-height: 30px;
+}
+
+.chip:hover { color: var(--ink); border-color: #4a5240; }
+
+.chip.build { border-color: #4a3a12; color: var(--warm); }
+.chip.build:hover { border-color: var(--warm); }
+.chip.play  { border-color: #26401a; color: var(--add); }
+.chip.play:hover { border-color: var(--add); }
+.chip.stale::after {
+	content: '';
+	width: 6px; height: 6px;
+	border-radius: 50%;
+	background: var(--warm);
+}
+
+.badge {
+	font-size: 10px;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--add);
+	border: 1px solid #244a1c;
+	padding: 3px 8px;
+	white-space: nowrap;
+}
+
+/* GAME / EDITOR switch. In the shipping engine kruddgui draws this over
+ * the canvas so it exists in the mode that has no DOM chrome at all —
+ * here it is DOM because there is no canvas to draw into. */
+.modeswitch {
+	display: flex;
+	border: 1px solid var(--line-2);
+	background: var(--void);
+	flex-shrink: 0;
+}
+
+.modeswitch button {
+	background: none;
+	border: 0;
+	color: var(--ink-dim);
+	font-size: 10px;
+	letter-spacing: 0.14em;
+	padding: 6px 11px;
+	cursor: pointer;
+}
+
+.modeswitch button[aria-pressed="true"] {
+	background: #17210f;
+	color: #cfe3c0;
+}
+
+/* ── Toolbar (the verbs that act on the map) ───────────────────────── */
+
+.toolbar {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	height: 36px;
+	flex-shrink: 0;
+	padding: 0 12px;
+	border-bottom: 1px solid var(--line);
+	background: var(--void);
+	overflow-x: auto;
+	scrollbar-width: none;
+}
+
+.toolbar::-webkit-scrollbar { display: none; }
+
+.tool {
+	background: var(--panel);
+	border: 1px solid var(--line);
+	color: var(--ink-mid);
+	font-size: 11px;
+	letter-spacing: 0.06em;
+	padding: 5px 10px;
+	cursor: pointer;
+	white-space: nowrap;
+	min-height: 28px;
+}
+
+.tool:hover { border-color: var(--line-2); color: var(--ink); }
+
+.tool[aria-pressed="true"] {
+	background: #1a2413;
+	border-color: var(--add);
+	color: #d7e8cb;
+}
+
+.tool .k { color: #565d50; margin-left: 6px; font-size: 10px; }
+
+.tool-sep {
+	width: 1px;
+	align-self: stretch;
+	background: var(--line);
+	margin: 6px 4px;
+	flex-shrink: 0;
+}
+
+.csgtoggle { display: flex; flex-shrink: 0; }
+
+.csgtoggle button {
+	background: var(--panel);
+	border: 1px solid var(--line);
+	color: var(--ink-dim);
+	font-size: 11px;
+	letter-spacing: 0.1em;
+	padding: 5px 11px;
+	cursor: pointer;
+	min-height: 28px;
+}
+
+.csgtoggle button + button { border-left: 0; }
+
+.csgtoggle button[aria-pressed="true"][data-op="add"] {
+	color: #d3ecc4; border-color: var(--add); background: #16240f;
+}
+
+.csgtoggle button[aria-pressed="true"][data-op="sub"] {
+	color: #f3cdc6; border-color: var(--sub); background: #260f0c;
+}
+
+/* ── Workbench: rail, docks, viewport deck ─────────────────────────── */
+
+.workbench {
+	flex: 1;
+	display: grid;
+	grid-template-columns: 46px 258px minmax(0, 1fr) 304px;
+	min-height: 0;
+	position: relative;
+}
+
+.rail {
+	grid-column: 1;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 3px;
+	padding: 6px 0;
+	border-right: 1px solid var(--line);
+	background: var(--sunk);
+}
+
+.rail button {
+	width: 34px;
+	height: 34px;
+	display: grid;
+	place-items: center;
+	background: none;
+	border: 1px solid transparent;
+	color: var(--ink-dim);
+	cursor: pointer;
+	font-size: 14px;
+}
+
+.rail button:hover { color: var(--ink); background: var(--panel); }
+
+.rail button[aria-pressed="true"] {
+	color: #cfe3c0;
+	border-color: #2c4620;
+	background: #16200f;
+}
+
+.rail .rail-gap { flex: 1; }
+
+.dock-left  { grid-column: 2; border-right: 1px solid var(--line); }
+.dock-right { grid-column: 4; border-left: 1px solid var(--line); }
+
+.dock-left, .dock-right {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	min-width: 0;
+	background: var(--void);
+}
+
+.center {
+	grid-column: 3;
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+}
+
+.dock-bottom {
+	height: 216px;
+	flex-shrink: 0;
+	border-top: 1px solid var(--line);
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	background: var(--void);
+}
+
+/* A dock is a tab group. One panel: the tab strip is a title bar. */
+.dock {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	flex: 1;
+}
+
+.dock + .dock { border-top: 1px solid var(--line); }
+
+.dock-tabs {
+	display: flex;
+	flex-shrink: 0;
+	background: var(--sunk);
+	border-bottom: 1px solid var(--line);
+	overflow-x: auto;
+	scrollbar-width: none;
+}
+
+.dock-tabs::-webkit-scrollbar { display: none; }
+
+.dock-tab {
+	background: none;
+	border: 0;
+	border-top: 2px solid transparent;
+	border-right: 1px solid var(--line);
+	padding: 7px 12px;
+	font-size: 10px;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--ink-dim);
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.dock-tab:hover { color: var(--ink-mid); }
+
+.dock-tab[aria-selected="true"] {
+	color: #fff;
+	background: var(--void);
+	border-top-color: var(--add);
+}
+
+.dock-body {
+	flex: 1;
+	overflow: auto;
+	min-height: 0;
+	overscroll-behavior: contain;
+}
+
+.panel { display: none; }
+.panel.on { display: block; }
+
+/* Inspector's own tabs, inside the panel. */
+.itab { display: none; }
+.itab.on { display: block; }
+
+/* ── Viewport deck ─────────────────────────────────────────────────── */
+
+.deck {
+	flex: 1;
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	grid-template-rows: 1fr 1fr;
+	gap: 1px;
+	background: var(--line);
+	min-height: 0;
+	position: relative;
+}
+
+.deck.solo { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+.deck.solo .view { display: none; }
+.deck.solo .view.solo-on { display: flex; }
+
+.view {
+	display: flex;
+	flex-direction: column;
+	background: #060706;
+	min-width: 0;
+	min-height: 0;
+	position: relative;
+}
+
+.view-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 4px 8px;
+	font-size: 10px;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--ink-dim);
+	background: rgba(14, 16, 14, 0.85);
+	border-bottom: 1px solid var(--line);
+	flex-shrink: 0;
+}
+
+.view-head .name { color: var(--ink-mid); }
+.view-head .persp { color: var(--cool); }
+.view-head .grow { flex: 1; }
+
+.view-head button {
+	background: none;
+	border: 1px solid transparent;
+	color: var(--ink-dim);
+	cursor: pointer;
+	font-size: 11px;
+	padding: 2px 6px;
+	line-height: 1;
+}
+
+.view-head button:hover { color: var(--ink); border-color: var(--line-2); }
+
+/* The canvas stand-in. In the real editor this is the WebGPU surface;
+ * here it is a grid, a horizon and a label that says so. */
+.surface {
+	flex: 1;
+	position: relative;
+	min-height: 0;
+	overflow: hidden;
+	background: #070807;
+}
+
+.surface.ortho {
+	background-color: #080908;
+	background-image:
+		linear-gradient(rgba(90, 110, 80, 0.10) 1px, transparent 1px),
+		linear-gradient(90deg, rgba(90, 110, 80, 0.10) 1px, transparent 1px),
+		linear-gradient(rgba(90, 110, 80, 0.22) 1px, transparent 1px),
+		linear-gradient(90deg, rgba(90, 110, 80, 0.22) 1px, transparent 1px);
+	background-size: 16px 16px, 16px 16px, 128px 128px, 128px 128px;
+}
+
+.surface.persp {
+	background:
+		radial-gradient(ellipse 120% 70% at 50% 100%, #12170f 0%, #070807 60%),
+		linear-gradient(#0a0d0b 0%, #070807 100%);
+}
+
+.surface-label {
+	position: absolute;
+	inset: auto 0 0 0;
+	text-align: center;
+	padding: 6px;
+	font-size: 9px;
+	letter-spacing: 0.18em;
+	text-transform: uppercase;
+	color: #3f4839;
+	pointer-events: none;
+}
+
+/* Plan-view stand-in geometry, so the ortho views read as a map rather
+ * than as empty graph paper. Drawn, not simulated. */
+.plan { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+.hud-pill {
+	position: absolute;
+	top: 8px;
+	left: 8px;
+	display: flex;
+	gap: 4px;
+	z-index: 4;
+}
+
+.hud-pill button {
+	background: rgba(10, 12, 10, 0.86);
+	border: 1px solid var(--line-2);
+	color: var(--ink-mid);
+	font-size: 10px;
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	padding: 6px 9px;
+	cursor: pointer;
+	min-height: 30px;
+}
+
+.hud-pill button[aria-pressed="true"] {
+	color: #d7e8cb; border-color: var(--add); background: #16220f;
+}
+
+/* Floating thumb cluster — phone/tablet only, hugs the right edge where
+ * a thumb actually reaches. */
+.thumbstack {
+	display: none;
+	position: absolute;
+	right: 10px;
+	bottom: 14px;
+	flex-direction: column;
+	gap: 8px;
+	z-index: 5;
+}
+
+.thumbstack button {
+	width: var(--tap);
+	height: var(--tap);
+	border-radius: 50%;
+	background: rgba(16, 19, 15, 0.92);
+	border: 1px solid var(--line-2);
+	color: var(--ink-mid);
+	font-size: 15px;
+	cursor: pointer;
+	display: grid;
+	place-items: center;
+	backdrop-filter: blur(3px);
+}
+
+.thumbstack button.primary {
+	background: #1c2b14;
+	border-color: var(--add);
+	color: #d7e8cb;
+}
+
+/* ── Graph takeover (material graph / script board) ────────────────── */
+
+.graph {
+	display: none;
+	position: absolute;
+	inset: 0;
+	background: #0a0c0a;
+	z-index: 20;
+	flex-direction: column;
+}
+
+.editor.graph-on .graph { display: flex; }
+
+.graph-head {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding: 5px 8px;
+	border-bottom: 1px solid var(--line);
+	background: var(--sunk);
+	flex-shrink: 0;
+	overflow-x: auto;
+	scrollbar-width: none;
+}
+
+.graph-head::-webkit-scrollbar { display: none; }
+
+.graph-canvas {
+	flex: 1;
+	position: relative;
+	min-height: 0;
+	overflow: hidden;
+	background-color: #090b09;
+	background-image:
+		radial-gradient(rgba(120, 140, 110, 0.13) 1px, transparent 1px);
+	background-size: 22px 22px;
+}
+
+.gnode {
+	position: absolute;
+	width: 132px;
+	background: var(--panel);
+	border: 1px solid var(--line-2);
+	font-size: 10px;
+}
+
+.gnode.sel { border-color: var(--add); box-shadow: 0 0 0 1px #2b4620; }
+
+.gnode .t {
+	padding: 4px 7px;
+	background: #1c211a;
+	border-bottom: 1px solid var(--line);
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--ink-mid);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.gnode .b { padding: 5px 7px; color: var(--ink-dim); }
+.gnode .b .v { color: var(--ink-mid); float: right; font-variant-numeric: tabular-nums; }
+
+.gwires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+
+.graph-preview {
+	position: absolute;
+	right: 12px;
+	bottom: 12px;
+	width: 132px;
+	background: rgba(14, 16, 14, 0.94);
+	border: 1px solid var(--line-2);
+	padding: 8px;
+}
+
+.graph-preview .sphere {
+	aspect-ratio: 1;
+	border-radius: 50%;
+	background:
+		radial-gradient(circle at 34% 30%, #b8a27a 0%, #6a5a3c 42%, #2a2418 78%, #14110b 100%);
+}
+
+.graph-preview .cap {
+	margin-top: 6px;
+	font-size: 9px;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--ink-dim);
+	text-align: center;
+}
+
+/* ── Status strip ──────────────────────────────────────────────────── */
+
+.statusstrip {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 26px;
+	flex-shrink: 0;
+	padding: 0 14px;
+	border-top: 1px solid var(--line);
+	background: var(--sunk);
+	font-size: 11px;
+	color: var(--ink-dim);
+	overflow-x: auto;
+	white-space: nowrap;
+	scrollbar-width: none;
+	font-variant-numeric: tabular-nums;
+}
+
+.statusstrip::-webkit-scrollbar { display: none; }
+.statusstrip .sep { width: 1px; height: 12px; background: var(--line-2); }
+.statusstrip .sel { color: var(--add); }
+.statusstrip .grow { flex: 1; }
+.statusstrip .stale { color: var(--warm); }
+
+/* ── Panel internals ───────────────────────────────────────────────── */
+
+.pad { padding: 10px 12px; }
+
+.sechead {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 12px 6px;
+	font-size: 9px;
+	letter-spacing: 0.16em;
+	text-transform: uppercase;
+	color: var(--ink-dim);
+}
+
+.sechead::after {
+	content: '';
+	flex: 1;
+	height: 1px;
+	background: var(--line);
+}
+
+/* Outliner tree */
+.tree { padding: 4px 0 10px; }
+
+.node {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	padding: 5px 12px;
+	font-size: 12px;
+	color: var(--ink-mid);
+	cursor: pointer;
+	border-left: 2px solid transparent;
+	min-height: 30px;
+}
+
+.node:hover { background: #14181250; color: var(--ink); }
+
+.node[aria-selected="true"] {
+	background: #17210f;
+	border-left-color: var(--add);
+	color: #e2eada;
+}
+
+.node .op {
+	width: 14px;
+	text-align: center;
+	font-size: 11px;
+	flex-shrink: 0;
+}
+
+.node .op.add { color: var(--add); }
+.node .op.sub { color: var(--sub); }
+.node .op.ent { color: var(--cool); }
+.node .op.brd { color: var(--warm); }
+
+.node .lbl {
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.node .meta { font-size: 10px; color: #545b4d; }
+.node.depth1 { padding-left: 26px; }
+.node.depth2 { padding-left: 40px; }
+
+.node.group {
+	color: var(--ink-dim);
+	font-size: 10px;
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
+	cursor: default;
+}
+
+.node.group:hover { background: none; }
+
+/* Brush palette */
+.palette {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+	gap: 5px;
+	padding: 8px 10px 12px;
+}
+
+.brush {
+	background: var(--panel);
+	border: 1px solid var(--line);
+	color: var(--ink-mid);
+	padding: 9px 4px 6px;
+	cursor: pointer;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 5px;
+	font-size: 9px;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	min-height: 62px;
+}
+
+.brush:hover { border-color: var(--line-2); color: var(--ink); }
+
+.brush[aria-pressed="true"] {
+	border-color: var(--add);
+	background: #16200f;
+	color: #d7e8cb;
+}
+
+.brush svg { width: 26px; height: 22px; }
+
+/* Inspector rows */
+.field {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 5px 12px;
+	min-height: 34px;
+}
+
+.field label {
+	width: 74px;
+	flex-shrink: 0;
+	font-size: 11px;
+	color: var(--ink-dim);
+	letter-spacing: 0.04em;
+}
+
+.field .ctl { flex: 1; display: flex; align-items: center; gap: 6px; min-width: 0; }
+
+.num {
+	background: var(--sunk);
+	border: 1px solid var(--line);
+	color: var(--ink);
+	font-size: 11px;
+	padding: 5px 7px;
+	width: 100%;
+	min-width: 0;
+	font-variant-numeric: tabular-nums;
+	min-height: 30px;
+}
+
+.num:focus { border-color: var(--line-2); }
+
+.triple { display: flex; gap: 4px; flex: 1; min-width: 0; }
+.triple .num { flex: 1; }
+
+input[type="range"] {
+	flex: 1;
+	min-width: 0;
+	accent-color: var(--add);
+	height: 26px;
+}
+
+.field .val {
+	width: 46px;
+	text-align: right;
+	font-size: 11px;
+	color: var(--ink-mid);
+	font-variant-numeric: tabular-nums;
+	flex-shrink: 0;
+}
+
+.swatch {
+	width: 34px;
+	height: 26px;
+	border: 1px solid var(--line-2);
+	flex-shrink: 0;
+	background:
+		repeating-linear-gradient(90deg, #6d4b34 0 6px, #7d5840 6px 7px),
+		#6d4b34;
+}
+
+.seg { display: flex; flex: 1; }
+
+.seg button {
+	flex: 1;
+	background: var(--sunk);
+	border: 1px solid var(--line);
+	color: var(--ink-dim);
+	font-size: 10px;
+	letter-spacing: 0.06em;
+	padding: 6px 4px;
+	cursor: pointer;
+	min-height: 30px;
+}
+
+.seg button + button { border-left: 0; }
+
+.seg button[aria-pressed="true"] {
+	background: #16200f; border-color: var(--add); color: #d7e8cb;
+}
+
+.hint {
+	font-family: var(--sans);
+	font-size: 11.5px;
+	line-height: 1.5;
+	color: var(--ink-dim);
+	padding: 4px 12px 12px;
+	max-width: 62ch;
+}
+
+.hint b { color: var(--ink-mid); font-weight: 600; }
+
+.flag {
+	display: inline-block;
+	font-size: 9px;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--warm);
+	border: 1px solid #4a3a12;
+	padding: 1px 5px;
+	margin-right: 5px;
+	vertical-align: 1px;
+}
+
+.flag.cool { color: var(--cool); border-color: #234352; }
+
+/* Asset grid */
+.assets {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+	gap: 7px;
+	padding: 10px 12px;
+}
+
+.asset { cursor: pointer; }
+
+.asset .thumb {
+	aspect-ratio: 1;
+	border: 1px solid var(--line);
+	background: #141712;
+}
+
+.asset:hover .thumb { border-color: var(--line-2); }
+
+.asset .nm {
+	margin-top: 4px;
+	font-size: 10px;
+	color: var(--ink-dim);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.asset.brick   .thumb { background: repeating-linear-gradient(0deg, #6a4632 0 7px, #56392a 7px 8px); }
+.asset.metal   .thumb { background: repeating-linear-gradient(90deg, #4a4f52 0 5px, #3b4043 5px 9px); }
+.asset.conc    .thumb { background: radial-gradient(circle at 30% 30%, #55574f, #35372f); }
+.asset.emis    .thumb { background: radial-gradient(circle at 50% 50%, #d9a520, #6b4f08); }
+.asset.mesh    .thumb { background: linear-gradient(135deg, #24291f 0 50%, #171b14 50%); }
+.asset.sound   .thumb { background: repeating-linear-gradient(90deg, #2a3326 0 2px, #101310 2px 5px); }
+
+/* Console */
+.console {
+	font-size: 11.5px;
+	line-height: 1.65;
+	padding: 8px 12px;
+}
+
+.console .ln { white-space: pre-wrap; color: var(--ink-mid); }
+.console .ln.in::before { content: '> '; color: var(--add); }
+.console .ln.out { color: var(--ink-dim); }
+.console .ln.err { color: #d98077; }
+
+.console .prompt {
+	display: flex;
+	gap: 6px;
+	align-items: center;
+	margin-top: 6px;
+	border-top: 1px solid var(--line);
+	padding-top: 7px;
+}
+
+.console .prompt span { color: var(--add); }
+
+.console input {
+	flex: 1;
+	background: none;
+	border: 0;
+	color: var(--ink);
+	font-size: 11.5px;
+	min-width: 0;
+	min-height: 30px;
+}
+
+.console input:focus { outline: none; }
+
+/* Build panel */
+.buildbar {
+	height: 8px;
+	background: var(--sunk);
+	border: 1px solid var(--line);
+	overflow: hidden;
+	margin: 2px 0 8px;
+}
+
+.buildbar i {
+	display: block;
+	height: 100%;
+	width: 0%;
+	background: var(--warm);
+	transition: width 0.18s linear;
+}
+
+.buildlog {
+	font-size: 11px;
+	line-height: 1.6;
+	color: var(--ink-dim);
+	max-height: 118px;
+	overflow: auto;
+}
+
+.buildlog .ok { color: var(--add); }
+.buildlog .t { color: var(--ink-mid); float: right; font-variant-numeric: tabular-nums; }
+
+.btn-wide {
+	width: 100%;
+	background: #1d1707;
+	border: 1px solid #4a3a12;
+	color: var(--warm);
+	font-size: 12px;
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	padding: 10px;
+	cursor: pointer;
+	min-height: var(--tap);
+}
+
+.btn-wide:hover { border-color: var(--warm); }
+.btn-wide[disabled] { opacity: 0.5; cursor: default; }
+
+/* ── Phone furniture (hidden until the container is narrow) ────────── */
+
+.toolbelt { display: none; }
+.sheet-scrim { display: none; }
+.sheet { display: none; }
+.drawer-scrim { display: none; }
+
+/* ══ RESPONSIVE ══════════════════════════════════════════════════════
+ * Container queries, not media queries: the layout answers to the frame
+ * it is mounted in, so the device buttons above show the true phone and
+ * tablet layouts on a desktop monitor — and the same rules fire off the
+ * real viewport when the page is opened on a real phone.
+ *
+ *   phone   < 720cqw   one view, sheets, toolbelt
+ *   tablet  720–1099   one view, rail, inspector, drawer for the rest
+ *   desktop ≥ 1100     four views, three docks, everything at once
+ * ══════════════════════════════════════════════════════════════════ */
+
+/* ── Tablet ─────────────────────────────────────────────────────────── */
+@container (max-width: 1099px) {
+	.workbench { grid-template-columns: 46px minmax(0, 1fr) 272px; }
+	.center { grid-column: 2; }
+	.dock-right { grid-column: 3; }
+
+	/* The left dock stops holding ground and becomes a drawer over the
+	 * viewport — the outliner and palette are consulted, not watched. */
+	/* Spanning every column makes the grid *container* the drawer's
+	 * containing block, so translating it -102% clears the rail as well
+	 * as itself — anchored to column 2 it slid only as far as the rail
+	 * and left its right edge showing. */
+	.dock-left {
+		grid-column: 1 / -1;
+		position: absolute;
+		top: 0; bottom: 0; left: 0;
+		width: 274px;
+		z-index: 30;
+		border-right: 1px solid var(--line-2);
+		box-shadow: 14px 0 34px rgba(0, 0, 0, 0.6);
+		transform: translateX(-102%);
+		transition: transform 0.16s ease;
+	}
+
+	.editor.drawer-on .dock-left { transform: none; }
+
+	.editor.drawer-on .drawer-scrim {
+		display: block;
+		position: absolute;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.45);
+		z-index: 25;
+	}
+
+	.deck { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+	.deck .view { display: none; }
+	.deck .view.solo-on { display: flex; }
+
+	.dock-bottom { height: 178px; }
+	.thumbstack { display: flex; }
+	.mapname { display: none; }
+}
+
+/* ── Phone ──────────────────────────────────────────────────────────── */
+@container (max-width: 719px) {
+	.commandbar { padding: 0 6px 0 10px; gap: 0; }
+	.wordmark { font-size: 12px; letter-spacing: 0.2em; margin-right: 8px; }
+	.menus { display: none; }
+	.badge { display: none; }
+	.cmd-group .chip.build span { display: none; }
+
+	.toolbar { display: none; }
+
+	.workbench { grid-template-columns: minmax(0, 1fr); }
+	.rail { display: none; }
+	.dock-right { display: none; }
+	.dock-bottom { display: none; }
+	.center { grid-column: 1; }
+
+	.dock-left { width: min(88%, 340px); }
+
+	/* Bottom toolbelt: the whole editor's navigation, in the thumb arc. */
+	.toolbelt {
+		display: grid;
+		grid-auto-flow: column;
+		grid-auto-columns: 1fr;
+		flex-shrink: 0;
+		border-top: 1px solid var(--line);
+		background: var(--sunk);
+		padding-bottom: env(safe-area-inset-bottom);
+	}
+
+	.toolbelt button {
+		background: none;
+		border: 0;
+		border-top: 2px solid transparent;
+		color: var(--ink-dim);
+		font-size: 9px;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		padding: 7px 2px 9px;
+		min-height: 54px;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 4px;
+		cursor: pointer;
+	}
+
+	.toolbelt button .ic { font-size: 15px; line-height: 1; }
+
+	.toolbelt button[aria-pressed="true"] {
+		color: #d7e8cb;
+		border-top-color: var(--add);
+		background: #12180f;
+	}
+
+	/* Sheets: the same panels the desktop docks hold, mounted in a
+	 * bottom sheet instead. One panel at a time, by design. */
+	.sheet-scrim {
+		display: block;
+		position: absolute;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.5);
+		z-index: 38;
+		opacity: 0;
+		pointer-events: none;
+		transition: opacity 0.16s ease;
+	}
+
+	.editor.sheet-on .sheet-scrim { opacity: 1; pointer-events: auto; }
+
+	.sheet {
+		display: flex;
+		flex-direction: column;
+		position: absolute;
+		left: 0; right: 0; bottom: 0;
+		height: 62%;
+		z-index: 40;
+		background: var(--panel);
+		border-top: 1px solid var(--line-2);
+		box-shadow: 0 -16px 40px rgba(0, 0, 0, 0.6);
+		transform: translateY(101%);
+		transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1), height 0.2s ease;
+		padding-bottom: env(safe-area-inset-bottom);
+	}
+
+	.editor.sheet-on .sheet { transform: none; }
+	.editor.sheet-full .sheet { height: 92%; }
+
+	.sheet-grab {
+		flex-shrink: 0;
+		padding: 9px 0 5px;
+		display: grid;
+		place-items: center;
+		cursor: grab;
+	}
+
+	.sheet-grab i {
+		width: 38px; height: 4px; border-radius: 2px;
+		background: var(--line-2);
+		display: block;
+	}
+
+	.sheet-head {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 0 12px 8px;
+		border-bottom: 1px solid var(--line);
+		flex-shrink: 0;
+	}
+
+	.sheet-head .ttl {
+		flex: 1;
+		font-size: 11px;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		color: var(--ink);
+	}
+
+	.sheet-head button {
+		background: none;
+		border: 1px solid var(--line-2);
+		color: var(--ink-mid);
+		width: 34px; height: 32px;
+		cursor: pointer;
+	}
+
+	.sheet-body { flex: 1; overflow: auto; min-height: 0; overscroll-behavior: contain; }
+
+	.statusstrip { font-size: 10px; padding: 0 10px; gap: 7px; }
+	.statusstrip .drop-sm { display: none; }
+
+	.hud-pill { top: 8px; left: 8px; }
+	.graph-preview { width: 108px; bottom: 12px; }
+}
+
+/* In four-view mode the view picker is redundant — every view is up. */
+@container (min-width: 1100px) {
+	.deck:not(.solo) .hud-pill { display: none; }
+}
+
+/* Wide desktop: stop the docks swimming, spend the width on the deck. */
+@container (min-width: 1700px) {
+	.workbench { grid-template-columns: 46px 300px minmax(0, 1fr) 348px; }
+	.dock-bottom { height: 250px; }
+}
+
+/* Game mode: the chrome goes away and the view is the whole page — the
+ * same handover body.editor-mode does in shell.html.in today. */
+.editor.game-mode .toolbar,
+.editor.game-mode .rail,
+.editor.game-mode .dock-left,
+.editor.game-mode .dock-right,
+.editor.game-mode .dock-bottom,
+.editor.game-mode .toolbelt,
+.editor.game-mode .hud-pill,
+.editor.game-mode .thumbstack,
+.editor.game-mode .statusstrip { display: none !important; }
+
+.editor.game-mode .deck { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+.editor.game-mode .deck .view { display: none; }
+.editor.game-mode .deck .view.persp-view { display: flex; }
+.editor.game-mode .view-head { display: none; }
+
+/* ── Note under the mockup ─────────────────────────────────────────── */
+
+/* On a real phone the rig's own chrome is the thing in the way: the
+ * device buttons are pointless (you are holding the device) and the
+ * banner's explanation can wait until the note below. Give the editor
+ * the screen. */
+@media (max-width: 719px) {
+	.devices { display: none; }
+	.banner { padding: 8px 12px; gap: 8px; }
+	.banner .note { display: none; }
+	.stage:not(.framed) { height: calc(100dvh - 40px); min-height: 420px; }
+}
+
+.readme {
+	max-width: 74ch;
+	margin: 0 auto;
+	padding: 34px 18px 60px;
+	font-family: var(--sans);
+	color: var(--ink-mid);
+	font-size: 14px;
+	line-height: 1.65;
+}
+
+.readme h2 {
+	font-family: var(--mono);
+	font-size: 12px;
+	letter-spacing: 0.18em;
+	text-transform: uppercase;
+	color: var(--ink);
+	margin: 30px 0 10px;
+	text-wrap: balance;
+}
+
+.readme h2:first-child { margin-top: 0; }
+.readme p { margin: 0 0 12px; }
+.readme ul { margin: 0 0 12px; padding-left: 20px; }
+.readme li { margin-bottom: 6px; }
+.readme code {
+	font-family: var(--mono);
+	font-size: 12.5px;
+	color: var(--ink);
+	background: var(--panel);
+	border: 1px solid var(--line);
+	padding: 1px 5px;
+}
+.readme strong { color: var(--ink); font-weight: 600; }
+
+.readme table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.readme th, .readme td {
+	text-align: left;
+	padding: 7px 10px;
+	border-bottom: 1px solid var(--line);
+	vertical-align: top;
+}
+.readme th {
+	font-family: var(--mono);
+	font-size: 10px;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--ink-dim);
+}
+.readme .scroll { overflow-x: auto; }
+</style>
+
+<div class="rig">
+
+<div class="banner">
+	<b>Mockup</b>
+	<span>not a working editor</span>
+	<span class="note">Static HTML. No engine, no wasm, no canvas — every
+		number below is a plausible lie. It exists to settle the layout and
+		the panel names.</span>
+</div>
+
+<div class="devices">
+	<span class="lbl">Drive it</span>
+	<button class="dev-btn" data-dev="phone"   aria-pressed="false">Phone 390</button>
+	<button class="dev-btn" data-dev="tablet"  aria-pressed="false">Tablet 900</button>
+	<button class="dev-btn" data-dev="desktop" aria-pressed="false">Desktop 1440</button>
+	<button class="dev-btn" data-dev="fit"     aria-pressed="true">This window</button>
+	<span class="dev-size" id="dev-size">—</span>
+</div>
+
+<div class="stage" id="stage">
+<div class="frame" id="frame">
+
+<div class="editor" id="editor">
+
+	<!-- ── Command bar ─────────────────────────────────────────────── -->
+	<div class="commandbar">
+		<span class="wordmark">KRUDD</span>
+		<span class="mapname">e1m1_atrium.map<span class="dirty"> *</span></span>
+
+		<div class="menus" id="menus">
+			<div class="menu">
+				<button type="button">File</button>
+				<div class="dropdown">
+					<div class="row">New Map<span class="key">Ctrl N</span></div>
+					<div class="row">Open Map…<span class="key">Ctrl O</span></div>
+					<div class="sep"></div>
+					<div class="row">Save<span class="key">Ctrl S</span></div>
+					<div class="row">Save As…</div>
+					<div class="sep"></div>
+					<div class="row">Export to Game</div>
+				</div>
+			</div>
+			<div class="menu">
+				<button type="button">Edit</button>
+				<div class="dropdown">
+					<div class="row">Undo<span class="key">Ctrl Z</span></div>
+					<div class="row">Redo<span class="key">Ctrl Y</span></div>
+					<div class="sep"></div>
+					<div class="row">Duplicate Brush<span class="key">Ctrl D</span></div>
+					<div class="row">Flip / Mirror</div>
+					<div class="row">Snap to Grid<span class="key">G</span></div>
+				</div>
+			</div>
+			<div class="menu">
+				<button type="button">View</button>
+				<div class="dropdown">
+					<div class="row" data-act="deck-quad">Four Views<span class="key">F1</span></div>
+					<div class="row" data-act="deck-solo">Single View<span class="key">F2</span></div>
+					<div class="sep"></div>
+					<div class="row" data-act="graph-mat">Material Graph</div>
+					<div class="row" data-act="graph-board">Script Board</div>
+					<div class="sep"></div>
+					<div class="row">Reset Layout</div>
+				</div>
+			</div>
+			<div class="menu">
+				<button type="button">Build</button>
+				<div class="dropdown">
+					<div class="row" data-act="build">Rebuild CSG<span class="key">F7</span></div>
+					<div class="row" data-act="build">Rebuild Lighting<span class="key">F8</span></div>
+					<div class="sep"></div>
+					<div class="row">Build Settings…</div>
+				</div>
+			</div>
+			<div class="menu">
+				<button type="button">Help</button>
+				<div class="dropdown">
+					<div class="row">Keyboard Reference</div>
+					<div class="row">About KRUDD</div>
+				</div>
+			</div>
+		</div>
+
+		<span class="cmd-spacer"></span>
+
+		<div class="cmd-group">
+			<button class="chip build stale" id="cmd-build" type="button">
+				Build<span> CSG</span>
+			</button>
+			<button class="chip play" id="cmd-play" type="button">▶ Play</button>
+			<span class="badge">WebGPU</span>
+			<div class="modeswitch">
+				<button type="button" data-mode="editor" aria-pressed="true">Editor</button>
+				<button type="button" data-mode="game" aria-pressed="false">Game</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- ── Toolbar ─────────────────────────────────────────────────── -->
+	<div class="toolbar" id="toolbar">
+		<button class="tool" data-tool="select" aria-pressed="true">Select<span class="k">Q</span></button>
+		<button class="tool" data-tool="move"   aria-pressed="false">Move<span class="k">W</span></button>
+		<button class="tool" data-tool="rotate" aria-pressed="false">Rotate<span class="k">E</span></button>
+		<button class="tool" data-tool="scale"  aria-pressed="false">Scale<span class="k">R</span></button>
+		<span class="tool-sep"></span>
+		<button class="tool" data-tool="brush"  aria-pressed="false">Place Brush<span class="k">B</span></button>
+		<button class="tool" data-tool="vertex" aria-pressed="false">Vertex<span class="k">V</span></button>
+		<button class="tool" data-tool="face"   aria-pressed="false">Face<span class="k">F</span></button>
+		<button class="tool" data-tool="paint"  aria-pressed="false">Paint Surface<span class="k">P</span></button>
+		<span class="tool-sep"></span>
+		<div class="csgtoggle" id="csg">
+			<button type="button" data-op="add" aria-pressed="true">+ Add</button>
+			<button type="button" data-op="sub" aria-pressed="false">− Subtract</button>
+		</div>
+		<span class="tool-sep"></span>
+		<button class="tool" type="button">Grid 16</button>
+		<button class="tool" type="button">Snap ✓</button>
+	</div>
+
+	<!-- ── Workbench ───────────────────────────────────────────────── -->
+	<div class="workbench" id="workbench">
+
+		<div class="rail" id="rail">
+			<button type="button" data-rail="drawer" title="Outliner &amp; brushes">☰</button>
+			<button type="button" data-rail="graph-mat" title="Material graph">◈</button>
+			<button type="button" data-rail="graph-board" title="Script board">⌥</button>
+			<span class="rail-gap"></span>
+			<button type="button" title="Settings">⚙</button>
+		</div>
+
+		<div class="drawer-scrim" id="drawer-scrim"></div>
+
+		<!-- Left dock: Outliner over Brush palette -->
+		<div class="dock-left" id="dock-left"></div>
+
+		<div class="center">
+			<div class="deck" id="deck">
+
+				<div class="view persp-view solo-on" data-view="3d">
+					<div class="view-head">
+						<span class="name persp">3D — Perspective</span>
+						<span class="grow"></span>
+						<span>shaded + edges</span>
+						<button type="button" data-max="3d" title="Maximize">⤢</button>
+					</div>
+					<div class="surface persp">
+						<div class="hud-pill" id="viewpick">
+							<button type="button" data-pick="3d" aria-pressed="true">3D</button>
+							<button type="button" data-pick="top" aria-pressed="false">Top</button>
+							<button type="button" data-pick="front" aria-pressed="false">Front</button>
+							<button type="button" data-pick="side" aria-pressed="false">Side</button>
+						</div>
+						<svg class="plan" viewBox="0 0 400 300" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+							<defs>
+								<linearGradient id="flr" x1="0" y1="0" x2="0" y2="1">
+									<stop offset="0" stop-color="#1a2016"/>
+									<stop offset="1" stop-color="#0c0f0b"/>
+								</linearGradient>
+							</defs>
+							<polygon points="60,300 175,150 225,150 340,300" fill="url(#flr)"/>
+							<polygon points="175,150 225,150 225,120 175,120" fill="#141a12"/>
+							<path d="M60 300 L175 150 M340 300 L225 150 M175 150 L225 150"
+							      stroke="#3f5a34" stroke-width="1" fill="none"/>
+							<path d="M20 300 L175 120 M380 300 L225 120"
+							      stroke="#28331f" stroke-width="1" fill="none"/>
+							<path d="M175 120 L225 120" stroke="#28331f" stroke-width="1"/>
+							<!-- the selected brush, lit in the CSG accent -->
+							<polygon points="196,196 244,196 244,152 196,152"
+							         fill="#1d2b16" stroke="#5faa3f" stroke-width="1.4"/>
+							<circle cx="196" cy="196" r="2.6" fill="#5faa3f"/>
+							<circle cx="244" cy="196" r="2.6" fill="#5faa3f"/>
+							<circle cx="196" cy="152" r="2.6" fill="#5faa3f"/>
+							<circle cx="244" cy="152" r="2.6" fill="#5faa3f"/>
+							<circle cx="300" cy="205" r="26" fill="#d9a52012"/>
+							<circle cx="300" cy="205" r="3" fill="#d9a520"/>
+						</svg>
+						<div class="surface-label">WebGPU canvas · placeholder</div>
+						<div class="thumbstack">
+							<button type="button" title="Orbit / fly">✥</button>
+							<button type="button" title="Frame selection">⌖</button>
+							<button class="primary" type="button" title="Place brush">＋</button>
+						</div>
+					</div>
+				</div>
+
+				<div class="view" data-view="top">
+					<div class="view-head">
+						<span class="name">Top — XY</span>
+						<span class="grow"></span>
+						<span>1:16</span>
+						<button type="button" data-max="top" title="Maximize">⤢</button>
+					</div>
+					<div class="surface ortho">
+						<svg class="plan" viewBox="0 0 400 300" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+							<rect x="70" y="60" width="260" height="180" fill="none" stroke="#c8503f" stroke-width="1.4"/>
+							<rect x="86" y="76" width="228" height="148" fill="#0d120b" stroke="#3b4a31" stroke-width="1"/>
+							<rect x="150" y="110" width="52" height="52" fill="#1d2b16" stroke="#5faa3f" stroke-width="1.4"/>
+							<rect x="240" y="150" width="34" height="70" fill="none" stroke="#3b4a31" stroke-width="1"/>
+							<circle cx="290" cy="100" r="4" fill="#d9a520"/>
+							<circle cx="120" cy="200" r="4" fill="#4f8fb0"/>
+							<text x="76" y="54" fill="#4a5541" font-size="10" font-family="monospace">room_atrium</text>
+						</svg>
+						<div class="surface-label">ortho placeholder</div>
+					</div>
+				</div>
+
+				<div class="view" data-view="front">
+					<div class="view-head">
+						<span class="name">Front — XZ</span>
+						<span class="grow"></span>
+						<span>1:16</span>
+						<button type="button" data-max="front" title="Maximize">⤢</button>
+					</div>
+					<div class="surface ortho">
+						<svg class="plan" viewBox="0 0 400 300" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+							<rect x="70" y="90" width="260" height="150" fill="none" stroke="#c8503f" stroke-width="1.4"/>
+							<rect x="86" y="106" width="228" height="118" fill="#0d120b" stroke="#3b4a31" stroke-width="1"/>
+							<rect x="150" y="160" width="52" height="64" fill="#1d2b16" stroke="#5faa3f" stroke-width="1.4"/>
+							<path d="M86 224 L314 224" stroke="#4a5541" stroke-width="1"/>
+							<circle cx="290" cy="130" r="4" fill="#d9a520"/>
+						</svg>
+						<div class="surface-label">ortho placeholder</div>
+					</div>
+				</div>
+
+				<div class="view" data-view="side">
+					<div class="view-head">
+						<span class="name">Side — YZ</span>
+						<span class="grow"></span>
+						<span>1:16</span>
+						<button type="button" data-max="side" title="Maximize">⤢</button>
+					</div>
+					<div class="surface ortho">
+						<svg class="plan" viewBox="0 0 400 300" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+							<rect x="90" y="90" width="220" height="150" fill="none" stroke="#c8503f" stroke-width="1.4"/>
+							<rect x="106" y="106" width="188" height="118" fill="#0d120b" stroke="#3b4a31" stroke-width="1"/>
+							<rect x="180" y="160" width="52" height="64" fill="#1d2b16" stroke="#5faa3f" stroke-width="1.4"/>
+							<path d="M106 224 L294 224" stroke="#4a5541" stroke-width="1"/>
+						</svg>
+						<div class="surface-label">ortho placeholder</div>
+					</div>
+				</div>
+			</div>
+
+			<div class="dock-bottom" id="dock-bottom"></div>
+		</div>
+
+		<div class="dock-right" id="dock-right"></div>
+
+		<!-- ── Graph takeover ─────────────────────────────────────── -->
+		<div class="graph" id="graph">
+			<div class="graph-head">
+				<button class="chip" type="button" data-graph="mat" aria-pressed="true">Material Graph</button>
+				<button class="chip" type="button" data-graph="board" aria-pressed="false">Script Board</button>
+				<span class="cmd-spacer"></span>
+				<button class="chip" type="button" id="graph-close">✕ Back to map</button>
+			</div>
+			<div class="graph-canvas" id="graph-canvas">
+				<svg class="gwires" viewBox="0 0 900 460" preserveAspectRatio="none" aria-hidden="true">
+					<path d="M156 92 C 210 92, 210 150, 264 150" stroke="#3f5a34" stroke-width="1.6" fill="none"/>
+					<path d="M156 232 C 214 232, 214 176, 264 176" stroke="#3f5a34" stroke-width="1.6" fill="none"/>
+					<path d="M400 162 C 452 162, 452 224, 506 224" stroke="#3f5a34" stroke-width="1.6" fill="none"/>
+					<path d="M400 320 C 456 320, 456 250, 506 250" stroke="#3f5a34" stroke-width="1.6" fill="none"/>
+					<path d="M642 236 C 692 236, 692 210, 742 210" stroke="#5faa3f" stroke-width="1.8" fill="none"/>
+				</svg>
+				<div class="gnode" style="left:24px; top:64px">
+					<div class="t">Noise · Perlin</div>
+					<div class="b">Octaves <span class="v">4</span></div>
+					<div class="b">Scale <span class="v">6.0</span></div>
+				</div>
+				<div class="gnode" style="left:24px; top:204px">
+					<div class="t">Noise · Worley</div>
+					<div class="b">Jitter <span class="v">0.8</span></div>
+				</div>
+				<div class="gnode" style="left:266px; top:122px">
+					<div class="t">Blend · Overlay</div>
+					<div class="b">Amount <span class="v">0.62</span></div>
+				</div>
+				<div class="gnode" style="left:266px; top:292px">
+					<div class="t">Gradient Ramp</div>
+					<div class="b">Stops <span class="v">3</span></div>
+				</div>
+				<div class="gnode sel" style="left:508px; top:196px">
+					<div class="t">Material · PBR</div>
+					<div class="b">Roughness <span class="v">0.44</span></div>
+					<div class="b">Metallic <span class="v">0.00</span></div>
+					<div class="b">Emissive <span class="v">0.00</span></div>
+				</div>
+				<div class="gnode" style="left:744px; top:184px">
+					<div class="t">Output · brick_wet</div>
+					<div class="b">Assigned <span class="v">14</span></div>
+				</div>
+				<div class="graph-preview">
+					<div class="sphere"></div>
+					<div class="cap">brick_wet</div>
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- ── Phone furniture ─────────────────────────────────────────── -->
+	<div class="sheet-scrim" id="sheet-scrim"></div>
+	<div class="sheet" id="sheet">
+		<div class="sheet-grab" id="sheet-grab"><i></i></div>
+		<div class="sheet-head">
+			<span class="ttl" id="sheet-title">Outliner</span>
+			<button type="button" id="sheet-expand" title="Expand">⤢</button>
+			<button type="button" id="sheet-close" title="Close">✕</button>
+		</div>
+		<div class="sheet-body" id="sheet-body"></div>
+	</div>
+
+	<div class="toolbelt" id="toolbelt">
+		<button type="button" data-sheet="outliner"><span class="ic">☰</span>Map</button>
+		<button type="button" data-sheet="palette"><span class="ic">◧</span>Brushes</button>
+		<button type="button" data-sheet="inspector"><span class="ic">◈</span>Inspect</button>
+		<button type="button" data-sheet="build"><span class="ic">⚒</span>Build</button>
+		<button type="button" data-sheet="assets"><span class="ic">▦</span>Assets</button>
+	</div>
+
+	<!-- ── Status strip ────────────────────────────────────────────── -->
+	<div class="statusstrip">
+		<span>144 fps</span>
+		<span class="sep"></span>
+		<span class="drop-sm">1920×1080</span>
+		<span class="sep drop-sm"></span>
+		<span class="sel" id="status-sel">brush · arch_hall_02</span>
+		<span class="sep drop-sm"></span>
+		<span class="drop-sm">grid 16</span>
+		<span class="grow"></span>
+		<span class="stale" id="status-build">CSG stale — 3 edits</span>
+	</div>
+</div><!-- /editor -->
+
+<!-- The panel bank. Panels live here and are mounted into whichever
+     container the current layout calls for — a dock on desktop, the
+     drawer on tablet, the sheet on a phone. Same panel, same DOM node,
+     three homes. This is the one structural idea in the mockup, and the
+     one worth copying into the real thing. -->
+<div id="bank" hidden>
+
+	<!-- Outliner -->
+	<div class="panel" data-panel="outliner" data-title="Outliner">
+		<div class="tree" id="tree">
+			<div class="node group">World</div>
+			<div class="node depth1" data-sel="room_atrium" aria-selected="false">
+				<span class="op sub">−</span><span class="lbl">room_atrium</span><span class="meta">box</span>
+			</div>
+			<div class="node depth2" data-sel="arch_hall_02" aria-selected="true">
+				<span class="op add">+</span><span class="lbl">arch_hall_02</span><span class="meta">arch</span>
+			</div>
+			<div class="node depth2" data-sel="pillar_a" aria-selected="false">
+				<span class="op add">+</span><span class="lbl">pillar_a</span><span class="meta">cyl</span>
+			</div>
+			<div class="node depth2" data-sel="pillar_b" aria-selected="false">
+				<span class="op add">+</span><span class="lbl">pillar_b</span><span class="meta">cyl</span>
+			</div>
+			<div class="node depth1" data-sel="stair_well" aria-selected="false">
+				<span class="op sub">−</span><span class="lbl">stair_well</span><span class="meta">spiral</span>
+			</div>
+			<div class="node group">Entities</div>
+			<div class="node depth1" data-sel="light_sun" aria-selected="false">
+				<span class="op ent">◆</span><span class="lbl">light_sun</span><span class="meta">sun</span>
+			</div>
+			<div class="node depth1" data-sel="light_torch_01" aria-selected="false">
+				<span class="op ent">◆</span><span class="lbl">light_torch_01</span><span class="meta">point</span>
+			</div>
+			<div class="node depth1" data-sel="door_north" aria-selected="false">
+				<span class="op ent">◆</span><span class="lbl">door_north</span><span class="meta">door</span>
+			</div>
+			<div class="node depth1" data-sel="trig_open" aria-selected="false">
+				<span class="op ent">◆</span><span class="lbl">trig_open</span><span class="meta">trigger</span>
+			</div>
+			<div class="node group">Boards</div>
+			<div class="node depth1" data-sel="board_door_north" aria-selected="false">
+				<span class="op brd">⌥</span><span class="lbl">door_north.board</span><span class="meta">7 nodes</span>
+			</div>
+		</div>
+	</div>
+
+	<!-- Brush palette -->
+	<div class="panel" data-panel="palette" data-title="Brushes">
+		<div class="sechead">CSG operation</div>
+		<div class="field">
+			<div class="ctl seg" id="palette-op">
+				<button type="button" data-op="add" aria-pressed="true">+ Add</button>
+				<button type="button" data-op="sub" aria-pressed="false">− Subtract</button>
+			</div>
+		</div>
+		<div class="sechead">Primitives</div>
+		<div class="palette" id="palette">
+			<button class="brush" type="button" data-brush="box" aria-pressed="false">
+				<svg viewBox="0 0 26 22" fill="none" stroke="currentColor" stroke-width="1.2">
+					<path d="M4 7l9-4 9 4v9l-9 4-9-4z"/><path d="M4 7l9 4 9-4M13 11v9"/></svg>Box</button>
+			<button class="brush" type="button" data-brush="cylinder" aria-pressed="false">
+				<svg viewBox="0 0 26 22" fill="none" stroke="currentColor" stroke-width="1.2">
+					<ellipse cx="13" cy="5" rx="7" ry="3"/><path d="M6 5v12M20 5v12"/>
+					<ellipse cx="13" cy="17" rx="7" ry="3"/></svg>Cyl</button>
+			<button class="brush" type="button" data-brush="cone" aria-pressed="false">
+				<svg viewBox="0 0 26 22" fill="none" stroke="currentColor" stroke-width="1.2">
+					<path d="M13 3l7 14M13 3L6 17"/><ellipse cx="13" cy="17" rx="7" ry="3"/></svg>Cone</button>
+			<button class="brush" type="button" data-brush="sphere" aria-pressed="false">
+				<svg viewBox="0 0 26 22" fill="none" stroke="currentColor" stroke-width="1.2">
+					<circle cx="13" cy="11" r="8"/><ellipse cx="13" cy="11" rx="8" ry="3.4"/></svg>Sphere</button>
+			<button class="brush" type="button" data-brush="stair" aria-pressed="false">
+				<svg viewBox="0 0 26 22" fill="none" stroke="currentColor" stroke-width="1.2">
+					<path d="M3 19h5v-4h5v-4h5V7h5"/></svg>Stair</button>
+			<button class="brush" type="button" data-brush="curved" aria-pressed="false">
+				<svg viewBox="0 0 26 22" fill="none" stroke="currentColor" stroke-width="1.2">
+					<path d="M3 19h5a9 9 0 004-4v-3a9 9 0 014-4h6"/></svg>Curved</button>
+			<button class="brush" type="button" data-brush="spiral" aria-pressed="false">
+				<svg viewBox="0 0 26 22" fill="none" stroke="currentColor" stroke-width="1.2">
+					<path d="M13 3a8 8 0 018 8 6 6 0 01-6 6 4 4 0 01-4-4 2 2 0 012-2"/></svg>Spiral</button>
+			<button class="brush" type="button" data-brush="arch" aria-pressed="true">
+				<svg viewBox="0 0 26 22" fill="none" stroke="currentColor" stroke-width="1.2">
+					<path d="M4 19V11a9 9 0 0118 0v8"/><path d="M8 19v-8a5 5 0 0110 0v8"/></svg>Arch</button>
+			<button class="brush" type="button" data-brush="sheet" aria-pressed="false">
+				<svg viewBox="0 0 26 22" fill="none" stroke="currentColor" stroke-width="1.2">
+					<path d="M3 14l10-5 10 5-10 5z"/></svg>Sheet</button>
+		</div>
+		<div class="hint">
+			Every primitive is a <b>parameterized asset</b> — the shape is its
+			params, not a mesh file. Place one, then drive its numbers in the
+			Inspector; the same arch at three parameter sets is three brushes,
+			not three assets.
+		</div>
+	</div>
+
+	<!-- Inspector -->
+	<div class="panel" data-panel="inspector" data-title="Inspector">
+		<div class="dock-tabs" id="insp-tabs" role="tablist">
+			<button class="dock-tab" type="button" role="tab" data-itab="brush"   aria-selected="true">Brush</button>
+			<button class="dock-tab" type="button" role="tab" data-itab="surface" aria-selected="false">Surface</button>
+			<button class="dock-tab" type="button" role="tab" data-itab="entity"  aria-selected="false">Entity</button>
+		</div>
+
+		<div class="itab on" data-itab-body="brush">
+			<div class="sechead">arch_hall_02 · arch</div>
+			<div class="field">
+				<label for="p-span">Span</label>
+				<div class="ctl"><input id="p-span" type="range" min="32" max="512" value="192"><span class="val">192</span></div>
+			</div>
+			<div class="field">
+				<label for="p-rise">Rise</label>
+				<div class="ctl"><input id="p-rise" type="range" min="16" max="384" value="128"><span class="val">128</span></div>
+			</div>
+			<div class="field">
+				<label for="p-seg">Segments</label>
+				<div class="ctl"><input id="p-seg" type="range" min="3" max="32" value="12"><span class="val">12</span></div>
+			</div>
+			<div class="field">
+				<label for="p-thk">Thickness</label>
+				<div class="ctl"><input id="p-thk" type="range" min="4" max="96" value="24"><span class="val">24</span></div>
+			</div>
+			<div class="sechead">Transform</div>
+			<div class="field">
+				<label>Position</label>
+				<div class="ctl triple">
+					<input class="num" type="text" value="192" aria-label="position x">
+					<input class="num" type="text" value="0" aria-label="position y">
+					<input class="num" type="text" value="448" aria-label="position z">
+				</div>
+			</div>
+			<div class="field">
+				<label>Rotation</label>
+				<div class="ctl triple">
+					<input class="num" type="text" value="0" aria-label="rotation x">
+					<input class="num" type="text" value="90" aria-label="rotation y">
+					<input class="num" type="text" value="0" aria-label="rotation z">
+				</div>
+			</div>
+			<div class="sechead">CSG</div>
+			<div class="field">
+				<label>Operation</label>
+				<div class="ctl seg" id="insp-op">
+					<button type="button" data-op="add" aria-pressed="true">+ Add</button>
+					<button type="button" data-op="sub" aria-pressed="false">− Subtract</button>
+				</div>
+			</div>
+			<div class="field">
+				<label>Order</label>
+				<div class="ctl"><input class="num" type="text" value="12 of 46"></div>
+			</div>
+			<div class="hint">
+				Changing a param marks CSG stale — the rebuild is a real,
+				visible step, not something that happens behind your back.
+			</div>
+		</div>
+
+		<div class="itab" data-itab-body="surface">
+			<div class="sechead">Face · 2 selected</div>
+			<div class="field">
+				<label>Material</label>
+				<div class="ctl"><span class="swatch"></span><input class="num" type="text" value="brick_wet"></div>
+			</div>
+			<div class="field">
+				<label>Fit</label>
+				<div class="ctl seg">
+					<button type="button" aria-pressed="true">World</button>
+					<button type="button" aria-pressed="false">Face</button>
+					<button type="button" aria-pressed="false">Fit</button>
+				</div>
+			</div>
+			<div class="field">
+				<label>Scale U/V</label>
+				<div class="ctl triple">
+					<input class="num" type="text" value="1.00" aria-label="scale u">
+					<input class="num" type="text" value="1.00" aria-label="scale v">
+				</div>
+			</div>
+			<div class="field">
+				<label>Offset U/V</label>
+				<div class="ctl triple">
+					<input class="num" type="text" value="0" aria-label="offset u">
+					<input class="num" type="text" value="-16" aria-label="offset v">
+				</div>
+			</div>
+			<div class="field">
+				<label for="p-rot">Rotation</label>
+				<div class="ctl"><input id="p-rot" type="range" min="0" max="360" value="0"><span class="val">0°</span></div>
+			</div>
+			<div class="field">
+				<label for="p-lm">Lightmap</label>
+				<div class="ctl"><input id="p-lm" type="range" min="1" max="32" value="8"><span class="val">8</span></div>
+			</div>
+			<div class="hint">
+				<span class="flag">Phone: tap a face</span> Face picking works
+				with a thumb. <b>Per-vertex</b> dragging does not, and the
+				mockup does not pretend otherwise — see the note below the
+				editor.
+			</div>
+		</div>
+
+		<div class="itab" data-itab-body="entity">
+			<div class="sechead">light_torch_01 · point light</div>
+			<div class="field">
+				<label>Name</label>
+				<div class="ctl"><input class="num" type="text" value="light_torch_01"></div>
+			</div>
+			<div class="field">
+				<label>Colour</label>
+				<div class="ctl"><span class="swatch" style="background:#d9a520"></span><input class="num" type="text" value="#d9a520"></div>
+			</div>
+			<div class="field">
+				<label for="p-int">Intensity</label>
+				<div class="ctl"><input id="p-int" type="range" min="0" max="100" value="64"><span class="val">64</span></div>
+			</div>
+			<div class="field">
+				<label for="p-rad">Radius</label>
+				<div class="ctl"><input id="p-rad" type="range" min="16" max="1024" value="320"><span class="val">320</span></div>
+			</div>
+			<div class="field">
+				<label>Shadows</label>
+				<div class="ctl seg">
+					<button type="button" aria-pressed="true">On</button>
+					<button type="button" aria-pressed="false">Off</button>
+				</div>
+			</div>
+			<div class="field">
+				<label>Board</label>
+				<div class="ctl"><button class="tool" type="button" data-act="graph-board">Open flicker.board →</button></div>
+			</div>
+		</div>
+	</div>
+
+	<!-- Assets -->
+	<div class="panel" data-panel="assets" data-title="Assets">
+		<div class="sechead">Materials</div>
+		<div class="assets">
+			<div class="asset brick"><div class="thumb"></div><div class="nm">brick_wet</div></div>
+			<div class="asset conc"><div class="thumb"></div><div class="nm">concrete_a</div></div>
+			<div class="asset metal"><div class="thumb"></div><div class="nm">plate_rust</div></div>
+			<div class="asset emis"><div class="thumb"></div><div class="nm">lamp_glow</div></div>
+		</div>
+		<div class="sechead">Meshes &amp; props</div>
+		<div class="assets">
+			<div class="asset mesh"><div class="thumb"></div><div class="nm">crate_01</div></div>
+			<div class="asset mesh"><div class="thumb"></div><div class="nm">barrel_01</div></div>
+			<div class="asset mesh"><div class="thumb"></div><div class="nm">grate_vent</div></div>
+		</div>
+		<div class="sechead">Sound</div>
+		<div class="assets">
+			<div class="asset sound"><div class="thumb"></div><div class="nm">amb_drip</div></div>
+			<div class="asset sound"><div class="thumb"></div><div class="nm">door_heavy</div></div>
+		</div>
+	</div>
+
+	<!-- Console -->
+	<div class="panel" data-panel="console" data-title="Console">
+		<div class="console">
+			<div class="ln out">krudd 19.2.0 · s7 scheme repl · live image</div>
+			<div class="ln in">(brush-params (selected))</div>
+			<div class="ln out">((span 192) (rise 128) (segments 12) (thickness 24))</div>
+			<div class="ln in">(set-brush-param! (selected) 'segments 16)</div>
+			<div class="ln out">ok — csg marked stale</div>
+			<div class="ln err">warn: 2 faces have no material; using dev_grid</div>
+			<div class="prompt"><span>&gt;</span><input type="text" placeholder="evaluate against the running engine" aria-label="repl input"></div>
+		</div>
+	</div>
+
+	<!-- Build -->
+	<div class="panel" data-panel="build" data-title="Build">
+		<div class="pad">
+			<button class="btn-wide" id="build-run" type="button">Rebuild CSG + Lighting</button>
+			<div class="buildbar"><i id="build-bar"></i></div>
+			<div class="buildlog" id="build-log">
+				<div><span class="ok">✓</span> csg: 46 brushes → 1,284 faces <span class="t">1.9s</span></div>
+				<div><span class="ok">✓</span> materials: 14 graphs compiled <span class="t">0.4s</span></div>
+				<div><span class="ok">✓</span> lighting: 38 lights, static indirect <span class="t">11.2s</span></div>
+				<div><span class="ok">✓</span> pack: e1m1_atrium.map <span class="t">0.3s</span></div>
+			</div>
+		</div>
+		<div class="hint">
+			The rebuild has a home because it is slow and it fails. It is not
+			hidden behind a save.
+		</div>
+	</div>
+</div><!-- /bank -->
+
+</div><!-- /frame -->
+</div><!-- /stage -->
+
+<div class="readme">
+	<h2>What this is</h2>
+	<p>A layout mockup for the map editor — <strong>not a working editor</strong>.
+	Nothing here is wired to the engine, the viewports are drawn SVG, and the
+	perspective view is a placeholder where the WebGPU canvas goes. Its job is
+	to settle two things before any editor code is written: <strong>what the
+	panels are called</strong>, and <strong>what happens to each one when the
+	screen is a phone.</strong></p>
+
+	<h2>Panel vocabulary</h2>
+	<div class="scroll">
+	<table>
+		<tr><th>Name</th><th>What it is</th><th>Where it lives</th></tr>
+		<tr><td>Command bar</td><td>Menus, map name, Build, Play, renderer badge, Game/Editor switch</td><td>Top, all sizes</td></tr>
+		<tr><td>Toolbar</td><td>The verbs: select, move, rotate, scale, place brush, vertex, face, paint, grid, snap</td><td>Desktop + tablet</td></tr>
+		<tr><td>Rail</td><td>Icon strip: drawer, material graph, script board, settings</td><td>Desktop + tablet</td></tr>
+		<tr><td>Viewport deck</td><td>The views: 3D perspective, Top (XY), Front (XZ), Side (YZ)</td><td>All sizes</td></tr>
+		<tr><td>Outliner</td><td>The map's contents: brushes with their CSG op, entities, boards</td><td>Left dock / drawer / sheet</td></tr>
+		<tr><td>Brush palette</td><td>CSG primitives, and the add/subtract mode they place in</td><td>Left dock / drawer / sheet</td></tr>
+		<tr><td>Inspector</td><td>Three tabs: Brush params, Surface (material + alignment), Entity keys</td><td>Right dock / sheet</td></tr>
+		<tr><td>Assets</td><td>Materials, meshes, sounds, maps</td><td>Bottom dock / sheet</td></tr>
+		<tr><td>Console</td><td>Live S7 REPL into the running image</td><td>Bottom dock / sheet</td></tr>
+		<tr><td>Build</td><td>CSG + lighting rebuild, its progress and its log</td><td>Bottom dock / sheet</td></tr>
+		<tr><td>Graph canvas</td><td>Material graph and script board — a takeover, not a dock</td><td>Over the deck, all sizes</td></tr>
+		<tr><td>Toolbelt</td><td>Bottom navigation that opens the sheets</td><td>Phone only</td></tr>
+		<tr><td>Sheet</td><td>Where a panel lands on a phone — one at a time, half or full height</td><td>Phone only</td></tr>
+		<tr><td>Status strip</td><td>fps, resolution, selection, grid, CSG staleness</td><td>Bottom, all sizes</td></tr>
+	</table>
+	</div>
+
+	<h2>Breakpoints</h2>
+	<ul>
+		<li><strong>Desktop, ≥ 1100px</strong> — the Worldcraft shape. Four
+		views, three docks, everything visible at once. Above 1700px the docks
+		widen rather than the whitespace.</li>
+		<li><strong>Tablet, 720–1099px</strong> — one view with a view picker,
+		rail and inspector stay, the outliner and palette become a drawer over
+		the viewport. Touch cluster appears at the thumb.</li>
+		<li><strong>Phone, &lt; 720px</strong> — the view is the whole screen.
+		Toolbar, rail and docks are gone; the toolbelt opens one panel at a
+		time as a sheet.</li>
+	</ul>
+	<p>These are <strong>container</strong> queries, not media queries — the
+	layout answers to the frame it is mounted in. That is why the buttons at the
+	top of this page show the real phone and tablet layouts on a desktop
+	monitor, and it is the same mechanism that would let a dock in the real
+	editor lay itself out correctly at any width it is dragged to.</p>
+
+	<h2>What the phone deliberately does not do</h2>
+	<p>The phone target is <strong>view, navigate, tweak params, place and
+	move brushes</strong> — not full authoring. Being explicit about the line
+	is the point:</p>
+	<ul>
+		<li><strong>Per-vertex manipulation is desktop-only.</strong> Dragging
+		a single vertex with a finger, on a map where vertices are 8 units
+		apart, is an unsolved interaction. The phone gets numeric fields in
+		the Inspector instead, which are precise and boring and work.</li>
+		<li><strong>The material graph is read-and-tweak on a phone.</strong>
+		Pan, zoom, select a node, change its numbers. <em>Wiring</em> nodes —
+		dragging between two 6px ports — is desktop and tablet.</li>
+		<li><strong>The script board is the same:</strong> read, inspect,
+		change constants. Rewiring is desktop.</li>
+		<li><strong>Multi-view is desktop-only.</strong> Four ortho views on a
+		390px screen is four useless views; the phone gets one, switched.</li>
+	</ul>
+
+	<h2>Things worth arguing about</h2>
+	<ul>
+		<li>The graph is a <strong>takeover</strong>, not a dock. A node graph
+		in a 300px dock is unusable at any screen size, so it takes the deck
+		and hands it back.</li>
+		<li>The Inspector is <strong>one panel with three tabs</strong>
+		(Brush / Surface / Entity) rather than three docks, because the
+		selection decides which one you want and the tab can follow it.</li>
+		<li><strong>Build is a panel, not a button.</strong> It is slow, it
+		fails, and it needs somewhere to say so.</li>
+		<li>Every panel is mounted, not duplicated — one DOM node moves
+		between dock, drawer, and sheet as the layout changes. Whatever the
+		real editor is built from, that property is the one to keep.</li>
+	</ul>
+</div>
+
+</div><!-- /rig -->
+
+<script>
+(function () {
+	'use strict';
+
+	var editor  = document.getElementById('editor');
+	var frame   = document.getElementById('frame');
+	var stage   = document.getElementById('stage');
+	var bank    = document.getElementById('bank');
+
+	/* ── Panel mounting ───────────────────────────────────────────────
+	 * The layout owns which container each panel is in; the panels
+	 * themselves are the same nodes throughout. Re-mount on every
+	 * breakpoint crossing, never on every resize tick. */
+
+	var LAYOUTS = {
+		desktop: {
+			'dock-left':   [['outliner'], ['palette']],
+			'dock-right':  [['inspector']],
+			'dock-bottom': [['assets', 'console', 'build']]
+		},
+		tablet: {
+			'dock-left':   [['outliner', 'palette']],
+			'dock-right':  [['inspector']],
+			'dock-bottom': [['assets', 'console', 'build']]
+		},
+		/* On a phone no panel is mounted at rest: they wait in the bank
+		 * until the toolbelt asks for one, and only one is ever up. */
+		phone: {}
+	};
+
+	/* Panels move between hosts, so never scope a lookup to the bank. */
+	function panel(id) {
+		return document.querySelector('[data-panel="' + id + '"]');
+	}
+
+	/* Return every panel to the bank before re-mounting, so clearing a
+	 * host cannot destroy one. */
+	function parkPanels() {
+		document.querySelectorAll('[data-panel]').forEach(function (p) {
+			p.classList.remove('on');
+			bank.appendChild(p);
+		});
+	}
+
+	function mountGroup(host, ids) {
+		var dock = document.createElement('div');
+		dock.className = 'dock';
+
+		var tabs = document.createElement('div');
+		tabs.className = 'dock-tabs';
+		tabs.setAttribute('role', 'tablist');
+
+		var body = document.createElement('div');
+		body.className = 'dock-body';
+
+		ids.forEach(function (id, i) {
+			var p = panel(id);
+			if (!p) return;
+
+			var tab = document.createElement('button');
+			tab.type = 'button';
+			tab.className = 'dock-tab';
+			tab.setAttribute('role', 'tab');
+			tab.textContent = p.dataset.title;
+			tab.setAttribute('aria-selected', i === 0 ? 'true' : 'false');
+			tab.addEventListener('click', function () {
+				tabs.querySelectorAll('.dock-tab').forEach(function (t, j) {
+					t.setAttribute('aria-selected', t === tab ? 'true' : 'false');
+					body.children[j].classList.toggle('on', t === tab);
+				});
+			});
+			tabs.appendChild(tab);
+
+			p.classList.toggle('on', i === 0);
+			body.appendChild(p);
+		});
+
+		dock.appendChild(tabs);
+		dock.appendChild(body);
+		host.appendChild(dock);
+	}
+
+	var mounted = null;
+
+	function mount(kind) {
+		if (mounted === kind) return;
+		mounted = kind;
+
+		parkPanels();
+		['dock-left', 'dock-right', 'dock-bottom', 'sheet-body']
+			.forEach(function (id) { document.getElementById(id).textContent = ''; });
+
+		var map = LAYOUTS[kind];
+		Object.keys(map).forEach(function (host) {
+			map[host].forEach(function (ids) {
+				mountGroup(document.getElementById(host), ids);
+			});
+		});
+
+		if (kind === 'phone') { closeSheet(); }
+		editor.classList.remove('drawer-on');
+	}
+
+	/* Which layout the frame's width asks for. Mirrors the container
+	 * query breakpoints exactly — one number, two places, on purpose:
+	 * CSS cannot mount DOM and JS should not restyle. */
+	function layoutFor(w) {
+		return w < 720 ? 'phone' : (w < 1100 ? 'tablet' : 'desktop');
+	}
+
+	var sizeEl = document.getElementById('dev-size');
+
+	new ResizeObserver(function (entries) {
+		var w = Math.round(entries[0].contentRect.width);
+		var h = Math.round(entries[0].contentRect.height);
+		sizeEl.textContent = w + ' × ' + h + '  ·  ' + layoutFor(w);
+		mount(layoutFor(w));
+	}).observe(frame);
+
+	/* ── Device buttons ─────────────────────────────────────────────── */
+
+	var DEV = {
+		phone:   { w: 390,  h: 780 },
+		tablet:  { w: 900,  h: 680 },
+		desktop: { w: 1440, h: 820 }
+	};
+
+	document.querySelectorAll('.dev-btn').forEach(function (b) {
+		b.addEventListener('click', function () {
+			document.querySelectorAll('.dev-btn').forEach(function (o) {
+				o.setAttribute('aria-pressed', String(o === b));
+			});
+			var d = DEV[b.dataset.dev];
+			if (!d) {
+				stage.classList.remove('framed');
+				frame.style.width = '';
+				frame.style.height = '';
+				return;
+			}
+			stage.classList.add('framed');
+			frame.style.width = d.w + 'px';
+			frame.style.height = d.h + 'px';
+		});
+	});
+
+	/* ── Menus ──────────────────────────────────────────────────────── */
+
+	document.querySelectorAll('.menu > button').forEach(function (b) {
+		b.addEventListener('click', function (e) {
+			e.stopPropagation();
+			var m = b.parentElement, was = m.classList.contains('open');
+			document.querySelectorAll('.menu').forEach(function (o) {
+				o.classList.remove('open');
+			});
+			m.classList.toggle('open', !was);
+		});
+	});
+
+	document.addEventListener('click', function () {
+		document.querySelectorAll('.menu').forEach(function (m) {
+			m.classList.remove('open');
+		});
+	});
+
+	/* ── Toolbar / palette / CSG toggles ────────────────────────────── */
+
+	function groupToggle(root, sel) {
+		if (!root) return;
+		root.addEventListener('click', function (e) {
+			var b = e.target.closest(sel);
+			if (!b || !root.contains(b)) return;
+			root.querySelectorAll(sel).forEach(function (o) {
+				o.setAttribute('aria-pressed', String(o === b));
+			});
+		});
+	}
+
+	groupToggle(document.getElementById('toolbar'), '.tool[data-tool]');
+	groupToggle(document.getElementById('csg'), 'button[data-op]');
+	groupToggle(document.getElementById('rail'), 'button[data-rail]');
+
+	/* Panel contents are delegated on the document: a panel changes parent
+	 * every time the layout does, so a listener bound to its host would
+	 * stop firing the moment it moved. */
+	document.addEventListener('click', function (e) {
+		var brush = e.target.closest('.brush');
+		if (brush) {
+			document.querySelectorAll('.brush').forEach(function (o) {
+				o.setAttribute('aria-pressed', String(o === brush));
+			});
+		}
+
+		/* Segmented controls only — the Inspector's own tabs share the
+		 * .dock-tab look but are selected below, not pressed here. */
+		var seg = e.target.closest('.seg button');
+		if (seg) {
+			seg.parentElement.querySelectorAll('button').forEach(function (o) {
+				o.setAttribute('aria-pressed', String(o === seg));
+			});
+		}
+
+		var itab = e.target.closest('[data-itab]');
+		if (itab) {
+			var insp = itab.closest('[data-panel="inspector"]');
+			insp.querySelectorAll('[data-itab]').forEach(function (o) {
+				o.setAttribute('aria-selected', String(o === itab));
+			});
+			insp.querySelectorAll('[data-itab-body]').forEach(function (o) {
+				o.classList.toggle('on', o.dataset.itabBody === itab.dataset.itab);
+			});
+		}
+
+		var node = e.target.closest('.node[data-sel]');
+		if (node) {
+			document.querySelectorAll('.node[data-sel]').forEach(function (o) {
+				o.setAttribute('aria-selected', String(o === node));
+			});
+			document.getElementById('status-sel').textContent =
+				(node.querySelector('.op').classList.contains('ent') ? 'entity · ' : 'brush · ')
+				+ node.dataset.sel;
+		}
+
+		var act = e.target.closest('[data-act]');
+		if (act) doAction(act.dataset.act);
+	});
+
+	/* Range readouts. */
+	document.addEventListener('input', function (e) {
+		if (e.target.type !== 'range') return;
+		var val = e.target.parentElement.querySelector('.val');
+		if (val) {
+			val.textContent = e.target.value + (val.textContent.indexOf('°') > -1 ? '°' : '');
+		}
+		markStale();
+	});
+
+	/* ── Viewport deck ──────────────────────────────────────────────── */
+
+	var deck = document.getElementById('deck');
+
+	function solo(which) {
+		deck.querySelectorAll('.view').forEach(function (v) {
+			v.classList.toggle('solo-on', v.dataset.view === which);
+		});
+		document.querySelectorAll('#viewpick button').forEach(function (b) {
+			b.setAttribute('aria-pressed', String(b.dataset.pick === which));
+		});
+		/* Keep the view picker with whichever view is showing. */
+		var pick = document.getElementById('viewpick');
+		var host = deck.querySelector('.view.solo-on .surface');
+		if (host && pick.parentElement !== host) host.insertBefore(pick, host.firstChild);
+	}
+
+	document.getElementById('viewpick').addEventListener('click', function (e) {
+		var b = e.target.closest('button[data-pick]');
+		if (b) solo(b.dataset.pick);
+	});
+
+	deck.addEventListener('click', function (e) {
+		var m = e.target.closest('button[data-max]');
+		if (!m) return;
+		deck.classList.toggle('solo');
+		if (deck.classList.contains('solo')) solo(m.dataset.max);
+	});
+
+	/* ── Graph takeover ─────────────────────────────────────────────── */
+
+	document.getElementById('graph-close').addEventListener('click', function () {
+		editor.classList.remove('graph-on');
+		document.querySelectorAll('#rail button[data-rail]').forEach(function (b) {
+			b.setAttribute('aria-pressed', 'false');
+		});
+	});
+
+	document.querySelectorAll('#graph .chip[data-graph]').forEach(function (b) {
+		b.addEventListener('click', function () {
+			document.querySelectorAll('#graph .chip[data-graph]').forEach(function (o) {
+				o.setAttribute('aria-pressed', String(o === b));
+			});
+		});
+	});
+
+	document.getElementById('rail').addEventListener('click', function (e) {
+		var b = e.target.closest('button[data-rail]');
+		if (b) doAction(b.dataset.rail);
+	});
+
+	document.getElementById('drawer-scrim').addEventListener('click', function () {
+		editor.classList.remove('drawer-on');
+	});
+
+	/* ── Sheets (phone) ─────────────────────────────────────────────── */
+
+	var sheet     = document.getElementById('sheet');
+	var sheetBody = document.getElementById('sheet-body');
+	var sheetTtl  = document.getElementById('sheet-title');
+	var sheetOpen = null;
+
+	function openSheet(id) {
+		var p = panel(id);
+		if (!p) return;
+		if (sheetOpen === id && editor.classList.contains('sheet-on')) {
+			closeSheet();
+			return;
+		}
+		sheetBody.textContent = '';
+		p.classList.add('on');
+		sheetBody.appendChild(p);
+		sheetTtl.textContent = p.dataset.title;
+		sheetOpen = id;
+		editor.classList.add('sheet-on');
+		document.querySelectorAll('#toolbelt button').forEach(function (b) {
+			b.setAttribute('aria-pressed', String(b.dataset.sheet === id));
+		});
+	}
+
+	function closeSheet() {
+		editor.classList.remove('sheet-on', 'sheet-full');
+		sheetOpen = null;
+		document.querySelectorAll('#toolbelt button').forEach(function (b) {
+			b.setAttribute('aria-pressed', 'false');
+		});
+	}
+
+	document.getElementById('toolbelt').addEventListener('click', function (e) {
+		var b = e.target.closest('button[data-sheet]');
+		if (b) openSheet(b.dataset.sheet);
+	});
+
+	document.getElementById('sheet-close').addEventListener('click', closeSheet);
+	document.getElementById('sheet-scrim').addEventListener('click', closeSheet);
+
+	document.getElementById('sheet-expand').addEventListener('click', function () {
+		editor.classList.toggle('sheet-full');
+	});
+
+	/* Drag the grab handle: down past half closes, up expands. Enough to
+	 * show the snap points exist; not a physics engine. */
+	document.getElementById('sheet-grab').addEventListener('pointerdown', function (e) {
+		var y0 = e.clientY;
+		var grab = e.currentTarget;
+		grab.setPointerCapture(e.pointerId);
+
+		function up(ev) {
+			var dy = ev.clientY - y0;
+			if (dy > 70) closeSheet();
+			else if (dy < -50) editor.classList.add('sheet-full');
+			else if (dy > 25) editor.classList.remove('sheet-full');
+			grab.releasePointerCapture(ev.pointerId);
+			grab.removeEventListener('pointerup', up);
+		}
+		grab.addEventListener('pointerup', up);
+	});
+
+	/* ── Game / Editor switch ───────────────────────────────────────── */
+
+	document.querySelectorAll('.modeswitch button').forEach(function (b) {
+		b.addEventListener('click', function () {
+			document.querySelectorAll('.modeswitch button').forEach(function (o) {
+				o.setAttribute('aria-pressed', String(o === b));
+			});
+			editor.classList.toggle('game-mode', b.dataset.mode === 'game');
+			if (b.dataset.mode === 'game') { closeSheet(); solo('3d'); }
+		});
+	});
+
+	document.getElementById('cmd-play').addEventListener('click', function () {
+		document.querySelector('.modeswitch button[data-mode="game"]').click();
+	});
+
+	/* ── Build ──────────────────────────────────────────────────────── */
+
+	var stale = true;
+
+	function markStale() {
+		stale = true;
+		document.getElementById('cmd-build').classList.add('stale');
+		var s = document.getElementById('status-build');
+		s.classList.add('stale');
+		s.textContent = 'CSG stale — edits pending';
+	}
+
+	function runBuild() {
+		var bar = document.getElementById('build-bar');
+		var log = document.getElementById('build-log');
+		var btn = document.getElementById('build-run');
+		var status = document.getElementById('status-build');
+		var steps = [
+			['csg: 46 brushes → 1,284 faces', '2.1s', 34],
+			['materials: 14 graphs compiled', '0.4s', 48],
+			['lighting: 38 lights, static indirect', '10.8s', 92],
+			['pack: e1m1_atrium.map', '0.3s', 100]
+		];
+		var i = 0;
+
+		if (btn) { btn.disabled = true; }
+		if (log) { log.textContent = ''; }
+		status.classList.remove('stale');
+		status.textContent = 'building…';
+
+		(function step() {
+			if (i >= steps.length) {
+				stale = false;
+				document.getElementById('cmd-build').classList.remove('stale');
+				status.textContent = 'build ok · 13.6s';
+				if (btn) btn.disabled = false;
+				return;
+			}
+			var s = steps[i++];
+			if (bar) bar.style.width = s[2] + '%';
+			if (log) {
+				var row = document.createElement('div');
+				row.innerHTML = '<span class="ok">✓</span> ' + s[0] +
+					' <span class="t">' + s[1] + '</span>';
+				log.appendChild(row);
+				log.scrollTop = log.scrollHeight;
+			}
+			status.textContent = 'building… ' + s[0];
+			setTimeout(step, 620);
+		})();
+	}
+
+	document.getElementById('cmd-build').addEventListener('click', function () {
+		doAction('build');
+	});
+
+	document.addEventListener('click', function (e) {
+		if (e.target.id === 'build-run') runBuild();
+	});
+
+	/* ── Actions shared by menu rows, the rail and panel buttons ─────── */
+
+	function doAction(act) {
+		if (act === 'build') {
+			if (mounted === 'phone') openSheet('build');
+			else {
+				var tab = Array.prototype.find.call(
+					document.querySelectorAll('#dock-bottom .dock-tab'),
+					function (t) { return t.textContent === 'Build'; });
+				if (tab) tab.click();
+			}
+			runBuild();
+			return;
+		}
+		if (act === 'drawer') {
+			if (mounted === 'phone') openSheet('outliner');
+			else editor.classList.toggle('drawer-on');
+			return;
+		}
+		if (act === 'graph-mat' || act === 'graph-board') {
+			editor.classList.add('graph-on');
+			var which = act === 'graph-mat' ? 'mat' : 'board';
+			document.querySelectorAll('#graph .chip[data-graph]').forEach(function (o) {
+				o.setAttribute('aria-pressed', String(o.dataset.graph === which));
+			});
+			closeSheet();
+			return;
+		}
+		if (act === 'deck-quad') { deck.classList.remove('solo'); return; }
+		if (act === 'deck-solo') { deck.classList.add('solo'); solo('3d'); return; }
+	}
+
+	document.querySelectorAll('.dropdown .row[data-act]').forEach(function (r) {
+		r.addEventListener('click', function () { doAction(r.dataset.act); });
+	});
+})();
+</script>

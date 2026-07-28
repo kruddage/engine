@@ -27,10 +27,25 @@
 //
 // The engine's EM_JS bridges are written defensively — every one of them checks
 // `typeof window.x === 'function'` or wraps the call in try/catch — so a host
-// page implements the ones it wants and the rest are no-ops. We take the four
+// page implements the ones it wants and the rest are no-ops. We take the ones
 // that report boot state and the renderer, and deliberately leave the rest
 // alone: kruddBuildEditor in particular is the old Scheme chrome's entry point,
 // and answering it would be the editor growing a second shell (#953 retires it).
+//
+// ## kruddWantsWebGPU is not optional, whatever the guard says
+//
+// krudd_wants_webgpu (engine.c) is the one bridge whose fallback is a decision
+// rather than a no-op: its catch returns 1, so a host that does not implement it
+// selects WebGPU unconditionally. On a machine with no adapter that is the worst
+// available answer, and it is not hypothetical — it is what a headless CI
+// browser is.
+//
+// So the editor answers it, mirroring the shell's contract exactly (Firefox
+// forced to WebGL, ?renderer=webgl as the opt-out, WebGPU otherwise). The shell
+// calls itself the single source of truth for "should this page run WebGPU" so
+// its chrome and the backend never disagree; the editor needs the same property
+// for the same reason, and having a second page silently disagree with it about
+// the default would be worse than either choice.
 
 import type { EngineInfo, EngineStatus } from "./types.js";
 
@@ -50,6 +65,7 @@ interface KruddHostHooks {
 	kruddSetReady?: () => void;
 	kruddSetRenderer?: (name: string) => void;
 	kruddSetRendererFailed?: (name: string, why: string) => void;
+	kruddWantsWebGPU?: () => boolean;
 	kruddBootGame?: () => string;
 }
 
@@ -62,6 +78,35 @@ export interface BootOptions {
 	onStatus: (status: EngineStatus) => void;
 	/** Called for each line the module writes to stdout or stderr. */
 	onLog?: (line: string, stream: "out" | "err") => void;
+	/**
+	 * Which backend to ask for. Defaults to the shell's own rule — see
+	 * wantsWebGPU below. Passed explicitly only by tests.
+	 */
+	wantsWebGPU?: boolean;
+}
+
+/**
+ * Whether this page should run WebGPU, by the shell's rule.
+ *
+ * Deliberately a copy of `window.kruddWantsWebGPU` in the generated shell
+ * rather than an improvement on it: Firefox is forced to WebGL until its
+ * implementation is further along, `?renderer=webgl` is the opt-out, and
+ * WebGPU is the default everywhere else. Two host pages driving one engine
+ * must not disagree about this.
+ *
+ * Note what it does *not* do: probe `navigator.gpu`. Presence of the object
+ * says nothing about whether an adapter will be handed over, so a probe would
+ * swap one wrong answer for a subtler one. The engine already reports
+ * "this browser returned no GPU adapter" through kruddSetRendererFailed, and
+ * that report is the honest signal.
+ */
+export function wantsWebGPU(search: string = window.location.search): boolean {
+	try {
+		if (/firefox/i.test(navigator.userAgent)) return false;
+		return new URLSearchParams(search).get("renderer") !== "webgl";
+	} catch {
+		return true;
+	}
 }
 
 /** A handle that stops the boot's effects on the page. */
@@ -116,6 +161,10 @@ export function bootEngine(options: BootOptions): BootHandle {
 		onAbort: (what) => update({ phase: "failed", error: String(what) }),
 	};
 
+	/* Answered rather than left to the engine's catch — see the note above. */
+	const preferWebGPU = options.wantsWebGPU ?? wantsWebGPU();
+	host.kruddWantsWebGPU = () => preferWebGPU;
+
 	host.kruddSetRunning = () => update({ phase: "running" });
 	host.kruddSetReady = () => update({ phase: "ready" });
 	host.kruddSetRenderer = (name) => update({ renderer: name });
@@ -144,6 +193,7 @@ export function bootEngine(options: BootOptions): BootHandle {
 			delete host.kruddSetReady;
 			delete host.kruddSetRenderer;
 			delete host.kruddSetRendererFailed;
+			delete host.kruddWantsWebGPU;
 			delete host.kruddBootGame;
 		},
 	};

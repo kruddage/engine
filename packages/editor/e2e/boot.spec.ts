@@ -11,8 +11,48 @@
 // here only when it would lie in Vitest; everything about the chrome that jsdom
 // can answer belongs in the component suite, and a browser suite that grows to
 // cover it is how a fast suite becomes one nobody runs.
+//
+// ## Why the boot test asks for WebGL
+//
+// The engine defaults to WebGPU, and the runner this executes on is headless
+// Chromium with no GPU. `?renderer=webgl` is the shell's own documented opt-out
+// and the editor implements the same rule, so this is selecting a supported
+// path rather than working around a defect.
+//
+// The claim being tested is "the module boots and reports a live renderer".
+// WebGL is a live renderer. Pinning the backend also makes the test deterministic
+// about *which* path it exercises, which the earlier version was not — it
+// assumed a fallback that the engine does not actually perform.
 
 import { expect, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
+
+/**
+ * Collect everything the page says about itself.
+ *
+ * A boot that stalls reports `loading…` and nothing else, which names the
+ * symptom and hides the cause — the first CI run of this file failed three
+ * times over 45s each and produced no evidence at all. Attaching the page's
+ * errors, its console and the engine's own stdout to the failure is what turns
+ * the next stall into one run instead of three.
+ */
+function collect(page: Page): { report: () => string } {
+	const errors: string[] = [];
+	const logs: string[] = [];
+
+	page.on("pageerror", (error) => errors.push(`${error.name}: ${error.message}`));
+	page.on("console", (message) => logs.push(`[${message.type()}] ${message.text()}`));
+
+	return {
+		report: () =>
+			[
+				`page errors:\n${errors.length > 0 ? errors.join("\n") : "  (none)"}`,
+				`console (last 40):\n${
+					logs.length > 0 ? logs.slice(-40).join("\n") : "  (none)"
+				}`,
+			].join("\n\n"),
+	};
+}
 
 test.describe("engine boot", () => {
 	test("serves the WASM module as application/wasm", async ({ request }) => {
@@ -40,26 +80,40 @@ test.describe("engine boot", () => {
 	});
 
 	test("boots the module and reports a live renderer", async ({ page }) => {
-		const errors: string[] = [];
-		page.on("pageerror", (error) => errors.push(error.message));
+		const { report } = collect(page);
 
-		await page.goto("/");
+		await page.goto("/?renderer=webgl");
 
-		/* The engine's own callbacks drive this. Reaching "running" means main()
-		 * ran inside the WASM module and called back into the page — which is
-		 * the whole claim. */
-		await expect(page.getByTestId("status-phase")).toHaveText(
-			/running|ready/,
-			{ timeout: 45_000 }
-		);
+		const phase = page.getByTestId("status-phase");
 
-		/* Which backend went live is the machine's business — a headless CI
-		 * runner may have no WebGPU adapter and fall back to WebGL. That it
-		 * reported *something* other than the seed is the assertion. */
+		/* Reaching "running" means main() ran inside the WASM module and called
+		 * back into the page — krudd_signal_running() is the line immediately
+		 * after engine_init() returns. That is the whole claim. */
+		try {
+			await expect(phase).toHaveText(/running|ready/, { timeout: 45_000 });
+		} catch {
+			const [last, engineLog] = await Promise.all([
+				phase.textContent(),
+				page
+					.getByTestId("engine-log")
+					.textContent()
+					.catch(() => null),
+			]);
+
+			throw new Error(
+				`the engine never reached "running" — last phase was ${JSON.stringify(last)}.\n\n` +
+					`Neither kruddSetRunning nor an abort fired, so engine_init() did ` +
+					`not return.\n\n${report()}\n\n` +
+					`engine stdout/stderr:\n${engineLog ?? "  (the log panel rendered nothing)"}`
+			);
+		}
+
+		await expect(phase).toHaveText(/running|ready/);
+
+		/* Which backend is pinned by the query above, so this asserts the badge
+		 * was actually overwritten by the engine rather than left at its seed. */
 		await expect(page.getByTestId("status-renderer")).not.toHaveText(
 			"renderer — booting…"
 		);
-
-		expect(errors).toEqual([]);
 	});
 });

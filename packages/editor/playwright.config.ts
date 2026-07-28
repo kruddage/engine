@@ -38,7 +38,25 @@ export default defineConfig({
 		video: "retain-on-failure",
 	},
 	projects: [
-		{ name: "chromium", use: { ...devices["Desktop Chrome"] } },
+		{
+			name: "chromium",
+			use: {
+				...devices["Desktop Chrome"],
+				launchOptions: {
+					/* A CI runner has no GPU, and the engine needs a real
+					 * rendering context rather than a stub — this suite exists
+					 * to boot it, not to watch it fail to find one. These route
+					 * WebGL through SwiftShader's software rasterizer; recent
+					 * Chrome requires the second flag to allow that fallback at
+					 * all rather than refusing the context outright.
+					 *
+					 * They do not enable WebGPU. e2e/boot.spec.ts asks for
+					 * WebGL explicitly, which is the shell's own documented
+					 * opt-out, so nothing here depends on a GPU existing. */
+					args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
+				},
+			},
+		},
 	],
 	webServer: {
 		/* --host is explicit, and it is load-bearing rather than tidiness.

@@ -13,7 +13,11 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { bootEngine, resetBootStateForTests } from "../src/engine/boot.js";
+import {
+	bootEngine,
+	resetBootStateForTests,
+	wantsWebGPU,
+} from "../src/engine/boot.js";
 import type { EngineInfo, EngineStatus } from "../src/engine/types.js";
 
 const BUILT: EngineInfo = {
@@ -32,6 +36,7 @@ interface HostHooks {
 	kruddSetReady?: () => void;
 	kruddSetRenderer?: (name: string) => void;
 	kruddSetRendererFailed?: (name: string, why: string) => void;
+	kruddWantsWebGPU?: () => boolean;
 	kruddBootGame?: () => string;
 }
 
@@ -51,6 +56,7 @@ beforeEach(() => {
 		"kruddSetReady",
 		"kruddSetRenderer",
 		"kruddSetRendererFailed",
+		"kruddWantsWebGPU",
 		"kruddBootGame",
 	] as const) {
 		delete host()[key];
@@ -128,6 +134,21 @@ describe("bootEngine", () => {
 		});
 	});
 
+	/* krudd_wants_webgpu's catch returns 1, so a host that does not answer it
+	 * selects WebGPU unconditionally — the worst answer on a machine with no
+	 * adapter, which is exactly what a headless CI browser is. This is the
+	 * regression guard on answering it at all. */
+	it("answers the backend question rather than leaving it to the engine", () => {
+		bootEngine({
+			engine: BUILT,
+			canvas: canvas(),
+			onStatus: vi.fn(),
+			wantsWebGPU: false,
+		});
+
+		expect(host().kruddWantsWebGPU?.()).toBe(false);
+	});
+
 	it("leaves the launcher standing rather than auto-loading a game", () => {
 		bootEngine({ engine: BUILT, canvas: canvas(), onStatus: vi.fn() });
 
@@ -174,3 +195,21 @@ function canvas(): HTMLCanvasElement {
 	document.body.appendChild(element);
 	return element;
 }
+
+/* The rule is copied from the generated shell rather than improved on, so these
+ * pin the copy. Two host pages driving one engine must not disagree about which
+ * backend the page is about to run. */
+describe("wantsWebGPU", () => {
+	it("defaults to WebGPU", () => {
+		expect(wantsWebGPU("")).toBe(true);
+	});
+
+	it("honours ?renderer=webgl as the opt-out", () => {
+		expect(wantsWebGPU("?renderer=webgl")).toBe(false);
+	});
+
+	it("ignores any other renderer value", () => {
+		expect(wantsWebGPU("?renderer=webgpu")).toBe(true);
+		expect(wantsWebGPU("?game=chess")).toBe(true);
+	});
+});

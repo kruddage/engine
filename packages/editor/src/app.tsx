@@ -13,6 +13,7 @@
 
 import { engine } from "virtual:krudd-engine";
 
+import { ENGINE_CANVAS_ID } from "./engine/boot.js";
 import { useEngine } from "./engine/use-engine.js";
 import type { EngineStatus } from "./engine/types.js";
 
@@ -45,6 +46,11 @@ export function App(): React.JSX.Element {
 			<section className="viewport" aria-label="Viewport">
 				<canvas
 					ref={canvasRef}
+					/* Not cosmetic, and not ours to choose — the engine looks
+					 * this element up by selector rather than taking a handle,
+					 * for the GL context and for every pointer callback. See
+					 * ENGINE_CANVAS_ID. */
+					id={ENGINE_CANVAS_ID}
 					data-testid="engine-canvas"
 					/* The engine owns this element's size once it boots; the
 					 * attributes are a starting point, not a layout. */

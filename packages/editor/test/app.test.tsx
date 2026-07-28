@@ -84,4 +84,21 @@ describe("App", () => {
 		 * boot.ts needs it before the loader is injected, not after. */
 		expect(screen.getByTestId("engine-canvas").tagName).toBe("CANVAS");
 	});
+
+	/* The engine looks the canvas up by selector rather than taking a handle:
+	 * renderer_webgl.c creates the GL context against "#canvas", and
+	 * kruddgui.cpp binds every pointer callback and both sizing calls to it.
+	 * Rename the element and there is no context and no input, reported nowhere
+	 * near the cause — an unchecked create_context return, a subsystem that
+	 * logs "init" anyway, and a TypeError from the first glCreateShader.
+	 *
+	 * jsdom cannot catch that, so this asserts the contract directly. It is
+	 * cheap and it is the guard on three CI runs' worth of diagnosis. */
+	it("gives the canvas the id the engine looks it up by", () => {
+		current.engine = BUILT;
+		render(<App />);
+
+		expect(screen.getByTestId("engine-canvas").id).toBe("canvas");
+		expect(document.querySelector("#canvas")).not.toBeNull();
+	});
 });

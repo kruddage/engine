@@ -117,6 +117,32 @@ export interface BootHandle {
 const LOADER = "index.js";
 
 /**
+ * The id the engine's canvas must carry.
+ *
+ * **This is a hard contract with the C tree, not a convention.** The engine does
+ * not take a canvas handle — it looks the element up by selector, from ten call
+ * sites that all hardcode `"#canvas"`:
+ *
+ * - `render/webgl/renderer_webgl.c` creates the GL context against it
+ * - `ui/kruddgui/kruddgui.cpp` registers every mouse, touch and wheel callback
+ *   on it, measures its CSS size, and sets its physical size each tick
+ *
+ * A host page that renames it gets no GL context *and* no input, and the
+ * failure is not reported anywhere near the cause:
+ * `emscripten_webgl_create_context` returns 0, the return is not checked, the
+ * subsystem logs "renderer_webgl: init" as though it succeeded, and the first
+ * `glCreateShader` later dies with "Cannot read properties of undefined". That
+ * is exactly how this cost three CI runs to find.
+ *
+ * `Module.canvas` is set as well, but it is not a substitute — it is what
+ * emscripten's own runtime uses, while the selector is what the engine uses.
+ * Both have to point at the same element.
+ *
+ * #954's viewport panel must keep this id when it takes the canvas over.
+ */
+export const ENGINE_CANVAS_ID = "canvas";
+
+/**
  * Boot the engine into `canvas`, reporting progress through `onStatus`.
  *
  * Returns a handle whose dispose() removes the injected script and the host

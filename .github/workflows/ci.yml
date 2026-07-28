@@ -40,11 +40,14 @@ jobs:
       - name: Workspace boundaries
         run: pnpm check
 
-      # Replaces what `pnpm -r run test` used to reach: kruddmake's Scheme suite
-      # was a workspace package's `test` script until krudd/ left the workspace
-      # (#934). It needs no compiler — only the s7 CLI that sync.sh fetches with
-      # curl — so this job is still the right place for it, but it has to be
-      # named now rather than arriving as a side effect of `pnpm test`.
+      # kruddmake's Scheme suite, reached by path rather than through the
+      # workspace — the same choice `sanitizers` and `coverage` make below,
+      # and for the same reason (WORKSPACE.md, Q2): it runs on the pinned s7
+      # CLI that sync.sh fetches with curl, needs no compiler, and needs no
+      # Node either, so routing it through pnpm would add a dependency for no
+      # gain. It used to arrive as a side effect of `pnpm -r run test`; that
+      # stopped working when krudd/ left the workspace and this stopped being
+      # a package's `test` script (#934), so it is named as its own step now.
       - name: kruddmake Scheme suite
         run: sh krudd/kruddmake/run-scheme-tests.sh
 
@@ -228,6 +231,12 @@ jobs:
   # used because its libasan/libubsan runtimes ship with the runner image;
   # the sanitizer flags ride in through kruddmake's KRUDD_EXTRA_* env hooks so
   # this is the ordinary native build with instrumentation, not a fork of it.
+  #
+  # It calls run-tests.sh by path rather than through the workspace, and that
+  # is deliberate, not an oversight: this job needs no Node at all, and
+  # routing a C test run through pnpm to satisfy a slogan would put Node in
+  # its path for no gain (WORKSPACE.md, Q2). `coverage` below makes the same
+  # call for the same reason.
   sanitizers:
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
     runs-on: ubuntu-latest
@@ -257,6 +266,9 @@ jobs:
   # the floor gate is intentionally deferred until the baseline has been
   # watched (see README). Coverage needs its own -O0 --coverage build, so it
   # runs separately from the sanitizer job in its own build directory.
+  #
+  # It also calls run-tests.sh by path rather than through the workspace —
+  # same reasoning as `sanitizers` above, see that job's comment.
   coverage:
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
     runs-on: ubuntu-latest

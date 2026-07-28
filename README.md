@@ -133,16 +133,19 @@ rather than building a partial WASM module.
 corepack enable
 pnpm install
 
-pnpm build   # engine (WASM) then site, in dependency order
-pnpm test    # the workspace's own suite — pure Node, no toolchain
-pnpm check   # package boundaries
+pnpm build        # engine (WASM) then site, in dependency order
+pnpm test         # the workspace's own suite — pure Node, no toolchain
+pnpm test:native  # the native C suite, through the workspace — needs a compiler
+pnpm check        # package boundaries
 ```
 
 **Node is not a prerequisite for the native suite.** kruddmake is POSIX shell
 and Scheme all the way down, and `sh krudd/kruddmake/run-tests.sh` builds and
 runs the C tests with a compiler and nothing else — which is what the sanitizer
-and coverage jobs invoke. That the workspace can also reach it, as
-`pnpm --filter @kruddage/engine run test:native`, is a second door.
+and coverage jobs invoke, and the path to reach for on a box with no Node. That
+the workspace can also reach it, as `pnpm test:native`, is the second door —
+named the same way in the root scripts, this README, and CI (WORKSPACE.md,
+Q2).
 
 | Package | What it is |
 |---|---|

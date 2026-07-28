@@ -93,6 +93,7 @@ the native tests through the generated `build.ninja`, then the WASM link when
 
 **Node is not in that path.** `run-tests.sh` and `kruddmake.sh` are POSIX shell
 and reach nothing outside `krudd/`; a contributor with a compiler and no node
-installed builds and tests the engine exactly as before. That
-`@kruddage/engine` can also invoke kruddmake — by this path, `pnpm --filter
-@kruddage/engine run test:native` — is a second door, not the door.
+installed builds and tests the engine exactly as before. That the workspace
+can also reach it — `pnpm test:native` at the root, which forwards to
+`pnpm --filter @kruddage/engine run test:native` — is a second door, not the
+door.

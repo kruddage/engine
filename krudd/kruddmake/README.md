@@ -14,7 +14,7 @@ That is the property being protected, and it is why `krudd/` is not in the pnpm
 workspace (#934, [`WORKSPACE.md`](../../WORKSPACE.md) Q2). It briefly carried a
 `package.json` (#920); what that bought — "only `@kruddage/engine` may drive the
 engine build", as a dependency edge — is enforced by path instead, in
-`scripts/check-barriers.mjs` rule 3.
+`tools/barriers/check-barriers.mjs` rule 3.
 
 ## Entry points
 

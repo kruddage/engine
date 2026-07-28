@@ -12,11 +12,11 @@
 	"type": "module",
 	"scripts": {
 		"build": "pnpm -r run build",
-		"test": "node --test scripts/test/*.test.mjs && pnpm -r run test",
-		"//test": "The workspace's own suite: this file's own scripts/test/*.test.mjs plus every package's own `test` script (engine, site, render-diff). Pure Node, no compiler, no emsdk — and it does not run the native C suite. That is test:native below, or sh krudd/kruddmake/run-tests.sh directly. See WORKSPACE.md (Q2).",
+		"test": "pnpm -r run test",
+		"//test": "The workspace's own suite: every package's own `test` script (barriers, engine, site, render-diff — dawn-smoke has none, it holds no JS). Pure Node, no compiler, no emsdk — and it does not run the native C suite. That is test:native below, or sh krudd/kruddmake/run-tests.sh directly. See WORKSPACE.md (Q2).",
 		"test:native": "pnpm --filter @kruddage/engine run test:native",
 		"//test:native": "The native C suite (every *_test.c under krudd/engine/), through the workspace's own door. Needs a C compiler and nothing else — see README.md's Prerequisites. This is the same suite sh krudd/kruddmake/run-tests.sh runs; use that path directly on a box with no Node, which is why CI's sanitizer and coverage jobs call it that way rather than through this script. See WORKSPACE.md (Q2).",
-		"check": "node scripts/check-barriers.mjs",
+		"check": "pnpm --filter @kruddage/barriers run check",
 		"clean": "pnpm -r run clean",
 		"site": "pnpm --filter @kruddage/site run build"
 	}

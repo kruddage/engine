@@ -16,4 +16,8 @@ importers:
         specifier: workspace:*
         version: link:../engine
 
+  tools/barriers: {}
+
+  tools/dawn-smoke: {}
+
   tools/render-diff: {}

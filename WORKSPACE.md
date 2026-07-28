@@ -23,12 +23,18 @@ the initiative that closes it.
 
 ## Q1 — the workspace is the physical design of the JS layer
 
-There are four JavaScript packages. Each declares a name, a surface, and what it
-may reach; `pnpm check` reads those declarations back and fails the build when
-one package reaches around another's `exports` map, or reaches the build tree out
-of band. That is the whole of what the workspace buys, and it is worth buying:
-the barrier holds on its own rather than by everyone remembering where the line
-is.
+There are four JavaScript packages, plus `@kruddage/dawn-smoke` — a fifth
+workspace member that is C and a shell script, not JS, and holds no surface for
+`pnpm check` to read. Each of the four JS packages declares a name, a surface,
+and what it may reach; `pnpm check` reads those declarations back and fails the
+build when one package reaches around another's `exports` map, or reaches the
+build tree out of band. That is the whole of what the workspace buys, and it is
+worth buying: the barrier holds on its own rather than by everyone remembering
+where the line is. `dawn-smoke` sits outside that mechanism rather than being
+forced into a fifth shape of it — it is in the workspace only so
+`pnpm --filter @kruddage/dawn-smoke run smoke` is a real command, and the
+boundary check's rules 1 and 3 both read source files, so a package with none
+is simply outside their reach rather than exempted from them.
 
 Two other answers were available and are rejected:
 

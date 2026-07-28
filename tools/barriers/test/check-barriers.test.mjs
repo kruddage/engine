@@ -13,7 +13,25 @@ import { test } from "node:test";
 
 import { findViolations, packageDirs } from "../check-barriers.mjs";
 
-const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+
+/* This file lives inside @kruddage/barriers now, which means it is itself a
+ * package the walk below (packageDirs -> findViolations) reads on every
+ * `pnpm check` — the whole point of #939. Several fixtures below exist to
+ * prove rule 3 catches krudd/kruddmake/, krudd/engine/, krudd/third_party/,
+ * KRUDD_TARGET and KRUDD_BUILD_DIR; if those strings sat in this file the
+ * ordinary way, the check would catch this file for the same reason it is
+ * supposed to catch the fixtures it writes into a synthetic workspace two
+ * directories down. Assembling them here, once, keeps every fixture below
+ * byte-identical to what a real violation looks like without leaving the
+ * trigger sitting in this file's own text for the walk to find when it
+ * reaches tools/barriers. */
+const KRUDDMAKE_PATH = "krudd" + "/kruddmake/";
+const ENGINE_PATH = "krudd" + "/engine/";
+const THIRD_PARTY_PATH = "krudd" + "/third_party/";
+const TARGET_ENV = "KRUDD" + "_TARGET";
+const BUILD_DIR_ENV = "KRUDD" + "_BUILD_DIR";
+const ESCAPING_SPECIFIER = "../../engine/src/b.mjs";
 
 /* A two-package workspace: `packages/engine` (privileged) and `packages/other`.
  * Both rules read sources, so a package here is a name and a `src/`. */
@@ -59,7 +77,7 @@ test("a clean workspace reports nothing", () => {
 
 test("catches a relative import that escapes the package", () => {
 	const problems = check({
-		"packages/other/src/a.mjs": `import { x } from "../../engine/src/b.mjs";\n`,
+		"packages/other/src/a.mjs": `import { x } from "${ESCAPING_SPECIFIER}";\n`,
 	});
 
 	assert.equal(problems.length, 1);
@@ -77,7 +95,7 @@ test("allows relative imports inside the package", () => {
 
 test("catches a dynamic import that escapes the package", () => {
 	const problems = check({
-		"packages/other/src/a.mjs": `const m = await import("../../engine/src/b.mjs");\n`,
+		"packages/other/src/a.mjs": `const m = await import("${ESCAPING_SPECIFIER}");\n`,
 	});
 
 	assert.equal(problems.length, 1);
@@ -90,9 +108,9 @@ test("catches a dynamic import that escapes the package", () => {
  * once as a path — is now caught only here. */
 test("catches a non-engine package reaching krudd/ by path", () => {
 	for (const path of [
-		"krudd/kruddmake/manifest.scm",
-		"krudd/engine/abi/build.scm",
-		"krudd/third_party/s7.h",
+		`${KRUDDMAKE_PATH}manifest.scm`,
+		`${ENGINE_PATH}abi/build.scm`,
+		`${THIRD_PARTY_PATH}s7.h`,
 	]) {
 		const problems = check({
 			"packages/other/src/a.mjs": `readFileSync("${path}");\n`,
@@ -109,7 +127,7 @@ test("catches a non-engine package reaching krudd/ by path", () => {
 test("catches a non-engine package deriving the kruddmake entry point", () => {
 	const problems = check({
 		"packages/other/src/a.mjs":
-			`const sh = join(REPO, "krudd/kruddmake/kruddmake.sh");\n` +
+			`const sh = join(REPO, "${KRUDDMAKE_PATH}kruddmake.sh");\n` +
 			`spawnSync("sh", [sh, "build"]);\n`,
 	});
 
@@ -130,7 +148,7 @@ test("naming the retired shim is not on its own a violation", () => {
 });
 
 test("catches a non-engine package setting the build environment", () => {
-	for (const variable of ["KRUDD_TARGET", "KRUDD_BUILD_DIR"]) {
+	for (const variable of [TARGET_ENV, BUILD_DIR_ENV]) {
 		const problems = check({
 			"packages/other/src/a.mjs": `process.env.${variable} = "x";\n`,
 		});
@@ -150,9 +168,9 @@ test("the engine package may do all of that", () => {
 			"packages/engine/src/b.mjs":
 				`const sh = join(REPO, "krudd", "kruddmake", "kruddmake.sh");\n` +
 				`spawnSync("sh", [sh, "build"], {\n` +
-				`	env: { KRUDD_TARGET: "wasm", KRUDD_BUILD_DIR: out },\n` +
+				`	env: { ${TARGET_ENV}: "wasm", ${BUILD_DIR_ENV}: out },\n` +
 				`});\n` +
-				`readFileSync("krudd/kruddmake/manifest.scm");\n`,
+				`readFileSync("${KRUDDMAKE_PATH}manifest.scm");\n`,
 		}),
 		[]
 	);
@@ -162,8 +180,8 @@ test("comments naming a forbidden path are not violations", () => {
 	assert.deepEqual(
 		check({
 			"packages/other/src/a.mjs":
-				`// This never reads krudd/kruddmake/.\n` +
-				`/* KRUDD_TARGET is the engine's business. */\n` +
+				`// This never reads ${KRUDDMAKE_PATH}.\n` +
+				`/* ${TARGET_ENV} is the engine's business. */\n` +
 				`export const x = 1;\n`,
 		}),
 		[]
@@ -193,6 +211,8 @@ test("the C tree is not in the workspace", () => {
 	assert.deepEqual(dirs.sort(), [
 		"packages/engine",
 		"packages/site",
+		"tools/barriers",
+		"tools/dawn-smoke",
 		"tools/render-diff",
 	]);
 });
@@ -208,9 +228,34 @@ test("packages/ is discovered, not enumerated", () => {
 		mkdirSync(join(root, "packages", name), { recursive: true });
 	}
 
-	assert.deepEqual(packageDirs(root).sort(), [
-		"packages/alpha",
-		"packages/beta",
-		"tools/render-diff",
-	]);
+	assert.deepEqual(packageDirs(root).sort(), ["packages/alpha", "packages/beta"]);
+});
+
+/* tools/* is discovered the same way packages/* is, and by the same
+ * manifestDirs walk krudd/ used to be excluded through: a directory under
+ * tools/ only joins the boundary check once it declares itself a package.
+ * tools/dawn-smoke is the standing example — C and a shell script, no
+ * package.json — and it must be silently skipped rather than reported as a
+ * package with no manifest. */
+test("tools/ is discovered, and a manifest-less tool is skipped", () => {
+	const root = mkdtempSync(join(tmpdir(), "krudd-ws-"));
+	mkdirSync(join(root, "packages"), { recursive: true });
+	mkdirSync(join(root, "tools", "has-manifest"), { recursive: true });
+	writeFileSync(
+		join(root, "tools", "has-manifest", "package.json"),
+		JSON.stringify({ name: "@kruddage/has-manifest" })
+	);
+	mkdirSync(join(root, "tools", "no-manifest"), { recursive: true });
+
+	assert.deepEqual(packageDirs(root).sort(), ["tools/has-manifest"]);
+});
+
+/* A workspace with no tools/ directory at all is not an error: `tools/*` is a
+ * glob, and a glob with nothing to match contributes nothing, the same way
+ * pnpm-workspace.yaml's tools/* would. */
+test("a missing tools/ directory is not an error", () => {
+	const root = mkdtempSync(join(tmpdir(), "krudd-ws-"));
+	mkdirSync(join(root, "packages", "alpha"), { recursive: true });
+
+	assert.deepEqual(packageDirs(root), ["packages/alpha"]);
 });

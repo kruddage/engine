@@ -32,7 +32,7 @@ when `krudd/` left the workspace (#934) — its ground was already covered by th
 path rule, under the same exemption, and two mechanisms for one rule is how the
 second one rots. The honest consequence is that the exemption now carries the
 barrier alone: there is one line between `krudd/` and the rest of the workspace,
-and it is the name check in `scripts/check-barriers.mjs`.
+and it is the name check in `tools/barriers/check-barriers.mjs`.
 
 Consumers import from the package, never from the build tree:
 

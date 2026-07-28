@@ -151,7 +151,9 @@ Q2).
 |---|---|
 | [`@kruddage/engine`](packages/engine) | The engine's WASM build, harvested into `dist/` with a manifest describing it |
 | [`@kruddage/site`](packages/site) | Stages the deployable static site from those artifacts (replaces `stage-site.sh`) |
+| [`@kruddage/barriers`](tools/barriers) | The boundary check itself: `pnpm check` |
 | [`@kruddage/render-diff`](tools/render-diff) | Screenshot oracle for the WebGPU port |
+| [`@kruddage/dawn-smoke`](tools/dawn-smoke) | Proves a native Dawn build works offscreen; no `build` script, needs an out-of-tree Dawn install (`pnpm --filter @kruddage/dawn-smoke run smoke`) |
 
 There are no third-party dependencies. `pnpm install` links the workspace and
 downloads nothing, matching how the rest of the repo treats its supply chain

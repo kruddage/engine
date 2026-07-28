@@ -75,9 +75,18 @@ const ENGINE_PRIVATE = [
  * Workspace package directories, relative to the repo root. Mirrors
  * pnpm-workspace.yaml, entry for entry: a package the boundary check does not
  * know about is a package with no boundary, so the two lists have to be read as
- * one thing. `packages/*` is expanded off the filesystem here for the same
- * reason it is a glob there — a new package under packages/ is inside the check
- * the moment it exists, rather than when someone remembers a second list.
+ * one thing. Both `packages/*` and `tools/*` are expanded off the filesystem
+ * here for the same reason they are globs there — a new package under either
+ * directory is inside the check the moment it exists, rather than when someone
+ * remembers a second list.
+ *
+ * `tools/*` is read with manifestDirs rather than a plain readdir, because not
+ * every directory under tools/ declares itself a package — tools/dawn-smoke is
+ * C and a shell script, no package.json, no JS for rules 1 or 3 to read. A
+ * plain readdir would hand its name to findViolations, which would then fail
+ * it for the same reason it fails a ghost package: no readable package.json.
+ * manifestDirs already answers "which directories here declared themselves a
+ * package", which is exactly the question.
  *
  * krudd/ is not here and is not walked for manifests. The C tree left the
  * workspace with #934 and holds none; rules 1 and 3 read source files, and
@@ -87,18 +96,21 @@ const ENGINE_PRIVATE = [
 export function packageDirs(repo) {
 	return [
 		...readdirSync(join(repo, "packages")).map((d) => join("packages", d)),
-		"tools/render-diff",
+		...(existsSync(join(repo, "tools")) ? manifestDirs(repo, "tools") : []),
 	];
 }
 
 /**
  * Directories at or below `root` that hold a package.json, repo-relative.
  *
- * Unused since #934 took the C tree's two manifests out of packageDirs, and
- * kept because the question it answers — which directories in a subtree have
- * declared themselves packages — is the one a workspace whose membership is
- * discovered rather than listed has to keep asking. Deleting it and writing it
- * again is not a saving.
+ * Used by packageDirs for tools/, where membership is discovered rather than
+ * listed for the same reason packages/* is a glob: a package the boundary
+ * check does not know about is a package with no boundary. It was unused
+ * between #934 (which took the C tree's two manifests out of packageDirs) and
+ * this commit (which gives tools/ the same discovery packages/ already had) —
+ * kept across that gap because the question it answers is one a workspace
+ * whose membership is discovered rather than listed always has to ask again.
+ * Deleting it and writing it again was not a saving.
  */
 function manifestDirs(repo, root) {
 	const out = [];
@@ -186,7 +198,7 @@ export function findViolations(repo, dirs = packageDirs(repo)) {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-	const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+	const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 	const dirs = packageDirs(repo);
 	const problems = findViolations(repo, dirs);
 

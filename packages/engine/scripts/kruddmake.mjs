@@ -6,9 +6,10 @@
 // below are spelled out from the repo root, which this file locates by counting
 // back from its own — packages/engine/scripts, three levels down.
 //
-// That is a package reaching krudd/ by path, which scripts/check-barriers.mjs
-// rule 3 forbids. What permits it is the exemption written into that rule: it
-// applies to every package but @kruddage/engine, and this is @kruddage/engine.
+// That is a package reaching krudd/ by path, which
+// tools/barriers/check-barriers.mjs rule 3 forbids. What permits it is the
+// exemption written into that rule: it applies to every package but
+// @kruddage/engine, and this is @kruddage/engine.
 // The exemption is the whole of the permission, and since rule 2 went with the
 // package it named, it is also the only gate between krudd/ and the rest of the
 // workspace — so the reason to keep this the one file that knows kruddmake's

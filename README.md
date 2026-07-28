@@ -150,14 +150,24 @@ Q2).
 | Package | What it is |
 |---|---|
 | [`@kruddage/engine`](packages/engine) | The engine's WASM build, harvested into `dist/` with a manifest describing it |
+| [`@kruddage/editor`](packages/editor) | The editor application: React over the WASM artifact. The only package with third-party dependencies |
 | [`@kruddage/site`](packages/site) | Stages the deployable static site from those artifacts (replaces `stage-site.sh`) |
 | [`@kruddage/barriers`](tools/barriers) | The boundary check itself: `pnpm check` |
 | [`@kruddage/render-diff`](tools/render-diff) | Screenshot oracle for the WebGPU port |
 | [`@kruddage/dawn-smoke`](tools/dawn-smoke) | Proves a native Dawn build works offscreen; no `build` script, needs an out-of-tree Dawn install (`pnpm --filter @kruddage/dawn-smoke run smoke`) |
 
-There are no third-party dependencies. `pnpm install` links the workspace and
-downloads nothing, matching how the rest of the repo treats its supply chain
-(vendored s7, a CDP client written against Node's built-in WebSocket, no CMake).
+**`pnpm install` downloads a dependency graph.** It did not until
+`@kruddage/editor` arrived (#946), and the change was deliberate rather than
+incidental: an editor built without packages is an editor that ships years late,
+so #944 spent the zero-dependency position on a dock splitter, a virtualized
+tree and a node canvas that the ecosystem has already written.
+
+The rest of the repo is unchanged and stays that way — s7 is still vendored, the
+CDP client is still written against Node's built-in WebSocket, and there is
+still no CMake. **Only `@kruddage/editor` has third-party dependencies**, every
+one of them is justified in a line in
+[`packages/editor/README.md`](packages/editor/README.md), and nothing the
+engine builds with went near a registry.
 
 The point of the split is the boundary, not the packaging. `pnpm check` fails
 the build on two things: a package reaching into another by relative path —

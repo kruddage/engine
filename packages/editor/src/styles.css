@@ -1,0 +1,149 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later
+ *
+ * Enough style to read the page, and no more. The editor's actual visual
+ * language arrives with the shell in #954; anything invented here would be
+ * something that PR has to undo.
+ *
+ * Two things are not placeholder and should survive: lengths are in rem so the
+ * reader's font size is honoured rather than overridden, and the colours come
+ * from a prefers-color-scheme pair rather than assuming a dark editor. Both are
+ * cheap now and are a sweep through every panel later.
+ */
+
+:root {
+	color-scheme: light dark;
+
+	--bg: #ffffff;
+	--fg: #16181d;
+	--muted: #5a6172;
+	--line: #d8dce5;
+	--panel: #f5f6f9;
+	--error: #a11d2b;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--bg: #14161b;
+		--fg: #e7e9ee;
+		--muted: #99a1b3;
+		--line: #2b303b;
+		--panel: #1b1e25;
+		--error: #ff8a94;
+	}
+}
+
+* {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	background: var(--bg);
+	color: var(--fg);
+	font-family: system-ui, sans-serif;
+	line-height: 1.5;
+}
+
+.app {
+	display: flex;
+	flex-direction: column;
+	gap: 1rem;
+	padding: 1.5rem;
+	max-width: 72rem;
+	margin: 0 auto;
+}
+
+.identity h1 {
+	margin: 0;
+	font-size: 1.5rem;
+}
+
+.subtitle {
+	margin: 0.25rem 0 0;
+	color: var(--muted);
+}
+
+.engine-identity {
+	display: grid;
+	grid-template-columns: max-content 1fr;
+	gap: 0.25rem 1rem;
+	margin: 0;
+	padding: 1rem;
+	border: 1px solid var(--line);
+	border-radius: 0.5rem;
+	background: var(--panel);
+}
+
+.engine-identity dt {
+	color: var(--muted);
+}
+
+.engine-identity dd {
+	margin: 0;
+	font-family: ui-monospace, monospace;
+	overflow-wrap: anywhere;
+}
+
+.unbuilt {
+	padding: 1rem;
+	border: 1px solid var(--line);
+	border-left: 0.25rem solid var(--error);
+	border-radius: 0.5rem;
+	background: var(--panel);
+}
+
+.unbuilt h2 {
+	margin: 0 0 0.5rem;
+	font-size: 1.1rem;
+}
+
+.unbuilt p {
+	margin: 0 0 0.75rem;
+}
+
+.unbuilt pre,
+.log pre {
+	margin: 0;
+	padding: 0.75rem;
+	border-radius: 0.375rem;
+	background: var(--bg);
+	border: 1px solid var(--line);
+	font-family: ui-monospace, monospace;
+	overflow-x: auto;
+}
+
+.viewport {
+	border: 1px solid var(--line);
+	border-radius: 0.5rem;
+	overflow: hidden;
+	background: #000;
+}
+
+.viewport canvas {
+	display: block;
+	width: 100%;
+	height: auto;
+}
+
+.status-strip {
+	display: flex;
+	gap: 1rem;
+	flex-wrap: wrap;
+	padding: 0.5rem 0.75rem;
+	border: 1px solid var(--line);
+	border-radius: 0.5rem;
+	background: var(--panel);
+	color: var(--muted);
+	font-size: 0.875rem;
+	font-family: ui-monospace, monospace;
+}
+
+.status-error {
+	color: var(--error);
+}
+
+.log pre {
+	max-height: 16rem;
+	overflow-y: auto;
+	font-size: 0.8125rem;
+}

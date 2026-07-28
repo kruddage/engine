@@ -3,8 +3,13 @@
 # The workspace is the physical design of the JavaScript layer, and this list is
 # all of it: every package under packages/, every package under tools/. Each
 # declares a name, a surface and what it may reach, and `pnpm check` reads those
-# declarations back (see WORKSPACE.md, Q1). There are no third-party
-# dependencies to resolve.
+# declarations back (see WORKSPACE.md, Q1).
+#
+# There are third-party dependencies to resolve as of #946, and there were none
+# before it. They belong to packages/editor and to nothing else: the engine's
+# build is kruddmake, which needs a compiler and nothing else, and no package
+# that feeds it acquired a registry dependency here. WORKSPACE.md (Q1) carries
+# the reasoning and #944 carries the decision.
 #
 # krudd/ is not here. #917 gave two of the C tree's twenty-three modules a
 # manifest and #924 was to have given the other twenty-one theirs; #924 closed

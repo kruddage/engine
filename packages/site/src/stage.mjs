@@ -80,8 +80,22 @@ export function planSite(artifacts, stem) {
  * Apply a plan to disk.
  *
  * Returns the staged filenames, in the order they were written.
+ *
+ * `editorDir`, when given, is @kruddage/editor's production output, copied in
+ * whole under `editor/`. It is a directory rather than an artifact list because
+ * the editor is a bundler's output — hashed chunk names nobody declares in
+ * advance — which is the opposite of the engine's case, where the whitelist
+ * exists precisely because the build directory also holds objects and archives
+ * that must never reach the Pages branch. A Vite `outDir` holds only what Vite
+ * put there.
  */
-export function stageSite({ artifacts, outDir, stem, assetDir = null }) {
+export function stageSite({
+	artifacts,
+	outDir,
+	stem,
+	assetDir = null,
+	editorDir = null,
+}) {
 	const plan = planSite(artifacts, stem);
 
 	rmSync(outDir, { recursive: true, force: true });
@@ -106,6 +120,15 @@ export function stageSite({ artifacts, outDir, stem, assetDir = null }) {
 	if (assetDir) {
 		cpSync(assetDir, join(outDir, "assets"), { recursive: true });
 		staged.push("assets/");
+	}
+
+	/* The editor sits beside the shell at its own route rather than replacing
+	 * it (#946). Copied after the engine's own files so that if the two ever
+	 * did collide it would be visible here, in one place, rather than depending
+	 * on which of them ran last. */
+	if (editorDir) {
+		cpSync(editorDir, join(outDir, "editor"), { recursive: true });
+		staged.push("editor/");
 	}
 
 	return staged;

@@ -49,7 +49,20 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { stripComments } from "./strip-comments.mjs";
 
 const SKIP_DIRS = new Set(["node_modules", "dist", "out", "shots", ".git"]);
-const SOURCE_EXT = /\.(mjs|js|cjs|ts|mts)$/;
+
+/* The extensions a rule can read. Getting this list wrong does not fail the
+ * check — it silently shrinks it, which is the worse failure, so it is worth
+ * being explicit about why each one is here.
+ *
+ * jsx and tsx arrived with @kruddage/editor (#946). Until then every package
+ * here was plain Node and the list happened to be complete; a React package is
+ * mostly .tsx, so leaving them out would have meant rule 1 reading the editor's
+ * handful of .ts files and none of its components — a boundary check that
+ * reports OK because it looked at almost nothing. That is the failure mode this
+ * comment exists to prevent the next time the workspace grows a language.
+ *
+ * cts is here for symmetry with mts rather than because anything uses it. */
+const SOURCE_EXT = /\.(mjs|cjs|js|jsx|mts|cts|ts|tsx)$/;
 
 /* A relative specifier in an import/export/require. */
 const RELATIVE_IMPORT =

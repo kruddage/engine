@@ -37,6 +37,14 @@ jobs:
       - name: Workspace tests
         run: pnpm test
 
+      # @kruddage/editor is TypeScript in strict mode and its `build` fails on a
+      # type error — but `build` needs the WASM artifact, which this job has no
+      # emsdk to produce. Typechecking is the half of that gate which needs
+      # nothing, so it runs here where the feedback is fast rather than waiting
+      # on the emsdk container.
+      - name: Workspace typecheck
+        run: pnpm typecheck
+
       - name: Workspace boundaries
         run: pnpm check
 
@@ -130,11 +138,40 @@ jobs:
           KRUDD_VERSION: ${{ steps.version.outputs.version }}
         run: pnpm --filter @kruddage/engine run build
 
+      # The editor consumes the artifact the step above produced, so it builds
+      # after the engine and before staging. It is a plain Vite build — no C, no
+      # emsdk — and it is in this job only because it needs the WASM output to
+      # copy alongside its own bundle.
+      - name: Build the editor
+        run: pnpm --filter @kruddage/editor run build
+
+      # The browser half of the test story (#944, Q6). It lives here rather than
+      # in the lint job for the reason the whole split exists: it boots the real
+      # WASM module in a real Chromium, so it needs the engine build that only
+      # this job has. scripts/e2e.mjs refuses to run without one rather than
+      # skipping, so a green result here means a module actually booted.
+      - name: Install Playwright's browser
+        run: pnpm --filter @kruddage/editor exec playwright install --with-deps chromium
+
+      - name: Editor browser suite
+        run: pnpm --filter @kruddage/editor run test:e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: packages/editor/playwright-report
+          retention-days: 7
+
       # Replaces stage-site.sh. Same whitelist-only staging — the build tree
       # carries objects and archives that must never reach the Pages branch —
       # but the cache-busting hash now comes from the built index.html's
       # Module.locateFile hook rather than a second, independent `git rev-parse`
       # that merely had to agree with it. See packages/site/src/stage.mjs.
+      #
+      # It also copies @kruddage/editor's output in under /editor/, which is why
+      # the editor build above has to come first.
       - name: Stage site
         run: pnpm --filter @kruddage/site run build
 

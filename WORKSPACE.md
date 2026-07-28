@@ -3,7 +3,8 @@
 # What the pnpm workspace is for
 
 **The workspace is the physical design of the JavaScript layer. It is not the
-build system, and it does not manage dependencies — there are none to manage.**
+build system, and dependency management is something it now does but is not
+_for_.**
 
 **kruddmake is the second door, and it is deliberate.** `krudd/kruddmake` builds
 C and WASM with a compiler and nothing else. The workspace never becomes a
@@ -23,27 +24,37 @@ the initiative that closes it.
 
 ## Q1 — the workspace is the physical design of the JS layer
 
-There are four JavaScript packages, plus `@kruddage/dawn-smoke` — a fifth
+There are five JavaScript packages, plus `@kruddage/dawn-smoke` — a sixth
 workspace member that is C and a shell script, not JS, and holds no surface for
-`pnpm check` to read. Each of the four JS packages declares a name, a surface,
+`pnpm check` to read. Each of the five JS packages declares a name, a surface,
 and what it may reach; `pnpm check` reads those declarations back and fails the
 build when one package reaches around another's `exports` map, or reaches the
 build tree out of band. That is the whole of what the workspace buys, and it is
 worth buying: the barrier holds on its own rather than by everyone remembering
 where the line is. `dawn-smoke` sits outside that mechanism rather than being
-forced into a fifth shape of it — it is in the workspace only so
+forced into a sixth shape of it — it is in the workspace only so
 `pnpm --filter @kruddage/dawn-smoke run smoke` is a real command, and the
 boundary check's rules 1 and 3 both read source files, so a package with none
 is simply outside their reach rather than exempted from them.
 
 Two other answers were available and are rejected:
 
-- **Dependency management.** The workspace manages no dependencies.
-  `pnpm-lock.yaml` is a few hundred bytes: a handful of importers, a couple of
-  `link:` edges, and zero registry packages. The zero-dependency supply chain is
-  a feature and it is staying, which means dependency management will never be
-  what this is for. Settings that arbitrate between competing third-party
-  versions are configuring a graph that does not exist, and they go.
+- **Dependency management.** Still rejected, but the reason changed and the
+  change is worth stating rather than quietly editing around. This used to say
+  the zero-dependency supply chain was a feature and was staying, on the
+  strength of a lockfile a few hundred bytes long holding a couple of `link:`
+  edges and zero registry packages. **That ended with `@kruddage/editor`
+  (#946).** `pnpm install` now downloads a real dependency graph, and the
+  arbitration settings this file once called "configuring a graph that does not
+  exist" are configuring one that does.
+
+  It is still not what the workspace is *for*. Managing dependencies is
+  something pnpm does for any workspace; it buys this repository nothing it
+  could not get from a bare `package.json`, and it explains none of the design
+  decisions the rest of this file is about. **The boundary check is still the
+  answer to "what is pnpm here for."** The difference is that the supply chain
+  is now a thing this repository has to think about — see #944's "accepted
+  costs", which took that on deliberately rather than drifting into it.
 - **The site build and nothing more.** Honest, and it under-describes what is
   already here. The boundary check is not site staging, and retiring it would
   give up the one thing the split has actually delivered.

@@ -123,6 +123,11 @@ and drives the build through it, then publishes the resulting artifacts behind a
 declared surface; everything downstream reads that surface instead of the build
 tree.
 
+`pnpm install` links the workspace and downloads nothing — it does not fetch
+the toolchain below. `pnpm build` still needs everything in Prerequisites,
+emsdk included; if a tool is missing it fails fast, naming what's missing
+rather than building a partial WASM module.
+
 ```sh
 corepack enable
 pnpm install

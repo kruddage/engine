@@ -54,19 +54,47 @@ function have(command) {
 
 /* ------------------------------------------------------------- toolchain */
 
-if (!have("emcc")) {
-	fail(
-		"emcc not found on PATH.\n" +
-			"The engine's deliverable is a WASM module, so the Emscripten SDK is\n" +
-			"required to build this package:\n" +
-			"  https://emscripten.org/docs/getting_started/downloads.html\n" +
-			"Then `source /path/to/emsdk/emsdk_env.sh` and re-run.\n" +
-			"(The native test suite needs no emcc — `pnpm --filter @kruddage/engine test`.)"
-	);
+/* `pnpm install` links the workspace and downloads nothing, so it tells a
+ * contributor nothing about whether they can actually build (README.md, "The
+ * pnpm workspace"). This is the first point that can, and the issue's fix is
+ * to fail fast rather than degrade: still require the full toolchain, but
+ * collect every gap before reporting instead of exiting on the first
+ * `fail()`. Without that, a machine missing two tools has to run the build
+ * twice to be told about both. Every probe here is a cheap `--version` call
+ * and nothing runs before them.
+ */
+const missingTools = [];
+
+/* Mirrors kruddmake.sh's own compiler search (krudd/kruddmake/kruddmake.sh):
+ * CC wins if set — trusted there without a --version probe, so trusted the
+ * same way here — else the first of clang/gcc/cc found on PATH. Missing
+ * means none of those is present either; kruddmake would fail identically,
+ * just after it has already generated build.ninja instead of before. */
+const cc = process.env.CC?.trim() || ["clang", "gcc", "cc"].find(have);
+if (!cc) {
+	missingTools.push("a C compiler (set CC, or install clang/gcc/cc)");
 }
 
 if (!have("ninja")) {
-	fail("ninja not found on PATH — kruddmake drives ninja(1) directly.");
+	missingTools.push("ninja — kruddmake drives ninja(1) directly");
+}
+
+if (!have("emcc")) {
+	missingTools.push(
+		"emcc — the engine's deliverable is a WASM module, so the Emscripten SDK\n" +
+			"    is required to build this package:\n" +
+			"      https://emscripten.org/docs/getting_started/downloads.html\n" +
+			"    Then `source /path/to/emsdk/emsdk_env.sh` and re-run.\n" +
+			"    (The native test suite needs no emcc — " +
+			"`pnpm --filter @kruddage/engine test`.)"
+	);
+}
+
+if (missingTools.length > 0) {
+	fail(
+		`missing build tool(s):\n` +
+			missingTools.map((tool) => `  - ${tool}`).join("\n")
+	);
 }
 
 /* ----------------------------------------------------------------- build */

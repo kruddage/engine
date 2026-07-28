@@ -205,6 +205,20 @@ krudd/kruddmake/kruddmake.sh build
 other than `build/` — the same knob the sanitizer and coverage jobs use to keep
 instrumented objects out of the plain build's tree.
 
+A build leaves two directories at the root, both gitignored, and neither is a
+`dist/`:
+
+| Directory | What is in it |
+|---|---|
+| `build/` | kruddmake's output — the compiled artifacts, and for a WASM build the module and its staging inputs |
+| `build-ninja/` | the generated `build.ninja` and the object files ninja builds from it |
+
+The workspace convention right beside them is `packages/*/dist/`, which is where
+each JS package's own output goes. These two are kruddmake's, they predate the
+workspace, and `KRUDD_BUILD_DIR`, the sanitizer job's `build-san`, the coverage
+job's `build-cov` and `.gitignore`'s `/build-*/` glob all key off the current
+names — so they are documented rather than moved.
+
 ### The browser is the only target
 
 KRUDD ships one artifact: the WASM module and the static site around it. There is no

@@ -1,6 +1,7 @@
 {
 	"name": "@kruddage/engine",
 	"version": "0.0.0",
+	"private": true,
 	"description": "The KRUDD engine as an npm package: builds the WASM module through kruddmake and publishes the resulting artifacts behind a declared API.",
 	"license": "GPL-2.0-or-later",
 	"type": "module",

@@ -111,6 +111,12 @@ directly — there is no CMake in the build path.
 
 ### The pnpm workspace
 
+**The workspace is the physical design of the JavaScript layer, and kruddmake is
+a deliberate second door: `krudd/kruddmake` builds C and WASM with a compiler and
+nothing else, and the workspace never becomes a prerequisite for it.**
+[`WORKSPACE.md`](WORKSPACE.md) is the long form — what the workspace is for,
+where it stops, and why each of those was chosen over the alternatives.
+
 The engine builds through a pnpm workspace that wraps kruddmake rather than
 replacing it. `@kruddage/engine` declares a dependency on `@kruddage/kruddmake`
 and drives the build through it, then publishes the resulting artifacts behind a

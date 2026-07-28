@@ -13,6 +13,8 @@
  */
 #include "bridge.h"
 
+#include "bridge_params.h"
+
 #include "world.h"
 
 #include <math.h>
@@ -209,6 +211,11 @@ static int32_t tape_u16(struct tape *t, uint16_t *out)
 static int32_t tape_u32(struct tape *t, uint32_t *out)
 {
 	return tape_take(t, out, (int32_t)sizeof(*out));
+}
+
+static int32_t tape_f32(struct tape *t, float *out)
+{
+	return tape_take(t, out, 4);
 }
 
 static int32_t tape_i32(struct tape *t, int32_t *out)
@@ -550,6 +557,29 @@ static int32_t apply_command(struct bridge *b, uint16_t op, struct tape *t)
 			en->set_script_ref(id, ref);
 		return BRIDGE_OK;
 
+	case BRIDGE_OP_ENTITY_PARAM: {
+		int32_t slot, field, c;
+		float   value[4];
+
+		if (!tape_i32(t, &id) || !tape_i32(t, &slot) ||
+		    !tape_i32(t, &field))
+			return BRIDGE_ERR_PAYLOAD;
+		for (c = 0; c < 4; c++)
+			if (!tape_f32(t, &value[c]))
+				return BRIDGE_ERR_PAYLOAD;
+		/*
+		 * A rejected write is a notice, not a failed batch. The editor
+		 * racing the engine by one frame — a field index from a
+		 * declaration that has since changed — is ordinary operation.
+		 */
+		if (!bridge_params_write(en, b->host.asset, id, slot, field,
+					 value))
+			bridge_emit(b, "command.rejected",
+				    BRIDGE_OP_ENTITY_PARAM,
+				    "no such entity, slot or parameter");
+		return BRIDGE_OK;
+	}
+
 	case BRIDGE_OP_SET_PAUSED:
 		if (!tape_i32(t, &flag))
 			return BRIDGE_ERR_PAYLOAD;
@@ -798,6 +828,105 @@ static void write_scene_text(struct bridge *b, struct jw *w)
 }
 
 /*
+ * An entity's parameter blocks — the declaration and the current value of
+ * every field the inspector could show (#951).
+ *
+ * The declaration travels with the values on purpose. A client that cached
+ * declarations separately would have to invalidate that cache when an asset
+ * was rebound, and getting that wrong means a control laid out for the old
+ * mesh writing into the new one's block.
+ */
+static void write_entity_params(struct bridge *b, struct jw *w, int32_t id)
+{
+	struct bridge_param_block blocks[BRIDGE_MAX_PARAM_BLOCKS];
+	int32_t                   count, i, f, c;
+
+	count = bridge_params_collect(b->host.entity, b->host.asset, id, blocks,
+				      BRIDGE_MAX_PARAM_BLOCKS);
+	if (count < 0) {
+		/* Same answer write_entity gives for a gone entity, and for the
+		 * same reason: `null` is honest, an empty list is a claim. */
+		jw_put(w, "null");
+		return;
+	}
+
+	jw_put(w, "{");
+	jw_key(w, "id");
+	jw_i32(w, id);
+	jw_put(w, ",");
+	jw_key(w, "blocks");
+	jw_put(w, "[");
+	for (i = 0; i < count; i++) {
+		const struct bridge_param_block *bl = &blocks[i];
+
+		if (i)
+			jw_put(w, ",");
+		jw_put(w, "{");
+		jw_key(w, "slot");
+		jw_str(w, bl->slot);
+		jw_put(w, ",");
+		jw_key(w, "asset");
+		jw_u32(w, bl->asset);
+		jw_put(w, ",");
+		jw_key(w, "path");
+		jw_str_or_null(w, bl->path);
+		jw_put(w, ",");
+		jw_key(w, "size");
+		jw_u32(w, bl->total);
+		jw_put(w, ",");
+		jw_key(w, "overridden");
+		jw_bool(w, bl->overridden);
+		jw_put(w, ",");
+		jw_key(w, "truncated");
+		jw_bool(w, bl->truncated);
+		jw_put(w, ",");
+		jw_key(w, "fields");
+		jw_put(w, "[");
+		for (f = 0; f < bl->count; f++) {
+			const struct shader_param *p = &bl->fields[f];
+
+			if (f)
+				jw_put(w, ",");
+			jw_put(w, "{");
+			jw_key(w, "name");
+			jw_str(w, p->name);
+			jw_put(w, ",");
+			jw_key(w, "type");
+			jw_str(w, p->type);
+			jw_put(w, ",");
+			jw_key(w, "components");
+			jw_u32(w, p->components);
+			jw_put(w, ",");
+			/*
+			 * "none", "color" or "range" — the authored (edit ...)
+			 * hint, verbatim. This one string is what the whole
+			 * derivation turns on, and the editor must never infer
+			 * it from the name or the type.
+			 */
+			jw_key(w, "edit");
+			jw_str(w, p->edit);
+			jw_put(w, ",");
+			jw_key(w, "min");
+			jw_f32(w, p->edit_min);
+			jw_put(w, ",");
+			jw_key(w, "max");
+			jw_f32(w, p->edit_max);
+			jw_put(w, ",");
+			jw_key(w, "value");
+			jw_put(w, "[");
+			for (c = 0; c < (int32_t)p->components && c < 4; c++) {
+				if (c)
+					jw_put(w, ",");
+				jw_f32(w, bl->values[f][c]);
+			}
+			jw_put(w, "]}");
+		}
+		jw_put(w, "]}");
+	}
+	jw_put(w, "]}");
+}
+
+/*
  * One query result. The generation is always reported, even on a hit: it is
  * what the caller stores, and returning it unconditionally means the client
  * never has to reason about which branch it took.
@@ -833,6 +962,12 @@ static int32_t answer_query(struct bridge *b, struct jw *w, uint16_t op,
 		kind = "scene.text";
 		domain = BRIDGE_SCENE;
 		break;
+	case BRIDGE_OP_QUERY_ENTITY_PARAMS:
+		kind = "entity.params";
+		domain = BRIDGE_SCENE;
+		if (!tape_i32(t, &id))
+			return BRIDGE_ERR_PAYLOAD;
+		break;
 	default:
 		return BRIDGE_ERR_OPCODE;
 	}
@@ -847,7 +982,8 @@ static int32_t answer_query(struct bridge *b, struct jw *w, uint16_t op,
 	jw_key(w, "kind");
 	jw_str(w, kind);
 	jw_put(w, ",");
-	if (op == BRIDGE_OP_QUERY_ENTITY) {
+	if (op == BRIDGE_OP_QUERY_ENTITY ||
+	    op == BRIDGE_OP_QUERY_ENTITY_PARAMS) {
 		jw_key(w, "id");
 		jw_i32(w, id);
 		jw_put(w, ",");
@@ -886,6 +1022,9 @@ static int32_t answer_query(struct bridge *b, struct jw *w, uint16_t op,
 		break;
 	case BRIDGE_OP_QUERY_SCENE_TEXT:
 		write_scene_text(b, w);
+		break;
+	case BRIDGE_OP_QUERY_ENTITY_PARAMS:
+		write_entity_params(b, w, id);
 		break;
 	default:
 		write_history(b, w);
@@ -982,6 +1121,7 @@ static int32_t op_fixed_bytes(uint16_t op, int32_t *out)
 	case BRIDGE_OP_ENTITY_MATERIAL_REF:
 	case BRIDGE_OP_ENTITY_SCRIPT_REF:
 	case BRIDGE_OP_QUERY_ENTITY:
+	case BRIDGE_OP_QUERY_ENTITY_PARAMS:
 		*out = 8;
 		return 1;
 	case BRIDGE_OP_ENTITY_TRANSFORM:
@@ -989,6 +1129,10 @@ static int32_t op_fixed_bytes(uint16_t op, int32_t *out)
 		return 1;
 	case BRIDGE_OP_ENTITY_CREATE:
 		*out = 4 + BRIDGE_TAPE_TRANSFORM_BYTES + 4 + 4;
+		return 1;
+	case BRIDGE_OP_ENTITY_PARAM:
+		/* id, slot, field, then four components. */
+		*out = 4 + 4 + 4 + 16;
 		return 1;
 	case BRIDGE_OP_GESTURE_BEGIN:
 	case BRIDGE_OP_ENTITY_NAME:

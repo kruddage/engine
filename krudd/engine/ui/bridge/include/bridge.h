@@ -2,6 +2,7 @@
 #ifndef BRIDGE_H
 #define BRIDGE_H
 
+#include "asset_api.h"
 #include "edit_api.h"
 #include "entity_api.h"
 
@@ -104,6 +105,15 @@ enum bridge_op {
 	BRIDGE_OP_ENTITY_RENDER_REF	= 0x0034,
 	BRIDGE_OP_ENTITY_MATERIAL_REF	= 0x0035,
 	BRIDGE_OP_ENTITY_SCRIPT_REF	= 0x0036,
+	/*
+	 * Set one field of one parameter block on an entity (#951).
+	 *
+	 * Carries a slot, a field index and up to four floats — never packed
+	 * bytes. The layout is the asset source's and the engine already parses
+	 * it; a client that packed its own blob would be a second implementation
+	 * of that rule, and the first divergence would be silent.
+	 */
+	BRIDGE_OP_ENTITY_PARAM		= 0x0037,
 
 	BRIDGE_OP_SET_PAUSED		= 0x0040,
 
@@ -131,7 +141,13 @@ enum bridge_op {
 	 * path into a per-edit one. The client asks for it once, when the
 	 * reader saves.
 	 */
-	BRIDGE_OP_QUERY_SCENE_TEXT	= 0x0104
+	BRIDGE_OP_QUERY_SCENE_TEXT	= 0x0104,
+	/*
+	 * An entity's editable parameters: what each bound asset declares, and
+	 * what value each field is actually at. The inspector derives its whole
+	 * UI from this and holds none of it (#951).
+	 */
+	BRIDGE_OP_QUERY_ENTITY_PARAMS	= 0x0105
 };
 
 /*
@@ -159,6 +175,13 @@ enum bridge_status {
 struct bridge_host {
 	const struct entity_api	*entity;
 	const struct edit_api	*edit;
+	/*
+	 * The catalog. Needed to reach an asset's source text, which is where a
+	 * (params ...) clause lives — so it is what makes the inspector's
+	 * derivation possible at all. Optional: a build without it answers the
+	 * params query with an empty list rather than failing.
+	 */
+	const struct asset_api	*asset;
 };
 
 /* Discrete notices — the part of the outbound stream a generation cannot say. */

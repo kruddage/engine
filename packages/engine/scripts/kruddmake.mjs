@@ -2,41 +2,44 @@
 //
 // Where @kruddage/engine reaches the build.
 //
-// It resolves @kruddage/kruddmake — a declared dependency in this package's
-// manifest — rather than spelling a path to the repo root. That is the whole
-// point of #920: "only @kruddage/engine may drive the engine build" used to be
-// a regex in scripts/check-barriers.mjs matching the string "krudd.sh", and is
-// now an edge in the package graph. A package that has not declared the
-// dependency cannot resolve it.
+// kruddmake is not a package (#934), so there is nothing to resolve: the paths
+// below are spelled out from the repo root, which this file locates by counting
+// back from its own — packages/engine/scripts, three levels down.
 //
-// The resolution goes through "./package.json", which is the only thing
-// kruddmake exports. There is no JS surface to import — kruddmake is Scheme
+// That is a package reaching krudd/ by path, which
+// tools/barriers/check-barriers.mjs rule 3 forbids. What permits it is the
+// exemption written into that rule: it applies to every package but
+// @kruddage/engine, and this is @kruddage/engine.
+// The exemption is the whole of the permission, and since rule 2 went with the
+// package it named, it is also the only gate between krudd/ and the rest of the
+// workspace — so the reason to keep this the one file that knows kruddmake's
+// layout has changed. It is no longer tidiness. Every other module in this
+// package asks here, which keeps the paths that rule 3 would otherwise catch
+// countable on sight.
+//
+// There was never a JS surface to import in any case. kruddmake is Scheme
 // behind a POSIX shell entry point, and this module spawns that entry point.
 
 import { spawnSync } from "node:child_process";
-import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const require = createRequire(import.meta.url);
+/* packages/engine/scripts -> packages/engine -> packages -> the repo root. */
+const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
-/** The kruddmake package directory. */
-export const KRUDDMAKE = dirname(
-	require.resolve("@kruddage/kruddmake/package.json")
-);
-
-/** Its entry point — the surface named in krudd/kruddmake/README.md. */
-export const KRUDDMAKE_SH = join(KRUDDMAKE, "kruddmake.sh");
+/** The build entry point — the surface named in krudd/kruddmake/README.md. */
+export const KRUDDMAKE_SH = join(REPO, "krudd/kruddmake/kruddmake.sh");
 
 /** The whole native suite: kruddmake's Scheme tests, then the toolchain ones. */
-export const KRUDDMAKE_TESTS = join(KRUDDMAKE, "run-tests.sh");
+export const KRUDDMAKE_TESTS = join(REPO, "krudd/kruddmake/run-tests.sh");
 
 /**
  * Run one of kruddmake's shell entry points, inheriting stdio.
  *
- * Invoked through `sh` rather than executed directly: pnpm does not preserve
- * the executable bit when it materializes a workspace link on every platform,
- * and these scripts are POSIX shell by design (no node in the native suite's
- * path).
+ * Invoked through `sh` rather than executed directly. These scripts are POSIX
+ * shell by design — no node anywhere in the native suite's path — and `sh
+ * <script>` is how CI, the README and a contributor with a compiler all invoke
+ * them, so it is the form that gets exercised.
  *
  * @param {string} script absolute path to a kruddmake entry point
  * @param {string[]} args arguments for it

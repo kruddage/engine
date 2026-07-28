@@ -3,10 +3,10 @@
 // @kruddage/engine — the engine's JS-facing API.
 //
 // Everything downstream reads the build through this module. Nothing outside
-// this package may depend on @kruddage/kruddmake, open krudd/ by path, or reach
-// into the kruddmake build directory: driving the build is this package's
-// private business, and scripts/check-barriers.mjs fails the workspace if
-// another package does any of it.
+// this package may open krudd/ by path or reach into the kruddmake build
+// directory: driving the build is this package's private business, and
+// tools/barriers/check-barriers.mjs fails the workspace if another package
+// does either.
 //
 // What is offered is deliberately narrow — where the artifacts are, what role
 // each one plays, and which C entry points the module exports. The engine is

@@ -6,7 +6,12 @@
 // on their own, rather than by everyone remembering where the lines are. This
 // is what makes them hold.
 //
-// Three rules:
+// Two rules. They are numbered 1 and 3, and the gap is deliberate: these
+// numbers are names. WORKSPACE.md's Q4 and the issues behind it argue about
+// "rule 2" and "rule 3" by number, and sliding rule 3 down into the vacancy
+// would leave every one of those references pointing at a rule it was not
+// written about — silently, because the number it now names is also a real
+// one. A gap a reader can see beats a citation that has quietly moved.
 //
 //   1. A package may not reach into another package by relative path. Cross-
 //      package code travels through the package name, which means it travels
@@ -15,25 +20,25 @@
 //      import routes around all of that, and it is the way every module system
 //      erodes.
 //
-//   2. Only @kruddage/engine may depend on @kruddage/kruddmake. The build
-//      language is a package now (#920), so "only @kruddage/engine may drive
-//      the engine build" is a statement about the dependency graph, and this
-//      is what reads it back. A package that has not declared the dependency
-//      cannot resolve it.
-//
 //   3. Nothing but @kruddage/engine may reach the build tree out of band —
 //      by a path into krudd/, or through the generator's environment
-//      (KRUDD_TARGET, KRUDD_BUILD_DIR). Rule 2 has an opinion about naming
-//      kruddmake, and rule 1 about importing across a package boundary;
-//      neither can see a spawn of a path or an env var read, which is what is
-//      left for a text match to do.
+//      (KRUDD_TARGET, KRUDD_BUILD_DIR). Rule 1 has an opinion about importing
+//      across a package boundary; it cannot see a spawn of a path or an env
+//      var read, which is what is left for a text match to do.
 //
-// Rule 3 used to carry a `krudd.sh` pattern as well, and no longer does. That
-// pattern was a package boundary drawn with a regex because the thing it
-// protected had no package to be inside of; krudd.sh is now a forwarding shim
-// over the entry point of one, so matching its name would be a second
-// mechanism for what rule 2 enforces. Two mechanisms for one rule is how the
-// second one rots.
+// Rule 2 was "only @kruddage/engine may depend on @kruddage/kruddmake", and it
+// went with the package it was about (#934). Its ground was already rule 3's:
+// the same `krudd/` subtree, matched by path, under the same @kruddage/engine
+// exemption. So it goes rather than being reimplemented as a regex beside the
+// one that already works — two mechanisms for one rule is how the second one
+// rots (WORKSPACE.md, Q4). Rule 3 lost a pattern the same way and for the same
+// reason: it used to match the repo-root forwarding script's filename, which
+// was a package boundary drawn with a regex because the thing it protected had
+// no package to be inside of. That script is retired (#935).
+//
+// The cost of collapsing onto rule 3 is real, and it is named again beside the
+// rule itself: rule 3's @kruddage/engine exemption is now load-bearing where it
+// used to be belt-and-braces.
 //
 // Run: pnpm check
 
@@ -50,17 +55,14 @@ const SOURCE_EXT = /\.(mjs|js|cjs|ts|mts)$/;
 const RELATIVE_IMPORT =
 	/(?:^|[^\w$])(?:import|export)[\s\S]{0,200}?from\s*["'](\.[^"']*)["']|(?:^|[^\w$])(?:import|require)\s*\(\s*["'](\.[^"']*)["']\s*\)/g;
 
-/* The build package. Only @kruddage/engine may name it (rule 2). */
-const KRUDDMAKE = "@kruddage/kruddmake";
-
-const DEPENDENCY_FIELDS = [
-	"dependencies",
-	"devDependencies",
-	"peerDependencies",
-	"optionalDependencies",
-];
-
-/* The engine build reached out of band, past both graph rules (rule 3). */
+/* The engine build reached out of band (rule 3).
+ *
+ * The @kruddage/engine exemption applied to these patterns — the `isEngine`
+ * skip in findViolations — is load-bearing since #934 removed rule 2. It used
+ * to be the second of two independent gates between a package and the build
+ * tree: rule 2 caught the dependency edge, this caught the path. There is one
+ * gate now. Widening the exemption, or letting a second package call itself
+ * @kruddage/engine, leaves nothing behind it. */
 const ENGINE_PRIVATE = [
 	{
 		pattern: /\bkrudd\/(kruddmake|engine|third_party)\//,
@@ -71,29 +73,45 @@ const ENGINE_PRIVATE = [
 
 /**
  * Workspace package directories, relative to the repo root. Mirrors
- * pnpm-workspace.yaml — including its `krudd/engine/**` glob, which is why that
- * tree is walked for manifests rather than listed. A C module joins the
- * workspace by gaining a package.json beside its build.scm (#918, Q1), and it
- * has to join this check at the same moment: a package the boundary check does
- * not know about is a package with no boundary.
+ * pnpm-workspace.yaml, entry for entry: a package the boundary check does not
+ * know about is a package with no boundary, so the two lists have to be read as
+ * one thing. Both `packages/*` and `tools/*` are expanded off the filesystem
+ * here for the same reason they are globs there — a new package under either
+ * directory is inside the check the moment it exists, rather than when someone
+ * remembers a second list.
  *
- * The walk starts at `krudd`, not `krudd/engine`, because @kruddage/kruddmake
- * lives beside the engine tree rather than in it (#920) — and it is the package
- * rule 2 is about, so it is the last one that may be invisible here.
+ * `tools/*` is read with manifestDirs rather than a plain readdir, because not
+ * every directory under tools/ declares itself a package — tools/dawn-smoke is
+ * C and a shell script, no package.json, no JS for rules 1 or 3 to read. A
+ * plain readdir would hand its name to findViolations, which would then fail
+ * it for the same reason it fails a ghost package: no readable package.json.
+ * manifestDirs already answers "which directories here declared themselves a
+ * package", which is exactly the question.
  *
- * These packages hold no JS: kruddmake is Scheme behind a POSIX shell entry
- * point, and the C modules are declarations. Rules 1 and 3 read source files
- * and so pass over them in silence; rule 2 reads manifests and does not.
+ * krudd/ is not here and is not walked for manifests. The C tree left the
+ * workspace with #934 and holds none; rules 1 and 3 read source files, and
+ * there is no JS in that tree to read. Rule 3 guards it from the outside
+ * instead, which is the only direction the guard was ever needed in.
  */
 export function packageDirs(repo) {
 	return [
 		...readdirSync(join(repo, "packages")).map((d) => join("packages", d)),
-		"tools/render-diff",
-		...manifestDirs(repo, "krudd"),
+		...(existsSync(join(repo, "tools")) ? manifestDirs(repo, "tools") : []),
 	];
 }
 
-/** Directories at or below `root` that hold a package.json, repo-relative. */
+/**
+ * Directories at or below `root` that hold a package.json, repo-relative.
+ *
+ * Used by packageDirs for tools/, where membership is discovered rather than
+ * listed for the same reason packages/* is a glob: a package the boundary
+ * check does not know about is a package with no boundary. It was unused
+ * between #934 (which took the C tree's two manifests out of packageDirs) and
+ * this commit (which gives tools/ the same discovery packages/ already had) —
+ * kept across that gap because the question it answers is one a workspace
+ * whose membership is discovered rather than listed always has to ask again.
+ * Deleting it and writing it again was not a saving.
+ */
 function manifestDirs(repo, root) {
 	const out = [];
 	const walk = (relative) => {
@@ -145,20 +163,6 @@ export function findViolations(repo, dirs = packageDirs(repo)) {
 
 		const isEngine = manifest.name === "@kruddage/engine";
 
-		/* Rule 2. Every dependency field, not just "dependencies": moving the
-		 * spec to devDependencies would resolve exactly the same and route
-		 * around a check that only looked at one of them. */
-		if (!isEngine) {
-			for (const field of DEPENDENCY_FIELDS) {
-				if (!manifest[field]?.[KRUDDMAKE]) continue;
-				problems.push(
-					`${packageDir}: declares ${KRUDDMAKE} in "${field}". Only ` +
-						`@kruddage/engine may drive the engine build; ask it for ` +
-						`build outputs instead of producing them here.`
-				);
-			}
-		}
-
 		for (const file of sourceFiles(abs)) {
 			const where = relative(repo, file);
 			/* Comments are stripped first: the names these rules forbid are the
@@ -194,7 +198,7 @@ export function findViolations(repo, dirs = packageDirs(repo)) {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-	const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+	const repo = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 	const dirs = packageDirs(repo);
 	const problems = findViolations(repo, dirs);
 

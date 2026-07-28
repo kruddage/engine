@@ -27,7 +27,7 @@ jobs:
       # on the WASM build.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
 
       - name: Install workspace
         run: |
@@ -39,6 +39,17 @@ jobs:
 
       - name: Workspace boundaries
         run: pnpm check
+
+      # kruddmake's Scheme suite, reached by path rather than through the
+      # workspace — the same choice `sanitizers` and `coverage` make below,
+      # and for the same reason (WORKSPACE.md, Q2): it runs on the pinned s7
+      # CLI that sync.sh fetches with curl, needs no compiler, and needs no
+      # Node either, so routing it through pnpm would add a dependency for no
+      # gain. It used to arrive as a side effect of `pnpm -r run test`; that
+      # stopped working when krudd/ left the workspace and this stopped being
+      # a package's `test` script (#934), so it is named as its own step now.
+      - name: kruddmake Scheme suite
+        run: sh krudd/kruddmake/run-scheme-tests.sh
 
       # .scm files are indented per CODING_STANDARD.md's Scheme section: spaces,
       # call arguments aligned under the first argument — Emacs scheme-mode's
@@ -69,9 +80,9 @@ jobs:
       - name: Trust the workspace
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      # krudd.sh picks clang first if it's on PATH, falling back to gcc then
-      # cc, so installing clang here makes CI build with it by default while
-      # keeping gcc as the fallback compiler. curl is required by
+      # kruddmake.sh picks clang first if it's on PATH, falling back to gcc
+      # then cc, so installing clang here makes CI build with it by default
+      # while keeping gcc as the fallback compiler. curl is required by
       # krudd/third_party/sync.sh to fetch the latest s7 release artifacts
       # (header + static libs + CLI), which are not committed to the repo.
       - name: Install a host compiler and ninja for krudd
@@ -98,16 +109,16 @@ jobs:
           fi
 
       # The build now enters through the pnpm workspace. @kruddage/engine still
-      # runs ./krudd.sh underneath — kruddmake remains the build system for C
-      # and WASM, generating build.ninja from the directory specs and driving
-      # ninja with emcc/em++ directly, no cmake and no emcmake. What the package
-      # adds is the boundary: it harvests the outputs into a dist/ with a
-      # manifest describing them, and everything downstream reads that instead
-      # of the build tree. KRUDD_VERSION comes from the version step above —
-      # see introspect.scm.
+      # runs krudd/kruddmake/kruddmake.sh underneath — kruddmake remains the
+      # build system for C and WASM, generating build.ninja from the directory
+      # specs and driving ninja with emcc/em++ directly, no cmake and no
+      # emcmake. What the package adds is the boundary: it harvests the
+      # outputs into a dist/ with a manifest describing them, and everything
+      # downstream reads that instead of the build tree. KRUDD_VERSION comes
+      # from the version step above — see introspect.scm.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
 
       - name: Install workspace
         run: |
@@ -220,6 +231,12 @@ jobs:
   # used because its libasan/libubsan runtimes ship with the runner image;
   # the sanitizer flags ride in through kruddmake's KRUDD_EXTRA_* env hooks so
   # this is the ordinary native build with instrumentation, not a fork of it.
+  #
+  # It calls run-tests.sh by path rather than through the workspace, and that
+  # is deliberate, not an oversight: this job needs no Node at all, and
+  # routing a C test run through pnpm to satisfy a slogan would put Node in
+  # its path for no gain (WORKSPACE.md, Q2). `coverage` below makes the same
+  # call for the same reason.
   sanitizers:
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
     runs-on: ubuntu-latest
@@ -249,6 +266,9 @@ jobs:
   # the floor gate is intentionally deferred until the baseline has been
   # watched (see README). Coverage needs its own -O0 --coverage build, so it
   # runs separately from the sanitizer job in its own build directory.
+  #
+  # It also calls run-tests.sh by path rather than through the workspace —
+  # same reasoning as `sanitizers` above, see that job's comment.
   coverage:
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
     runs-on: ubuntu-latest

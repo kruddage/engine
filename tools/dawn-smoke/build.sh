@@ -3,9 +3,10 @@
 #
 # Build the dawn-smoke binary against an external native Dawn checkout.
 #
-# This is deliberately NOT part of `./krudd.sh build`. dawn-smoke's whole job is
-# to prove the Dawn build seam works before any engine code depends on it, so it
-# must be buildable without the engine build graph having grown a Dawn edge yet.
+# This is deliberately NOT part of `krudd/kruddmake/kruddmake.sh build`.
+# dawn-smoke's whole job is to prove the Dawn build seam works before any
+# engine code depends on it, so it must be buildable without the engine build
+# graph having grown a Dawn edge yet.
 # See tools/dawn-smoke/README.md for how the same flags map onto kruddmake.
 #
 #   DAWN_PREFIX=/path/to/dawn-native/install ./tools/dawn-smoke/build.sh

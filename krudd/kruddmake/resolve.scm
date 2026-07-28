@@ -298,7 +298,7 @@
 ;;! way to tell from inside the tree whether the list was wrong or the link was
 ;;! (#923).
 ;;!
-;;! The check lives here rather than in scripts/check-barriers.mjs because
+;;! The check lives here rather than in tools/barriers/check-barriers.mjs because
 ;;! kruddmake already holds both halves of it: manifest.scm's order is the list
 ;;! this very generator is driven by, and rz-target-table already records the
 ;;! module each library was declared in. Reading them from JS would mean a

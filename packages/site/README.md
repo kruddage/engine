@@ -21,7 +21,7 @@ archives and dependency checkouts that must never reach the Pages branch. That
 part is unchanged from the shell script. What changed is where the rules come
 from — this package asks `@kruddage/engine` what was built, which of those files
 may be renamed, and what hash to rename them to. It does not look at
-`<repo>/build`, does not run `krudd.sh`, and does not derive the hash itself.
+`<repo>/build`, does not run kruddmake, and does not derive the hash itself.
 `pnpm check` fails the workspace if that ever stops being true.
 
 ## The failure this prevents

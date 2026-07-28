@@ -1,0 +1,10 @@
+{
+	"name": "@kruddage/dawn-smoke",
+	"version": "0.0.0",
+	"private": true,
+	"description": "The smallest thing that proves a native Dawn build works offscreen: create instance -> adapter -> device, clear a texture, read it back, write a PNG. Needs DAWN_PREFIX and a Dawn install that is not fetched here, so it has no build script and is reached with `pnpm --filter @kruddage/dawn-smoke run smoke`.",
+	"license": "GPL-2.0-or-later",
+	"scripts": {
+		"smoke": "sh build.sh && ./out/dawn-smoke out.png"
+	}
+}

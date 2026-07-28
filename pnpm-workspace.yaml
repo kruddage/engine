@@ -1,22 +1,33 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
-# The workspace is the outer build system: it sequences the packages and
-# enforces the boundaries between them. It does not replace kruddmake — the
-# engine's C/WASM build stays in krudd/ and is driven by @kruddage/kruddmake,
-# which @kruddage/engine depends on and wraps (see packages/engine/README.md).
+# The workspace is the physical design of the JavaScript layer, and this list is
+# all of it: every package under packages/, every package under tools/. Each
+# declares a name, a surface and what it may reach, and `pnpm check` reads those
+# declarations back (see WORKSPACE.md, Q1). There are no third-party
+# dependencies to resolve.
 #
-# krudd/kruddmake is that build language, and one of the two C-tree packages
-# that carry a real `test`: its Scheme suite runs on the fetched s7 interpreter
-# with no compiler and no emsdk (#920).
+# krudd/ is not here. #917 gave two of the C tree's twenty-three modules a
+# manifest and #924 was to have given the other twenty-one theirs; #924 closed
+# unstarted, and a tree that is 2/23 packaged is worse than one that is 0/23,
+# because a reader cannot tell whether the missing modules are pending or
+# excluded on purpose. They are excluded on purpose (#934). The C build is
+# kruddmake — Scheme behind a POSIX shell entry point, needing a compiler and
+# nothing else — and a manifest beside a build.scm bought that tree nothing it
+# did not already have, while inviting Node into the one path that is deliberate
+# about not needing it (WORKSPACE.md, Q2).
 #
-# krudd/engine/** is the C tree. Those packages carry no build or test script —
-# a C module's build is one edge in one ninja graph and cannot be driven per
-# module — so they are here as names, dependency lists and surfaces, which is
-# what #917 is for. The glob matches directories that hold a package.json and
-# ignores the rest, so a module joins the workspace by gaining a manifest beside
-# its build.scm rather than by being added to a list here (#918, Q1).
+# Both globs, no per-package exceptions. `tools/render-diff` used to be listed
+# by name here, and the rest of tools/ — tools/dawn-smoke, at the time this
+# comment was written — was reachable by neither this file nor kruddmake, in no
+# door at all. A glob would have covered both from the start; a list covers
+# whichever entries someone remembered to add. `packages/*` and `tools/*` mean a
+# new package under either directory is inside the boundary check the moment it
+# exists; tools/barriers/check-barriers.mjs's packageDirs() reads the same shape
+# back off the filesystem, because a package the check does not know about is a
+# package with no boundary. A directory under tools/ with no package.json — a
+# smoke test built from C and a shell script, say — is simply not a package,
+# and the glob finds nothing to package there; it is not an exception to carve
+# out.
 packages:
   - packages/*
-  - tools/render-diff
-  - krudd/kruddmake
-  - krudd/engine/**
+  - tools/*

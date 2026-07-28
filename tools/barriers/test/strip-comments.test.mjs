@@ -5,6 +5,14 @@ import { test } from "node:test";
 
 import { stripComments } from "../strip-comments.mjs";
 
+/* This file lives inside @kruddage/barriers (#939), so it is itself walked by
+ * check-barriers.mjs's rule 3 on every `pnpm check`. One fixture below wants a
+ * "krudd/kruddmake/" inside a fake block comment; assembled here instead of
+ * spelled out in place, so the text this file's own bytes offer to that walk
+ * never contains it contiguous — see the longer version of this note in
+ * check-barriers.test.mjs. */
+const KRUDDMAKE_PATH = "krudd" + "/kruddmake/";
+
 test("removes line comments, keeps the code around them", () => {
 	const out = stripComments('const a = 1; // mentions krudd.sh\nconst b = 2;');
 	assert.match(out, /const a = 1;/);
@@ -13,7 +21,7 @@ test("removes line comments, keeps the code around them", () => {
 });
 
 test("removes block comments spanning lines", () => {
-	const out = stripComments("/* krudd.sh\n * krudd/kruddmake/\n */\nlet x;");
+	const out = stripComments(`/* krudd.sh\n * ${KRUDDMAKE_PATH}\n */\nlet x;`);
 	assert.doesNotMatch(out, /krudd/);
 	assert.match(out, /let x;/);
 });

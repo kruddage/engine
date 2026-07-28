@@ -5,9 +5,10 @@ The smallest thing that proves a **native Dawn** build works offscreen on this
 box: create instance → adapter → device, clear a texture to a known colour, read
 the pixels back, write a PNG.
 
-It touches no engine code, and it is not part of `./krudd.sh build`. That is the
-point — it has to be buildable *before* the engine build graph grows a Dawn edge,
-so the build seam can be proven independently of the code that will use it.
+It touches no engine code, and it is not part of
+`krudd/kruddmake/kruddmake.sh build`. That is the point — it has to be
+buildable *before* the engine build graph grows a Dawn edge, so the build seam
+can be proven independently of the code that will use it.
 
 Chunk 1 of `spec-dawn-native-build`. Chunk 2 (the platform split in
 `renderer_webgpu.c`) is separate work.
@@ -102,17 +103,17 @@ rounding argument.
 Chunk 2 landed the include half of the seam. With Dawn installed as above:
 
 ```sh
-KRUDD_DAWN_PREFIX=/path/to/dawn-native/install ./krudd.sh build
+KRUDD_DAWN_PREFIX=/path/to/dawn-native/install krudd/kruddmake/kruddmake.sh build
 ```
 
 `renderer_webgpu.c` then compiles for the native target too, against the same
 Dawn revision the web build uses.
 
-**`KRUDD_DAWN_PREFIX` is opt-in on purpose.** Unset — which is how CI runs — any
-`(dawn)` target is left out of the native graph entirely and `./krudd.sh build`
-is byte-for-byte what it was before. Dawn is a ~38 MB out-of-tree artifact, so
-making it a hard build dependency would break every checkout that has not built
-it.
+**`KRUDD_DAWN_PREFIX` is opt-in on purpose.** Unset — which is how CI runs —
+any `(dawn)` target is left out of the native graph entirely and
+`krudd/kruddmake/kruddmake.sh build` is byte-for-byte what it was before. Dawn
+is a ~38 MB out-of-tree artifact, so making it a hard build dependency would
+break every checkout that has not built it.
 
 The WASM target ignores `(dawn)` entirely: there the headers arrive through
 `--use-port=emdawnwebgpu`.
@@ -124,7 +125,7 @@ against native Dawn, run for N frames with no browser and no compositor, colour
 target read back and written to a PNG.
 
 ```
-KRUDD_DAWN_PREFIX=/path/to/dawn-native/install ./krudd.sh build
+KRUDD_DAWN_PREFIX=/path/to/dawn-native/install krudd/kruddmake/kruddmake.sh build
 ```
 
 ```

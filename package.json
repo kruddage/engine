@@ -2,7 +2,7 @@
 	"name": "@kruddage/workspace",
 	"version": "0.0.0",
 	"private": true,
-	"description": "pnpm workspace root for the KRUDD engine. The engine itself still builds through krudd.sh; this layer sequences packages and enforces the boundaries between them.",
+	"description": "pnpm workspace root for the KRUDD engine. The engine itself still builds through @kruddage/kruddmake; this layer sequences packages and enforces the boundaries between them.",
 	"license": "GPL-2.0-or-later",
 	"packageManager": "pnpm@10.33.0",
 	"engines": {

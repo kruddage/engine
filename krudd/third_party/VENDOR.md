@@ -31,9 +31,9 @@ the browser's single WASM module.
 
 ## Fetch
 
-`../krudd.sh` and `../kruddmake/run-tests.sh` source `sync.sh` before linking
-anything that touches s7 — including the `krudd.sh` bootstrap itself, which needs
-the library before the `krudd` host tool exists. The artifacts are **not
+`../kruddmake/kruddmake.sh` and `../kruddmake/run-scheme-tests.sh` source
+`sync.sh` before anything that touches s7 — including the `kruddmake.sh`
+bootstrap itself, which needs the library before the `krudd` host tool exists. The artifacts are **not
 committed** (see the repo `.gitignore`), so a fresh checkout fetches them on the
 first build; `sync.sh` is idempotent, so once each artifact is present and
 matches its sidecar checksum, no artifact is re-downloaded on later runs (the
@@ -71,7 +71,7 @@ binaries are unchanged), and `$s7wasmlib` links into the WASM main module.
 There is no tag to bump: `sync.sh` re-fetches each asset's `.sha256` sidecar on
 every run and re-downloads whenever the cached artifact no longer matches it, so
 a new `kruddage/s7` release is picked up automatically the next time `sync.sh`
-(or `krudd.sh`) runs. Each download is still checksum-verified against its
+(or `kruddmake.sh`) runs. Each download is still checksum-verified against its
 published sidecar, so a corrupted or truncated fetch fails loudly — but a
 *bad* `kruddage/s7` release (one that publishes broken artifacts with a
 matching sidecar, as v0.4.0 did) will now reach every build immediately instead
@@ -102,7 +102,7 @@ commercial license offered alongside the GPL build.
 
 The `kruddage/s7` release builds the libraries with `WITH_C_LOADER=0` (drops the
 `dlopen`-based external-C-library loader — unneeded, unwanted surface for a build
-tool) and `WITH_MAIN=0` (a library, not a REPL binary). `../krudd.sh` passes the
+tool) and `WITH_MAIN=0` (a library, not a REPL binary). `../kruddmake/kruddmake.sh` passes the
 same `-DWITH_C_LOADER=0 -DWITH_MAIN=0` when compiling `krudd.c` so its view of
 `s7.h` matches how the linked library was built. s7 is upstream code, so the
 engine's warning flags are not enforced against it.

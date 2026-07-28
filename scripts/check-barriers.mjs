@@ -6,7 +6,7 @@
 // on their own, rather than by everyone remembering where the lines are. This
 // is what makes them hold.
 //
-// Two rules:
+// Three rules:
 //
 //   1. A package may not reach into another package by relative path. Cross-
 //      package code travels through the package name, which means it travels
@@ -15,9 +15,25 @@
 //      import routes around all of that, and it is the way every module system
 //      erodes.
 //
-//   2. Only @kruddage/engine may drive the engine build. krudd.sh, krudd/, and
-//      the kruddmake output directory are that package's private business.
-//      Anything else that wants build outputs asks @kruddage/engine for them.
+//   2. Only @kruddage/engine may depend on @kruddage/kruddmake. The build
+//      language is a package now (#920), so "only @kruddage/engine may drive
+//      the engine build" is a statement about the dependency graph, and this
+//      is what reads it back. A package that has not declared the dependency
+//      cannot resolve it.
+//
+//   3. Nothing but @kruddage/engine may reach the build tree out of band —
+//      by a path into krudd/, or through the generator's environment
+//      (KRUDD_TARGET, KRUDD_BUILD_DIR). Rule 2 has an opinion about naming
+//      kruddmake, and rule 1 about importing across a package boundary;
+//      neither can see a spawn of a path or an env var read, which is what is
+//      left for a text match to do.
+//
+// Rule 3 used to carry a `krudd.sh` pattern as well, and no longer does. That
+// pattern was a package boundary drawn with a regex because the thing it
+// protected had no package to be inside of; krudd.sh is now a forwarding shim
+// over the entry point of one, so matching its name would be a second
+// mechanism for what rule 2 enforces. Two mechanisms for one rule is how the
+// second one rots.
 //
 // Run: pnpm check
 
@@ -34,36 +50,46 @@ const SOURCE_EXT = /\.(mjs|js|cjs|ts|mts)$/;
 const RELATIVE_IMPORT =
 	/(?:^|[^\w$])(?:import|export)[\s\S]{0,200}?from\s*["'](\.[^"']*)["']|(?:^|[^\w$])(?:import|require)\s*\(\s*["'](\.[^"']*)["']\s*\)/g;
 
-/* Engine-build entry points only @kruddage/engine may reach for. */
+/* The build package. Only @kruddage/engine may name it (rule 2). */
+const KRUDDMAKE = "@kruddage/kruddmake";
+
+const DEPENDENCY_FIELDS = [
+	"dependencies",
+	"devDependencies",
+	"peerDependencies",
+	"optionalDependencies",
+];
+
+/* The engine build reached out of band, past both graph rules (rule 3). */
 const ENGINE_PRIVATE = [
-	{ pattern: /\bkrudd\.sh\b/, what: "krudd.sh" },
 	{
 		pattern: /\bkrudd\/(kruddmake|engine|third_party)\//,
-		what: "krudd/ internals",
+		what: "krudd/ by path",
 	},
 	{ pattern: /\bKRUDD_(TARGET|BUILD_DIR)\b/, what: "the kruddmake build environment" },
 ];
 
 /**
  * Workspace package directories, relative to the repo root. Mirrors
- * pnpm-workspace.yaml — including its `krudd/engine/**` glob, which is why the
- * C tree is walked for manifests rather than listed. A C module joins the
+ * pnpm-workspace.yaml — including its `krudd/engine/**` glob, which is why that
+ * tree is walked for manifests rather than listed. A C module joins the
  * workspace by gaining a package.json beside its build.scm (#918, Q1), and it
  * has to join this check at the same moment: a package the boundary check does
  * not know about is a package with no boundary.
  *
- * Those packages hold no JS today, so both rules below pass over them in
- * silence. That is the correct amount of work for a declaration — but it means
- * the first C package that grows a script is the first one either rule has
- * anything to say about, and rule 2 in particular will have to be revisited
- * then, since `krudd/` internals being private to @kruddage/engine reads
- * differently once packages live inside `krudd/` (#920).
+ * The walk starts at `krudd`, not `krudd/engine`, because @kruddage/kruddmake
+ * lives beside the engine tree rather than in it (#920) — and it is the package
+ * rule 2 is about, so it is the last one that may be invisible here.
+ *
+ * These packages hold no JS: kruddmake is Scheme behind a POSIX shell entry
+ * point, and the C modules are declarations. Rules 1 and 3 read source files
+ * and so pass over them in silence; rule 2 reads manifests and does not.
  */
 export function packageDirs(repo) {
 	return [
 		...readdirSync(join(repo, "packages")).map((d) => join("packages", d)),
 		"tools/render-diff",
-		...manifestDirs(repo, "krudd/engine"),
+		...manifestDirs(repo, "krudd"),
 	];
 }
 
@@ -118,6 +144,20 @@ export function findViolations(repo, dirs = packageDirs(repo)) {
 		}
 
 		const isEngine = manifest.name === "@kruddage/engine";
+
+		/* Rule 2. Every dependency field, not just "dependencies": moving the
+		 * spec to devDependencies would resolve exactly the same and route
+		 * around a check that only looked at one of them. */
+		if (!isEngine) {
+			for (const field of DEPENDENCY_FIELDS) {
+				if (!manifest[field]?.[KRUDDMAKE]) continue;
+				problems.push(
+					`${packageDir}: declares ${KRUDDMAKE} in "${field}". Only ` +
+						`@kruddage/engine may drive the engine build; ask it for ` +
+						`build outputs instead of producing them here.`
+				);
+			}
+		}
 
 		for (const file of sourceFiles(abs)) {
 			const where = relative(repo, file);

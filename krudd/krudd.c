@@ -10,7 +10,8 @@
  * scaffolder. The point of this file is the front door (`krudd`); the insides
  * live in Scheme and are meant to be gutted from behind while it stays put.
  *
- * Built with the system compiler by krudd.sh; it owns no engine headers.
+ * Built with the system compiler by krudd/kruddmake/kruddmake.sh, whose package
+ * (@kruddage/kruddmake) this file belongs to; it owns no engine headers.
  */
 #include <dirent.h>
 #include <stdio.h>

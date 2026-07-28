@@ -27,10 +27,10 @@
 ;;! every error checked for its wording here carries one string argument.
 (define (error-text thunk)
   (catch #t
-    (lambda () (thunk) "")
-    (lambda args
-      (let ((info (cadr args)))
-        (if (and (pair? info) (string? (car info))) (car info) "")))))
+         (lambda () (thunk) "")
+         (lambda args
+           (let ((info (cadr args)))
+             (if (and (pair? info) (string? (car info))) (car info) "")))))
 
 (define (contains? hay needle)
   (let ((hl (string-length hay)) (nl (string-length needle)))

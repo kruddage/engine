@@ -112,9 +112,10 @@ directly — there is no CMake in the build path.
 ### The pnpm workspace
 
 The engine builds through a pnpm workspace that wraps kruddmake rather than
-replacing it. `@kruddage/engine` runs `krudd.sh` underneath and publishes the
-resulting artifacts behind a declared surface; everything downstream reads that
-surface instead of the build tree.
+replacing it. `@kruddage/engine` declares a dependency on `@kruddage/kruddmake`
+and drives the build through it, then publishes the resulting artifacts behind a
+declared surface; everything downstream reads that surface instead of the build
+tree.
 
 ```sh
 corepack enable
@@ -125,15 +126,19 @@ pnpm test    # the workspace's own suite — pure Node, no toolchain
 pnpm check   # package boundaries
 ```
 
-The native C suite is unchanged and still runs through kruddmake; it is reachable
-from the workspace as `pnpm --filter @kruddage/engine run test:native`, and is
-what the sanitizer and coverage jobs build.
+**Node is not a prerequisite for the native suite.** kruddmake is POSIX shell
+and Scheme all the way down, and `sh krudd/kruddmake/run-tests.sh` builds and
+runs the C tests with a compiler and nothing else — which is what the sanitizer
+and coverage jobs invoke. That the workspace can also reach it, as
+`pnpm --filter @kruddage/engine run test:native`, is a second door.
 
 | Package | What it is |
 |---|---|
+| [`@kruddage/kruddmake`](krudd/kruddmake) | The build language: specs → `build.ninja`, and the entry point that drives it |
 | [`@kruddage/engine`](packages/engine) | The engine's WASM build, harvested into `dist/` with a manifest describing it |
 | [`@kruddage/site`](packages/site) | Stages the deployable static site from those artifacts (replaces `stage-site.sh`) |
 | [`@kruddage/render-diff`](tools/render-diff) | Screenshot oracle for the WebGPU port |
+| [`@kruddage/abi`](krudd/engine/abi) | The plugin vtables — a name and a surface over headers, no build |
 
 There are no third-party dependencies. `pnpm install` links the workspace and
 downloads nothing, matching how the rest of the repo treats its supply chain
@@ -141,9 +146,11 @@ downloads nothing, matching how the rest of the repo treats its supply chain
 
 The point of the split is the boundary, not the packaging. `pnpm check` fails
 the build when a package reaches into another by relative path — routing around
-the `exports` map — or when anything but `@kruddage/engine` drives the engine
-build directly. See [`packages/engine/README.md`](packages/engine/README.md) for
-what the barrier buys and where the next ones go.
+the `exports` map — when anything but `@kruddage/engine` declares a dependency
+on `@kruddage/kruddmake`, or when anything but `@kruddage/engine` reaches the
+build tree by path or through the generator's environment. See
+[`packages/engine/README.md`](packages/engine/README.md) for what the barrier
+buys and where the next ones go.
 
 ### WASM build
 
@@ -162,9 +169,12 @@ kruddmake is still reachable on its own, and the workspace changes nothing about
 what it does:
 
 ```sh
-KRUDD_TARGET=wasm ./krudd.sh build   # -> build/
+KRUDD_TARGET=wasm krudd/kruddmake/kruddmake.sh build   # -> build/
 python3 -m http.server -d build
 ```
+
+`./krudd.sh` at the repo root forwards to that entry point and holds no logic;
+it is kept for the muscle memory.
 
 ### Native build (tests only)
 
@@ -173,7 +183,7 @@ engine loop; the test stamps run the suite, so a green build is a green test run
 It needs no emsdk and no Node.
 
 ```sh
-./krudd.sh build
+krudd/kruddmake/kruddmake.sh build
 ```
 
 `KRUDD_BUILD_DIR` points the generated `build.ninja` and its objects somewhere

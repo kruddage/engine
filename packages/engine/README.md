@@ -2,22 +2,30 @@
 
 The KRUDD engine, as an npm package.
 
-The engine is not ported. It is still C, still built by kruddmake — the s7
-Scheme build system in `krudd/` that renders a `build.ninja` from per-directory
-specs and drives `emcc` through it. This package wraps that build and puts a
-declared surface in front of its output.
+The engine is not ported. It is still C, still built by
+[`@kruddage/kruddmake`](../../krudd/kruddmake) — the s7 Scheme build system that
+renders a `build.ninja` from per-directory specs and drives `emcc` through it.
+This package wraps that build and puts a declared surface in front of its
+output.
 
 ```sh
-pnpm --filter @kruddage/engine run build   # needs emsdk on PATH
-pnpm --filter @kruddage/engine run test    # native suite, no emsdk needed
+pnpm --filter @kruddage/engine run build        # needs emsdk on PATH
+pnpm --filter @kruddage/engine run test         # this package's own suite, pure Node
+pnpm --filter @kruddage/engine run test:native  # the C suite, no emsdk needed
 ```
 
 ## What it does
 
-`scripts/build.mjs` runs `./krudd.sh build` with `KRUDD_TARGET=wasm`, then
+`scripts/build.mjs` runs `kruddmake build` with `KRUDD_TARGET=wasm`, then
 harvests the outputs into `dist/` alongside an `engine-manifest.json` that
 describes them: version, the cache-busting stem, the artifact list with sizes
 and SHA-256s, and the function exports read back out of the WASM module.
+
+It reaches kruddmake by resolving the dependency — `scripts/kruddmake.mjs` is
+the one place that knows kruddmake's layout — rather than by spelling a path to
+`./krudd.sh`. That is the barrier: "only `@kruddage/engine` may drive the engine
+build" is an edge in the package graph, and `pnpm check` reads it back (#920).
+Before, it was a regex matching the string `krudd.sh`.
 
 Consumers import from the package, never from the build tree:
 
@@ -83,6 +91,12 @@ This is the first membrane, not the finished shape. In rough order of value:
    `interface-library` in `manifest.scm` and a workspace package beside it, with
    an empty dependency list and the module root as its surface. It compiles
    nothing and it is the first C module in the workspace — the shape the rest of
-   the tree copies (#919). The next of these is the build system itself (#920).
+   the tree copies (#919).
+4. ~~**Package the build system.**~~ Done. `krudd/kruddmake/` is
+   `@kruddage/kruddmake`, and this package depends on it. The build entry point
+   moved out of `./krudd.sh` — which now forwards and holds no logic — into
+   `krudd/kruddmake/kruddmake.sh`, and "only `@kruddage/engine` may drive the
+   build" stopped being a regex about a filename (#920). Next of these is the
+   shader transpiler, which needs neither a compiler nor the engine (#921).
 
 Each step is independently useful, and none of them require porting the engine.

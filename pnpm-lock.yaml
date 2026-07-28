@@ -10,7 +10,13 @@ importers:
 
   krudd/engine/abi: {}
 
-  packages/engine: {}
+  krudd/kruddmake: {}
+
+  packages/engine:
+    dependencies:
+      '@kruddage/kruddmake':
+        specifier: workspace:*
+        version: link:../../krudd/kruddmake
 
   packages/site:
     dependencies:

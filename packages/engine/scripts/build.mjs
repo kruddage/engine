@@ -2,11 +2,12 @@
 //
 // Builds @kruddage/engine.
 //
-// This does not reimplement the engine build. It drives krudd.sh — the same
-// command CI has always run — and then harvests the outputs into dist/ with a
-// manifest describing them. kruddmake stays the build system for C and WASM;
-// this is the wrapper that turns its output into a package with a boundary
-// around it.
+// This does not reimplement the engine build. It drives @kruddage/kruddmake —
+// the same generator CI has always run, reached now through this package's
+// declared dependency on it rather than through a path to ./krudd.sh (#920) —
+// and then harvests the outputs into dist/ with a manifest describing them.
+// kruddmake stays the build system for C and WASM; this is the wrapper that
+// turns its output into a package with a boundary around it.
 //
 //   KRUDD_VERSION     stamped into the build (default: version.txt)
 //   KRUDD_BUILD_DIR   kruddmake's output directory (default: <repo>/build)
@@ -34,6 +35,7 @@ import {
 } from "../src/artifacts.mjs";
 import { bakedCacheStem } from "../src/index.mjs";
 import { readWasmExports } from "../src/wasm-exports.mjs";
+import { KRUDDMAKE_SH, runKruddmake } from "./kruddmake.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PKG = resolve(HERE, "..");
@@ -78,19 +80,17 @@ const buildDir = process.env.KRUDD_BUILD_DIR
 
 process.stdout.write(`@kruddage/engine: building ${version} (wasm)\n`);
 
-const build = spawnSync("./krudd.sh", ["build"], {
+const status = runKruddmake(KRUDDMAKE_SH, ["build"], {
 	cwd: REPO,
-	stdio: "inherit",
 	env: {
-		...process.env,
 		KRUDD_TARGET: "wasm",
 		KRUDD_VERSION: version,
 		KRUDD_BUILD_DIR: buildDir,
 	},
 });
 
-if (build.status !== 0) {
-	fail(`krudd.sh build failed (exit ${build.status ?? build.signal})`);
+if (status !== 0) {
+	fail(`kruddmake build failed (exit ${status})`);
 }
 
 /* --------------------------------------------------------------- harvest */

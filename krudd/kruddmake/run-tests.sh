@@ -3,11 +3,11 @@
 #
 # kruddmake test harness.
 #
-# Stage 0 (always): the s7-only bootstrap checks — introspect_test.scm exercises
-# the codegen/embed helpers with no WASM/Ninja toolchain needed.
-#
-# Stage 1 (always): run resolve_test.scm through the pinned krudds7 interpreter —
-# the resolver + emitter checks. This needs only the fetched s7 CLI, no compiler.
+# Stage 0+1 (always): run-scheme-tests.sh — kruddmake's own suite, and
+# @kruddage/kruddmake's `test` script. The codegen/embed helpers
+# (introspect_test.scm) and the resolver + emitter (resolve_test.scm), on the
+# fetched s7 CLI alone, no compiler. It also renders the build.ninja stage 2
+# builds, which is why KRUDD_NINJA_OUT is exported before it runs.
 #
 # Stage 2 (when ninja + cc are present): render the real manifest to a
 # build.ninja and build the `native` target with ninja(1). Each test links and
@@ -34,15 +34,10 @@ mkdir -p "$work"
 
 s7bin="$S7_CLI"
 
-# Stage 0: s7-only bootstrap checks (codegen/embed helpers).
-"$s7bin" "$root/krudd/kruddmake/introspect_test.scm"
-
-# Stage 1: resolver/emitter checks; render build.ninja for stage 2. KRUDD_S7BIN
-# lets resolve_test.scm bake a self-contained `regen` command into build.ninja
-# so a later raw `ninja` run regenerates codegen when a `.scm` input changes.
+# Stage 0+1: kruddmake's own suite. S7_CLI is already exported above, so the
+# fetch is not repeated; KRUDD_NINJA_OUT names the build.ninja stage 2 wants.
 export KRUDD_NINJA_OUT="$work/build.ninja"
-export KRUDD_S7BIN="$s7bin"
-"$s7bin" "$root/krudd/kruddmake/resolve_test.scm"
+sh "$root/krudd/kruddmake/run-scheme-tests.sh"
 
 # Stage 1b: the monolang reference oracle — evaluate math.scm's (define-c-fn)
 # bodies in s7 and check the numbers, the same math the generated C is checked

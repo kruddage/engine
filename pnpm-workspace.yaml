@@ -2,8 +2,12 @@
 #
 # The workspace is the outer build system: it sequences the packages and
 # enforces the boundaries between them. It does not replace kruddmake — the
-# engine's C/WASM build stays in krudd/ and is driven by krudd.sh, which
-# @kruddage/engine wraps (see packages/engine/README.md).
+# engine's C/WASM build stays in krudd/ and is driven by @kruddage/kruddmake,
+# which @kruddage/engine depends on and wraps (see packages/engine/README.md).
+#
+# krudd/kruddmake is that build language, and one of the two C-tree packages
+# that carry a real `test`: its Scheme suite runs on the fetched s7 interpreter
+# with no compiler and no emsdk (#920).
 #
 # krudd/engine/** is the C tree. Those packages carry no build or test script —
 # a C module's build is one edge in one ninja graph and cannot be driven per
@@ -14,4 +18,5 @@
 packages:
   - packages/*
   - tools/render-diff
+  - krudd/kruddmake
   - krudd/engine/**

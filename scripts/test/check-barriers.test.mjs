@@ -15,8 +15,10 @@ import { findViolations, packageDirs } from "../check-barriers.mjs";
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-/* A two-package workspace: `packages/engine` (privileged) and `packages/other`. */
-function workspace(files) {
+/* A two-package workspace: `packages/engine` (privileged) and `packages/other`.
+ * `extra` merges into a package's manifest, which is how the dependency rule is
+ * exercised — that rule reads manifests rather than sources. */
+function workspace(files, extra = {}) {
 	const root = mkdtempSync(join(tmpdir(), "krudd-ws-"));
 
 	for (const [name, manifest] of [
@@ -26,7 +28,7 @@ function workspace(files) {
 		mkdirSync(join(root, "packages", name, "src"), { recursive: true });
 		writeFileSync(
 			join(root, "packages", name, "package.json"),
-			JSON.stringify(manifest)
+			JSON.stringify({ ...manifest, ...(extra[name] ?? {}) })
 		);
 	}
 
@@ -41,8 +43,8 @@ function workspace(files) {
 	};
 }
 
-function check(files) {
-	const { root, dirs } = workspace(files);
+function check(files, extra) {
+	const { root, dirs } = workspace(files, extra);
 	return findViolations(root, dirs);
 }
 
@@ -83,22 +85,56 @@ test("catches a dynamic import that escapes the package", () => {
 	assert.match(problems[0], /escapes/);
 });
 
-test("catches a non-engine package driving the engine build", () => {
-	const problems = check({
-		"packages/other/src/a.mjs": `spawnSync("./krudd.sh", ["build"]);\n`,
-	});
+test("catches a non-engine package depending on kruddmake", () => {
+	const problems = check(
+		{},
+		{ other: { dependencies: { "@kruddage/kruddmake": "workspace:*" } } }
+	);
 
 	assert.equal(problems.length, 1);
-	assert.match(problems[0], /krudd\.sh.*private to @kruddage\/engine/s);
+	assert.match(problems[0], /declares @kruddage\/kruddmake in "dependencies"/);
 });
 
-test("catches a non-engine package reading krudd/ internals", () => {
+test("the dependency rule reads every dependency field", () => {
+	const problems = check(
+		{},
+		{ other: { devDependencies: { "@kruddage/kruddmake": "workspace:*" } } }
+	);
+
+	assert.equal(problems.length, 1);
+	assert.match(problems[0], /"devDependencies"/);
+});
+
+test("the engine package may depend on kruddmake", () => {
+	assert.deepEqual(
+		check(
+			{},
+			{ engine: { dependencies: { "@kruddage/kruddmake": "workspace:*" } } }
+		),
+		[]
+	);
+});
+
+test("catches a non-engine package reaching krudd/ by path", () => {
 	const problems = check({
 		"packages/other/src/a.mjs": `readFileSync("krudd/kruddmake/manifest.scm");\n`,
 	});
 
 	assert.equal(problems.length, 1);
-	assert.match(problems[0], /krudd\/ internals/);
+	assert.match(problems[0], /krudd\/ by path/);
+});
+
+/* The rule that used to match this string is gone: krudd.sh is a forwarding
+ * shim over @kruddage/kruddmake's entry point, and the dependency rule above is
+ * what enforces who may drive the build (#920). Naming the shim is no longer
+ * the interesting act — resolving the package is. */
+test("naming krudd.sh is not on its own a violation", () => {
+	assert.deepEqual(
+		check({
+			"packages/other/src/a.mjs": `const shim = "krudd.sh";\nexport { shim };\n`,
+		}),
+		[]
+	);
 });
 
 test("catches a non-engine package setting the build environment", () => {
@@ -114,7 +150,7 @@ test("the engine package may do all of that", () => {
 	assert.deepEqual(
 		check({
 			"packages/engine/src/b.mjs":
-				`spawnSync("./krudd.sh", ["build"], { env: { KRUDD_TARGET: "wasm" } });\n` +
+				`spawnSync("sh", [k, "build"], { env: { KRUDD_TARGET: "wasm" } });\n` +
 				`readFileSync("krudd/kruddmake/manifest.scm");\n`,
 		}),
 		[]
@@ -125,7 +161,7 @@ test("comments naming a forbidden path are not violations", () => {
 	assert.deepEqual(
 		check({
 			"packages/other/src/a.mjs":
-				`// This never runs krudd.sh and never reads krudd/kruddmake/.\n` +
+				`// This never reads krudd/kruddmake/.\n` +
 				`/* KRUDD_TARGET is the engine's business. */\n` +
 				`export const x = 1;\n`,
 		}),
@@ -153,6 +189,7 @@ test("packages in the C tree are discovered, not listed", () => {
 	const dirs = packageDirs(REPO);
 
 	assert.ok(dirs.includes("krudd/engine/abi"));
+	assert.ok(dirs.includes("krudd/kruddmake"));
 	assert.ok(dirs.includes("packages/engine"));
 	assert.ok(!dirs.includes("krudd/engine/base"));
 });

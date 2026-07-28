@@ -352,12 +352,154 @@ body {
 	flex: 1;
 	min-width: 0;
 	min-height: 0;
+	container-type: inline-size;
 }
 
 .viewport canvas {
 	display: block;
 	width: 100%;
 	height: 100%;
+}
+
+/*
+ * The surface pointer events land on (#949).
+ *
+ * Over the canvas rather than on it: emscripten registers its own listeners on
+ * the canvas element, and binding React's handlers to the same node would leave
+ * two things reading one press. `touch-action: none` is what stops a drag over
+ * the viewport from scrolling or pinch-zooming the page instead of orbiting the
+ * camera — without it a touch drag never reaches a pointermove at all.
+ */
+.viewport__surface {
+	position: absolute;
+	inset: 0;
+	touch-action: none;
+	outline-offset: -2px;
+}
+
+/*
+ * The cursor is the only feedback the DOM gives about a gesture — everything
+ * else is drawn in the canvas. `pending` deliberately looks like `camera`: the
+ * frame in which the engine has not yet said whether a handle was grabbed is
+ * one the reader must not see flicker.
+ */
+.viewport__surface[data-phase="pending"],
+.viewport__surface[data-phase="camera"] {
+	cursor: grabbing;
+}
+
+.viewport__surface[data-phase="gizmo"] {
+	cursor: move;
+}
+
+/* ------------------------------------------------------------------ *
+ * The viewport's own controls
+ *
+ * Floated over the canvas rather than docked above it, so turning them on and
+ * off never resizes the drawing surface — a toolbar that reflowed the viewport
+ * would cost a GL resize every time it appeared.
+ * ------------------------------------------------------------------ */
+
+.viewport__bar {
+	position: absolute;
+	z-index: 1;
+	inset: var(--gap) var(--gap) auto var(--gap);
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--gap);
+	padding: calc(var(--gap) / 2) var(--gap);
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: color-mix(in srgb, var(--chrome) 88%, transparent);
+	font-size: 0.8rem;
+}
+
+.viewport__modes {
+	display: flex;
+	gap: 1px;
+}
+
+.viewport__modes button {
+	display: flex;
+	align-items: center;
+	gap: 0.35em;
+	padding: 0.2em 0.6em;
+	border: 1px solid var(--line);
+	background: var(--panel);
+	color: var(--fg);
+	font: inherit;
+	cursor: pointer;
+}
+
+.viewport__modes button:first-child {
+	border-radius: var(--radius) 0 0 var(--radius);
+}
+
+.viewport__modes button:last-child {
+	border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.viewport__modes button[aria-checked="true"] {
+	background: var(--accent);
+	color: var(--accent-fg);
+	border-color: var(--accent);
+}
+
+.viewport__modes kbd {
+	font-size: 0.85em;
+	opacity: 0.7;
+}
+
+.viewport__snap,
+.viewport__toggle {
+	display: flex;
+	align-items: center;
+	gap: 0.35em;
+	color: var(--muted);
+}
+
+.viewport__snap input {
+	width: 4.5em;
+	padding: 0.2em 0.35em;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--bg);
+	color: var(--fg);
+	font: inherit;
+}
+
+.viewport__play {
+	margin-left: auto;
+	padding: 0.2em 0.9em;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--panel);
+	color: var(--fg);
+	font: inherit;
+	cursor: pointer;
+}
+
+.viewport__play[aria-pressed="true"] {
+	background: var(--error);
+	border-color: var(--error);
+	color: #fff;
+}
+
+/*
+ * A narrow deck drops the keyboard hints and the snap unit rather than
+ * wrapping the bar onto three lines. The container is the viewport, not the
+ * window — a wide window with the deck squeezed between two open docks is the
+ * ordinary case, and it is the one a media query gets wrong.
+ */
+@container (max-width: 34rem) {
+	.viewport__modes kbd {
+		display: none;
+	}
+
+	.viewport__snap span {
+		display: none;
+	}
 }
 
 .viewport__error {

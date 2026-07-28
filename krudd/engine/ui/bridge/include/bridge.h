@@ -3,8 +3,11 @@
 #define BRIDGE_H
 
 #include "asset_api.h"
+#include "camera_api.h"
 #include "edit_api.h"
 #include "entity_api.h"
+#include "gizmo.h"
+#include "viewport_api.h"
 
 #include <stdint.h>
 
@@ -59,8 +62,16 @@
  * in C, and gets the same undo entry.
  */
 
-/* Wire version. Bumped when the tape or the reply document changes shape. */
-#define BRIDGE_PROTOCOL 1
+/*
+ * Wire version. Bumped when the tape or the reply document changes shape.
+ *
+ * 2 added the viewport domain (#949): the camera commands, the pick, the gizmo
+ * and the editor-mode switch, plus a fourth generation to cache them against.
+ * The bump is required rather than polite — the reply's `generations` object
+ * grew a key, and a client that does not know about it would read a `viewport`
+ * query's stamp as 0 and re-fetch the whole thing every frame.
+ */
+#define BRIDGE_PROTOCOL 2
 
 /* 'K' 'B' 'R' 'G' little-endian — the tape's first four bytes. */
 #define BRIDGE_TAPE_MAGIC 0x47524248u
@@ -73,6 +84,19 @@ enum bridge_domain {
 	BRIDGE_SCENE = 0,
 	BRIDGE_SELECTION,
 	BRIDGE_HISTORY,
+	/*
+	 * The viewport's own state (#949): the gizmo's mode, the snap
+	 * increments, the grid, the editor-mode switch, and the canvas size.
+	 *
+	 * Note what is deliberately *not* in it: the camera pose. An orbit
+	 * moves the eye every frame of a drag, and a generation that moved with
+	 * it would re-send this whole domain sixty times a second to a panel
+	 * whose contents did not change — the camera is drawn by the engine and
+	 * read by nothing here. What the editor renders from this domain is a
+	 * row of mode buttons and a snap field, and those change when a reader
+	 * presses something.
+	 */
+	BRIDGE_VIEWPORT,
 	BRIDGE_DOMAIN_COUNT
 };
 
@@ -125,6 +149,66 @@ enum bridge_op {
 	 */
 	BRIDGE_OP_SCENE_LOAD		= 0x0050,
 
+	/*
+	 * The viewport (#949).
+	 *
+	 * ## Why the camera is commands rather than a transform the editor sets
+	 *
+	 * The camera belongs to the renderer, which fights for it: a scripted
+	 * scene camera is copied into the eye every frame until something
+	 * navigates, and camera_api's orbit/pan/dolly are what detach it. An
+	 * editor that computed a pose and pushed it would be pushing against
+	 * that copy, and would also be a second implementation of the framing
+	 * arithmetic. So the editor sends the gesture and the engine holds the
+	 * pose — which is the same rule as everywhere else here.
+	 */
+	BRIDGE_OP_VIEWPORT_SIZE		= 0x0060,
+	BRIDGE_OP_CAMERA_ORBIT		= 0x0061,
+	BRIDGE_OP_CAMERA_PAN		= 0x0062,
+	BRIDGE_OP_CAMERA_DOLLY		= 0x0063,
+	/*
+	 * Frame an entity, or the selection when the id is -1. The bounding
+	 * sphere comes from the same mesh generation the pick and the draw use.
+	 */
+	BRIDGE_OP_CAMERA_FRAME		= 0x0064,
+	BRIDGE_OP_CAMERA_RESET		= 0x0065,
+
+	/*
+	 * Pick at a pixel, and select what is there.
+	 *
+	 * A command rather than a query, and that is the design rather than a
+	 * shortcut: what the editor wants from a click is for the selection to
+	 * change, and the selection is #947's — it already has a generation, a
+	 * query and every panel watching it. A pick query would hand the editor
+	 * an id it would then have to send back as a select, which is two
+	 * crossings and a window in which the editor holds a selection the
+	 * engine does not.
+	 *
+	 * A miss clears the selection, exactly as the game path does.
+	 */
+	BRIDGE_OP_PICK			= 0x0066,
+
+	/*
+	 * The GAME / EDITOR switch, which is the whole of the play/edit
+	 * handover: entering pauses the simulation and lights the selection
+	 * outline, leaving resumes and stands the editor's chrome down.
+	 */
+	BRIDGE_OP_EDITOR_MODE		= 0x0067,
+
+	BRIDGE_OP_GIZMO_MODE		= 0x0068,
+	BRIDGE_OP_GIZMO_SNAP		= 0x0069,
+	/*
+	 * One phase of a gizmo drag: begin, move or end, at a pixel.
+	 *
+	 * A move that solves to a transform is applied through the same
+	 * entity_api->set_transform every other edit uses, so it lands on
+	 * world/edit's ring inside whatever gesture the editor opened and
+	 * coalesces by key like an inspector slider. That is what makes a drag
+	 * one undo step without anything here knowing about undo (#944, Q2).
+	 */
+	BRIDGE_OP_GIZMO_DRAG		= 0x006a,
+	BRIDGE_OP_GRID			= 0x006b,
+
 	/* Queries. Each carries the generation the caller already holds. */
 	BRIDGE_OP_QUERY_TREE		= 0x0100,
 	BRIDGE_OP_QUERY_ENTITY		= 0x0101,
@@ -147,7 +231,25 @@ enum bridge_op {
 	 * what value each field is actually at. The inspector derives its whole
 	 * UI from this and holds none of it (#951).
 	 */
-	BRIDGE_OP_QUERY_ENTITY_PARAMS	= 0x0105
+	BRIDGE_OP_QUERY_ENTITY_PARAMS	= 0x0105,
+	/*
+	 * The viewport's state: what mode the gizmo is in, which handle a live
+	 * drag holds, the snap increments, the grid, the editor-mode switch and
+	 * the canvas size the engine is picking against.
+	 *
+	 * The last two are how the editor checks that the engine agrees with
+	 * it about the things the editor itself reported. A size the editor
+	 * sent and the engine did not adopt is a real bug class — a collapsed
+	 * dock, a zero rect — and reading it back is the cheapest way to see it.
+	 */
+	BRIDGE_OP_QUERY_VIEWPORT	= 0x0106
+};
+
+/* Gizmo drag phases, as they ride on BRIDGE_OP_GIZMO_DRAG. */
+enum bridge_drag_phase {
+	BRIDGE_DRAG_BEGIN	= 0,
+	BRIDGE_DRAG_MOVE	= 1,
+	BRIDGE_DRAG_END		= 2
 };
 
 /*
@@ -182,6 +284,25 @@ struct bridge_host {
 	 * params query with an empty list rather than failing.
 	 */
 	const struct asset_api	*asset;
+
+	/*
+	 * The viewport's three services (#949). Every one is optional and every
+	 * command that needs one is a no-op without it, so a build that has no
+	 * canvas — the native test, a headless host — drives the same tape and
+	 * simply does nothing with the viewport half of it.
+	 */
+	const struct camera_api		*camera;
+	const struct viewport_api	*viewport;
+	const struct gizmo_api		*gizmo;
+
+	/*
+	 * The GAME / EDITOR switch. Function pointers rather than a direct call
+	 * to krudd_editor_mode() because that symbol is the main module's and
+	 * exists only under emscripten, and because the native test has to be
+	 * able to watch the flag move.
+	 */
+	void	(*set_editor_mode)(int32_t on);
+	int32_t	(*get_editor_mode)(void);
 };
 
 /* Discrete notices — the part of the outbound stream a generation cannot say. */
@@ -251,6 +372,18 @@ struct bridge {
 
 	uint32_t	serial;		/* exchanges served, for ordering */
 	int32_t		gesture_depth;	/* open begin() without a commit */
+
+	/*
+	 * How many gizmo drags have been opened. The editor's answer to "did my
+	 * press grab a handle?".
+	 *
+	 * A press that grabs nothing changes no other viewport state, so
+	 * without a counter the editor could not tell "the engine has not
+	 * answered yet" from "the engine answered: nothing". It waits for this
+	 * to advance and then reads `axis`. One frame, which is the same frame
+	 * the drag had not moved in.
+	 */
+	uint32_t	drag_serial;
 
 	char		labels[BRIDGE_LABEL_SLOTS][BRIDGE_LABEL_BYTES];
 	int32_t		label_next;

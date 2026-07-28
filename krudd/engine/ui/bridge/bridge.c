@@ -354,6 +354,49 @@ static uint64_t fingerprint_selection(const struct bridge *b)
 	return fnv(FNV64_OFFSET, &id, sizeof(id));
 }
 
+/*
+ * The viewport's fingerprint. Everything the viewport query reports, and
+ * nothing else — in particular not the camera pose, for the reason the domain's
+ * comment in bridge.h gives.
+ */
+static uint64_t fingerprint_viewport(const struct bridge *b)
+{
+	uint64_t          h = FNV64_OFFSET;
+	struct gizmo_snap snap;
+	float             w = 0.0f, hgt = 0.0f;
+	int32_t           v;
+
+	h = fnv(h, &b->drag_serial, sizeof(b->drag_serial));
+
+	v = b->host.get_editor_mode ? b->host.get_editor_mode() : 0;
+	h = fnv(h, &v, sizeof(v));
+
+	if (b->host.viewport && b->host.viewport->get_size)
+		b->host.viewport->get_size(&w, &hgt);
+	h = fnv(h, &w, sizeof(w));
+	h = fnv(h, &hgt, sizeof(hgt));
+
+	if (!b->host.gizmo)
+		return h;
+
+	v = b->host.gizmo->get_mode ? b->host.gizmo->get_mode() : 0;
+	h = fnv(h, &v, sizeof(v));
+	v = b->host.gizmo->axis ? b->host.gizmo->axis() : GIZMO_AXIS_NONE;
+	h = fnv(h, &v, sizeof(v));
+	v = b->host.gizmo->grid_shown ? b->host.gizmo->grid_shown() : 0;
+	h = fnv(h, &v, sizeof(v));
+	if (b->host.gizmo->grid_spacing) {
+		float spacing = b->host.gizmo->grid_spacing();
+
+		h = fnv(h, &spacing, sizeof(spacing));
+	}
+	memset(&snap, 0, sizeof(snap));
+	if (b->host.gizmo->get_snap)
+		b->host.gizmo->get_snap(&snap);
+	h = fnv(h, &snap, sizeof(snap));
+	return h;
+}
+
 static uint64_t fingerprint_history(const struct bridge *b)
 {
 	const struct edit_api *e = b->host.edit;
@@ -379,6 +422,7 @@ void bridge_refresh(struct bridge *b)
 	next[BRIDGE_SCENE]     = fingerprint_scene(b);
 	next[BRIDGE_SELECTION] = fingerprint_selection(b);
 	next[BRIDGE_HISTORY]   = fingerprint_history(b);
+	next[BRIDGE_VIEWPORT]  = fingerprint_viewport(b);
 
 	for (i = 0; i < BRIDGE_DOMAIN_COUNT; i++) {
 		/*
@@ -614,6 +658,195 @@ static int32_t apply_command(struct bridge *b, uint16_t op, struct tape *t)
 			ed->clear();
 		return BRIDGE_OK;
 
+	case BRIDGE_OP_VIEWPORT_SIZE: {
+		float w, h;
+
+		if (!tape_f32(t, &w) || !tape_f32(t, &h))
+			return BRIDGE_ERR_PAYLOAD;
+		if (b->host.viewport && b->host.viewport->set_size)
+			b->host.viewport->set_size(w, h);
+		return BRIDGE_OK;
+	}
+
+	case BRIDGE_OP_CAMERA_ORBIT: {
+		float yaw, pitch;
+
+		if (!tape_f32(t, &yaw) || !tape_f32(t, &pitch))
+			return BRIDGE_ERR_PAYLOAD;
+		if (b->host.camera && b->host.camera->orbit)
+			b->host.camera->orbit(yaw, pitch);
+		return BRIDGE_OK;
+	}
+
+	case BRIDGE_OP_CAMERA_PAN: {
+		float dx, dy;
+
+		if (!tape_f32(t, &dx) || !tape_f32(t, &dy))
+			return BRIDGE_ERR_PAYLOAD;
+		if (b->host.camera && b->host.camera->pan)
+			b->host.camera->pan(dx, dy);
+		return BRIDGE_OK;
+	}
+
+	case BRIDGE_OP_CAMERA_DOLLY: {
+		float amount;
+
+		if (!tape_f32(t, &amount))
+			return BRIDGE_ERR_PAYLOAD;
+		if (b->host.camera && b->host.camera->dolly)
+			b->host.camera->dolly(amount);
+		return BRIDGE_OK;
+	}
+
+	case BRIDGE_OP_CAMERA_FRAME: {
+		float centre[3];
+		float radius = 0.0f;
+
+		if (!tape_i32(t, &id))
+			return BRIDGE_ERR_PAYLOAD;
+		/* -1 means "whatever is selected", so the shortcut does not
+		 * have to know the id and cannot disagree about it. */
+		if (id < 0 && en && en->get_selected)
+			id = en->get_selected();
+		if (id < 0) {
+			bridge_emit(b, "viewport.nothing", BRIDGE_OP_CAMERA_FRAME,
+				    "nothing is selected to frame");
+			return BRIDGE_OK;
+		}
+		if (!b->host.viewport || !b->host.viewport->bounds ||
+		    !b->host.viewport->bounds(id, centre, &radius)) {
+			/*
+			 * No mesh to measure. Not an error — an empty group
+			 * node is a perfectly ordinary selection — but the
+			 * reader pressed a key and deserves to know why
+			 * nothing moved.
+			 */
+			bridge_emit(b, "viewport.nothing",
+				    BRIDGE_OP_CAMERA_FRAME,
+				    "this entity has nothing drawn to frame");
+			return BRIDGE_OK;
+		}
+		if (b->host.camera && b->host.camera->frame)
+			b->host.camera->frame(centre, radius);
+		return BRIDGE_OK;
+	}
+
+	case BRIDGE_OP_CAMERA_RESET:
+		if (b->host.camera && b->host.camera->reset_view)
+			b->host.camera->reset_view();
+		return BRIDGE_OK;
+
+	case BRIDGE_OP_PICK: {
+		float   sx, sy;
+		int32_t hit = -1;
+
+		if (!tape_f32(t, &sx) || !tape_f32(t, &sy))
+			return BRIDGE_ERR_PAYLOAD;
+		if (b->host.viewport && b->host.viewport->pick)
+			hit = b->host.viewport->pick(sx, sy);
+		/*
+		 * Through set_selected like any other selection, so the pick
+		 * and the outliner's click land in exactly the same place.
+		 * A miss selects -1, which clears — clicking empty space
+		 * deselecting is what every editor does and what the game
+		 * path already did.
+		 */
+		if (en && en->set_selected)
+			en->set_selected(hit);
+		return BRIDGE_OK;
+	}
+
+	case BRIDGE_OP_EDITOR_MODE:
+		if (!tape_i32(t, &flag))
+			return BRIDGE_ERR_PAYLOAD;
+		if (b->host.set_editor_mode)
+			b->host.set_editor_mode(flag);
+		/*
+		 * Leaving the editor abandons any drag in progress. The
+		 * handles are not drawn in game mode, so a drag that survived
+		 * would be one the reader could neither see nor finish.
+		 */
+		if (!flag && b->host.gizmo && b->host.gizmo->end)
+			b->host.gizmo->end();
+		return BRIDGE_OK;
+
+	case BRIDGE_OP_GIZMO_MODE:
+		if (!tape_i32(t, &flag))
+			return BRIDGE_ERR_PAYLOAD;
+		if (b->host.gizmo && b->host.gizmo->set_mode)
+			b->host.gizmo->set_mode(flag);
+		return BRIDGE_OK;
+
+	case BRIDGE_OP_GIZMO_SNAP: {
+		float translate, rotate, scale;
+
+		if (!tape_f32(t, &translate) || !tape_f32(t, &rotate) ||
+		    !tape_f32(t, &scale))
+			return BRIDGE_ERR_PAYLOAD;
+		if (b->host.gizmo && b->host.gizmo->set_snap)
+			b->host.gizmo->set_snap(translate, rotate, scale);
+		return BRIDGE_OK;
+	}
+
+	case BRIDGE_OP_GIZMO_DRAG: {
+		struct transform moved;
+		float            sx, sy;
+		int32_t          phase;
+
+		if (!tape_i32(t, &phase) || !tape_f32(t, &sx) ||
+		    !tape_f32(t, &sy))
+			return BRIDGE_ERR_PAYLOAD;
+		if (!b->host.gizmo)
+			return BRIDGE_OK;
+
+		switch (phase) {
+		case BRIDGE_DRAG_BEGIN:
+			/*
+			 * Bumped whether or not a handle was grabbed. It is
+			 * the editor's "answered" signal, not its "grabbed"
+			 * one — `axis` is that, and the distinction is what
+			 * lets a missed press be reported at all.
+			 */
+			b->drag_serial++;
+			if (b->host.gizmo->begin)
+				b->host.gizmo->begin(sx, sy);
+			return BRIDGE_OK;
+		case BRIDGE_DRAG_MOVE:
+			if (!b->host.gizmo->move ||
+			    !b->host.gizmo->move(sx, sy, &moved))
+				return BRIDGE_OK;
+			id = en && en->get_selected ? en->get_selected() : -1;
+			/*
+			 * The one line that makes a gizmo drag an ordinary
+			 * edit: it goes through set_transform, so it lands on
+			 * world/edit's ring inside the editor's gesture and
+			 * coalesces exactly as an inspector slider does.
+			 */
+			if (id >= 0 && en->set_transform)
+				en->set_transform(id, &moved);
+			return BRIDGE_OK;
+		case BRIDGE_DRAG_END:
+			if (b->host.gizmo->end)
+				b->host.gizmo->end();
+			return BRIDGE_OK;
+		default:
+			bridge_emit(b, "command.rejected",
+				    BRIDGE_OP_GIZMO_DRAG,
+				    "not a drag phase this build knows");
+			return BRIDGE_OK;
+		}
+	}
+
+	case BRIDGE_OP_GRID: {
+		float spacing;
+
+		if (!tape_i32(t, &flag) || !tape_f32(t, &spacing))
+			return BRIDGE_ERR_PAYLOAD;
+		if (b->host.gizmo && b->host.gizmo->set_grid)
+			b->host.gizmo->set_grid(flag, spacing);
+		return BRIDGE_OK;
+	}
+
 	default:
 		return BRIDGE_ERR_OPCODE;
 	}
@@ -767,6 +1000,66 @@ static void write_entity(struct bridge *b, struct jw *w, int32_t id)
 	jw_key(w, "script");
 	jw_u32(w, world->script_ref[id]);
 	jw_put(w, "}");
+}
+
+/*
+ * The viewport's state (#949).
+ *
+ * Never null, unlike the history: the size and the editor-mode flag are the
+ * bridge's own answers rather than a service's, so there is always something
+ * true to say even on a build with no gizmo and no canvas. A panel that has to
+ * render mode buttons wants "translate, nothing grabbed" rather than "null".
+ */
+static void write_viewport(struct bridge *b, struct jw *w)
+{
+	const struct gizmo_api *g = b->host.gizmo;
+	struct gizmo_snap       snap;
+	float                   vw = 0.0f, vh = 0.0f;
+
+	memset(&snap, 0, sizeof(snap));
+	if (g && g->get_snap)
+		g->get_snap(&snap);
+	if (b->host.viewport && b->host.viewport->get_size)
+		b->host.viewport->get_size(&vw, &vh);
+
+	jw_put(w, "{");
+	jw_key(w, "width");
+	jw_f32(w, vw);
+	jw_put(w, ",");
+	jw_key(w, "height");
+	jw_f32(w, vh);
+	jw_put(w, ",");
+	jw_key(w, "editorMode");
+	jw_bool(w, b->host.get_editor_mode ? b->host.get_editor_mode() : 0);
+	jw_put(w, ",");
+	jw_key(w, "mode");
+	jw_i32(w, g && g->get_mode ? g->get_mode() : GIZMO_MODE_NONE);
+	jw_put(w, ",");
+	jw_key(w, "axis");
+	jw_i32(w, g && g->axis ? g->axis() : GIZMO_AXIS_NONE);
+	jw_put(w, ",");
+	jw_key(w, "dragSerial");
+	jw_u32(w, b->drag_serial);
+	jw_put(w, ",");
+	jw_key(w, "snap");
+	jw_put(w, "{");
+	jw_key(w, "translate");
+	jw_f32(w, snap.translate);
+	jw_put(w, ",");
+	jw_key(w, "rotate");
+	jw_f32(w, snap.rotate_degrees);
+	jw_put(w, ",");
+	jw_key(w, "scale");
+	jw_f32(w, snap.scale);
+	jw_put(w, "},");
+	jw_key(w, "grid");
+	jw_put(w, "{");
+	jw_key(w, "shown");
+	jw_bool(w, g && g->grid_shown ? g->grid_shown() : 0);
+	jw_put(w, ",");
+	jw_key(w, "spacing");
+	jw_f32(w, g && g->grid_spacing ? g->grid_spacing() : 0.0f);
+	jw_put(w, "}}");
 }
 
 static void write_history(struct bridge *b, struct jw *w)
@@ -968,6 +1261,10 @@ static int32_t answer_query(struct bridge *b, struct jw *w, uint16_t op,
 		if (!tape_i32(t, &id))
 			return BRIDGE_ERR_PAYLOAD;
 		break;
+	case BRIDGE_OP_QUERY_VIEWPORT:
+		kind = "viewport";
+		domain = BRIDGE_VIEWPORT;
+		break;
 	default:
 		return BRIDGE_ERR_OPCODE;
 	}
@@ -1025,6 +1322,9 @@ static int32_t answer_query(struct bridge *b, struct jw *w, uint16_t op,
 		break;
 	case BRIDGE_OP_QUERY_ENTITY_PARAMS:
 		write_entity_params(b, w, id);
+		break;
+	case BRIDGE_OP_QUERY_VIEWPORT:
+		write_viewport(b, w);
 		break;
 	default:
 		write_history(b, w);
@@ -1088,6 +1388,9 @@ static void write_generations(struct bridge *b, struct jw *w)
 	jw_put(w, ",");
 	jw_key(w, "history");
 	jw_u32(w, b->generation[BRIDGE_HISTORY]);
+	jw_put(w, ",");
+	jw_key(w, "viewport");
+	jw_u32(w, b->generation[BRIDGE_VIEWPORT]);
 	jw_put(w, "}");
 }
 
@@ -1108,13 +1411,21 @@ static int32_t op_fixed_bytes(uint16_t op, int32_t *out)
 	case BRIDGE_OP_REDO:
 		*out = 0;
 		return 1;
+	case BRIDGE_OP_CAMERA_RESET:
+		*out = 0;
+		return 1;
 	case BRIDGE_OP_SELECT:
 	case BRIDGE_OP_ENTITY_DESTROY:
 	case BRIDGE_OP_SET_PAUSED:
+	case BRIDGE_OP_CAMERA_DOLLY:
+	case BRIDGE_OP_CAMERA_FRAME:
+	case BRIDGE_OP_EDITOR_MODE:
+	case BRIDGE_OP_GIZMO_MODE:
 	case BRIDGE_OP_QUERY_TREE:
 	case BRIDGE_OP_QUERY_SELECTION:
 	case BRIDGE_OP_QUERY_HISTORY:
 	case BRIDGE_OP_QUERY_SCENE_TEXT:
+	case BRIDGE_OP_QUERY_VIEWPORT:
 		*out = 4;
 		return 1;
 	case BRIDGE_OP_ENTITY_RENDER_REF:
@@ -1122,7 +1433,19 @@ static int32_t op_fixed_bytes(uint16_t op, int32_t *out)
 	case BRIDGE_OP_ENTITY_SCRIPT_REF:
 	case BRIDGE_OP_QUERY_ENTITY:
 	case BRIDGE_OP_QUERY_ENTITY_PARAMS:
+	case BRIDGE_OP_VIEWPORT_SIZE:
+	case BRIDGE_OP_CAMERA_ORBIT:
+	case BRIDGE_OP_CAMERA_PAN:
+	case BRIDGE_OP_PICK:
+	case BRIDGE_OP_GRID:
 		*out = 8;
+		return 1;
+	case BRIDGE_OP_GIZMO_SNAP:
+		*out = 12;
+		return 1;
+	case BRIDGE_OP_GIZMO_DRAG:
+		/* phase, then the pixel. */
+		*out = 4 + 4 + 4;
 		return 1;
 	case BRIDGE_OP_ENTITY_TRANSFORM:
 		*out = 4 + BRIDGE_TAPE_TRANSFORM_BYTES;

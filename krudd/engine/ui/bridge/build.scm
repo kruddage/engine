@@ -11,12 +11,15 @@
 ;;!
 ;;! It reads world/entity's headers rather than linking entity.c: every scene
 ;;! mutation goes through the `scene` service vtable it is handed, so the only
-;;! thing it needs from that module is the shape of the columns it reports.
+;;! thing it needs from that module is the shape of the columns it reports. Same
+;;! for ui/gizmo (#949): the viewport commands drive the gizmo through a vtable,
+;;! and all this needs from that module is the shape of it.
 ((wasm-only
   (library "bridge"
     (sources "bridge.c" "bridge_plugin.c" "bridge_params.c")
     (private "include" (root "abi") (root "world/entity/include")
-             (root "base/math/include") (root "core/include"))
+             (root "base/math/include") (root "core/include")
+             (root "ui/gizmo/include"))
     (link "subsystem" "subsystem_manager" "script" "m")))
 
  (native-only
@@ -33,7 +36,7 @@
                        (root "world/entity/entity.c"))
               (private "include" (root "abi") (root "world/entity/include")
                        (root "base/math/include") (root "core/include")
-                       (root "base/memory/include")
+                       (root "base/memory/include") (root "ui/gizmo/include")
                        (raw "../third_party"))
               (link "script" "memory" "m"))
   (test "bridge" "bridge_test")))

@@ -7,69 +7,19 @@
 // list, and touch no part of the frame. That is the whole point of the registry
 // and it is the criterion this file exists to satisfy.
 //
-// Every panel below except the viewport is a placeholder, and each says so on
-// screen with the issue that fills it in. They are empty in the shipped editor
-// today too — that is #954's premise, not a shortcut it took.
+// The viewport is `src/viewport/`, which is where the canvas handover, the
+// camera and the picking live (#949) — it is the one panel big enough to be a
+// directory rather than a function here.
+//
+// Every panel below except the viewport and the inspector is a placeholder, and
+// each says so on screen with the issue that fills it in. They are empty in the
+// shipped editor today too — that is #954's premise, not a shortcut it took.
 
-import { ENGINE_CANVAS_ID } from "../engine/boot.js";
 import { useEngineContext } from "../engine/engine-context.js";
 import { registerPanel } from "../shell/panels.js";
+import { Viewport } from "../viewport/viewport.js";
 import { Inspector } from "./inspector/inspector.js";
 import { Placeholder } from "./placeholder.js";
-
-/* ------------------------------------------------------------------ *
- * The viewport deck
- * ------------------------------------------------------------------ */
-
-/*
- * The canvas, and the one panel that is not a placeholder.
- *
- * The id is a hard contract with the C tree — ten call sites look the element
- * up by `#canvas` for the GL context and for every pointer callback. See
- * ENGINE_CANVAS_ID; #949 keeps it when it takes the canvas over properly.
- */
-function Viewport(): React.JSX.Element {
-	const { canvasRef, engine, status } = useEngineContext();
-
-	return (
-		<div className="viewport" data-testid="viewport">
-			<canvas
-				ref={canvasRef}
-				id={ENGINE_CANVAS_ID}
-				data-testid="engine-canvas"
-				/* A starting point, not a layout — the engine owns this
-				 * element's size from its first tick. */
-				width={1280}
-				height={720}
-			/>
-			{!engine.built && <UnbuiltNotice command={engine.buildCommand} />}
-			{engine.built && status.phase === "failed" && (
-				<p className="viewport__error" role="alert" data-testid="viewport-error">
-					{status.error ?? "the engine failed to start"}
-				</p>
-			)}
-		</div>
-	);
-}
-
-/*
- * Said plainly rather than rendered as an empty box. A contributor working on
- * the shell has no reason to have emsdk installed, and the difference between
- * "you have not built the engine" and "the editor is broken" is one this panel
- * is the only thing positioned to explain.
- */
-function UnbuiltNotice({ command }: { command: string }): React.JSX.Element {
-	return (
-		<section className="unbuilt" data-testid="engine-unbuilt" role="status">
-			<h2>The engine is not built</h2>
-			<p>
-				The shell is running, but there is no WASM module to boot. Build it
-				and reload — this needs emsdk on your PATH:
-			</p>
-			<pre>{command}</pre>
-		</section>
-	);
-}
 
 /* ------------------------------------------------------------------ *
  * The docked panels

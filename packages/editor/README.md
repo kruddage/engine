@@ -89,13 +89,173 @@ container. #944 rules the phone out of scope and this goes in anyway: it costs
 days now and a rewrite of every panel later. `test/styles.test.ts` fails the
 build on a width media query, and on any font size fixed in pixels.
 
-### No boundary work
+## The viewport, and the seam it sits on
 
-Not one new engine export, no new `EM_JS`, and nothing in this package calls
-`@kruddage/engine/bridge` yet. The status strip's renderer badge and the
-console's scrollback come from push channels that already existed; fps and the
-resolution are measured from the page, and `src/engine/frame-stats.ts` explains
-why that is honest rather than a stand-in. Consuming the boundary is #948's.
+[#949](https://github.com/kruddage/engine/issues/949) is where the editor stops
+being DOM and starts being the engine. Four decisions carry it, and each one is
+the answer to a question the issue asked out loud.
+
+### Who owns the canvas: nobody in React, in the sense that matters
+
+The element is rendered by `src/viewport/viewport.tsx` and it is **never**
+conditionally rendered, keyed, moved between parents or unmounted. The panel is
+registered `hideable: false, movable: false` for exactly that reason, and
+everything that varies — the bar, the pointer surface, the unbuilt notice, the
+error — is a *sibling* of the canvas rather than a wrapper around it.
+
+That is the whole mechanism, and it is deliberately not a portal, a ref cache or
+a manual `appendChild`. React does not remount a node whose position in the tree
+never changes, so the ordinary rules suffice; the elaborate versions exist to
+survive a canvas that moves, and the right answer to a canvas that moves is that
+it does not.
+
+`useCanvasSize` does the rest: a `ResizeObserver` on the element for dock
+resizes, and a re-armed `matchMedia("(resolution: Ndppx)")` for the DPI change
+that fires no resize at all — dragging a window between a laptop screen and an
+external monitor changes the ratio while the CSS box stays identical.
+
+### Who owns input: the editor, and the mode says so
+
+> **In editor mode the editor owns the pointer over the canvas. In game mode
+> kruddgui does.**
+
+Both halves are enforced. `ui/viewport`'s kruddgui overlay stands its
+click-to-pick and its aspect sync down whenever editor mode is lit, and
+`ui/gizmo`'s overlay draws without reading a pointer at all. So exactly one
+thing acts on a press, and which one is a flag rather than a race.
+
+Against the shell: **the shell owns every accelerator with a modifier, the
+viewport owns unmodified keys while it has focus.** That line holds by
+construction rather than by inspection — every action in `src/shell/commands.ts`
+carries a modifier, so the two sets cannot overlap. Ctrl+S is Save even with the
+pointer over the scene; G/R/S switch gizmo mode only when it is.
+
+| | |
+|---|---|
+| Drag | Orbit |
+| Middle-drag, or Ctrl/Cmd-drag | Pan |
+| Wheel | Zoom |
+| Click | Pick, and a miss clears |
+| Arrows / Shift+arrows / `+` `-` | Orbit / pan / zoom, from the keyboard |
+| `G` `R` `S` | Move, Rotate, Scale |
+| `F` / `Home` | Frame the selection / back to the authored camera |
+| `Escape` mid-drag | Abort the whole drag |
+
+### The one frame a press is ambiguous, and what it costs
+
+A press on a gizmo handle drags the selection; a press anywhere else orbits.
+**Only the engine can tell them apart** — the handles live in world space and
+are hit-tested against the same view·projection the renderer draws with, and a
+second copy of that arithmetic in TypeScript is the drift #813 warns about.
+
+So the answer takes a flush. `src/viewport/pointer.ts` holds the gesture in a
+`pending` phase until it arrives, accumulating whatever the pointer did
+meanwhile, then replays it into whichever branch won. One frame — the same bound
+#944's Q1 accepted for every other read, and the frame the drag had not moved
+in.
+
+`ViewportState.dragSerial` is what makes that possible: a press that grabs
+nothing changes no other field, so without a counter there is no way to tell
+"not answered yet" from "answered: nothing".
+
+The machine is **pure** — events in, intents out, no React state and no bridge —
+so every branch of it is tested in `test/viewport-pointer.test.ts` without a
+canvas, a document or a wasm module.
+
+### What is drawn by whom: the engine draws, and it draws everything
+
+Not one pixel of the scene, the selection, the grid, the gizmo or the axis
+indicator is DOM.
+
+| | Where | Why |
+|---|---|---|
+| **Selection** | `render/scene_renderer`'s outline pass, through the frame graph | Silhouette mask then a full-screen edge detect, against the same depth buffer the scene was drawn into. It predates this issue; this issue *enables* it, by lighting editor mode |
+| **Gizmo, grid, axis indicator** | `ui/gizmo`'s kruddgui overlay | #944's Q4: kruddgui is the game's GUI, it draws in the canvas, and the editor's gizmos are its second tenant |
+| **Mode buttons, snap field, play switch** | DOM, floated over the canvas | Text and inputs, which the DOM does accessibly for free and immediate-mode does badly |
+
+An SVG overlay projected from a view·projection read across the boundary was the
+alternative, and it loses on the first ground rather than the second: it is
+always one frame stale, so a gizmo would swim behind the mesh it is attached to
+during every orbit. That it would also duplicate the camera's arithmetic is the
+second reason, not the first.
+
+**Picking and rendering agree** because the hit-test is generated through the
+path that draws: `viewport_pick_entity` raycasts against `mesh_script_generate`
+geometry with the entity's own parameter override, and the rotation rings are
+hit-tested against the very polyline `draw_ring` emits. #813's finding, applied
+twice.
+
+### One view, not four
+
+#949 asks whether the deck holds one view or several and asks for the answer to
+be stated. **It holds one.**
+
+Worldcraft's four-pane arrangement is the reference and it is not free: four
+cameras, four picks and four gizmo hit-tests a frame, each needing its own
+viewport size across a boundary designed around there being one. The engine
+draws through a single scene camera today (`scene_renderer`'s `g_cam`), so a
+second pane is a renderer change rather than an editor one — and one nobody has
+asked for. When somebody does, it arrives as its own issue with its own case,
+not as a shape this panel was built around on the chance.
+
+### A drag is one undo step
+
+The gesture opens at `pointerdown`, **before** the engine has said whether a
+handle was grabbed. That ordering is the whole mechanism: a gesture opened only
+on confirmation would leave the first move outside it, as a history entry of its
+own, and undoing a drag would take two presses.
+
+Each move lands on the engine's `set_transform` — the same call an inspector
+slider makes — so it coalesces by key inside `world/edit`'s ring exactly as one.
+A gesture that edited nothing aborts rather than commits, so an orbit does not
+leave a "Transform" entry that undoes nothing.
+
+### Play and edit
+
+`body.editor-mode` was the entire handover in the shipped shell, and its spirit
+is kept: **one flag, one command**, and the engine does everything that follows —
+pauses the simulation, lights the selection outline, hands the pointer back to
+kruddgui. Nothing on this side is torn down or rebuilt, which is what makes
+entering and leaving repeatedly cost nothing and need no reload. The canvas never
+moves; only what the engine draws into it does.
+
+### Deliberately not done
+
+- **Marquee select.** The issue offers it "if it is cheap" and it is not: a
+  rubber band is a frustum query, the engine has a ray query, and the selection
+  model is one id (`SelectionState` carries `id`, singular). Multi-select is a
+  boundary change before it is a viewport one, and it belongs with whatever adds
+  it — not smuggled in as a fourth meaning of a drag.
+- **Local-space and screen-space gizmo orientation.** The handles are the
+  parent's axes, which for a root entity are the world's. A local/world toggle is
+  a button and a flag on `gizmo_frame`; it is left out because nothing has asked
+  for it and every mode added untested is a mode that is wrong.
+
+### The boundary work this needed
+
+The shell needed none, and said so. The viewport needed a fourth domain, and it
+is the first thing in this initiative to push a change back down into the C
+tree:
+
+- `ui/gizmo/` — a new module. `gizmo.c` is pure arithmetic (projection,
+  hit-testing, three drag solves) with a native test that drives all of it
+  against a synthetic camera; `gizmo_plugin.c` is the vtable and the kruddgui
+  overlay.
+- `ui/viewport/` — publishes a `viewport_api` (report the size, pick, measure an
+  entity) and stands its own click-to-pick down in editor mode.
+- `camera_api` — gains `frame()`, because frame-selection needs `fov_y` and the
+  eye→target distance and both are the camera's own.
+- `ui/bridge/` — the viewport domain, twelve opcodes and one query. **Wire
+  version 2**: the reply's `generations` object grew a key.
+
+Nothing else changed shape. Every command lands on a service vtable that already
+existed, so a gizmo drag is indistinguishable from a C-side edit and gets the
+same undo entry.
+
+The status strip's renderer badge and the console's scrollback still come from
+push channels that predate the boundary; fps and the resolution are still
+measured from the page, and `src/engine/frame-stats.ts` explains why that is
+honest rather than a stand-in.
 
 ## The end of zero-dep
 
@@ -117,10 +277,29 @@ package that feeds the C build acquired a registry dependency.
 ### Every dependency, and what replacing it would cost
 
 The rule is #944's: each entry arrives with the issue that uses it, and each
-carries a line saying what replacing it would cost. `@xyflow/react`,
-`react-arborist` and `@use-gesture/react` are still absent for that reason —
-they belong to #950 and to the node canvas, and adding them early would mean
-dependencies whose justifications nobody could check against real code.
+carries a line saying what replacing it would cost. `@xyflow/react` and
+`react-arborist` are still absent for that reason — they belong to #950 and to
+the node canvas, and adding them early would mean dependencies whose
+justifications nobody could check against real code.
+
+**`@use-gesture/react` is absent for a different reason, and it is a
+deviation worth stating.** #949 names it for the camera, on the strength of
+#946 having reserved it. It was added, written against, and taken back out,
+because the viewport's gesture layer is not the shape it fits:
+
+- The load-bearing part is the `pending` phase — a press whose meaning arrives a
+  frame later, from the engine, and is then replayed. No gesture library models
+  that, so it would sit on top of one rather than being served by it.
+- What is left underneath is `pointerdown`/`move`/`up` with
+  `setPointerCapture`, which the DOM does correctly and which the library also
+  just calls.
+- The one real gain was trackpad pinch, and that is five lines: every browser
+  reports a pinch as a wheel event with `ctrlKey` set, and `wheelNotches` gives
+  it its own scale.
+
+So the package would have been a dependency whose justification nobody could
+check against real code — which is the rule, applied to the package the rule was
+written about.
 
 | Package | What it does here | Replacing it |
 |---|---|---|
@@ -230,13 +409,11 @@ ship a type error happily.
 
 ## What is deliberately not here
 
-- **Panel contents** — the outliner's tree (#950), the inspector's property grid
-  (#951), the asset browser (#952). Each is a placeholder that says so on screen
-- **The canvas handover** — camera and picking are #949. The viewport panel
-  holds the canvas and keeps its id; it does not yet drive it
-- **Driving the boundary** — `@kruddage/engine/bridge` exists as of #945, and
-  nothing here calls it. Wiring the command bar to #947's command layer and the
-  status strip to the boundary is #948
+- **Panel contents** — the outliner's tree (#950) and the asset browser (#952).
+  Each is a placeholder that says so on screen. The inspector (#951) and the
+  viewport (#949) are real
+- **Marquee select** — the issue offers it "if it is cheap" and it is not; see
+  the viewport section above for why it is a boundary change first
 - **The node graph** — #944's Q5 puts it here, in React, as one canvas. It
   arrives after the panels
 - **A phone layout** — ruled out of #944 explicitly. Container queries and

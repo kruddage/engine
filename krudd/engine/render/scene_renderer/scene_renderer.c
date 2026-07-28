@@ -778,6 +778,59 @@ static void camera_reset_view(void)
 	g_cam_user_controlled = 0;
 }
 
+/*
+ * Frame a world-space sphere (#949): look at `centre`, from far enough back
+ * that a ball of `radius` fills the vertical field of view with a little air
+ * around it, along the direction the camera is already looking.
+ *
+ * Keeping the direction is the whole design. A frame-selection that also chose
+ * an angle would throw away the view the reader had spent the last minute
+ * setting up, which is exactly the moment they press the key — they want to see
+ * *this* thing, from where they already are.
+ */
+static void camera_frame(const float centre[3], float radius)
+{
+	float back[3];
+	float dist;
+
+	if (!centre || radius <= 0.0f)
+		return;
+
+	/* The current view direction, reversed: eye - target. */
+	back[0] = g_cam.eye[0] - g_cam.target[0];
+	back[1] = g_cam.eye[1] - g_cam.target[1];
+	back[2] = g_cam.eye[2] - g_cam.target[2];
+	if (cam_norm3(back) <= 1e-4f) {
+		/* Degenerate pose — no direction to keep. Any is better than
+		 * none, and looking down -Z is the scene's default. */
+		back[0] = 0.0f;
+		back[1] = 0.0f;
+		back[2] = 1.0f;
+	}
+
+	/*
+	 * The distance at which a sphere of `radius` subtends the vertical
+	 * field of view, with 1.6 of margin so the selection has air around it
+	 * rather than touching the top and bottom of the dock.
+	 */
+	dist = radius * 1.6f / tanf(0.5f * g_cam.fov_y);
+	if (dist < g_cam.near * 4.0f)
+		dist = g_cam.near * 4.0f;
+
+	g_cam.target[0] = centre[0];
+	g_cam.target[1] = centre[1];
+	g_cam.target[2] = centre[2];
+	g_cam.eye[0]    = centre[0] + back[0] * dist;
+	g_cam.eye[1]    = centre[1] + back[1] * dist;
+	g_cam.eye[2]    = centre[2] + back[2] * dist;
+	/*
+	 * Detached, like orbit/pan/dolly. Framing a selection that the demo's
+	 * scripted orbit snaps away from on the next tick is not framing it.
+	 */
+	g_cam_user_controlled = 1;
+	camera_update(&g_cam);
+}
+
 static const struct camera_api g_camera_api = {
 	camera_get_view_proj,
 	camera_get_eye,
@@ -786,6 +839,7 @@ static const struct camera_api g_camera_api = {
 	camera_pan,
 	camera_dolly,
 	camera_reset_view,
+	camera_frame,
 };
 
 /*

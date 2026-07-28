@@ -19,6 +19,7 @@ import {
 	type BridgeModule,
 	type BridgeReply,
 	type BridgeResult,
+	type Generations,
 } from "@kruddage/engine/bridge";
 
 const BUFFER_AT = 1024;
@@ -37,6 +38,17 @@ export interface ModuleStub extends BridgeModule {
 	readonly ops: number[];
 }
 
+/**
+ * A generation vector, with every domain at 1 unless a test says otherwise.
+ *
+ * Spelled here rather than at each call site so that adding a domain — #949
+ * added `viewport` — is one edit rather than one per assertion. A test names
+ * the domain it is reasoning about and inherits the rest.
+ */
+export function generations(overrides: Partial<Generations> = {}): Generations {
+	return { scene: 1, selection: 1, history: 1, viewport: 1, ...overrides };
+}
+
 export function reply(overrides: Partial<BridgeReply> = {}): BridgeReply {
 	return {
 		protocol: BRIDGE_PROTOCOL,
@@ -44,7 +56,7 @@ export function reply(overrides: Partial<BridgeReply> = {}): BridgeReply {
 		applied: 0,
 		error: null,
 		code: 0,
-		generations: { scene: 1, selection: 1, history: 1 },
+		generations: generations(),
 		events: [],
 		eventsDropped: 0,
 		results: [],

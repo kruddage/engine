@@ -12,6 +12,11 @@ export interface Generations {
 	scene: number;
 	selection: number;
 	history: number;
+	/**
+	 * The viewport's own state (#949). Deliberately not the camera — see
+	 * the `viewport` query in bridge.mjs for why the pose is left out.
+	 */
+	viewport: number;
 }
 
 /** A notice the generation vector cannot express on its own. */
@@ -130,6 +135,50 @@ export interface EntityParams {
 	blocks: ParamBlock[];
 }
 
+/** Which handle set the gizmo shows. Mirrors enum gizmo_mode. */
+export type GizmoMode = 0 | 1 | 2 | 3;
+
+/** Which handle a drag holds. -1 is none; 3 is the uniform-scale centre. */
+export type GizmoAxis = -1 | 0 | 1 | 2 | 3;
+
+export interface GizmoSnap {
+	/** World units. 0 means translation does not snap. */
+	translate: number;
+	/** Degrees. 0 means rotation does not snap. */
+	rotate: number;
+	/** A multiple of the axis's scale. 0 means scaling does not snap. */
+	scale: number;
+}
+
+export interface GridState {
+	shown: boolean;
+	spacing: number;
+}
+
+/** The viewport, as the engine reports it. */
+export interface ViewportState {
+	/** The size the engine answers a pick against, in CSS pixels. */
+	width: number;
+	height: number;
+	/** Which half of the GAME / EDITOR switch is lit. */
+	editorMode: boolean;
+	mode: GizmoMode;
+	/** The handle a live drag holds, or -1. */
+	axis: GizmoAxis;
+	/**
+	 * How many drags have been opened.
+	 *
+	 * The editor's "answered" signal. A press that grabs nothing changes
+	 * no other field, so without this there is no way to tell it apart
+	 * from a press the engine has not seen yet — and the editor has to
+	 * know which before it can decide whether the gesture is a gizmo drag
+	 * or a camera orbit.
+	 */
+	dragSerial: number;
+	snap: GizmoSnap;
+	grid: GridState;
+}
+
 /** Query kinds, and what each answers with. */
 export interface QueryValues {
 	"scene.tree": SceneTree;
@@ -142,6 +191,7 @@ export interface QueryValues {
 	 */
 	"scene.text": string | null;
 	"entity.params": EntityParams;
+	viewport: ViewportState;
 }
 
 export type QueryKind = keyof QueryValues;
@@ -235,6 +285,35 @@ export interface Bridge {
 	setMaterialRef(id: number, ref: number): Bridge;
 	setScriptRef(id: number, ref: number): Bridge;
 
+	/* The viewport (#949). See bridge.mjs for what each of these means. */
+
+	/** The canvas's drawable size, CSS pixels. What a pick is answered against. */
+	setViewportSize(width: number, height: number): Bridge;
+	/** Orbit about the camera's target, radians. */
+	orbitCamera(dyaw: number, dpitch: number): Bridge;
+	/** Slide eye and target across the view plane, in viewport fractions. */
+	panCamera(dx: number, dy: number): Bridge;
+	/** Move along the view direction, as a fraction of the eye→target gap. */
+	dollyCamera(amount: number): Bridge;
+	/** Frame an entity, or the selection when `id` is -1. */
+	frameCamera(id?: number): Bridge;
+	/** Hand the camera back to the scene's scripted one. */
+	resetCamera(): Bridge;
+	/** Pick at a pixel and select what is there. A miss clears. */
+	pick(x: number, y: number): Bridge;
+	/** The GAME / EDITOR switch — the whole of the play/edit handover. */
+	setEditorMode(on: boolean): Bridge;
+	setGizmoMode(mode: GizmoMode): Bridge;
+	/** Snap increments. Zero on any of them means that mode is free. */
+	setGizmoSnap(
+		translate: number,
+		rotateDegrees: number,
+		scale: number
+	): Bridge;
+	/** One phase of a gizmo drag, at a pixel. */
+	gizmoDrag(phase: DragPhase, x: number, y: number): Bridge;
+	setGrid(shown: boolean, spacing: number): Bridge;
+
 	subscribe(listener: (reply: BridgeReply) => void): () => void;
 
 	/** One crossing. Null when there was nothing to send and nothing to ask. */
@@ -275,6 +354,43 @@ export declare const OP: Readonly<{
 	QUERY_SELECTION: number;
 	QUERY_HISTORY: number;
 	QUERY_SCENE_TEXT: number;
+	VIEWPORT_SIZE: number;
+	CAMERA_ORBIT: number;
+	CAMERA_PAN: number;
+	CAMERA_DOLLY: number;
+	CAMERA_FRAME: number;
+	CAMERA_RESET: number;
+	PICK: number;
+	EDITOR_MODE: number;
+	GIZMO_MODE: number;
+	GIZMO_SNAP: number;
+	GIZMO_DRAG: number;
+	GRID: number;
+	QUERY_VIEWPORT: number;
+}>;
+
+/** The phases of a gizmo drag. Mirrors enum bridge_drag_phase. */
+export type DragPhase = 0 | 1 | 2;
+
+export declare const GIZMO_MODE: Readonly<{
+	NONE: 0;
+	TRANSLATE: 1;
+	ROTATE: 2;
+	SCALE: 3;
+}>;
+
+export declare const GIZMO_AXIS: Readonly<{
+	NONE: -1;
+	X: 0;
+	Y: 1;
+	Z: 2;
+	ALL: 3;
+}>;
+
+export declare const DRAG_PHASE: Readonly<{
+	BEGIN: 0;
+	MOVE: 1;
+	END: 2;
 }>;
 
 export declare function createBridge(

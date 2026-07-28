@@ -71,6 +71,7 @@ void renderer_webgpu_release_frame(void);
 void fg_plugin_entry(struct subsystem_manager *mgr);
 void scene_renderer_plugin_entry(struct subsystem_manager *mgr);
 void viewport_plugin_entry(struct subsystem_manager *mgr);
+void gizmo_plugin_entry(struct subsystem_manager *mgr);
 void kruddgui_plugin_entry(struct subsystem_manager *mgr);
 void bridge_plugin_entry(struct subsystem_manager *mgr);
 void audio_scriptnode_plugin_entry(struct subsystem_manager *mgr);
@@ -99,6 +100,14 @@ static const struct {
 	 * kruddgui's very first tick rather than one frame late.
 	 */
 	{ "viewport",       viewport_plugin_entry       },
+	/*
+	 * The gizmo resolves "camera", "scene" and "viewport" — the last of
+	 * which is the entry immediately above — and registers its own kruddgui
+	 * overlay from its first tick, so it sits here for the same reason the
+	 * viewport does (#949). Overlays draw in registration order, so the
+	 * handles compose over the viewport's, which draws nothing.
+	 */
+	{ "gizmo",          gizmo_plugin_entry          },
 	{ "kruddgui",       kruddgui_plugin_entry       },
 	/*
 	 * The editor boundary resolves "scene" and "edit", both of which are up

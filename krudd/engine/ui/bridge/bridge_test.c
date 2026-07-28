@@ -14,6 +14,9 @@
 
 #include "world.h"
 #include "asset_api.h"
+#include "camera_api.h"
+#include "gizmo.h"
+#include "viewport_api.h"
 #include "script.h"
 #include "log.h"
 
@@ -393,6 +396,171 @@ static void b_simple(struct builder *b, uint16_t op)
 }
 
 /* ------------------------------------------------------------------ *
+ * Fake camera, viewport and gizmo services (#949)
+ *
+ * Each records what it was asked to do rather than doing it: there is no
+ * renderer to orbit, no canvas to pick against and nothing to draw. What the
+ * boundary owes these vtables is that the right call arrives with the right
+ * numbers, and that is exactly what a recorder can check.
+ * ------------------------------------------------------------------ */
+
+static float   g_orbit_yaw, g_orbit_pitch;
+static float   g_pan_dx, g_pan_dy;
+static float   g_dolly;
+static int32_t g_resets;
+static float   g_framed[3];
+static float   g_framed_radius;
+static int32_t g_frames;
+
+/*
+ * The identity, written out rather than through mat4_identity: this test links
+ * no math library, on purpose — the boundary does no geometry, it hands
+ * co-ordinates to services that do, and linking base/math here would let a
+ * future arithmetic mistake in bridge.c compile.
+ */
+static void fake_get_view_proj(struct mat4 *out)
+{
+	int i;
+
+	for (i = 0; i < 16; i++)
+		out->m[i] = i % 5 == 0 ? 1.0f : 0.0f;
+}
+static void fake_get_eye(float out[3]) { out[0] = out[1] = 0.0f; out[2] = 5.0f; }
+static void fake_set_viewport(float w, float h) { (void)w; (void)h; }
+static void fake_orbit(float yaw, float pitch)
+{
+	g_orbit_yaw   = yaw;
+	g_orbit_pitch = pitch;
+}
+static void fake_pan(float dx, float dy) { g_pan_dx = dx; g_pan_dy = dy; }
+static void fake_dolly(float amount) { g_dolly = amount; }
+static void fake_reset_view(void) { g_resets++; }
+static void fake_frame(const float centre[3], float radius)
+{
+	g_framed[0]     = centre[0];
+	g_framed[1]     = centre[1];
+	g_framed[2]     = centre[2];
+	g_framed_radius = radius;
+	g_frames++;
+}
+
+static const struct camera_api g_camera = {
+	fake_get_view_proj, fake_get_eye,  fake_set_viewport,
+	fake_orbit,         fake_pan,      fake_dolly,
+	fake_reset_view,    fake_frame,
+};
+
+static float   g_vp_w, g_vp_h;
+/* What the next pick answers, and where it was asked. */
+static int32_t g_pick_answer = -1;
+static float   g_pick_x, g_pick_y;
+/* Which entity has something to frame, and how big it is. */
+static int32_t g_bounds_entity = -1;
+
+static void fake_vp_set_size(float w, float h)
+{
+	if (w <= 0.0f || h <= 0.0f)
+		return;
+	g_vp_w = w;
+	g_vp_h = h;
+}
+static void fake_vp_get_size(float *w, float *h)
+{
+	if (w)
+		*w = g_vp_w;
+	if (h)
+		*h = g_vp_h;
+}
+static int32_t fake_vp_pick(float sx, float sy)
+{
+	g_pick_x = sx;
+	g_pick_y = sy;
+	return g_pick_answer;
+}
+static int32_t fake_vp_bounds(int32_t entity, float centre[3], float *radius)
+{
+	if (entity != g_bounds_entity)
+		return 0;
+	centre[0] = 1.0f;
+	centre[1] = 2.0f;
+	centre[2] = 3.0f;
+	*radius   = 4.0f;
+	return 1;
+}
+
+static const struct viewport_api g_viewport = {
+	fake_vp_set_size, fake_vp_get_size, fake_vp_pick, fake_vp_bounds,
+};
+
+static int32_t           g_gizmo_mode = GIZMO_MODE_TRANSLATE;
+static struct gizmo_snap g_gizmo_snap;
+static int32_t           g_gizmo_axis = GIZMO_AXIS_NONE;
+static int32_t           g_gizmo_begins, g_gizmo_ends;
+static int32_t           g_grid_shown = 1;
+static float             g_grid_spacing = 1.0f;
+/*
+ * What the next move() solves to, and whether it solves at all. A real gizmo
+ * answers 0 when the pointer maps to nothing usable; the boundary has to leave
+ * the entity alone in that case rather than writing a stale transform.
+ */
+static int32_t           g_gizmo_moves_to = 1;
+static float             g_gizmo_move_x = 7.0f;
+
+static void fake_gz_set_mode(int32_t mode) { g_gizmo_mode = mode; }
+static int32_t fake_gz_get_mode(void) { return g_gizmo_mode; }
+static void fake_gz_set_snap(float t, float r, float s)
+{
+	g_gizmo_snap.translate      = t;
+	g_gizmo_snap.rotate_degrees = r;
+	g_gizmo_snap.scale          = s;
+}
+static void fake_gz_get_snap(struct gizmo_snap *out) { *out = g_gizmo_snap; }
+static int32_t fake_gz_begin(float sx, float sy)
+{
+	(void)sx;
+	(void)sy;
+	g_gizmo_begins++;
+	return g_gizmo_axis;
+}
+static int32_t fake_gz_move(float sx, float sy, struct transform *out)
+{
+	(void)sx;
+	(void)sy;
+	if (!g_gizmo_moves_to)
+		return 0;
+	memset(out, 0, sizeof(*out));
+	out->position[0] = g_gizmo_move_x;
+	out->rotation[3] = 1.0f;
+	out->scale[0] = out->scale[1] = out->scale[2] = 1.0f;
+	return 1;
+}
+static void fake_gz_end(void)
+{
+	g_gizmo_ends++;
+	g_gizmo_axis = GIZMO_AXIS_NONE;
+}
+static int32_t fake_gz_axis(void) { return g_gizmo_axis; }
+static void fake_gz_set_grid(int32_t shown, float spacing)
+{
+	g_grid_shown = shown ? 1 : 0;
+	if (spacing > 0.0f)
+		g_grid_spacing = spacing;
+}
+static int32_t fake_gz_grid_shown(void) { return g_grid_shown; }
+static float fake_gz_grid_spacing(void) { return g_grid_spacing; }
+
+static const struct gizmo_api g_gizmo = {
+	fake_gz_set_mode, fake_gz_get_mode,     fake_gz_set_snap,
+	fake_gz_get_snap, fake_gz_begin,        fake_gz_move,
+	fake_gz_end,      fake_gz_axis,         fake_gz_set_grid,
+	fake_gz_grid_shown, fake_gz_grid_spacing,
+};
+
+static int32_t g_editor_mode;
+static void fake_set_editor_mode(int32_t on) { g_editor_mode = on ? 1 : 0; }
+static int32_t fake_get_editor_mode(void) { return g_editor_mode; }
+
+/* ------------------------------------------------------------------ *
  * Fixtures
  * ------------------------------------------------------------------ */
 
@@ -401,9 +569,14 @@ static struct bridge g_bridge;
 static void reset_all(void)
 {
 	static const struct bridge_host host = {
-		.entity = &g_entity,
-		.edit   = &g_edit,
-		.asset  = &g_asset,
+		.entity          = &g_entity,
+		.edit            = &g_edit,
+		.asset           = &g_asset,
+		.camera          = &g_camera,
+		.viewport        = &g_viewport,
+		.gizmo           = &g_gizmo,
+		.set_editor_mode = fake_set_editor_mode,
+		.get_editor_mode = fake_get_editor_mode,
 	};
 	struct transform origin = {
 		.position = { 0.0f, 0.0f, 0.0f },
@@ -421,6 +594,22 @@ static void reset_all(void)
 	g_cleared = g_clears = 0;
 	g_built[0] = '\0';
 	g_build_result = 0;
+
+	g_orbit_yaw = g_orbit_pitch = g_pan_dx = g_pan_dy = g_dolly = 0.0f;
+	g_resets = g_frames = 0;
+	g_framed_radius = 0.0f;
+	g_vp_w = g_vp_h = 0.0f;
+	g_pick_answer = -1;
+	g_pick_x = g_pick_y = 0.0f;
+	g_bounds_entity = -1;
+	g_gizmo_mode = GIZMO_MODE_TRANSLATE;
+	memset(&g_gizmo_snap, 0, sizeof(g_gizmo_snap));
+	g_gizmo_axis = GIZMO_AXIS_NONE;
+	g_gizmo_begins = g_gizmo_ends = 0;
+	g_gizmo_moves_to = 1;
+	g_grid_shown = 1;
+	g_grid_spacing = 1.0f;
+	g_editor_mode = 0;
 
 	bridge_init(&g_bridge, &host);
 
@@ -467,13 +656,24 @@ static void test_empty_tape(void)
 	b_reset(&b);
 	r = exchange(&b);
 
-	has(r, "\"protocol\":1");
+	{
+		char want[32];
+
+		/* Derived, not spelled: this assertion is that the reply
+		 * carries the build's own wire version, not that the version
+		 * is any particular number. */
+		snprintf(want, sizeof(want), "\"protocol\":%d", BRIDGE_PROTOCOL);
+		has(r, want);
+	}
 	has(r, "\"serial\":1");
 	has(r, "\"applied\":0");
 	has(r, "\"error\":null");
 	has(r, "\"results\":[]");
 	/* Seeded on the first refresh; 0 is reserved for "the client has none". */
-	has(r, "\"generations\":{\"scene\":1,\"selection\":1,\"history\":1}");
+	/* Every domain seeded to 1 on the first refresh, and the vector
+	 * carries all of them — #949's viewport included. */
+	has(r, "\"generations\":{\"scene\":1,\"selection\":1,\"history\":1,"
+	       "\"viewport\":1}");
 	printf("ok: empty tape\n");
 }
 
@@ -1258,6 +1458,461 @@ static void test_no_services_is_survivable(void)
 	printf("ok: a bridge with no services answers rather than crashing\n");
 }
 
+/* ------------------------------------------------------------------ *
+ * The viewport domain (#949)
+ * ------------------------------------------------------------------ */
+
+/* The camera gestures reach the camera with the numbers they were sent. */
+static void test_camera_commands(void)
+{
+	struct builder b;
+	const char    *r;
+
+	reset_all();
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_CAMERA_ORBIT);
+	b_f32(&b, 0.25f);
+	b_f32(&b, -0.5f);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_CAMERA_PAN);
+	b_f32(&b, 0.1f);
+	b_f32(&b, 0.2f);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_CAMERA_DOLLY);
+	b_f32(&b, -0.3f);
+	b_close(&b);
+	b_simple(&b, BRIDGE_OP_CAMERA_RESET);
+	r = exchange(&b);
+
+	has(r, "\"error\":null");
+	has(r, "\"applied\":4");
+	assert(g_orbit_yaw == 0.25f && g_orbit_pitch == -0.5f);
+	assert(g_pan_dx == 0.1f && g_pan_dy == 0.2f);
+	assert(g_dolly == -0.3f);
+	assert(g_resets == 1);
+	printf("ok: the camera gestures reach the camera unchanged\n");
+}
+
+/*
+ * The size the editor reports is the size a pick is answered against, and the
+ * viewport query reads it back — which is how the editor notices a dock that
+ * collapsed under it.
+ */
+static void test_viewport_size_round_trips(void)
+{
+	struct builder b;
+	const char    *r;
+
+	reset_all();
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_VIEWPORT_SIZE);
+	b_f32(&b, 1280.0f);
+	b_f32(&b, 720.0f);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_QUERY_VIEWPORT);
+	b_u32(&b, 0);
+	b_close(&b);
+	r = exchange(&b);
+
+	has(r, "\"kind\":\"viewport\"");
+	has(r, "\"width\":1280");
+	has(r, "\"height\":720");
+	printf("ok: the reported viewport size reads back\n");
+}
+
+/*
+ * A pick is a select. The whole point of making it a command rather than a
+ * query: the editor never holds an id the engine has not agreed to.
+ */
+static void test_pick_selects(void)
+{
+	struct builder b;
+	const char    *r;
+
+	reset_all();
+	g_pick_answer = 1;
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_PICK);
+	b_f32(&b, 400.0f);
+	b_f32(&b, 300.0f);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_QUERY_SELECTION);
+	b_u32(&b, 0);
+	b_close(&b);
+	r = exchange(&b);
+
+	assert(g_pick_x == 400.0f && g_pick_y == 300.0f);
+	has(r, "\"kind\":\"selection\"");
+	has(r, "\"id\":1");
+	printf("ok: a pick selects what it hit\n");
+}
+
+/* A miss clears the selection, exactly as clicking empty space should. */
+static void test_pick_miss_clears(void)
+{
+	struct builder b;
+	const char    *r;
+
+	reset_all();
+	g_pick_answer = 1;
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_PICK);
+	b_f32(&b, 10.0f);
+	b_f32(&b, 10.0f);
+	b_close(&b);
+	exchange(&b);
+	assert(g_world.selected == 1);
+
+	g_pick_answer = -1;
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_PICK);
+	b_f32(&b, 10.0f);
+	b_f32(&b, 10.0f);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_QUERY_SELECTION);
+	b_u32(&b, 0);
+	b_close(&b);
+	r = exchange(&b);
+
+	has(r, "\"id\":-1");
+	printf("ok: a pick that misses clears the selection\n");
+}
+
+/* Frame with -1 means "the selection", so no caller has to know the id. */
+static void test_frame_uses_the_selection(void)
+{
+	struct builder b;
+
+	reset_all();
+	g_bounds_entity = 1;
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_SELECT);
+	b_i32(&b, 1);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_CAMERA_FRAME);
+	b_i32(&b, -1);
+	b_close(&b);
+	exchange(&b);
+
+	assert(g_frames == 1);
+	assert(g_framed[0] == 1.0f && g_framed[1] == 2.0f &&
+	       g_framed[2] == 3.0f);
+	assert(g_framed_radius == 4.0f);
+	printf("ok: frame-selection frames the selection's bounds\n");
+}
+
+/*
+ * An entity with nothing drawn cannot be framed, and the reader who pressed the
+ * key is told rather than left watching a still camera.
+ */
+static void test_frame_without_bounds_is_an_event(void)
+{
+	struct builder b;
+	const char    *r;
+
+	reset_all();
+	g_bounds_entity = -2;	/* nothing matches */
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_CAMERA_FRAME);
+	b_i32(&b, 1);
+	b_close(&b);
+	r = exchange(&b);
+
+	assert(g_frames == 0);
+	has(r, "\"error\":null");
+	has(r, "viewport.nothing");
+	printf("ok: framing something undrawable says so\n");
+}
+
+/* Mode, snap and grid are engine state, and the query is how a panel reads it. */
+static void test_gizmo_state_round_trips(void)
+{
+	struct builder b;
+	const char    *r;
+
+	reset_all();
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_GIZMO_MODE);
+	b_i32(&b, GIZMO_MODE_ROTATE);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_GIZMO_SNAP);
+	b_f32(&b, 0.5f);
+	b_f32(&b, 15.0f);
+	b_f32(&b, 0.25f);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_GRID);
+	b_i32(&b, 0);
+	b_f32(&b, 2.0f);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_QUERY_VIEWPORT);
+	b_u32(&b, 0);
+	b_close(&b);
+	r = exchange(&b);
+
+	has(r, "\"mode\":2");
+	has(r, "\"translate\":0.5");
+	has(r, "\"rotate\":15");
+	has(r, "\"scale\":0.25");
+	has(r, "\"shown\":false");
+	has(r, "\"spacing\":2");
+	printf("ok: the gizmo's mode, snap and grid read back\n");
+}
+
+/*
+ * The drag serial. A press that grabs nothing changes nothing else, so without
+ * it the editor could not tell "no answer yet" from "answered: nothing" — and
+ * it would either orbit on a grabbed handle or refuse to orbit at all.
+ */
+static void test_drag_serial_advances_on_every_begin(void)
+{
+	struct builder b;
+	const char    *r;
+
+	reset_all();
+	g_gizmo_axis = GIZMO_AXIS_NONE;	/* the press will miss */
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_GIZMO_DRAG);
+	b_i32(&b, BRIDGE_DRAG_BEGIN);
+	b_f32(&b, 10.0f);
+	b_f32(&b, 10.0f);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_QUERY_VIEWPORT);
+	b_u32(&b, 0);
+	b_close(&b);
+	r = exchange(&b);
+
+	assert(g_gizmo_begins == 1);
+	has(r, "\"dragSerial\":1");
+	has(r, "\"axis\":-1");
+	printf("ok: a press that grabs nothing still reports an answer\n");
+}
+
+/*
+ * A drag's moves land on set_transform — the same call an inspector edit makes.
+ * That is the one line that makes a gizmo drag an ordinary undoable edit
+ * (#944, Q2), so it is the one worth pinning.
+ */
+static void test_drag_moves_the_selection(void)
+{
+	struct builder b;
+
+	reset_all();
+	g_gizmo_axis = GIZMO_AXIS_X;
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_SELECT);
+	b_i32(&b, 1);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_GIZMO_DRAG);
+	b_i32(&b, BRIDGE_DRAG_BEGIN);
+	b_f32(&b, 10.0f);
+	b_f32(&b, 10.0f);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_GIZMO_DRAG);
+	b_i32(&b, BRIDGE_DRAG_MOVE);
+	b_f32(&b, 40.0f);
+	b_f32(&b, 10.0f);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_GIZMO_DRAG);
+	b_i32(&b, BRIDGE_DRAG_END);
+	b_f32(&b, 40.0f);
+	b_f32(&b, 10.0f);
+	b_close(&b);
+	exchange(&b);
+
+	assert(g_world.local[1].position[0] == 7.0f);
+	assert(g_gizmo_ends == 1);
+	printf("ok: a gizmo drag moves the selection through set_transform\n");
+}
+
+/* A move that solves to nothing leaves the entity where it was. */
+static void test_drag_that_solves_to_nothing_writes_nothing(void)
+{
+	struct builder b;
+
+	reset_all();
+	g_gizmo_axis     = GIZMO_AXIS_X;
+	g_gizmo_moves_to = 0;
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_SELECT);
+	b_i32(&b, 1);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_GIZMO_DRAG);
+	b_i32(&b, BRIDGE_DRAG_MOVE);
+	b_f32(&b, 40.0f);
+	b_f32(&b, 10.0f);
+	b_close(&b);
+	exchange(&b);
+
+	assert(g_world.local[1].position[0] == 0.0f);
+	printf("ok: an unsolvable drag leaves the entity alone\n");
+}
+
+/* An unknown phase is a notice, not a rejected batch. */
+static void test_unknown_drag_phase_is_an_event(void)
+{
+	struct builder b;
+	const char    *r;
+
+	reset_all();
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_GIZMO_DRAG);
+	b_i32(&b, 99);
+	b_f32(&b, 0.0f);
+	b_f32(&b, 0.0f);
+	b_close(&b);
+	r = exchange(&b);
+
+	has(r, "\"error\":null");
+	has(r, "command.rejected");
+	printf("ok: a drag phase this build does not know is a notice\n");
+}
+
+/* Editor mode is a switch, and leaving it abandons any drag in progress. */
+static void test_editor_mode_switch(void)
+{
+	struct builder b;
+	const char    *r;
+
+	reset_all();
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_EDITOR_MODE);
+	b_i32(&b, 1);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_QUERY_VIEWPORT);
+	b_u32(&b, 0);
+	b_close(&b);
+	r = exchange(&b);
+	assert(g_editor_mode == 1);
+	has(r, "\"editorMode\":true");
+
+	g_gizmo_axis = GIZMO_AXIS_Y;
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_EDITOR_MODE);
+	b_i32(&b, 0);
+	b_close(&b);
+	exchange(&b);
+	assert(g_editor_mode == 0);
+	assert(g_gizmo_ends == 1);
+	printf("ok: leaving editor mode abandons a drag in progress\n");
+}
+
+/*
+ * The viewport is its own domain. A scene edit must not invalidate the mode
+ * buttons, and pressing a mode button must not re-send the scene tree.
+ */
+static void test_viewport_is_its_own_domain(void)
+{
+	struct builder b;
+	const char    *r;
+
+	reset_all();
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_QUERY_VIEWPORT);
+	b_u32(&b, 0);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_QUERY_TREE);
+	b_u32(&b, 0);
+	b_close(&b);
+	r = exchange(&b);
+	has(r, "\"fresh\":false");
+
+	/* Move the scene only. The viewport's stamp must hold. */
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_ENTITY_NAME);
+	b_i32(&b, 0);
+	b_str(&b, "renamed");
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_QUERY_VIEWPORT);
+	b_u32(&b, bridge_generation(&g_bridge, BRIDGE_VIEWPORT));
+	b_close(&b);
+	r = exchange(&b);
+	has(r, "\"kind\":\"viewport\"");
+	has(r, "\"fresh\":true");
+
+	/* Move the viewport only. The scene's stamp must hold. */
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_GIZMO_MODE);
+	b_i32(&b, GIZMO_MODE_SCALE);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_QUERY_TREE);
+	b_u32(&b, bridge_generation(&g_bridge, BRIDGE_SCENE));
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_QUERY_VIEWPORT);
+	b_u32(&b, bridge_generation(&g_bridge, BRIDGE_VIEWPORT));
+	b_close(&b);
+	r = exchange(&b);
+	has(r, "\"kind\":\"scene.tree\",\"generation\":");
+	has(r, "\"mode\":3");
+	printf("ok: the viewport is cached apart from the scene\n");
+}
+
+/*
+ * The camera does *not* move the viewport generation. An orbit runs every frame
+ * of a drag, and a domain that moved with it would re-send the mode buttons
+ * sixty times a second to say the same thing.
+ */
+static void test_camera_does_not_move_the_generation(void)
+{
+	struct builder b;
+	uint32_t       before;
+
+	reset_all();
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_QUERY_VIEWPORT);
+	b_u32(&b, 0);
+	b_close(&b);
+	exchange(&b);
+	before = bridge_generation(&g_bridge, BRIDGE_VIEWPORT);
+
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_CAMERA_ORBIT);
+	b_f32(&b, 0.4f);
+	b_f32(&b, 0.1f);
+	b_close(&b);
+	exchange(&b);
+
+	assert(bridge_generation(&g_bridge, BRIDGE_VIEWPORT) == before);
+	printf("ok: orbiting does not invalidate the viewport's cache\n");
+}
+
+/*
+ * A build with no camera, no canvas and no gizmo still answers. The editor's
+ * viewport panel has to render something on a page whose engine came up half
+ * way, and "null" is not something a row of mode buttons can render.
+ */
+static void test_viewport_without_services(void)
+{
+	struct bridge  bare;
+	struct builder b;
+	const char    *r;
+
+	bridge_init(&bare, NULL);
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_CAMERA_ORBIT);
+	b_f32(&b, 1.0f);
+	b_f32(&b, 1.0f);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_PICK);
+	b_f32(&b, 1.0f);
+	b_f32(&b, 1.0f);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_GIZMO_DRAG);
+	b_i32(&b, BRIDGE_DRAG_BEGIN);
+	b_f32(&b, 1.0f);
+	b_f32(&b, 1.0f);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_QUERY_VIEWPORT);
+	b_u32(&b, 0);
+	b_close(&b);
+	r = bridge_exchange(&bare, b.bytes, b.len);
+
+	has(r, "\"error\":null");
+	has(r, "\"kind\":\"viewport\"");
+	has(r, "\"axis\":-1");
+	has(r, "\"editorMode\":false");
+	printf("ok: a viewport with no services answers rather than crashing\n");
+}
+
 int main(void)
 {
 	/*
@@ -1300,6 +1955,24 @@ int main(void)
 	test_scene_load_rejection_is_an_event();
 	test_load_then_save_in_one_batch();
 	test_no_services_is_survivable();
+
+	/* The viewport domain (#949). */
+	test_camera_commands();
+	test_viewport_size_round_trips();
+	test_pick_selects();
+	test_pick_miss_clears();
+	test_frame_uses_the_selection();
+	test_frame_without_bounds_is_an_event();
+	test_gizmo_state_round_trips();
+	test_drag_serial_advances_on_every_begin();
+	test_drag_moves_the_selection();
+	test_drag_that_solves_to_nothing_writes_nothing();
+	test_unknown_drag_phase_is_an_event();
+	test_editor_mode_switch();
+	test_viewport_is_its_own_domain();
+	test_camera_does_not_move_the_generation();
+	test_viewport_without_services();
+
 	printf("all bridge tests passed\n");
 	return 0;
 }

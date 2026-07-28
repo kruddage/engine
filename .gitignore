@@ -25,3 +25,9 @@ public/
 # pnpm workspace
 node_modules/
 /packages/*/dist/
+
+# @kruddage/editor's browser suite (#946). Playwright writes both on failure —
+# traces, videos and the HTML report — and CI uploads them as an artifact
+# instead. Neither belongs in the tree.
+/packages/editor/playwright-report/
+/packages/editor/test-results/

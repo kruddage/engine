@@ -171,3 +171,63 @@ test("staging is idempotent", () => {
 
 	assert.deepEqual(first, second);
 });
+
+/* The editor is a second thing staged into the same output, at its own route
+ * (#946). These check the two states the deploy can be in and, between them,
+ * that adding the editor did not disturb the engine's own staging — the risk
+ * with a second writer into one directory. */
+test("stages the editor beside the shell when it is built", () => {
+	const { artifacts } = fakeBuild();
+	const out = mkdtempSync(join(tmpdir(), "krudd-out-"));
+
+	const editor = mkdtempSync(join(tmpdir(), "krudd-editor-"));
+	mkdirSync(join(editor, "assets"), { recursive: true });
+	writeFileSync(join(editor, "index.html"), "<!doctype html>editor\n");
+	writeFileSync(join(editor, "assets", "index-abc.js"), "/* bundle */\n");
+
+	const staged = stageSite({ artifacts, outDir: out, stem: STEM, editorDir: editor });
+
+	assert.ok(staged.includes("editor/"));
+	assert.equal(
+		readFileSync(join(out, "editor", "index.html"), "utf8"),
+		"<!doctype html>editor\n"
+	);
+	/* The bundler's own hashed output comes across whole — the engine's
+	 * artifact whitelist does not apply to it and must not be made to. */
+	assert.ok(readdirSync(join(out, "editor", "assets")).includes("index-abc.js"));
+});
+
+test("the editor's output does not disturb the engine's", () => {
+	const { artifacts } = fakeBuild();
+	const withoutEditor = mkdtempSync(join(tmpdir(), "krudd-out-"));
+	const withEditor = mkdtempSync(join(tmpdir(), "krudd-out-"));
+
+	const editor = mkdtempSync(join(tmpdir(), "krudd-editor-"));
+	writeFileSync(join(editor, "index.html"), "<!doctype html>editor\n");
+
+	const before = stageSite({ artifacts, outDir: withoutEditor, stem: STEM });
+	const after = stageSite({
+		artifacts,
+		outDir: withEditor,
+		stem: STEM,
+		editorDir: editor,
+	});
+
+	assert.deepEqual(after.filter((name) => name !== "editor/"), before);
+	/* The shell's own index.html is the collision that would matter, and the
+	 * editor's must not have overwritten it. */
+	assert.equal(
+		readFileSync(join(withEditor, "index.html"), "utf8"),
+		readFileSync(join(withoutEditor, "index.html"), "utf8")
+	);
+});
+
+test("stages nothing extra when the editor is not built", () => {
+	const { artifacts } = fakeBuild();
+	const out = mkdtempSync(join(tmpdir(), "krudd-out-"));
+
+	const staged = stageSite({ artifacts, outDir: out, stem: STEM, editorDir: null });
+
+	assert.ok(!staged.includes("editor/"));
+	assert.ok(!readdirSync(out).includes("editor"));
+});

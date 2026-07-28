@@ -1,5 +1,23 @@
 # Changelog
 
+## [19.2.0](https://github.com/kruddage/engine/compare/v19.1.0...v19.2.0) (2026-07-28)
+
+
+### Features
+
+* **abi:** @kruddage/abi — the vtables get a name and a surface ([#919](https://github.com/kruddage/engine/issues/919)) ([#928](https://github.com/kruddage/engine/issues/928)) ([d78b5c5](https://github.com/kruddage/engine/commit/d78b5c510d4d8ea52692d3d52878d68009df545d)), closes [#918](https://github.com/kruddage/engine/issues/918)
+* **kruddmake:** enforce the manifest tier order, and move core below base ([#927](https://github.com/kruddage/engine/issues/927)) ([8c7e7b1](https://github.com/kruddage/engine/commit/8c7e7b155ccbfcfd04530a939b7e6ad7cbeb503c)), closes [#923](https://github.com/kruddage/engine/issues/923)
+
+
+### Bug Fixes
+
+* **kruddmake:** reindent resolve_test.scm to satisfy indent-scm CI check ([#929](https://github.com/kruddage/engine/issues/929)) ([82bd545](https://github.com/kruddage/engine/commit/82bd54535a6a9c6b8eb0f18ae8ebdb789222a417))
+
+
+### Refactoring
+
+* **engine:** close the public surfaces — no library exports its module root ([#925](https://github.com/kruddage/engine/issues/925)) ([590c7db](https://github.com/kruddage/engine/commit/590c7dbaab6a465d7490f9b1819920dea3a19c26))
+
 ## [19.1.0](https://github.com/kruddage/engine/compare/v19.0.0...v19.1.0) (2026-07-27)
 
 

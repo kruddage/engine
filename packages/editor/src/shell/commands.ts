@@ -17,10 +17,15 @@
 //
 // ## Which actions are real
 //
-// `reset-layout`, the panel toggles and the moves. Everything else hints, which
-// is exactly where the current shell stands and is what makes a read-only shell
-// honest rather than broken. #948 replaces the hint path with #947's command
-// layer; this file is where it will do that, and it does not need to move.
+// Everything the editor can currently do: the layout actions, and — once a
+// document exists — undo, redo, new, open and save. The hint path survives for
+// the rest (cut, copy, paste, quit), and it is what keeps an unwired menu
+// honest instead of silent. #953 is where the last of them either arrive or are
+// listed as dropped.
+//
+// Note where the document actions are *not*: there is no branch here that
+// mutates a scene. `runAction` dispatches a command id and the document layer
+// owns what that means, so this file names actions and never performs them.
 
 import type { PanelId } from "./panels.js";
 import type { PanelSlot } from "./vocabulary.js";
@@ -230,6 +235,32 @@ export interface CommandContext {
 	togglePanel: (id: PanelId) => void;
 	movePanel: (id: PanelId, slot: PanelSlot) => void;
 	hint: (text: string) => void;
+	/**
+	 * The document actions, absent until the engine has booted.
+	 *
+	 * Optional rather than always-present because there is a real window —
+	 * every frame before the wasm runtime comes up, and forever on a page whose
+	 * engine was never built — in which Undo genuinely cannot work. During it,
+	 * the menu items fall through to the hint path and say so, which is the
+	 * same thing they do for an action nobody has written yet.
+	 */
+	document?: DocumentActions | undefined;
+}
+
+/**
+ * The document, as the menu needs it: five verbs and nothing else.
+ *
+ * Deliberately not the KruddDocument itself. The shell has no business
+ * dispatching an arbitrary command or opening a gesture, and handing it the
+ * whole object would make "the shell does not mutate the scene" a convention
+ * rather than something the types enforce.
+ */
+export interface DocumentActions {
+	undo: () => void;
+	redo: () => void;
+	newProject: () => void;
+	open: () => void;
+	save: () => void;
 }
 
 /**
@@ -250,5 +281,29 @@ export function runAction(
 		context.hint("layout reset");
 		return;
 	}
+
+	const document = context.document;
+	if (document) {
+		switch (id) {
+			case "undo":
+				document.undo();
+				return;
+			case "redo":
+				document.redo();
+				return;
+			case "new":
+				document.newProject();
+				return;
+			case "open-project":
+				document.open();
+				return;
+			case "save":
+				document.save();
+				return;
+			default:
+				break;
+		}
+	}
+
 	context.hint(`${stripMnemonic(label)}: coming soon`);
 }

@@ -250,7 +250,15 @@
                     ;;! build checks against the real wasm export table.
                     "-sEXPORTED_FUNCTIONS=_main,_krudd_load_game,"
                     "_krudd_bridge_protocol,_krudd_bridge_buffer,"
-                    "_krudd_bridge_capacity,_krudd_bridge_exchange")
+                    "_krudd_bridge_capacity,_krudd_bridge_exchange "
+                    ;;! The two runtime members the bridge client touches, and
+                    ;;! the reason it can touch them at all: emscripten puts
+                    ;;! neither on Module unless it is named here. Writing a
+                    ;;! tape means HEAPU8.set(bytes, at), and reading the reply
+                    ;;! means UTF8ToString(ptr) — without these the client is
+                    ;;! correct, tested against a stub, and dead in a browser
+                    ;;! (#947).
+                    "-sEXPORTED_RUNTIME_METHODS=HEAPU8,UTF8ToString")
      ""
      "rule cc"
      "  command = $cc $cflags $extracflags $includes -MMD -MF $out.d -c $in -o $out"

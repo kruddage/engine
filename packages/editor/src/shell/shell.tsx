@@ -52,6 +52,15 @@ export interface ShellProps {
 	engine: EngineInfo;
 	status: EngineStatus;
 	stats: FrameStats;
+	/**
+	 * Why the editor has no document, when it has none for a reason.
+	 *
+	 * Distinct from the hint, and permanent rather than transient: a protocol
+	 * mismatch between this bundle and the wasm artifact means every document
+	 * action is dead for the life of the page, and a message that fades after
+	 * 2.6 seconds is the wrong shape for a condition that never clears.
+	 */
+	boundaryError?: string | null | undefined;
 }
 
 export function Shell({
@@ -60,6 +69,7 @@ export function Shell({
 	engine,
 	status,
 	stats,
+	boundaryError = null,
 }: ShellProps): React.JSX.Element {
 	useShortcuts(shell.run);
 
@@ -144,6 +154,7 @@ export function Shell({
 				phase={status.phase}
 				renderer={status.renderer}
 				hint={shell.hint}
+				boundaryError={boundaryError}
 			/>
 		</div>
 	);

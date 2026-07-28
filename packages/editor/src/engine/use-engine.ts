@@ -4,6 +4,8 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import type { BridgeModule } from "@kruddage/engine/bridge";
+
 import { bootEngine } from "./boot.js";
 import type { EngineInfo, EngineStatus } from "./types.js";
 
@@ -22,12 +24,23 @@ export function useEngine(engine: EngineInfo): {
 	status: EngineStatus;
 	canvasRef: React.RefObject<HTMLCanvasElement | null>;
 	log: readonly string[];
+	/**
+	 * The wasm module, once its runtime is up. Null before that, and on a page
+	 * whose engine was never built.
+	 *
+	 * This is the only thing that reaches the boundary — createBridge needs the
+	 * heap views and the four `_krudd_bridge_*` exports, and they live on the
+	 * module rather than on `window`. Held as state rather than a ref because a
+	 * document is built from it, and a ref would not re-render to say so.
+	 */
+	module: BridgeModule | null;
 } {
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const [status, setStatus] = useState<EngineStatus>(
 		engine.built ? LOADING : UNBUILT
 	);
 	const [log, setLog] = useState<readonly string[]>([]);
+	const [module, setModule] = useState<BridgeModule | null>(null);
 
 	useEffect(() => {
 		const canvas = canvasRef.current;
@@ -42,12 +55,13 @@ export function useEngine(engine: EngineInfo): {
 			 * #954's, and it gets to decide its own retention. */
 			onLog: (line) =>
 				setLog((prior) => [...prior, line].slice(-LOG_LIMIT)),
+			onModule: setModule,
 		});
 
 		return () => handle.dispose();
 	}, [engine]);
 
-	return { status, canvasRef, log };
+	return { status, canvasRef, log, module };
 }
 
 const LOG_LIMIT = 200;

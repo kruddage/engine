@@ -44,6 +44,18 @@ struct entity_api {
 	 */
 	int32_t             (*build_scene_scm)(const char *src);
 	/*
+	 * Write the live world into `out` as a (scene ...) form — the exact
+	 * text build_scene_scm ingests, so a save reloads through the path that
+	 * already existed rather than a second one (#947). Returns the bytes
+	 * written, not counting the NUL, or -1 when it does not fit `cap` or
+	 * the scene cannot be written. See world/entity/scene_save.h.
+	 *
+	 * The inverse of build_scene_scm, and deliberately its twin rather than
+	 * a "serialize" entry point: what comes out is source text, readable
+	 * and hand-editable, and it is the only thing that comes out.
+	 */
+	int32_t             (*save_scene_scm)(char *out, int32_t cap);
+	/*
 	 * Invoke image function `fn` (an integer -> integer procedure) with `arg`,
 	 * the live world bound so image-side game rules can spawn and mutate in
 	 * response — the runtime twin of build_scene_scm. Returns fn's integer

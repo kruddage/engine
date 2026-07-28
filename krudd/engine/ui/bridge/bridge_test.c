@@ -140,12 +140,52 @@ static void fake_set_paused(int32_t p)
 	g_paused = p != 0;
 }
 
+/* ------------------------------------------------------------------ *
+ * The document path: what a load was handed, and what a save answers
+ * ------------------------------------------------------------------ */
+
+static int32_t g_cleared;
+static char    g_built[256];
+static int32_t g_build_result;
+
+static void fake_clear_world(void)
+{
+	g_cleared++;
+}
+
+static int32_t fake_build_scene(const char *src)
+{
+	snprintf(g_built, sizeof(g_built), "%s", src ? src : "");
+	return g_build_result;
+}
+
+/*
+ * A fixed form rather than a real serialization: what the bridge owes the
+ * client is that whatever the engine wrote reaches the reply intact and
+ * escaped. Whether the writer writes the right thing is scene_save_test's
+ * question, and answering it twice would couple this test to that format.
+ *
+ * The embedded quotes are the point — they are what proves the escaping.
+ */
+static int32_t fake_save_scene(char *out, int32_t cap)
+{
+	static const char form[] = "(scene fake (entity (name \"root\")))";
+
+	if (cap < (int32_t)sizeof(form))
+		return -1;
+	memcpy(out, form, sizeof(form));
+	return (int32_t)sizeof(form) - 1;
+}
+
 /*
  * Only the members the bridge touches are filled in. The rest stay NULL on
  * purpose: every call site in bridge.c guards, and a test that filled them
  * would stop proving that.
  */
 static const struct entity_api g_entity = {
+	.build_scene_scm  = fake_build_scene,
+	.save_scene_scm   = fake_save_scene,
+	.clear_world      = fake_clear_world,
 	.get_world        = fake_get_world,
 	.create_entity    = fake_create,
 	.destroy_entity   = fake_destroy,
@@ -194,6 +234,13 @@ static const char *fake_redo_label(void)
 	return g_can_redo ? "Rename" : NULL;
 }
 
+static int32_t g_clears;
+
+static void fake_clear_history(void)
+{
+	g_clears++;
+}
+
 static const struct edit_api g_edit = {
 	.begin      = fake_begin,
 	.commit     = fake_commit,
@@ -204,6 +251,7 @@ static const struct edit_api g_edit = {
 	.can_redo   = fake_can_redo,
 	.undo_label = fake_undo_label,
 	.redo_label = fake_redo_label,
+	.clear      = fake_clear_history,
 };
 
 /* ------------------------------------------------------------------ *
@@ -303,6 +351,9 @@ static void reset_all(void)
 	g_begins = g_commits = g_aborts = g_undos = g_redos = 0;
 	g_can_undo = g_can_redo = 0;
 	g_last_label = NULL;
+	g_cleared = g_clears = 0;
+	g_built[0] = '\0';
+	g_build_result = 0;
 
 	bridge_init(&g_bridge, &host);
 
@@ -787,6 +838,164 @@ static void test_payload_length_mismatch(void)
 	printf("ok: a record whose declared length is wrong fails the batch\n");
 }
 
+/*
+ * Save is a query, and it is the one query the client is expected to ask once
+ * rather than watch. The fake returns a fixed form, so what is under test here
+ * is the plumbing — that the text reaches the reply, JSON-escaped — and not
+ * scene_save's output, which scene_save_test owns.
+ */
+static void test_scene_text_query(void)
+{
+	struct builder b;
+
+	reset_all();
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_QUERY_SCENE_TEXT);
+	b_u32(&b, 0);
+	b_close(&b);
+
+	has(exchange(&b), "\"kind\":\"scene.text\"");
+	has(g_bridge.reply, "\"fresh\":false");
+	/* The quotes in the form's (name "root") clause survive as escapes. */
+	has(g_bridge.reply, "(scene fake (entity (name \\\"root\\\")))");
+	printf("ok: scene.text answers with the saved form, escaped\n");
+}
+
+/* It is a scene-domain query, so it is an ETag like every other read. */
+static void test_scene_text_is_generation_cached(void)
+{
+	struct builder b;
+	uint32_t       gen;
+
+	reset_all();
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_QUERY_SCENE_TEXT);
+	b_u32(&b, 0);
+	b_close(&b);
+	exchange(&b);
+	gen = bridge_generation(&g_bridge, BRIDGE_SCENE);
+
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_QUERY_SCENE_TEXT);
+	b_u32(&b, gen);
+	b_close(&b);
+	has(exchange(&b), "\"fresh\":true");
+	lacks(g_bridge.reply, "(scene fake");
+	printf("ok: an unchanged scene answers scene.text fresh, with no text\n");
+}
+
+/* A build that cannot write a scene says so rather than saving nothing. */
+static void test_scene_text_without_a_writer(void)
+{
+	static const struct entity_api no_writer = {
+		.get_world = fake_get_world,
+	};
+	static const struct bridge_host host = { .entity = &no_writer };
+	struct builder b;
+
+	bridge_init(&g_bridge, &host);
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_QUERY_SCENE_TEXT);
+	b_u32(&b, 0);
+	b_close(&b);
+
+	has(exchange(&b), "\"value\":null");
+
+	/*
+	 * The reason is one exchange behind, and deliberately so: the envelope
+	 * (events included) is written before the query pass runs, so a notice
+	 * a query emits has already missed its own reply. That is why the
+	 * failure is carried by `value` and only the explanation by the event —
+	 * a client that waited for the event to know it failed would save an
+	 * empty file this frame and hear why on the next one.
+	 */
+	lacks(g_bridge.reply, "query.unavailable");
+	b_reset(&b);
+	b_simple(&b, BRIDGE_OP_UNDO);
+	has(exchange(&b), "query.unavailable");
+	printf("ok: a build with no writer answers null, and says why next frame\n");
+}
+
+static void test_scene_load_replaces_the_world(void)
+{
+	struct builder b;
+
+	reset_all();
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_SCENE_LOAD);
+	b_str(&b, "(scene loaded (entity))");
+	b_close(&b);
+	exchange(&b);
+
+	assert(g_cleared == 1);
+	assert(strcmp(g_built, "(scene loaded (entity))") == 0);
+	printf("ok: a load clears the world before building into it\n");
+}
+
+/*
+ * The history goes with the document. A memento captured against the old world
+ * refers to entity ids that now mean something else, so undoing across a load
+ * would drive the new scene to a state the old one was in.
+ */
+static void test_scene_load_clears_the_history(void)
+{
+	struct builder b;
+
+	reset_all();
+	g_clears = 0;
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_SCENE_LOAD);
+	b_str(&b, "(scene loaded)");
+	b_close(&b);
+	exchange(&b);
+
+	assert(g_clears == 1);
+	printf("ok: loading a scene clears the undo history\n");
+}
+
+/* A form the interpreter rejects is a notice, not a failed batch. */
+static void test_scene_load_rejection_is_an_event(void)
+{
+	struct builder b;
+
+	reset_all();
+	g_build_result = -1;
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_SCENE_LOAD);
+	b_str(&b, "not-a-scene");
+	b_close(&b);
+
+	has(exchange(&b), "command.rejected");
+	has(g_bridge.reply, "\"error\":null");
+	g_build_result = 0;
+	printf("ok: a scene the engine cannot build is reported, not fatal\n");
+}
+
+/*
+ * A load and a save in one batch: the load runs in the command pass and the
+ * save in the query pass, so the text that comes back describes the world the
+ * load produced. The two share one scratch buffer, and this is the test that
+ * says that sharing is safe.
+ */
+static void test_load_then_save_in_one_batch(void)
+{
+	struct builder b;
+
+	reset_all();
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_SCENE_LOAD);
+	b_str(&b, "(scene incoming (entity))");
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_QUERY_SCENE_TEXT);
+	b_u32(&b, 0);
+	b_close(&b);
+	exchange(&b);
+
+	assert(strcmp(g_built, "(scene incoming (entity))") == 0);
+	has(g_bridge.reply, "(scene fake");
+	printf("ok: a load and a save in one batch do not share a buffer\n");
+}
+
 static void test_no_services_is_survivable(void)
 {
 	struct bridge  bare;
@@ -833,6 +1042,13 @@ int main(void)
 	test_truncated_record();
 	test_unknown_opcode();
 	test_payload_length_mismatch();
+	test_scene_text_query();
+	test_scene_text_is_generation_cached();
+	test_scene_text_without_a_writer();
+	test_scene_load_replaces_the_world();
+	test_scene_load_clears_the_history();
+	test_scene_load_rejection_is_an_event();
+	test_load_then_save_in_one_batch();
 	test_no_services_is_survivable();
 	printf("all bridge tests passed\n");
 	return 0;

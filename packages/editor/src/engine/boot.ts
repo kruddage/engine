@@ -47,6 +47,8 @@
 // for the same reason, and having a second page silently disagree with it about
 // the default would be worse than either choice.
 
+import type { BridgeModule } from "@kruddage/engine/bridge";
+
 import type { EngineInfo, EngineStatus } from "./types.js";
 
 /** The subset of the emscripten module object this page sets up. */
@@ -56,6 +58,7 @@ interface EmscriptenModule {
 	print: (text: string) => void;
 	printErr: (text: string) => void;
 	onAbort: (what: unknown) => void;
+	onRuntimeInitialized: () => void;
 }
 
 /** The engine's host hooks, as its EM_JS bridges look for them. */
@@ -78,6 +81,21 @@ export interface BootOptions {
 	onStatus: (status: EngineStatus) => void;
 	/** Called for each line the module writes to stdout or stderr. */
 	onLog?: (line: string, stream: "out" | "err") => void;
+	/**
+	 * Called once the wasm runtime is up, with the module object itself.
+	 *
+	 * This is the only way anything reaches the boundary: createBridge needs
+	 * HEAPU8, UTF8ToString and the four `_krudd_bridge_*` exports, and they
+	 * exist on the module rather than on `window`. It fires at
+	 * onRuntimeInitialized rather than at kruddSetReady, because the exports
+	 * are callable as soon as the runtime is, and waiting for the engine to
+	 * finish booting its subsystems would mean the first flush is later than
+	 * it needs to be for no reason.
+	 *
+	 * Not the same event as `phase: "ready"`. The runtime being up says the
+	 * module can be called; ready says the engine finished starting.
+	 */
+	onModule?: (module: BridgeModule) => void;
 	/**
 	 * Which backend to ask for. Defaults to the shell's own rule — see
 	 * wantsWebGPU below. Passed explicitly only by tests.
@@ -153,7 +171,7 @@ export const ENGINE_CANVAS_ID = "canvas";
  * rather than by unwinding something that cannot be unwound.
  */
 export function bootEngine(options: BootOptions): BootHandle {
-	const { engine, canvas, onStatus, onLog } = options;
+	const { engine, canvas, onStatus, onLog, onModule } = options;
 
 	if (!engine.built) {
 		onStatus({ phase: "unbuilt", renderer: null, error: null });
@@ -167,6 +185,7 @@ export function bootEngine(options: BootOptions): BootHandle {
 		 * injecting a second copy of a module that owns a canvas and a main
 		 * loop. */
 		onStatus(lastStatus);
+		if (hostModule) onModule?.(hostModule);
 		return { dispose: () => {} };
 	}
 	hasBooted = true;
@@ -185,6 +204,17 @@ export function bootEngine(options: BootOptions): BootHandle {
 		print: (text) => onLog?.(text, "out"),
 		printErr: (text) => onLog?.(text, "err"),
 		onAbort: (what) => update({ phase: "failed", error: String(what) }),
+		/*
+		 * `host.Module` is the same object the loader augments in place —
+		 * emscripten is linked without MODULARIZE, so the global this page
+		 * defined *is* the module once the runtime is up. Reading it here
+		 * rather than storing our own literal is what makes the exports
+		 * and heap views visible.
+		 */
+		onRuntimeInitialized: () => {
+			hostModule = host.Module as unknown as BridgeModule;
+			onModule?.(hostModule);
+		},
 	};
 
 	/* Answered rather than left to the engine's catch — see the note above. */
@@ -225,9 +255,14 @@ export function bootEngine(options: BootOptions): BootHandle {
 	};
 }
 
-/* Module-scoped rather than per-call: the guard has to survive a component
- * remount, which is the case it exists for. */
+/*
+ * Module-scoped rather than per-call: the guard has to survive a component
+ * remount, which is the case it exists for. `hostModule` is the same — a
+ * second mount must be handed the module the first one booted, not left
+ * waiting for an onRuntimeInitialized that already fired.
+ */
 let hasBooted = false;
+let hostModule: BridgeModule | null = null;
 let lastStatus: EngineStatus = {
 	phase: "loading",
 	renderer: null,
@@ -241,5 +276,6 @@ let lastStatus: EngineStatus = {
  */
 export function resetBootStateForTests(): void {
 	hasBooted = false;
+	hostModule = null;
 	lastStatus = { phase: "loading", renderer: null, error: null };
 }

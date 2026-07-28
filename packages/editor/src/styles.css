@@ -556,6 +556,16 @@ body {
 	opacity: 1;
 }
 
+/*
+ * A standing failure, not a passing note. Colour alone would carry it for most
+ * readers and for none of the rest, so the weight change goes in beside it —
+ * the same reason the phase pill is a word rather than a dot.
+ */
+.status-strip__hint--error {
+	color: var(--error);
+	font-weight: 600;
+}
+
 @media (prefers-reduced-motion: reduce) {
 	.status-strip__hint {
 		transition: none;

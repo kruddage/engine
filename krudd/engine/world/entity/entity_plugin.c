@@ -5,6 +5,7 @@
 #include "scene_script.h"
 #include "scene.h"
 #include "scene_edit.h"
+#include "scene_save.h"
 #include "edit_api.h"
 #include "asset_api.h"
 #include "asset_codec_api.h"
@@ -103,6 +104,18 @@ static const struct world *scene_get_world(void)
 static int32_t scene_build_scm(const char *src)
 {
 	return scene_script_build(&g_world, g_asset, src);
+}
+
+/*
+ * Write the live world back out as a (scene ...) form (see scene_save.c).
+ *
+ * The catalog goes in because the form binds assets by path and the world holds
+ * numeric refs — without it the geometry still saves and the bindings do not,
+ * which is why g_asset is passed rather than checked for.
+ */
+static int32_t scene_save_scm(char *out, int32_t cap)
+{
+	return scene_save_write(&g_world, g_asset, "scene", out, cap);
 }
 
 /*
@@ -307,6 +320,7 @@ static const struct entity_api g_entity_api = {
 	.get_world      = scene_get_world,
 	.load_scene     = scene_load,
 	.build_scene_scm = scene_build_scm,
+	.save_scene_scm = scene_save_scm,
 	.dispatch_scm   = scene_dispatch_scm,
 	.clear_world    = scene_clear_world,
 	.create_entity  = scene_create_entity,

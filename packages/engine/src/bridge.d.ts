@@ -100,6 +100,11 @@ export interface QueryValues {
 	entity: EntityDetail;
 	selection: SelectionState;
 	history: HistoryState;
+	/**
+	 * The whole world as a `(scene ...)` form, or null when this build
+	 * cannot write one. Asked through ask(), never watched — see there.
+	 */
+	"scene.text": string | null;
 }
 
 export type QueryKind = keyof QueryValues;
@@ -152,6 +157,15 @@ export interface Bridge {
 	/** The last value the engine gave for a watched query, or null. */
 	read<K extends QueryKind>(kind: K, id?: number): QueryValues[K] | null;
 
+	/**
+	 * Ask a query once and resolve with its answer on the next flush.
+	 *
+	 * The cold-path escape hatch: use it for anything a reader asks for by
+	 * pressing a key, and watch() for anything a panel renders. Rejects if
+	 * the flush it rode on never reached the engine.
+	 */
+	ask<K extends QueryKind>(kind: K, id?: number): Promise<QueryValues[K] | null>;
+
 	beginGesture(label: string): Bridge;
 	commitGesture(): Bridge;
 	abortGesture(): Bridge;
@@ -159,6 +173,8 @@ export interface Bridge {
 	redo(): Bridge;
 	select(id: number): Bridge;
 	setPaused(paused: boolean): Bridge;
+	/** Replace the document with a `(scene ...)` form. Clears the history. */
+	loadScene(text: string): Bridge;
 	createEntity(
 		parent: number,
 		transform: TransformLike,
@@ -183,7 +199,36 @@ export interface Bridge {
 
 export declare const BRIDGE_PROTOCOL: number;
 export declare const TAPE_MAGIC: number;
-export declare const OP: Readonly<Record<string, number>>;
+/**
+ * The opcodes, named.
+ *
+ * Spelled out rather than `Record<string, number>` so a caller gets a type
+ * error for `OP.ENTITY_RENMAE` instead of `undefined` on the wire — and so
+ * that under noUncheckedIndexedAccess an opcode is a `number` rather than a
+ * `number | undefined` every call site has to narrow.
+ */
+export declare const OP: Readonly<{
+	GESTURE_BEGIN: number;
+	GESTURE_COMMIT: number;
+	GESTURE_ABORT: number;
+	UNDO: number;
+	REDO: number;
+	SELECT: number;
+	ENTITY_CREATE: number;
+	ENTITY_DESTROY: number;
+	ENTITY_TRANSFORM: number;
+	ENTITY_NAME: number;
+	ENTITY_RENDER_REF: number;
+	ENTITY_MATERIAL_REF: number;
+	ENTITY_SCRIPT_REF: number;
+	SET_PAUSED: number;
+	SCENE_LOAD: number;
+	QUERY_TREE: number;
+	QUERY_ENTITY: number;
+	QUERY_SELECTION: number;
+	QUERY_HISTORY: number;
+	QUERY_SCENE_TEXT: number;
+}>;
 
 export declare function createBridge(
 	module: BridgeModule,

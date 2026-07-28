@@ -35,6 +35,13 @@ export interface StatusStripProps {
 	phase: EnginePhase;
 	renderer: string | null;
 	hint: string | null;
+	/**
+	 * A standing reason the boundary is unusable, or null. Rendered instead of
+	 * the hint, not beside it: a transient "layout reset" scrolling past a
+	 * permanent "this bundle cannot talk to this engine" would be the less
+	 * important message hiding the more important one.
+	 */
+	boundaryError?: string | null | undefined;
 }
 
 export function StatusStrip({
@@ -42,6 +49,7 @@ export function StatusStrip({
 	phase,
 	renderer,
 	hint,
+	boundaryError = null,
 }: StatusStripProps): React.JSX.Element {
 	return (
 		<footer className="status-strip" data-testid="status-strip">
@@ -71,14 +79,29 @@ export function StatusStrip({
 			 * the bottom of the screen. "polite" rather than "assertive": it is
 			 * a note about an unwired button, not an error.
 			 */}
-			<span
-				className={`status-strip__hint${hint === null ? "" : " is-visible"}`}
-				data-testid="status-hint"
-				role="status"
-				aria-live="polite"
-			>
-				{hint ?? ""}
-			</span>
+			{boundaryError === null ? (
+				<span
+					className={`status-strip__hint${hint === null ? "" : " is-visible"}`}
+					data-testid="status-hint"
+					role="status"
+					aria-live="polite"
+				>
+					{hint ?? ""}
+				</span>
+			) : (
+				/*
+				 * "alert", not "status": this one is not a note about an unwired
+				 * button, and a reader who does not look at the bottom of the
+				 * screen still needs to hear that nothing they do will stick.
+				 */
+				<span
+					className="status-strip__hint status-strip__hint--error is-visible"
+					data-testid="status-boundary-error"
+					role="alert"
+				>
+					{boundaryError}
+				</span>
+			)}
 		</footer>
 	);
 }

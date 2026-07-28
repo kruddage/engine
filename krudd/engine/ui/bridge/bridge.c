@@ -557,6 +557,33 @@ static int32_t apply_command(struct bridge *b, uint16_t op, struct tape *t)
 			en->set_paused(flag);
 		return BRIDGE_OK;
 
+	case BRIDGE_OP_SCENE_LOAD:
+		if (!tape_string(t, b->scene_text, BRIDGE_SCENE_TEXT_BYTES))
+			return BRIDGE_ERR_PAYLOAD;
+		if (!en || !en->build_scene_scm || !en->clear_world) {
+			bridge_emit(b, "command.rejected", BRIDGE_OP_SCENE_LOAD,
+				    "this build cannot load a scene");
+			return BRIDGE_OK;
+		}
+		/*
+		 * Cleared, not merged. A load replaces the document; building
+		 * into a populated world would layer one scene over another,
+		 * which is what the launcher's clear_world exists to prevent.
+		 */
+		en->clear_world();
+		if (en->build_scene_scm(b->scene_text) < 0)
+			bridge_emit(b, "command.rejected", BRIDGE_OP_SCENE_LOAD,
+				    "not a (scene ...) form, or the "
+				    "interpreter is down");
+		/*
+		 * The history goes with the old document. Undo across a load
+		 * would drive mementos captured against a world that no longer
+		 * exists — every entity id in them now means something else.
+		 */
+		if (ed && ed->clear)
+			ed->clear();
+		return BRIDGE_OK;
+
 	default:
 		return BRIDGE_ERR_OPCODE;
 	}
@@ -736,6 +763,41 @@ static void write_history(struct bridge *b, struct jw *w)
 }
 
 /*
+ * The world as (scene ...) text.
+ *
+ * `null` rather than an empty string when the engine cannot write one: "" is a
+ * scene with no entities, which is a legitimate answer, and a client that
+ * cannot tell the two apart would happily save an empty document over a full
+ * one. So `null` is the failure, and it is self-describing.
+ *
+ * The reason goes out as an event, which arrives on the *next* exchange rather
+ * than this one — write_envelope drains the event list before the query pass
+ * runs, so anything a query emits has missed the reply it is being written
+ * into. That is fine for a reason and would not be fine for the failure
+ * itself, which is why the failure is the value and not the event.
+ */
+static void write_scene_text(struct bridge *b, struct jw *w)
+{
+	const struct entity_api *en = b->host.entity;
+	int32_t                  n;
+
+	if (!en || !en->save_scene_scm) {
+		bridge_emit(b, "query.unavailable", BRIDGE_OP_QUERY_SCENE_TEXT,
+			    "this build cannot save a scene");
+		jw_put(w, "null");
+		return;
+	}
+	n = en->save_scene_scm(b->scene_text, BRIDGE_SCENE_TEXT_BYTES);
+	if (n < 0) {
+		bridge_emit(b, "query.unavailable", BRIDGE_OP_QUERY_SCENE_TEXT,
+			    "the scene did not fit, or could not be written");
+		jw_put(w, "null");
+		return;
+	}
+	jw_str(w, b->scene_text);
+}
+
+/*
  * One query result. The generation is always reported, even on a hit: it is
  * what the caller stores, and returning it unconditionally means the client
  * never has to reason about which branch it took.
@@ -766,6 +828,10 @@ static int32_t answer_query(struct bridge *b, struct jw *w, uint16_t op,
 	case BRIDGE_OP_QUERY_HISTORY:
 		kind = "history";
 		domain = BRIDGE_HISTORY;
+		break;
+	case BRIDGE_OP_QUERY_SCENE_TEXT:
+		kind = "scene.text";
+		domain = BRIDGE_SCENE;
 		break;
 	default:
 		return BRIDGE_ERR_OPCODE;
@@ -818,6 +884,9 @@ static int32_t answer_query(struct bridge *b, struct jw *w, uint16_t op,
 			      b->host.entity->get_selected() : -1);
 		jw_put(w, "}");
 		break;
+	case BRIDGE_OP_QUERY_SCENE_TEXT:
+		write_scene_text(b, w);
+		break;
 	default:
 		write_history(b, w);
 		break;
@@ -865,6 +934,7 @@ static void write_events(struct bridge *b, struct jw *w)
 	jw_put(w, "],");
 	jw_key(w, "eventsDropped");
 	jw_i32(w, b->events_dropped);
+	b->events_sent = b->event_count;
 }
 
 static void write_generations(struct bridge *b, struct jw *w)
@@ -905,6 +975,7 @@ static int32_t op_fixed_bytes(uint16_t op, int32_t *out)
 	case BRIDGE_OP_QUERY_TREE:
 	case BRIDGE_OP_QUERY_SELECTION:
 	case BRIDGE_OP_QUERY_HISTORY:
+	case BRIDGE_OP_QUERY_SCENE_TEXT:
 		*out = 4;
 		return 1;
 	case BRIDGE_OP_ENTITY_RENDER_REF:
@@ -921,6 +992,7 @@ static int32_t op_fixed_bytes(uint16_t op, int32_t *out)
 		return 1;
 	case BRIDGE_OP_GESTURE_BEGIN:
 	case BRIDGE_OP_ENTITY_NAME:
+	case BRIDGE_OP_SCENE_LOAD:
 		return 0;
 	default:
 		return -1;
@@ -1156,14 +1228,32 @@ const char *bridge_exchange(struct bridge *b, const uint8_t *tape, int32_t len)
 			 (int)b->events_dropped);
 		b->reply_overflow = 1;
 		b->reply_len      = (int32_t)strlen(b->reply);
+		/* That fallback carries "events":[] — nothing was delivered. */
+		b->events_sent    = 0;
 	} else {
 		b->reply_overflow = 0;
 		b->reply_len      = w.len;
 	}
 
-	/* Events are per-exchange: the client has them now. */
-	b->event_count    = 0;
-	b->events_dropped = 0;
+	/*
+	 * Drop exactly what went out, and keep the rest.
+	 *
+	 * Anything a query emitted was queued after the envelope had already
+	 * been written, so it has not reached the client yet. Clearing the
+	 * whole list here — which is what "events are per-exchange" used to
+	 * mean — discarded those unread, and the only reason it never showed is
+	 * that until scene.text no query emitted anything.
+	 */
+	if (b->events_sent > 0) {
+		int32_t kept = b->event_count - b->events_sent;
+
+		if (kept > 0)
+			memmove(b->events, b->events + b->events_sent,
+				(size_t)kept * sizeof(b->events[0]));
+		b->event_count    = kept > 0 ? kept : 0;
+		b->events_dropped = 0;
+	}
+	b->events_sent = 0;
 	return b->reply;
 }
 

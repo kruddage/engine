@@ -107,11 +107,31 @@ enum bridge_op {
 
 	BRIDGE_OP_SET_PAUSED		= 0x0040,
 
+	/*
+	 * Replace the world with the (scene ...) form on the tape. The document
+	 * half of open-a-project, and not an undoable edit: loading a scene is
+	 * arriving at a new document rather than changing the current one, so
+	 * it clears the history instead of landing on it.
+	 */
+	BRIDGE_OP_SCENE_LOAD		= 0x0050,
+
 	/* Queries. Each carries the generation the caller already holds. */
 	BRIDGE_OP_QUERY_TREE		= 0x0100,
 	BRIDGE_OP_QUERY_ENTITY		= 0x0101,
 	BRIDGE_OP_QUERY_SELECTION	= 0x0102,
-	BRIDGE_OP_QUERY_HISTORY		= 0x0103
+	BRIDGE_OP_QUERY_HISTORY		= 0x0103,
+	/*
+	 * The world as (scene ...) text — the answer to Save.
+	 *
+	 * A query rather than a command with a reply channel, because it is a
+	 * read of engine state and the generation machinery already makes reads
+	 * cheap. It is nonetheless the one query no panel should watch: the
+	 * answer is the whole scene serialized, and re-serializing it on every
+	 * scene-generation bump to feed a cache nobody reads would turn a cold
+	 * path into a per-edit one. The client asks for it once, when the
+	 * reader saves.
+	 */
+	BRIDGE_OP_QUERY_SCENE_TEXT	= 0x0104
 };
 
 /*
@@ -179,6 +199,26 @@ struct bridge_event {
 #define BRIDGE_LABEL_SLOTS	128
 #define BRIDGE_LABEL_BYTES	48
 
+/*
+ * Scratch for scene text, in both directions.
+ *
+ * One buffer rather than two, because the two uses cannot overlap: a load
+ * decodes into it during the command pass, and a save serializes into it
+ * during the query pass, which always runs afterwards. A batch carrying both
+ * loads the scene and then saves the world it produced, which is the only
+ * meaning that ordering could have.
+ *
+ * Sized for a full scene rather than for the tape: a load is bounded by
+ * BRIDGE_TAPE_BYTES on the way in, but a save has to hold every entity in a
+ * world at WORLD_MAX_ENTITIES. Undersizing it would make Save fail on exactly
+ * the large levels that most need saving.
+ *
+ * A load is therefore capped by the tape rather than by this: a scene form
+ * larger than BRIDGE_TAPE_BYTES cannot be sent at all, and the client refuses
+ * the flush and says so rather than delivering a scene cut in half.
+ */
+#define BRIDGE_SCENE_TEXT_BYTES	(512 * 1024)
+
 struct bridge {
 	struct bridge_host	host;
 
@@ -195,6 +235,18 @@ struct bridge {
 	struct bridge_event	events[BRIDGE_MAX_EVENTS];
 	int32_t			event_count;
 	int32_t			events_dropped;
+	/*
+	 * How many of `events` the reply being built has already written.
+	 *
+	 * The envelope — events included — is written before the query pass
+	 * runs, so a notice a query emits arrives after its own reply has been
+	 * serialized. Draining the whole list at the end of the exchange would
+	 * throw those away unread; draining exactly this many carries them to
+	 * the next reply, which is what bridge_emit promises.
+	 */
+	int32_t			events_sent;
+
+	char		scene_text[BRIDGE_SCENE_TEXT_BYTES];
 
 	uint8_t		tape[BRIDGE_TAPE_BYTES];
 	char		reply[BRIDGE_REPLY_BYTES];

@@ -59,10 +59,12 @@ export const OP = Object.freeze({
 	ENTITY_MATERIAL_REF: 0x0035,
 	ENTITY_SCRIPT_REF: 0x0036,
 	SET_PAUSED: 0x0040,
+	SCENE_LOAD: 0x0050,
 	QUERY_TREE: 0x0100,
 	QUERY_ENTITY: 0x0101,
 	QUERY_SELECTION: 0x0102,
 	QUERY_HISTORY: 0x0103,
+	QUERY_SCENE_TEXT: 0x0104,
 });
 
 /** Query kinds, and the domain whose generation each is cached against. */
@@ -71,6 +73,11 @@ const QUERY = Object.freeze({
 	entity: { op: OP.QUERY_ENTITY, domain: "scene", keyed: true },
 	selection: { op: OP.QUERY_SELECTION, domain: "selection", keyed: false },
 	history: { op: OP.QUERY_HISTORY, domain: "history", keyed: false },
+	/*
+	 * The whole scene as text. Answered like any other query and cached
+	 * like none of them — see ask() for why this one is never watched.
+	 */
+	"scene.text": { op: OP.QUERY_SCENE_TEXT, domain: "scene", keyed: false },
 });
 
 const DEFAULT_GENERATIONS = Object.freeze({
@@ -228,6 +235,13 @@ export function createBridge(module, options = {}) {
 	let pending = [];
 	const watched = new Map();
 
+	/*
+	 * One-shot queries: asked on the next flush, answered once, forgotten.
+	 * A list rather than a map because the same question asked twice before
+	 * a flush is two callers who each want an answer, not one.
+	 */
+	let asked = [];
+
 	const cache = new Map();
 	let generations = { ...DEFAULT_GENERATIONS };
 	let lastReply = null;
@@ -277,6 +291,32 @@ export function createBridge(module, options = {}) {
 		return entry ? entry.value : null;
 	}
 
+	/**
+	 * Ask a query once, and resolve with its answer.
+	 *
+	 * This is the escape hatch #944's Q1 reserved for cold paths, and it
+	 * exists for `scene.text`. Watching that query would mean the engine
+	 * re-serializing the entire scene every time the scene generation
+	 * moved — which is every edit — to keep a cache nothing reads between
+	 * saves. A watch is right for anything a panel renders; this is right
+	 * for anything a reader asks for by pressing a key.
+	 *
+	 * The generation sent is 0, which never matches, so a one-shot always
+	 * comes back with a value rather than `fresh`. That is the point: the
+	 * caller wants the answer now, not confirmation that a cache it does
+	 * not keep is still good.
+	 *
+	 * Resolves on the next flush and only then, so a caller that awaits it
+	 * without something driving flush() waits forever. In the editor the
+	 * document's frame loop is that something.
+	 */
+	function ask(kind, id = -1) {
+		if (!QUERY[kind]) throw new Error(`unknown query kind: ${kind}`);
+		return new Promise((resolve, reject) => {
+			asked.push({ kind, id, resolve, reject });
+		});
+	}
+
 	function queue(build) {
 		pending.push(build);
 		return api;
@@ -304,6 +344,7 @@ export function createBridge(module, options = {}) {
 
 		watch,
 		read,
+		ask,
 
 		beginGesture: (label) =>
 			queue((t) => t.open(OP.GESTURE_BEGIN).str(label).close()),
@@ -316,6 +357,17 @@ export function createBridge(module, options = {}) {
 		select: (id) => queue((t) => t.open(OP.SELECT).i32(id).close()),
 		setPaused: (paused) =>
 			queue((t) => t.open(OP.SET_PAUSED).i32(paused ? 1 : 0).close()),
+
+		/*
+		 * Replace the document. Not an undoable edit — the engine clears
+		 * the history behind this, because a memento captured against
+		 * the old world names entity ids that now mean something else.
+		 *
+		 * A scene larger than the engine's tape buffer cannot be sent,
+		 * and flush() reports that rather than delivering half of one.
+		 */
+		loadScene: (text) =>
+			queue((t) => t.open(OP.SCENE_LOAD).str(text).close()),
 
 		createEntity: (parent, transform, mask = 0, renderRef = 0) =>
 			queue((t) =>
@@ -356,7 +408,11 @@ export function createBridge(module, options = {}) {
 
 		/** Whether anything is waiting to go out. */
 		get idle() {
-			return pending.length === 0 && watched.size === 0;
+			return (
+				pending.length === 0 &&
+				watched.size === 0 &&
+				asked.length === 0
+			);
 		},
 
 		flush,
@@ -375,6 +431,20 @@ export function createBridge(module, options = {}) {
 			tape.u32(known);
 			tape.close();
 		}
+		/*
+		 * One-shots last, and deduplicated against nothing: two callers
+		 * asking the same question in one frame write the record twice,
+		 * and each gets its own result out of the reply. Collapsing
+		 * them would save a few bytes and cost the guarantee that a
+		 * caller's ask() is answered by the exchange it rode on.
+		 */
+		for (const { kind, id } of asked) {
+			const spec = QUERY[kind];
+			tape.open(spec.op);
+			if (spec.keyed) tape.i32(id);
+			tape.u32(0);
+			tape.close();
+		}
 		return tape;
 	}
 
@@ -386,9 +456,21 @@ export function createBridge(module, options = {}) {
 	 * frame to be told the same thing.
 	 */
 	function flush() {
-		if (pending.length === 0 && watched.size === 0) return null;
+		if (pending.length === 0 && watched.size === 0 && asked.length === 0)
+			return null;
+
+		/*
+		 * Captured before encode(), because the one-shots answered by
+		 * this exchange are exactly the ones its tape carried — an
+		 * ask() made while the reply is being handled belongs to the
+		 * next flush, not this one.
+		 */
+		const answering = asked;
+		const answeringFrom = watched.size;
 
 		encode();
+		/* After encode(), which is what writes their records. */
+		asked = [];
 		const bytes = tape.bytes();
 		if (bytes.length > capacity) {
 			/*
@@ -397,12 +479,14 @@ export function createBridge(module, options = {}) {
 			 * them across frames instead of losing them.
 			 */
 			return fail(
-				`tape is ${bytes.length} bytes and the engine's buffer holds ${capacity}`
+				`tape is ${bytes.length} bytes and the engine's buffer holds ${capacity}`,
+				answering
 			);
 		}
 
 		const at = call(module, "_krudd_bridge_buffer", 0);
-		if (!at) return fail("the engine exposes no bridge buffer");
+		if (!at)
+			return fail("the engine exposes no bridge buffer", answering);
 
 		/*
 		 * HEAPU8 is re-read here, every flush, and must never be hoisted:
@@ -419,16 +503,19 @@ export function createBridge(module, options = {}) {
 		try {
 			reply = JSON.parse(text);
 		} catch {
-			return fail(`the engine's reply did not parse: ${text.slice(0, 120)}`);
+			return fail(
+				`the engine's reply did not parse: ${text.slice(0, 120)}`,
+				answering
+			);
 		}
 
 		/* The batch is gone whether or not the engine liked it — resending
 		 * commands the engine may have applied would double them. */
 		pending = [];
-		return accept(reply);
+		return accept(reply, answering, answeringFrom);
 	}
 
-	function accept(reply) {
+	function accept(reply, answering = [], answeringFrom = 0) {
 		const before = generations;
 		generations = { ...DEFAULT_GENERATIONS, ...(reply.generations ?? {}) };
 
@@ -445,6 +532,38 @@ export function createBridge(module, options = {}) {
 				value: result.value ?? null,
 			});
 		}
+
+		/*
+		 * One-shots, matched by position: run_queries answers in tape
+		 * order, and encode() writes the watched set before the asked
+		 * one. The kind is checked rather than assumed — if the two
+		 * sides ever disagree about that ordering, a caller should get
+		 * a rejection it can report, not another query's answer.
+		 */
+		const results = reply.results ?? [];
+		answering.forEach((entry, i) => {
+			const result = results[answeringFrom + i];
+			if (!result || result.kind !== entry.kind) {
+				entry.reject(
+					new Error(
+						`the engine did not answer ${entry.kind}` +
+							` (asked for ${answering.length}, ` +
+							`got ${Math.max(0, results.length - answeringFrom)})`
+					)
+				);
+				return;
+			}
+			entry.resolve(result.value ?? null);
+		});
+
+		/*
+		 * A one-shot's answer must not linger in the cache. `scene.text`
+		 * is an entire scene, nothing watches it, and a later read()
+		 * would hand back a copy of the document from whenever the last
+		 * save happened. Anything still watched keeps its entry.
+		 */
+		for (const key of [...cache.keys()])
+			if (!watched.has(key)) cache.delete(key);
 
 		lastReply = reply;
 		if (reply.error && onError) onError(reply);
@@ -464,7 +583,7 @@ export function createBridge(module, options = {}) {
 	 * a caller has one thing to check rather than two. `code` is 0 because
 	 * the engine's codes are the engine's; this never reached it.
 	 */
-	function fail(message) {
+	function fail(message, answering = []) {
 		const reply = {
 			protocol,
 			serial: lastReply?.serial ?? 0,
@@ -477,6 +596,13 @@ export function createBridge(module, options = {}) {
 			results: [],
 		};
 		lastReply = reply;
+		/*
+		 * Rejected, never left hanging: a save whose tape never crossed
+		 * must surface as a failed save rather than as a promise that
+		 * quietly never settles.
+		 */
+		for (const entry of answering)
+			entry.reject(new Error(message));
 		if (onError) onError(reply);
 		for (const listener of listeners) listener(reply);
 		return reply;

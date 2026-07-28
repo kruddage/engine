@@ -11,6 +11,7 @@
 #include "scene.h"
 #include "asset_api.h"
 #include "scene_script.h"
+#include "scene_save.h"
 
 #include "script.h"
 #include "log.h"
@@ -64,9 +65,26 @@ static int32_t fake_info(uint32_t i, struct asset_info *out)
 	return 0;
 }
 
+/*
+ * Resolving a stable id back to its entry — the direction scene_save needs to
+ * turn a bound ref back into the catalog path the form binds by. Only the
+ * round-trip check below uses it; scene building never asks.
+ */
+static int32_t fake_find(uint32_t id, struct asset_info *out)
+{
+	uint32_t i;
+
+	for (i = 0; i < fake_count(); i++) {
+		if (g_catalog[i].id == id)
+			return fake_info(i, out);
+	}
+	return -1;
+}
+
 static const struct asset_api fake_asset = {
 	.count = fake_count,
 	.info  = fake_info,
+	.find  = fake_find,
 };
 
 /* The board + two marks scene, exercising every clause kind. */
@@ -271,6 +289,106 @@ static void test_entity_fault_is_isolated(void)
 	assert(w.render_ref[2] == 11);
 }
 
+/*
+ * The (quat ...) clause sets the rotation exactly, overriding (rotate ...).
+ *
+ * It exists so a saved scene reloads as the scene that was saved: the world
+ * stores a quaternion, and a trip out through euler degrees and back is not the
+ * identity (#947, scene_save.h). Asserted bit-exactly rather than through feq
+ * — "close enough" is the property this clause exists to stop settling for.
+ */
+static void test_quat_clause_is_exact(void)
+{
+	static const char *src =
+		"(scene q"
+		"  (entity (rotate 0 90 0)"
+		"          (quat 0.100000001 0.200000003 0.300000012 0.927361846)))";
+
+	world_reset(&w);
+	assert(scene_script_build(&w, &fake_asset, src) == 1);
+
+	assert(w.local[0].rotation[0] == 0.100000001f);
+	assert(w.local[0].rotation[1] == 0.200000003f);
+	assert(w.local[0].rotation[2] == 0.300000012f);
+	assert(w.local[0].rotation[3] == 0.927361846f);
+	printf("ok: (quat ...) overrides (rotate ...) exactly\n");
+}
+
+/* A zero quaternion is not a rotation, so the euler clause stands. */
+static void test_degenerate_quat_is_ignored(void)
+{
+	static const char *src =
+		"(scene q (entity (rotate 0 90 0) (quat 0 0 0 0)))";
+
+	world_reset(&w);
+	assert(scene_script_build(&w, &fake_asset, src) == 1);
+
+	assert(feq(w.local[0].rotation[1], 0.70710678f));
+	assert(feq(w.local[0].rotation[3], 0.70710678f));
+	printf("ok: a degenerate (quat ...) leaves the euler rotation alone\n");
+}
+
+/*
+ * The round trip, which is the criterion #947 actually asks for: build a scene,
+ * write it out, clear the world, build what was written, and compare.
+ *
+ * This is the test that makes scene_save a persistence path rather than a text
+ * generator. It lives here because this is the side that owns the reader — a
+ * failure here means the two halves disagree, and scene_save_test has already
+ * ruled on whether the writer says what it meant to.
+ */
+static void test_save_load_round_trips(void)
+{
+	static char out[16 * 1024];
+	static char again[16 * 1024];
+	struct world before;
+	int32_t      n, i;
+
+	world_reset(&w);
+	assert(scene_script_build(&w, &fake_asset, SCENE_SRC) == 3);
+	/* A child, so nesting is part of what round-trips. */
+	assert(scene_script_build(&w, &fake_asset,
+				  "(scene kids (entity (name \"parent\")"
+				  "  (at 1 2 3)"
+				  "  (children (entity (name \"kid\")"
+				  "                    (at 4 5 6)))))") == 2);
+
+	n = scene_save_write(&w, &fake_asset, "round", out, sizeof(out));
+	assert(n > 0);
+
+	before = w;
+	world_reset(&w);
+	assert(scene_script_build(&w, &fake_asset, out) == 5);
+
+	assert(w.count == before.count);
+	for (i = 0; i < (int32_t)before.count; i++) {
+		assert(w.alive[i] == before.alive[i]);
+		assert(w.parent[i] == before.parent[i]);
+		assert(w.mask[i] == before.mask[i]);
+		assert(w.render_ref[i] == before.render_ref[i]);
+		assert(w.material_ref[i] == before.material_ref[i]);
+		assert(w.script_ref[i] == before.script_ref[i]);
+		/*
+		 * Bit-exact, not feq. %.9g and the (quat ...) clause exist so
+		 * this comparison can be the strict one; relaxing it here would
+		 * retire the reason either of them is in the tree.
+		 */
+		assert(memcmp(&w.local[i], &before.local[i],
+			      sizeof(w.local[i])) == 0);
+		if (before.mask[i] & COMPONENT_NAME) {
+			assert(strcmp(world_entity_name(&w, (uint32_t)i),
+				      world_entity_name(&before,
+							(uint32_t)i)) == 0);
+		}
+	}
+
+	/* And writing the reloaded world produces the same text, byte for byte. */
+	assert(scene_save_write(&w, &fake_asset, "round", again,
+				sizeof(again)) == n);
+	assert(memcmp(out, again, (size_t)n) == 0);
+	printf("ok: a scene round-trips through save and load unchanged\n");
+}
+
 int main(void)
 {
 	log_init();
@@ -285,6 +403,9 @@ int main(void)
 	test_unknown_path_is_inert();
 	test_not_a_scene_form();
 	test_entity_fault_is_isolated();
+	test_quat_clause_is_exact();
+	test_degenerate_quat_is_ignored();
+	test_save_load_round_trips();
 
 	printf("scene_script_test: ok\n");
 	return 0;

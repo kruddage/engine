@@ -58,6 +58,7 @@ export const OP = Object.freeze({
 	ENTITY_RENDER_REF: 0x0034,
 	ENTITY_MATERIAL_REF: 0x0035,
 	ENTITY_SCRIPT_REF: 0x0036,
+	ENTITY_PARAM: 0x0037,
 	SET_PAUSED: 0x0040,
 	SCENE_LOAD: 0x0050,
 	QUERY_TREE: 0x0100,
@@ -65,6 +66,7 @@ export const OP = Object.freeze({
 	QUERY_SELECTION: 0x0102,
 	QUERY_HISTORY: 0x0103,
 	QUERY_SCENE_TEXT: 0x0104,
+	QUERY_ENTITY_PARAMS: 0x0105,
 });
 
 /** Query kinds, and the domain whose generation each is cached against. */
@@ -78,6 +80,17 @@ const QUERY = Object.freeze({
 	 * like none of them — see ask() for why this one is never watched.
 	 */
 	"scene.text": { op: OP.QUERY_SCENE_TEXT, domain: "scene", keyed: false },
+	/*
+	 * An entity's editable parameters — declaration and current value
+	 * together. Keyed by entity, and watched rather than asked: it is what a
+	 * panel renders continuously, and the generation stamp means an
+	 * unchanged scene costs one `fresh` per frame rather than a re-parse.
+	 */
+	"entity.params": {
+		op: OP.QUERY_ENTITY_PARAMS,
+		domain: "scene",
+		keyed: true,
+	},
 });
 
 const DEFAULT_GENERATIONS = Object.freeze({
@@ -357,6 +370,27 @@ export function createBridge(module, options = {}) {
 		select: (id) => queue((t) => t.open(OP.SELECT).i32(id).close()),
 		setPaused: (paused) =>
 			queue((t) => t.open(OP.SET_PAUSED).i32(paused ? 1 : 0).close()),
+
+		/*
+		 * Set one parameter field to `value`.
+		 *
+		 * Numbers, never packed bytes. The block's layout belongs to the
+		 * asset source and the engine already parses it — packing here
+		 * would be a second implementation of that rule, and its first
+		 * divergence would be silent (#951).
+		 *
+		 * Always four components on the wire regardless of the field's
+		 * arity: a fixed-size record is one the whole-tape validator can
+		 * check before anything is applied, and sixteen bytes on a
+		 * gesture that is coalesced anyway is not a cost worth a
+		 * variable-length payload.
+		 */
+		setParam: (id, slot, field, value) =>
+			queue((t) => {
+				t.open(OP.ENTITY_PARAM).i32(id).i32(slot).i32(field);
+				for (let c = 0; c < 4; c++) t.f32(value[c] ?? 0);
+				return t.close();
+			}),
 
 		/*
 		 * Replace the document. Not an undoable edit — the engine clears

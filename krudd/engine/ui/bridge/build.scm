@@ -14,18 +14,26 @@
 ;;! thing it needs from that module is the shape of the columns it reports.
 ((wasm-only
   (library "bridge"
-    (sources "bridge.c" "bridge_plugin.c")
+    (sources "bridge.c" "bridge_plugin.c" "bridge_params.c")
     (private "include" (root "abi") (root "world/entity/include")
              (root "base/math/include") (root "core/include"))
-    (link "subsystem" "subsystem_manager" "m")))
+    (link "subsystem" "subsystem_manager" "script" "m")))
 
  (native-only
   ;;! The boundary end to end, browser-free: a hand-built world and two fake
   ;;! service vtables in, the reply document's exact bytes asserted on the way
   ;;! out. No subsystem manager, no plugins, no wasm.
+  ;;! bridge_params.c comes with it, and brings s7: the inspector's derivation
+  ;;! reads a (params ...) clause through core/script.c, which is the one place
+  ;;! that vocabulary is parsed (#951). A test that faked that parse would be
+  ;;! asserting against a second reader of the format, which is the thing the
+  ;;! derivation exists to avoid.
   (executable "bridge_test"
-              (sources "bridge_test.c" "bridge.c")
+              (sources "bridge_test.c" "bridge.c" "bridge_params.c"
+                       (root "world/entity/entity.c"))
               (private "include" (root "abi") (root "world/entity/include")
-                       (root "base/math/include"))
-              (link "m"))
+                       (root "base/math/include") (root "core/include")
+                       (root "base/memory/include")
+                       (raw "../third_party"))
+              (link "script" "memory" "m"))
   (test "bridge" "bridge_test")))

@@ -13,6 +13,9 @@
 #include "bridge.h"
 
 #include "world.h"
+#include "asset_api.h"
+#include "script.h"
+#include "log.h"
 
 #include <assert.h>
 #include <stdint.h>
@@ -141,6 +144,67 @@ static void fake_set_paused(int32_t p)
 }
 
 /* ------------------------------------------------------------------ *
+ * A catalog with one real mesh script, for the inspector's derivation
+ * ------------------------------------------------------------------ */
+
+/*
+ * A genuine (params ...) clause, parsed by the real s7 reader.
+ *
+ * Hand-written rather than borrowed from builtin_mesh_scripts.h so the three
+ * shapes under test sit side by side: a range field with a default, a colour
+ * field with none, and an int. What is being asserted is that the authored
+ * (edit ...) hint reaches the editor verbatim — the moment this test fakes the
+ * parse, it stops testing the thing #951 exists for.
+ */
+static const char MESH_SRC[] =
+	"(mesh probe"
+	"  (params (width float (edit range 0.1 3) (default 1.5))"
+	"          (tint  vec3  (edit color))"
+	"          (rings int   (default 4)))"
+	"  (generate () '()))";
+
+#define MESH_ASSET_ID 42u
+
+static const void *fake_get_data(uint32_t id, uint32_t *out_size)
+{
+	if (id != MESH_ASSET_ID)
+		return NULL;
+	if (out_size)
+		*out_size = (uint32_t)sizeof(MESH_SRC);	/* NUL included */
+	return MESH_SRC;
+}
+
+static int32_t fake_asset_find(uint32_t id, struct asset_info *out)
+{
+	if (id != MESH_ASSET_ID || !out)
+		return -1;
+	memset(out, 0, sizeof(*out));
+	out->id   = MESH_ASSET_ID;
+	out->path = "builtin://mesh/probe";
+	out->type = ASSET_TYPE_MESH;
+	return 0;
+}
+
+static const struct asset_api g_asset = {
+	.find     = fake_asset_find,
+	.get_data = fake_get_data,
+};
+
+/* What the last param write handed the entity api. */
+static uint8_t  g_params[WORLD_MESH_PARAM_CAP];
+static uint32_t g_params_len;
+
+static void fake_set_mesh_params(int32_t id, const uint8_t *bytes, uint32_t len)
+{
+	if (!live(id))
+		return;
+	g_params_len = len < sizeof(g_params) ? len : sizeof(g_params);
+	if (bytes && g_params_len)
+		memcpy(g_params, bytes, g_params_len);
+	world_set_mesh_params(&g_world, id, bytes, len);
+}
+
+/* ------------------------------------------------------------------ *
  * The document path: what a load was handed, and what a save answers
  * ------------------------------------------------------------------ */
 
@@ -198,6 +262,7 @@ static const struct entity_api g_entity = {
 	.set_selected     = fake_set_selected,
 	.get_paused       = fake_get_paused,
 	.set_paused       = fake_set_paused,
+	.set_mesh_params  = fake_set_mesh_params,
 };
 
 /* ------------------------------------------------------------------ *
@@ -302,6 +367,7 @@ static void b_close(struct builder *b)
 }
 
 static void b_i32(struct builder *b, int32_t v) { b_raw(b, &v, 4); }
+static void b_f32(struct builder *b, float v) { b_raw(b, &v, 4); }
 static void b_u32(struct builder *b, uint32_t v) { b_raw(b, &v, 4); }
 
 static void b_str(struct builder *b, const char *s)
@@ -337,6 +403,7 @@ static void reset_all(void)
 	static const struct bridge_host host = {
 		.entity = &g_entity,
 		.edit   = &g_edit,
+		.asset  = &g_asset,
 	};
 	struct transform origin = {
 		.position = { 0.0f, 0.0f, 0.0f },
@@ -362,6 +429,8 @@ static void reset_all(void)
 	assert(fake_create(0, &origin, 0, 0) == 1);
 	fake_set_name(0, "root");
 	fake_set_name(1, "child");
+	g_params_len = 0;
+	memset(g_params, 0, sizeof(g_params));
 }
 
 static const char *exchange(struct builder *b)
@@ -996,6 +1065,174 @@ static void test_load_then_save_in_one_batch(void)
 	printf("ok: a load and a save in one batch do not share a buffer\n");
 }
 
+/*
+ * The derivation, end to end: an authored (edit ...) hint reaches the editor
+ * exactly as written, beside the value the engine would actually use.
+ *
+ * This is #951's criterion in one assertion. Nothing in the reply is
+ * hand-written per asset type — it is what script-params-form reported.
+ */
+static void test_entity_params_derive_from_the_asset(void)
+{
+	struct builder b;
+
+	reset_all();
+	fake_set_render_ref(0, MESH_ASSET_ID);
+
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_QUERY_ENTITY_PARAMS);
+	b_i32(&b, 0);
+	b_u32(&b, 0);
+	b_close(&b);
+
+	has(exchange(&b), "\"kind\":\"entity.params\"");
+	has(g_bridge.reply, "\"slot\":\"mesh\"");
+	has(g_bridge.reply, "\"path\":\"builtin://mesh/probe\"");
+
+	/* The range field: hint, bounds and its authored default as the value. */
+	has(g_bridge.reply, "\"name\":\"width\"");
+	has(g_bridge.reply, "\"edit\":\"range\"");
+	has(g_bridge.reply, "\"min\":0.100000001");
+	has(g_bridge.reply, "\"max\":3");
+	has(g_bridge.reply, "\"value\":[1.5]");
+
+	/* The colour field: three components, no bounds worth reading. */
+	has(g_bridge.reply, "\"name\":\"tint\"");
+	has(g_bridge.reply, "\"edit\":\"color\"");
+	has(g_bridge.reply, "\"components\":3");
+
+	/* And a field with no (edit ...) at all still arrives, with its type. */
+	has(g_bridge.reply, "\"name\":\"rings\"");
+	has(g_bridge.reply, "\"type\":\"int\"");
+	has(g_bridge.reply, "\"edit\":\"none\"");
+
+	/* Nothing is overridden yet — every value above is a declared default. */
+	has(g_bridge.reply, "\"overridden\":false");
+	printf("ok: parameters derive from the asset, hints and all\n");
+}
+
+/* An entity with nothing parameterized bound is an empty list, not null. */
+static void test_entity_params_without_assets(void)
+{
+	struct builder b;
+
+	reset_all();
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_QUERY_ENTITY_PARAMS);
+	b_i32(&b, 0);
+	b_u32(&b, 0);
+	b_close(&b);
+
+	has(exchange(&b), "\"blocks\":[]");
+	printf("ok: an entity with no parameterized asset has no blocks\n");
+}
+
+/* A gone entity answers null — the same shape the entity query uses. */
+static void test_entity_params_for_a_dead_entity(void)
+{
+	struct builder b;
+
+	reset_all();
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_QUERY_ENTITY_PARAMS);
+	b_i32(&b, 99);
+	b_u32(&b, 0);
+	b_close(&b);
+
+	has(exchange(&b), "\"value\":null");
+	printf("ok: parameters for an entity that is not there answer null\n");
+}
+
+/*
+ * A write packs at the declaration's offset, and leaves its neighbours at the
+ * values they were already resolved to.
+ *
+ * The second half is the one that matters: rebuilding the block from resolved
+ * values rather than from the entity's (absent) override is what stops editing
+ * `width` from silently flattening `rings` to zero.
+ */
+static void test_entity_param_write(void)
+{
+	struct builder b;
+	float          width = 0.0f;
+	int32_t        rings = 0;
+
+	reset_all();
+	fake_set_render_ref(0, MESH_ASSET_ID);
+
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_ENTITY_PARAM);
+	b_i32(&b, 0);	/* entity */
+	b_i32(&b, 0);	/* slot: the mesh block */
+	b_i32(&b, 0);	/* field: width */
+	b_f32(&b, 2.25f);
+	b_f32(&b, 0.0f);
+	b_f32(&b, 0.0f);
+	b_f32(&b, 0.0f);
+	b_close(&b);
+	exchange(&b);
+
+	/* width is tight-packed first, rings third (float, vec3, int). */
+	assert(g_params_len >= 20);
+	memcpy(&width, g_params + 0, sizeof(width));
+	memcpy(&rings, g_params + 16, sizeof(rings));
+	assert(width == 2.25f);
+	assert(rings == 4);	/* its declared default, not zero */
+	printf("ok: a param write packs one field and preserves the rest\n");
+}
+
+/* The value comes back through the query, and the block reports as overridden. */
+static void test_entity_param_write_is_visible(void)
+{
+	struct builder b;
+
+	reset_all();
+	fake_set_render_ref(0, MESH_ASSET_ID);
+
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_ENTITY_PARAM);
+	b_i32(&b, 0);
+	b_i32(&b, 0);
+	b_i32(&b, 0);
+	b_f32(&b, 2.25f);
+	b_f32(&b, 0.0f);
+	b_f32(&b, 0.0f);
+	b_f32(&b, 0.0f);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_QUERY_ENTITY_PARAMS);
+	b_i32(&b, 0);
+	b_u32(&b, 0);
+	b_close(&b);
+
+	has(exchange(&b), "\"value\":[2.25]");
+	has(g_bridge.reply, "\"overridden\":true");
+	printf("ok: a written parameter reads back through the query\n");
+}
+
+/* A stale field index is a notice, not a failed batch. */
+static void test_entity_param_write_out_of_range(void)
+{
+	struct builder b;
+
+	reset_all();
+	fake_set_render_ref(0, MESH_ASSET_ID);
+
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_ENTITY_PARAM);
+	b_i32(&b, 0);
+	b_i32(&b, 0);
+	b_i32(&b, 99);	/* no such field */
+	b_f32(&b, 1.0f);
+	b_f32(&b, 0.0f);
+	b_f32(&b, 0.0f);
+	b_f32(&b, 0.0f);
+	b_close(&b);
+
+	has(exchange(&b), "command.rejected");
+	has(g_bridge.reply, "\"error\":null");
+	printf("ok: a stale parameter index is reported, not fatal\n");
+}
+
 static void test_no_services_is_survivable(void)
 {
 	struct bridge  bare;
@@ -1023,6 +1260,13 @@ static void test_no_services_is_survivable(void)
 
 int main(void)
 {
+	/*
+	 * The real s7 image: the (params ...) clause under test is parsed by
+	 * script-params-form, which is the engine's own reader. See build.scm.
+	 */
+	log_init();
+	script_init();
+
 	test_empty_tape();
 	test_command_then_query_sees_the_command();
 	test_query_order_does_not_matter();
@@ -1042,6 +1286,12 @@ int main(void)
 	test_truncated_record();
 	test_unknown_opcode();
 	test_payload_length_mismatch();
+	test_entity_params_derive_from_the_asset();
+	test_entity_params_without_assets();
+	test_entity_params_for_a_dead_entity();
+	test_entity_param_write();
+	test_entity_param_write_is_visible();
+	test_entity_param_write_out_of_range();
 	test_scene_text_query();
 	test_scene_text_is_generation_cached();
 	test_scene_text_without_a_writer();

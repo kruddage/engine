@@ -54,6 +54,7 @@ export interface CommandPayloads {
 	"entity.mesh": { id: number; ref: number };
 	"entity.material": { id: number; ref: number };
 	"entity.script": { id: number; ref: number };
+	"entity.param": { id: number; slot: number; field: number; value: number[] };
 	"history.undo": Record<string, never>;
 	"history.redo": Record<string, never>;
 	"engine.paused": { paused: boolean };
@@ -127,6 +128,18 @@ export const COMMANDS: Table = {
 		label: "Assign Script",
 		continuity: "discrete",
 		run: (bridge, { id, ref }) => bridge.setScriptRef(id, ref),
+	},
+	/*
+	 * Continuous, because a slider drag repeats it once a frame. The engine
+	 * coalesces consecutive same-key edits into one history entry, so what
+	 * this owes that mechanism is a gesture around the drag — not a
+	 * coalescing rule of its own (#944, Q2).
+	 */
+	"entity.param": {
+		label: "Set Parameter",
+		continuity: "continuous",
+		run: (bridge, { id, slot, field, value }) =>
+			bridge.setParam(id, slot, field, value),
 	},
 	"history.undo": {
 		label: "Undo",

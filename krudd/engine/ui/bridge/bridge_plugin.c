@@ -33,6 +33,7 @@ static struct bridge g_bridge;
 
 static const struct entity_api *g_entity;
 static const struct edit_api   *g_edit;
+static const struct asset_api  *g_asset;
 
 static void bridge_subsystem_init(void)
 {
@@ -40,6 +41,7 @@ static void bridge_subsystem_init(void)
 
 	host.entity = g_entity;
 	host.edit   = g_edit;
+	host.asset  = g_asset;
 	bridge_init(&g_bridge, &host);
 }
 
@@ -66,6 +68,9 @@ void bridge_plugin_entry(struct subsystem_manager *mgr)
 	/* Resolve before register(), which calls init at once. */
 	g_entity = subsystem_manager_get_api(mgr, "scene");
 	g_edit   = subsystem_manager_get_api(mgr, "edit");
+	/* The catalog, for the inspector's derivation — an asset's (params ...)
+	 * clause lives in its source text and this is the way to it (#951). */
+	g_asset  = subsystem_manager_get_api(mgr, "asset");
 	subsystem_manager_register(mgr, &bridge_desc);
 }
 

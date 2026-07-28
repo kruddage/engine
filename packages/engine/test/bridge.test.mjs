@@ -775,3 +775,61 @@ test("ask refuses a query kind that does not exist", () => {
 	const bridge = createBridge(fakeModule());
 	assert.throws(() => bridge.ask("nonsense"), /unknown query kind/);
 });
+
+/* ------------------------------------------------------------------ *
+ * Editable parameters
+ * ------------------------------------------------------------------ */
+
+test("setParam writes id, slot, field and four components", () => {
+	const module = fakeModule();
+	const bridge = createBridge(module);
+
+	bridge.setParam(7, 1, 2, [0.5, 0.25]);
+	bridge.flush();
+
+	const [record] = module.tapes[0];
+	assert.equal(record.op, OP.ENTITY_PARAM);
+	/*
+	 * Fixed size regardless of the field's arity — that is what lets the C
+	 * side check the whole tape before applying any of it.
+	 */
+	assert.equal(record.payload.length, 4 + 4 + 4 + 16);
+
+	const r = payloadReader(record.payload);
+	assert.deepEqual([r.i32(), r.i32(), r.i32()], [7, 1, 2]);
+	/* Missing components go out as 0 rather than as undefined-turned-NaN. */
+	assert.deepEqual([r.f32(), r.f32(), r.f32(), r.f32()], [0.5, 0.25, 0, 0]);
+	assert.ok(r.done);
+});
+
+test("entity.params is keyed by entity, so two entities cache separately", () => {
+	const module = fakeModule();
+	const bridge = createBridge(module);
+
+	bridge.watch("entity.params", 3);
+	bridge.watch("entity.params", 4);
+	module.willAnswer(
+		reply({
+			results: [
+				{
+					kind: "entity.params",
+					id: 3,
+					generation: 1,
+					fresh: false,
+					value: { id: 3, blocks: [] },
+				},
+				{
+					kind: "entity.params",
+					id: 4,
+					generation: 1,
+					fresh: false,
+					value: { id: 4, blocks: [{ slot: "mesh" }] },
+				},
+			],
+		})
+	);
+	bridge.flush();
+
+	assert.deepEqual(bridge.read("entity.params", 3), { id: 3, blocks: [] });
+	assert.equal(bridge.read("entity.params", 4).blocks[0].slot, "mesh");
+});

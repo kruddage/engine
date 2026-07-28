@@ -94,6 +94,42 @@ export interface HistoryState {
 	redoLabel: string | null;
 }
 
+/** One editable parameter, as the asset declared it. */
+export interface ParamField {
+	name: string;
+	/** "float" | "int" | "vec2" | "vec3" | "vec4". */
+	type: string;
+	components: number;
+	/**
+	 * The authored `(edit ...)` hint: "none", "color" or "range". The whole
+	 * of the inspector's derivation turns on this one string, and it must
+	 * never be inferred from the name or the type.
+	 */
+	edit: string;
+	min: number;
+	max: number;
+	/** Current value, one entry per component. */
+	value: number[];
+}
+
+export interface ParamBlock {
+	/** "mesh" | "material" | "script". */
+	slot: string;
+	asset: number;
+	path: string | null;
+	size: number;
+	/** False means every value is a declared default, not a set one. */
+	overridden: boolean;
+	/** True when the declaration had more fields than the boundary carries. */
+	truncated: boolean;
+	fields: ParamField[];
+}
+
+export interface EntityParams {
+	id: number;
+	blocks: ParamBlock[];
+}
+
 /** Query kinds, and what each answers with. */
 export interface QueryValues {
 	"scene.tree": SceneTree;
@@ -105,6 +141,7 @@ export interface QueryValues {
 	 * cannot write one. Asked through ask(), never watched — see there.
 	 */
 	"scene.text": string | null;
+	"entity.params": EntityParams;
 }
 
 export type QueryKind = keyof QueryValues;
@@ -173,6 +210,16 @@ export interface Bridge {
 	redo(): Bridge;
 	select(id: number): Bridge;
 	setPaused(paused: boolean): Bridge;
+	/**
+	 * Set one field of one parameter block. `slot` indexes the blocks in the
+	 * order `entity.params` reports them; `value` is up to four components.
+	 */
+	setParam(
+		id: number,
+		slot: number,
+		field: number,
+		value: readonly number[]
+	): Bridge;
 	/** Replace the document with a `(scene ...)` form. Clears the history. */
 	loadScene(text: string): Bridge;
 	createEntity(

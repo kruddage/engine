@@ -237,6 +237,26 @@
 (check "resolve-check-tiers passes over the real manifest"
        (not (expect-error (lambda () (resolve-check-tiers manifest)))))
 
+;;! abi is the root of the graph, and until #919 it was not in the graph at all
+;;! — so the check above had nothing to say about the tree's highest-fan-in
+;;! node. These three assert the shape that makes it the root: first in the
+;;! order (so every module may reach it), a surface and no sources (so it
+;;! compiles nothing), and no links of its own (so it reaches for nothing).
+(check "abi is first in the tier order"
+       (= (index-of "abi" manifest-dirs) 0))
+
+(check "abi is an interface-library exporting its module root"
+       (let ((target (rz-lookup table "abi")))
+         (and target
+              (eq? (rz-field target 'kind) 'interface-library)
+              (equal? (rz-field target 'public) '("abi"))
+              (null? (rz-field target 'links)))))
+
+(check "abi emits no build edge"
+       (not (contains? (ninja-synthesize
+                        manifest (string-append krudd-root "/krudd/engine"))
+                       "libabi.a")))
+
 ;;! Two modules, `hi` listed above `lo`, and a library in `hi` linking down.
 (define inverted-manifest
   (list (cons "hi" '((library "high" (sources "h.c") (link "low"))))

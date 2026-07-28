@@ -21,10 +21,17 @@
 ;;!
 ;;!   abi/      the plugin vtables every tier includes, and nothing else. Hand-
 ;;!             written headers only — nothing to build and nothing to generate,
-;;!             so it is the one tree that carries no spec at all. It
-;;!             includes no module's headers: where a vtable needs a type it
-;;!             owns no definition of, it forward-declares the tag rather than
-;;!             reaching down into the module that implements it.
+;;!             so for a long time it carried no spec at all and was absent from
+;;!             this list. That is right for a build system and wrong for a
+;;!             dependency graph: it is the highest fan-in node in the tree, and
+;;!             while it was unlisted the check below could not have an opinion
+;;!             about it. It now carries an `interface-library` — a public
+;;!             surface and nothing else, emitting no ninja edge — and is first
+;;!             here, which is what "everything may reach for abi, abi reaches
+;;!             for nothing" looks like as a position (#919). It includes no
+;;!             module's headers: where a vtable needs a type it owns no
+;;!             definition of, it forward-declares the tag rather than reaching
+;;!             down into the module that implements it.
 ;;!   base/     no engine concepts at all — logging, allocation, arithmetic.
 ;;!             Includes the spatial types (struct transform, struct mat4),
 ;;!             which are geometry rather than world data model, so base/ can
@@ -53,7 +60,8 @@
 ;;!             targets — its assets are copied by the generator — but it is
 ;;!             listed, for the shell template it configures.
 
-("base/log"
+("abi"
+ "base/log"
  "base/memory"
  "base/math"
  "core"

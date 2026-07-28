@@ -21,7 +21,7 @@
 //
 // Run: pnpm check
 
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -44,12 +44,44 @@ const ENGINE_PRIVATE = [
 	{ pattern: /\bKRUDD_(TARGET|BUILD_DIR)\b/, what: "the kruddmake build environment" },
 ];
 
-/** Workspace package directories, relative to the repo root. Mirrors pnpm-workspace.yaml. */
+/**
+ * Workspace package directories, relative to the repo root. Mirrors
+ * pnpm-workspace.yaml — including its `krudd/engine/**` glob, which is why the
+ * C tree is walked for manifests rather than listed. A C module joins the
+ * workspace by gaining a package.json beside its build.scm (#918, Q1), and it
+ * has to join this check at the same moment: a package the boundary check does
+ * not know about is a package with no boundary.
+ *
+ * Those packages hold no JS today, so both rules below pass over them in
+ * silence. That is the correct amount of work for a declaration — but it means
+ * the first C package that grows a script is the first one either rule has
+ * anything to say about, and rule 2 in particular will have to be revisited
+ * then, since `krudd/` internals being private to @kruddage/engine reads
+ * differently once packages live inside `krudd/` (#920).
+ */
 export function packageDirs(repo) {
 	return [
 		...readdirSync(join(repo, "packages")).map((d) => join("packages", d)),
 		"tools/render-diff",
+		...manifestDirs(repo, "krudd/engine"),
 	];
+}
+
+/** Directories at or below `root` that hold a package.json, repo-relative. */
+function manifestDirs(repo, root) {
+	const out = [];
+	const walk = (relative) => {
+		const abs = join(repo, relative);
+		for (const name of readdirSync(abs)) {
+			if (SKIP_DIRS.has(name)) continue;
+			const child = join(relative, name);
+			if (!statSync(join(repo, child)).isDirectory()) continue;
+			if (existsSync(join(repo, child, "package.json"))) out.push(child);
+			walk(child);
+		}
+	};
+	walk(root);
+	return out;
 }
 
 function sourceFiles(dir) {

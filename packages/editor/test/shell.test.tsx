@@ -126,7 +126,9 @@ describe("the frame", () => {
 		mount();
 
 		expect(screen.getAllByTestId("engine-canvas")).toHaveLength(1);
-		expect(screen.getAllByTestId("inspector")).toHaveLength(1);
+		/* The inspector renders its waiting state here — this suite mounts the
+		 * shell without a document — and there is exactly one of that too. */
+		expect(screen.getAllByTestId("inspector-waiting")).toHaveLength(1);
 	});
 
 	it("renders a panel added to the registry without any edit to the shell", () => {
@@ -208,14 +210,18 @@ describe("panels", () => {
 		expect(left.getByText(/Not built yet/)).toBeTruthy();
 	});
 
-	it("gives the inspector one tab group rather than three docks", () => {
+	it("gives the inspector one dock rather than three", () => {
 		withBuiltins();
 		mount();
 
-		const inspector = within(screen.getByTestId("inspector"));
-		for (const tab of ["Entity", "Material", "Script"]) {
-			expect(inspector.getByRole("tab", { name: tab })).toBeTruthy();
-		}
+		/*
+		 * The tab group itself moved into the inspector's own suite when #951
+		 * made its tabs derive from the selection: it needs a document to have
+		 * any, and this suite deliberately renders the shell without one. What
+		 * the shell still owes is that there is one inspector dock and not a
+		 * column of them, which is the layout claim this test was making.
+		 */
+		expect(screen.getByTestId("inspector-waiting")).toBeTruthy();
 		expect(screen.queryByTestId("dock-far-right")).toBeNull();
 	});
 });

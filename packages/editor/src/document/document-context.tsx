@@ -50,11 +50,27 @@ export const DocumentProvider = DocumentContext.Provider;
  * state that cannot legitimately occur.
  */
 export function useDocument(): KruddDocument {
-	const document = useContext(DocumentContext);
+	const document = useOptionalDocument();
 	if (document === null) {
 		throw new Error("a panel was rendered outside the DocumentProvider");
 	}
 	return document;
+}
+
+/**
+ * The document, or null.
+ *
+ * There is a real window in which there is none: every frame before the wasm
+ * runtime comes up, forever on a page whose engine was never built, and after a
+ * protocol mismatch. A panel that reads engine state has to render *something*
+ * during it, so it asks this and says what it knows — rather than throwing,
+ * which would take the whole shell down for a condition that is ordinary.
+ *
+ * useDocument() stays the strict one, for the code paths that only run once a
+ * document exists.
+ */
+export function useOptionalDocument(): KruddDocument | null {
+	return useContext(DocumentContext);
 }
 
 /**
@@ -67,10 +83,11 @@ export function useQuery<K extends QueryKind>(
 	kind: K,
 	id = -1
 ): QueryValues[K] | null {
-	const document = useDocument();
+	const document = useOptionalDocument();
 
 	const subscribe = useCallback(
 		(onChange: () => void) => {
+			if (!document) return () => {};
 			const unwatch = document.bridge.watch(kind, id);
 			const off = document.subscribe(onChange);
 			return () => {
@@ -83,7 +100,7 @@ export function useQuery<K extends QueryKind>(
 
 	return useSyncExternalStore(
 		subscribe,
-		() => document.bridge.read(kind, id),
+		() => document?.bridge.read(kind, id) ?? null,
 		/*
 		 * The server snapshot. There is no server — the editor is a client-only
 		 * app — but the argument is required when a component might hydrate,

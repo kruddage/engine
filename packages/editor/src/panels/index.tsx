@@ -14,8 +14,8 @@
 import { ENGINE_CANVAS_ID } from "../engine/boot.js";
 import { useEngineContext } from "../engine/engine-context.js";
 import { registerPanel } from "../shell/panels.js";
+import { Inspector } from "./inspector/inspector.js";
 import { Placeholder } from "./placeholder.js";
-import * as Tabs from "@radix-ui/react-tabs";
 
 /* ------------------------------------------------------------------ *
  * The viewport deck
@@ -82,53 +82,6 @@ function Outliner(): React.JSX.Element {
 			blurb="The entity hierarchy of the open project — pick a node to edit it in the Inspector."
 			issue={950}
 		/>
-	);
-}
-
-/*
- * One panel with a tab group, not three docks.
- *
- * #948 makes this call and #954 lands it, because it is a layout decision
- * rather than a contents decision — and the moment to make it is while there is
- * nothing in the tabs to migrate. The selection will decide which tab you want
- * once there is a selection to have.
- */
-function Inspector(): React.JSX.Element {
-	return (
-		<Tabs.Root className="inspector" defaultValue="entity" data-testid="inspector">
-			<Tabs.List className="inspector__tabs" aria-label="Inspector">
-				<Tabs.Trigger className="inspector__tab" value="entity">
-					Entity
-				</Tabs.Trigger>
-				<Tabs.Trigger className="inspector__tab" value="material">
-					Material
-				</Tabs.Trigger>
-				<Tabs.Trigger className="inspector__tab" value="script">
-					Script
-				</Tabs.Trigger>
-			</Tabs.List>
-			<Tabs.Content value="entity" className="inspector__body">
-				<Placeholder
-					heading="Inspector"
-					blurb="Components and properties of the selected entity, written back to the project files."
-					issue={951}
-				/>
-			</Tabs.Content>
-			<Tabs.Content value="material" className="inspector__body">
-				<Placeholder
-					heading="Material"
-					blurb="The selected entity's material parameters, derived from the asset rather than hand-written beside it."
-					issue={951}
-				/>
-			</Tabs.Content>
-			<Tabs.Content value="script" className="inspector__body">
-				<Placeholder
-					heading="Script"
-					blurb="The behaviour script bound to the selected entity, and the parameters it declares."
-					issue={951}
-				/>
-			</Tabs.Content>
-		</Tabs.Root>
 	);
 }
 

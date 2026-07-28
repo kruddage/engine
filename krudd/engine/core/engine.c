@@ -72,6 +72,7 @@ void fg_plugin_entry(struct subsystem_manager *mgr);
 void scene_renderer_plugin_entry(struct subsystem_manager *mgr);
 void viewport_plugin_entry(struct subsystem_manager *mgr);
 void kruddgui_plugin_entry(struct subsystem_manager *mgr);
+void bridge_plugin_entry(struct subsystem_manager *mgr);
 void audio_scriptnode_plugin_entry(struct subsystem_manager *mgr);
 void chess_plugin_entry(struct subsystem_manager *mgr);
 
@@ -99,6 +100,13 @@ static const struct {
 	 */
 	{ "viewport",       viewport_plugin_entry       },
 	{ "kruddgui",       kruddgui_plugin_entry       },
+	/*
+	 * The editor boundary resolves "scene" and "edit", both of which are up
+	 * by now. It has no tick — it does its work inside the exchange the
+	 * editor drives — so where it sits here costs nothing beyond having the
+	 * two services it reads already registered (#945).
+	 */
+	{ "bridge",         bridge_plugin_entry         },
 	/*
 	 * Built-in games register last: they resolve the "scene" api (entity
 	 * plugin) and register on the launcher, which needs the asset catalog the

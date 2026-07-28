@@ -50,7 +50,11 @@
 ;;!             GLSL/WGSL transpiler). Neither builds a target; both are listed,
 ;;!             for the one codegen declaration each.
 ;;!   audio/    the mixer and its device backends.
-;;!   ui/       the editor chrome: immediate-mode gui, viewport, kruddboard.
+;;!   ui/       the editor chrome: immediate-mode gui, viewport, kruddboard,
+;;!             and bridge/ — the boundary the TypeScript editor drives the
+;;!             document across (#945). It sits here rather than under shell/
+;;!             because core links it like any other plugin, and nothing may
+;;!             reach into a shell.
 ;;!   game/     host/ is the launcher registry; its siblings are the games
 ;;!             that register with it.
 ;;!   shell/    the host the engine runs inside: web/, the browser page (PWA
@@ -77,6 +81,7 @@
  "render/particles"
  "render/scene_renderer"
  "audio"
+ "ui/bridge"
  "ui/kruddboard"
  "ui/kruddgui"
  "ui/viewport"

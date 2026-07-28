@@ -34,7 +34,8 @@
              (link "subsystem" "subsystem_manager" "log" "memory" "script")
              (wasm-modules "asset_plugin" "edit_plugin" "entity_plugin"
                            "renderer_webgl" "renderer_webgpu" "frame_graph" "scene_renderer"
-                           "viewport" "kruddgui" "bridge" "audio_scriptnode"
+                           "viewport" "gizmo" "kruddgui" "bridge"
+                           "audio_scriptnode"
                            "chess_game"))
 
  (native-only

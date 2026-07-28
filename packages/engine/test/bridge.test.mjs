@@ -16,6 +16,8 @@ import test from "node:test";
 
 import {
 	BRIDGE_PROTOCOL,
+	DRAG_PHASE,
+	GIZMO_MODE,
 	OP,
 	Tape,
 	TAPE_MAGIC,
@@ -128,7 +130,7 @@ function reply(overrides = {}) {
 		applied: 0,
 		error: null,
 		code: 0,
-		generations: { scene: 1, selection: 1, history: 1 },
+		generations: { scene: 1, selection: 1, history: 1, viewport: 1 },
 		events: [],
 		eventsDropped: 0,
 		results: [],
@@ -832,4 +834,177 @@ test("entity.params is keyed by entity, so two entities cache separately", () =>
 
 	assert.deepEqual(bridge.read("entity.params", 3), { id: 3, blocks: [] });
 	assert.equal(bridge.read("entity.params", 4).blocks[0].slot, "mesh");
+});
+
+/* ------------------------------------------------------------------ *
+ * The viewport (#949)
+ *
+ * The encoder half of the domain the C suite tests from the other side. What
+ * matters here is that each command lands on the right opcode with the right
+ * payload, because the C decoder's `op_fixed_bytes` rejects a whole batch on a
+ * length mismatch — so a wrong arity here is not one broken command, it is a
+ * frame in which nothing the editor did reached the engine.
+ * ------------------------------------------------------------------ */
+
+test("the camera commands carry their gestures and nothing else", () => {
+	const module = fakeModule();
+	const bridge = createBridge(module);
+
+	bridge.setViewportSize(1280, 720);
+	bridge.orbitCamera(0.25, -0.5);
+	bridge.panCamera(0.1, 0.2);
+	bridge.dollyCamera(-0.3);
+	bridge.frameCamera();
+	bridge.resetCamera();
+	bridge.flush();
+
+	const [tape] = module.tapes;
+	assert.deepEqual(
+		tape.map((r) => r.op),
+		[
+			OP.VIEWPORT_SIZE,
+			OP.CAMERA_ORBIT,
+			OP.CAMERA_PAN,
+			OP.CAMERA_DOLLY,
+			OP.CAMERA_FRAME,
+			OP.CAMERA_RESET,
+		]
+	);
+
+	const size = payloadReader(tape[0].payload);
+	assert.deepEqual([size.f32(), size.f32()], [1280, 720]);
+	assert.ok(size.done);
+
+	const orbit = payloadReader(tape[1].payload);
+	assert.equal(orbit.f32(), 0.25);
+	assert.equal(orbit.f32(), -0.5);
+	assert.ok(orbit.done);
+
+	const dolly = payloadReader(tape[3].payload);
+	assert.equal(dolly.f32().toFixed(3), "-0.300");
+	assert.ok(dolly.done);
+
+	/* Frame with no argument means the selection, so a shortcut cannot
+	 * disagree with the engine about what is selected. */
+	assert.equal(payloadReader(tape[4].payload).i32(), -1);
+	assert.equal(tape[5].payload.length, 0);
+});
+
+test("a pick carries the pixel it was asked at", () => {
+	const module = fakeModule();
+	const bridge = createBridge(module);
+
+	bridge.pick(400.5, 300.25);
+	bridge.flush();
+
+	const [[record]] = module.tapes;
+	assert.equal(record.op, OP.PICK);
+	const r = payloadReader(record.payload);
+	assert.deepEqual([r.f32(), r.f32()], [400.5, 300.25]);
+	assert.ok(r.done);
+});
+
+test("editor mode goes across as an int, not a bool", () => {
+	const module = fakeModule();
+	const bridge = createBridge(module);
+
+	bridge.setEditorMode(true);
+	bridge.setEditorMode(false);
+	bridge.flush();
+
+	const [tape] = module.tapes;
+	assert.equal(payloadReader(tape[0].payload).i32(), 1);
+	assert.equal(payloadReader(tape[1].payload).i32(), 0);
+});
+
+test("the gizmo commands carry mode, snap, drag and grid", () => {
+	const module = fakeModule();
+	const bridge = createBridge(module);
+
+	bridge.setGizmoMode(GIZMO_MODE.ROTATE);
+	bridge.setGizmoSnap(0.5, 15, 0.25);
+	bridge.gizmoDrag(DRAG_PHASE.BEGIN, 10, 20);
+	bridge.setGrid(false, 2);
+	bridge.flush();
+
+	const [tape] = module.tapes;
+	assert.equal(payloadReader(tape[0].payload).i32(), GIZMO_MODE.ROTATE);
+
+	const snap = payloadReader(tape[1].payload);
+	assert.deepEqual([snap.f32(), snap.f32(), snap.f32()], [0.5, 15, 0.25]);
+	assert.ok(snap.done);
+
+	const drag = payloadReader(tape[2].payload);
+	assert.equal(drag.i32(), DRAG_PHASE.BEGIN);
+	assert.deepEqual([drag.f32(), drag.f32()], [10, 20]);
+	assert.ok(drag.done);
+
+	const grid = payloadReader(tape[3].payload);
+	assert.equal(grid.i32(), 0);
+	assert.equal(grid.f32(), 2);
+	assert.ok(grid.done);
+});
+
+test("the viewport query is cached against its own generation", () => {
+	const module = fakeModule();
+	const bridge = createBridge(module);
+	const state = {
+		width: 800,
+		height: 600,
+		editorMode: true,
+		mode: GIZMO_MODE.TRANSLATE,
+		axis: -1,
+		dragSerial: 3,
+		snap: { translate: 0, rotate: 0, scale: 0 },
+		grid: { shown: true, spacing: 1 },
+	};
+
+	bridge.watch("viewport");
+	module.willAnswer(
+		reply({
+			generations: { scene: 1, selection: 1, history: 1, viewport: 7 },
+			results: [
+				{ kind: "viewport", generation: 7, fresh: false, value: state },
+			],
+		})
+	);
+	bridge.flush();
+	assert.deepEqual(bridge.read("viewport"), state);
+
+	/* The next flush sends the generation it now holds, and a `fresh` answer
+	 * leaves the held value alone rather than replacing it with nothing. */
+	module.willAnswer(
+		reply({
+			generations: { scene: 2, selection: 1, history: 1, viewport: 7 },
+			results: [{ kind: "viewport", generation: 7, fresh: true }],
+		})
+	);
+	bridge.flush();
+	assert.equal(payloadReader(module.tapes[1][0].payload).u32(), 7);
+	assert.deepEqual(bridge.read("viewport"), state);
+});
+
+test("a viewport generation moving on its own still notifies", () => {
+	const module = fakeModule();
+	const bridge = createBridge(module);
+	let heard = 0;
+
+	bridge.subscribe(() => {
+		heard += 1;
+	});
+	bridge.watch("viewport");
+
+	/*
+	 * Nothing else moved — this is a reader pressing a mode button while
+	 * the scene sits still. A client that only watched the first three
+	 * domains would render the old mode until something else changed.
+	 */
+	module.willAnswer(
+		reply({
+			generations: { scene: 1, selection: 1, history: 1, viewport: 2 },
+			results: [],
+		})
+	);
+	bridge.flush();
+	assert.equal(heard, 1);
 });

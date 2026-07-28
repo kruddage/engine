@@ -23,6 +23,7 @@
 #include "math_types.h"
 
 #include <float.h>
+#include <math.h>
 
 int32_t viewport_pick_entity(const struct world *w,
 			     const struct mat4 *view_proj,
@@ -81,4 +82,76 @@ int32_t viewport_pick_entity(const struct world *w,
 		mem->free(blob);
 	}
 	return best;
+}
+
+int32_t viewport_entity_bounds(const struct world *w, int32_t entity,
+			       float centre[3], float *radius,
+			       const struct asset_api *asset,
+			       const struct memory_api *mem)
+{
+	struct mesh_blob         *blob;
+	const struct mesh_vertex *vtx;
+	const char               *src;
+	const uint8_t            *mp;
+	uint32_t                  mplen = 0;
+	struct mat4               model;
+	float                     lo[3], hi[3];
+	uint32_t                  i;
+	int                       c;
+
+	if (!w || !centre || !radius || !asset || !mem)
+		return 0;
+	if (entity < 0 || (uint32_t)entity >= w->count || !w->alive[entity])
+		return 0;
+	if (!(w->mask[entity] & COMPONENT_RENDER))
+		return 0;
+
+	src = (const char *)asset->get_data(w->render_ref[entity], NULL);
+	if (!src)
+		return 0;
+	mp   = world_mesh_params(w, (uint32_t)entity, &mplen);
+	blob = mesh_script_generate(src, mp, mplen, mem, NULL);
+	if (!blob)
+		return 0;
+
+	vtx = mesh_blob_vertices(blob);
+	if (blob->vertex_count == 0) {
+		mem->free(blob);
+		return 0;
+	}
+
+	/*
+	 * The world-space axis-aligned box of the transformed vertices, then
+	 * the sphere around it. Every vertex is transformed rather than the box
+	 * corners being transformed afterwards: a rotated mesh's world box is
+	 * not the rotation of its local box, and the cheap version of this is
+	 * how a framed selection ends up slightly too small on exactly the
+	 * entities a reader rotated.
+	 */
+	mat4_from_transform(&model, &w->world_xform[entity]);
+	for (i = 0; i < blob->vertex_count; i++) {
+		float p[3];
+
+		mat4_transform_point(p, &model, vtx[i].position);
+		for (c = 0; c < 3; c++) {
+			if (i == 0 || p[c] < lo[c])
+				lo[c] = p[c];
+			if (i == 0 || p[c] > hi[c])
+				hi[c] = p[c];
+		}
+	}
+	mem->free(blob);
+
+	*radius = 0.0f;
+	for (c = 0; c < 3; c++) {
+		float half = (hi[c] - lo[c]) * 0.5f;
+
+		centre[c] = (lo[c] + hi[c]) * 0.5f;
+		*radius  += half * half;
+	}
+	*radius = sqrtf(*radius);
+	/* A degenerate mesh still deserves a framing that shows where it is. */
+	if (*radius < 1e-3f)
+		*radius = 1e-3f;
+	return 1;
 }

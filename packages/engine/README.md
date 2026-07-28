@@ -100,6 +100,39 @@ Three things are worth knowing from out here:
   scene answers `fresh` and sends no payload. It is an ETag, and it is what
   makes a JSON read model affordable at 60fps.
 
+### The viewport half
+
+[#949](https://github.com/kruddage/engine/issues/949) added a fourth domain, and
+with it the camera, the pick, the gizmo and the GAME / EDITOR switch. The wire
+version went to **2** for it: the reply's `generations` object grew a key, and a
+client that did not know about it would read a `viewport` query's stamp as 0 and
+re-fetch the whole thing every frame.
+
+```js
+bridge.setViewportSize(rect.width, rect.height);  // what a pick is answered against
+bridge.orbitCamera(dyaw, dpitch);                 // a gesture, not a pose
+bridge.pick(x, y);                                // raycast, and select what is there
+bridge.watch("viewport");                         // mode, snap, grid, editor mode
+```
+
+Two of those are shaped the way they are on purpose:
+
+- **The camera takes gestures, not poses.** The renderer owns the camera and
+  fights for it — a scripted scene camera is copied into the eye every frame
+  until something navigates — so a client that computed a pose and pushed it
+  would be pushing against that copy, and would be a second implementation of
+  the framing arithmetic besides.
+- **A pick is a command, not a query.** What a click wants is for the selection
+  to change, and the selection already has a generation, a query and every panel
+  watching it. Asking for an id and sending it back as a `select` would be two
+  crossings and a window in which the caller holds a selection the engine does
+  not.
+
+The camera's *pose* is deliberately absent from the `viewport` query. It moves
+every frame of an orbit and nothing outside the engine draws from it, so a
+generation that tracked it would invalidate the cache sixty times a second to
+report the same row of buttons.
+
 ### Why it is a separate export
 
 The package root is build-time code — it reads the filesystem to find artifacts,

@@ -13,6 +13,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { COMMANDS, isCommandId } from "../src/document/commands.js";
 import { createDocument, type KruddDocument } from "../src/document/document.js";
 import {
+	generations,
 	manualScheduler,
 	moduleStub,
 	readString,
@@ -181,7 +182,7 @@ describe("gestures", () => {
 
 describe("dirty state", () => {
 	it("opens clean, whatever generation the engine is already at", () => {
-		module.willAnswer({ generations: { scene: 9, selection: 1, history: 1 } });
+		module.willAnswer({ generations: generations({ scene: 9 }) });
 		document.dispatch("history.undo", {});
 		loop.frame();
 
@@ -194,11 +195,11 @@ describe("dirty state", () => {
 	});
 
 	it("goes dirty when the scene generation moves", () => {
-		module.willAnswer({ generations: { scene: 1, selection: 1, history: 1 } });
+		module.willAnswer({ generations: generations() });
 		document.dispatch("history.undo", {});
 		loop.frame();
 
-		module.willAnswer({ generations: { scene: 2, selection: 1, history: 1 } });
+		module.willAnswer({ generations: generations({ scene: 2 }) });
 		document.dispatch("entity.rename", { id: 1, name: "x" });
 		loop.frame();
 
@@ -206,11 +207,11 @@ describe("dirty state", () => {
 	});
 
 	it("ignores a change that is not the scene's", () => {
-		module.willAnswer({ generations: { scene: 1, selection: 1, history: 1 } });
+		module.willAnswer({ generations: generations() });
 		document.dispatch("history.undo", {});
 		loop.frame();
 
-		module.willAnswer({ generations: { scene: 1, selection: 5, history: 3 } });
+		module.willAnswer({ generations: generations({ selection: 5, history: 3 }) });
 		document.dispatch("selection.set", { id: 2 });
 		loop.frame();
 
@@ -222,15 +223,15 @@ describe("dirty state", () => {
 		const listener = vi.fn();
 		document.subscribeState(listener);
 
-		module.willAnswer({ generations: { scene: 1, selection: 1, history: 1 } });
+		module.willAnswer({ generations: generations() });
 		document.dispatch("history.undo", {});
 		loop.frame();
 
-		module.willAnswer({ generations: { scene: 2, selection: 1, history: 1 } });
+		module.willAnswer({ generations: generations({ scene: 2 }) });
 		document.dispatch("entity.rename", { id: 1, name: "x" });
 		loop.frame();
 
-		module.willAnswer({ generations: { scene: 3, selection: 1, history: 1 } });
+		module.willAnswer({ generations: generations({ scene: 3 }) });
 		document.dispatch("entity.rename", { id: 1, name: "y" });
 		loop.frame();
 
@@ -277,17 +278,17 @@ describe("save", () => {
 	});
 
 	it("marks the document clean at the generation it wrote", async () => {
-		module.willAnswer({ generations: { scene: 1, selection: 1, history: 1 } });
+		module.willAnswer({ generations: generations() });
 		document.dispatch("history.undo", {});
 		loop.frame();
 
-		module.willAnswer({ generations: { scene: 2, selection: 1, history: 1 } });
+		module.willAnswer({ generations: generations({ scene: 2 }) });
 		document.dispatch("entity.rename", { id: 1, name: "x" });
 		loop.frame();
 		expect(document.state().dirty).toBe(true);
 
 		module.willAnswer({
-			generations: { scene: 2, selection: 1, history: 1 },
+			generations: generations({ scene: 2 }),
 			results: [
 				{ kind: "scene.text", generation: 2, fresh: false, value: "(scene s)" },
 			],
@@ -333,7 +334,7 @@ describe("load", () => {
 		 * that waited for a change would hang here, and "open the file I
 		 * already have open" is not an exotic thing for a reader to do.
 		 */
-		module.willAnswer({ generations: { scene: 1, selection: 1, history: 1 } });
+		module.willAnswer({ generations: generations() });
 		await expect(
 			(async () => {
 				const loading = document.load("(scene same)");
@@ -344,7 +345,7 @@ describe("load", () => {
 	});
 
 	it("leaves the document clean at what was just loaded", async () => {
-		module.willAnswer({ generations: { scene: 7, selection: 1, history: 1 } });
+		module.willAnswer({ generations: generations({ scene: 7 }) });
 		const loading = document.load("(scene fresh)");
 		loop.frame();
 		await loading;

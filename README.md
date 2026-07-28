@@ -69,7 +69,8 @@ krudd/
                  null/, frame_graph/, particles/, scene_renderer/, plus renderer.scm
                  (the backend interface spec) and shader/ (the shader DSL)
     audio/       The mixer and its device backends
-    ui/          Editor chrome — kruddgui/, viewport/, kruddboard/
+    ui/          Editor chrome — kruddgui/, viewport/, gizmo/, kruddboard/,
+                 and bridge/ (the boundary the TypeScript editor drives)
     game/        host/ is the launcher registry; its siblings register with it
     shell/       The host the engine runs inside — web/
 ```

@@ -26,7 +26,28 @@
 // anything locally. What a command carries about undo is its label and, for
 // the continuous ones, the fact that it belongs inside a gesture.
 
-import type { Bridge, TransformLike } from "@kruddage/engine/bridge";
+import type {
+	Bridge,
+	DragPhase,
+	GizmoMode,
+	TransformLike,
+} from "@kruddage/engine/bridge";
+
+/*
+ * The boundary's enumerations, re-exported.
+ *
+ * `src/document/` is the only place allowed to import the bridge for its values
+ * (test/document-boundary.test.ts holds that against the source tree), and
+ * these are values: a panel that wants to say "translate" needs the number the
+ * C side means by it. Re-exporting keeps one door rather than making an
+ * exception to the rule for constants — and a second copy of the numbers here
+ * would be a second place for them to be wrong.
+ */
+export {
+	DRAG_PHASE,
+	GIZMO_AXIS,
+	GIZMO_MODE,
+} from "@kruddage/engine/bridge";
 
 /**
  * Whether a command is one a drag repeats.
@@ -59,6 +80,20 @@ export interface CommandPayloads {
 	"history.redo": Record<string, never>;
 	"engine.paused": { paused: boolean };
 	"document.load": { text: string };
+
+	/* The viewport (#949). */
+	"viewport.size": { width: number; height: number };
+	"viewport.pick": { x: number; y: number };
+	"camera.orbit": { dyaw: number; dpitch: number };
+	"camera.pan": { dx: number; dy: number };
+	"camera.dolly": { amount: number };
+	"camera.frame": { id?: number };
+	"camera.reset": Record<string, never>;
+	"engine.editing": { editing: boolean };
+	"gizmo.mode": { mode: GizmoMode };
+	"gizmo.snap": { translate: number; rotate: number; scale: number };
+	"gizmo.drag": { phase: DragPhase; x: number; y: number };
+	"gizmo.grid": { shown: boolean; spacing: number };
 }
 
 export type CommandId = keyof CommandPayloads;
@@ -167,6 +202,118 @@ export const COMMANDS: Table = {
 		label: "Open Project",
 		continuity: "discrete",
 		run: (bridge, { text }) => bridge.loadScene(text),
+	},
+
+	/* ------------------------------------------------------------------ *
+	 * The viewport (#949)
+	 *
+	 * Every one of these is here rather than called from the viewport panel
+	 * for the reason the file's header gives: `run` is the only place a
+	 * bridge mutator is called from in the whole application, and
+	 * test/document-boundary.test.ts holds that true against the source
+	 * tree. A camera orbit is not a scene mutation, but exempting it would
+	 * mean the rule was "mutations, plus whatever else someone decides is
+	 * not one".
+	 * ------------------------------------------------------------------ */
+
+	/*
+	 * Not an edit, and it is the one command here that is pure bookkeeping:
+	 * it tells the engine how big the canvas is so the ray it casts and the
+	 * pixels it drew agree. A drag repeats it — a splitter drag resizes the
+	 * dock every frame — so it is continuous, though there is nothing for
+	 * the history to coalesce.
+	 */
+	"viewport.size": {
+		label: "Resize Viewport",
+		continuity: "continuous",
+		run: (bridge, { width, height }) =>
+			bridge.setViewportSize(width, height),
+	},
+	/*
+	 * A pick *is* a selection: the engine raycasts and calls set_selected
+	 * itself, and the answer arrives through #947's selection query like
+	 * any other. The editor never holds an id the engine has not agreed to,
+	 * which is why this is not "ask what is there, then select it".
+	 */
+	"viewport.pick": {
+		label: "Select",
+		continuity: "discrete",
+		run: (bridge, { x, y }) => bridge.pick(x, y),
+	},
+
+	/*
+	 * The camera gestures. Continuous, all of them — a drag repeats them
+	 * once a frame — but nothing they do is undoable, because the camera is
+	 * not part of the document. Undoing an edit must not move the view, and
+	 * that falls out of the camera never reaching `world/edit` at all.
+	 */
+	"camera.orbit": {
+		label: "Orbit",
+		continuity: "continuous",
+		run: (bridge, { dyaw, dpitch }) => bridge.orbitCamera(dyaw, dpitch),
+	},
+	"camera.pan": {
+		label: "Pan",
+		continuity: "continuous",
+		run: (bridge, { dx, dy }) => bridge.panCamera(dx, dy),
+	},
+	"camera.dolly": {
+		label: "Zoom",
+		continuity: "continuous",
+		run: (bridge, { amount }) => bridge.dollyCamera(amount),
+	},
+	/* -1, the default, means "the selection" — resolved by the engine so a
+	 * shortcut cannot disagree with it about what is selected. */
+	"camera.frame": {
+		label: "Frame Selection",
+		continuity: "discrete",
+		run: (bridge, { id }) => bridge.frameCamera(id ?? -1),
+	},
+	"camera.reset": {
+		label: "Reset View",
+		continuity: "discrete",
+		run: (bridge) => bridge.resetCamera(),
+	},
+
+	/*
+	 * The play/edit handover, and the whole of it: the engine pauses the
+	 * simulation, lights the selection outline and stands kruddgui's
+	 * click-to-pick down on the way in, and undoes all three on the way out.
+	 * Nothing on this side is torn down or rebuilt, which is what makes it
+	 * survive being pressed repeatedly.
+	 */
+	"engine.editing": {
+		label: "Edit Mode",
+		continuity: "discrete",
+		run: (bridge, { editing }) => bridge.setEditorMode(editing),
+	},
+
+	"gizmo.mode": {
+		label: "Gizmo Mode",
+		continuity: "discrete",
+		run: (bridge, { mode }) => bridge.setGizmoMode(mode),
+	},
+	"gizmo.snap": {
+		label: "Snap",
+		continuity: "discrete",
+		run: (bridge, { translate, rotate, scale }) =>
+			bridge.setGizmoSnap(translate, rotate, scale),
+	},
+	/*
+	 * A drag phase. The moves land on the engine's set_transform, so they
+	 * coalesce into the gesture the viewport opened at pointerdown — one
+	 * undo step per drag, by the same mechanism an inspector slider uses
+	 * (#944, Q2). Continuous for exactly that reason.
+	 */
+	"gizmo.drag": {
+		label: "Transform",
+		continuity: "continuous",
+		run: (bridge, { phase, x, y }) => bridge.gizmoDrag(phase, x, y),
+	},
+	"gizmo.grid": {
+		label: "Grid",
+		continuity: "discrete",
+		run: (bridge, { shown, spacing }) => bridge.setGrid(shown, spacing),
 	},
 };
 

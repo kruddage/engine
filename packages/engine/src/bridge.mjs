@@ -33,8 +33,13 @@
 // **It is not an undo stack.** undo() and redo() are commands like any other.
 // The 128-entry ring in world/edit is the only history in the system.
 
-/** The wire version this client speaks. Must match the module's. */
-export const BRIDGE_PROTOCOL = 1;
+/**
+ * The wire version this client speaks. Must match the module's.
+ *
+ * 2 added the viewport domain (#949) — the camera commands, the pick, the
+ * gizmo and the editor-mode switch, plus a fourth generation in the reply.
+ */
+export const BRIDGE_PROTOCOL = 2;
 
 /** 'K' 'B' 'R' 'G', little-endian. */
 export const TAPE_MAGIC = 0x47524248;
@@ -61,12 +66,49 @@ export const OP = Object.freeze({
 	ENTITY_PARAM: 0x0037,
 	SET_PAUSED: 0x0040,
 	SCENE_LOAD: 0x0050,
+	VIEWPORT_SIZE: 0x0060,
+	CAMERA_ORBIT: 0x0061,
+	CAMERA_PAN: 0x0062,
+	CAMERA_DOLLY: 0x0063,
+	CAMERA_FRAME: 0x0064,
+	CAMERA_RESET: 0x0065,
+	PICK: 0x0066,
+	EDITOR_MODE: 0x0067,
+	GIZMO_MODE: 0x0068,
+	GIZMO_SNAP: 0x0069,
+	GIZMO_DRAG: 0x006a,
+	GRID: 0x006b,
 	QUERY_TREE: 0x0100,
 	QUERY_ENTITY: 0x0101,
 	QUERY_SELECTION: 0x0102,
 	QUERY_HISTORY: 0x0103,
 	QUERY_SCENE_TEXT: 0x0104,
 	QUERY_ENTITY_PARAMS: 0x0105,
+	QUERY_VIEWPORT: 0x0106,
+});
+
+/** Which handle set the gizmo shows. Mirrors enum gizmo_mode. */
+export const GIZMO_MODE = Object.freeze({
+	NONE: 0,
+	TRANSLATE: 1,
+	ROTATE: 2,
+	SCALE: 3,
+});
+
+/** Which handle a drag holds. Mirrors enum gizmo_axis. */
+export const GIZMO_AXIS = Object.freeze({
+	NONE: -1,
+	X: 0,
+	Y: 1,
+	Z: 2,
+	ALL: 3,
+});
+
+/** The phases of a gizmo drag. Mirrors enum bridge_drag_phase. */
+export const DRAG_PHASE = Object.freeze({
+	BEGIN: 0,
+	MOVE: 1,
+	END: 2,
 });
 
 /** Query kinds, and the domain whose generation each is cached against. */
@@ -91,12 +133,24 @@ const QUERY = Object.freeze({
 		domain: "scene",
 		keyed: true,
 	},
+	/*
+	 * The viewport's own state: gizmo mode, the handle a drag holds, the
+	 * snap increments, the grid, the editor-mode switch and the size the
+	 * engine is picking against.
+	 *
+	 * Note what is not in it: the camera. It moves every frame of an orbit
+	 * and nothing in the editor draws from it — the engine draws the
+	 * viewport — so a generation that tracked it would invalidate this
+	 * cache sixty times a second to report the same row of buttons.
+	 */
+	viewport: { op: OP.QUERY_VIEWPORT, domain: "viewport", keyed: false },
 });
 
 const DEFAULT_GENERATIONS = Object.freeze({
 	scene: 0,
 	selection: 0,
 	history: 0,
+	viewport: 0,
 });
 
 const TRANSFORM_FLOATS = 10;
@@ -434,6 +488,103 @@ export function createBridge(module, options = {}) {
 				t.open(OP.ENTITY_SCRIPT_REF).i32(id).u32(ref).close()
 			),
 
+		/* ---------------------------------------------------------- *
+		 * The viewport (#949)
+		 *
+		 * Every one of these is a gesture the engine interprets rather
+		 * than a state the caller computes. The camera in particular:
+		 * the renderer owns the pose and fights for it — a scripted
+		 * scene camera is copied into the eye every frame until
+		 * something navigates — so a client that computed a pose and
+		 * pushed it would be pushing against that copy, and would be a
+		 * second implementation of the framing arithmetic besides.
+		 * ---------------------------------------------------------- */
+
+		/**
+		 * Report the canvas's drawable size, in CSS pixels.
+		 *
+		 * The size a pick is answered against and the size the
+		 * projection's aspect is built from, so it is the editor's job
+		 * to keep it true — a stale one puts the ray somewhere the
+		 * pixels are not.
+		 */
+		setViewportSize: (width, height) =>
+			queue((t) =>
+				t.open(OP.VIEWPORT_SIZE).f32(width).f32(height).close()
+			),
+
+		/** Orbit about the camera's target. Radians. */
+		orbitCamera: (dyaw, dpitch) =>
+			queue((t) =>
+				t.open(OP.CAMERA_ORBIT).f32(dyaw).f32(dpitch).close()
+			),
+		/** Slide eye and target across the view plane. Viewport fractions. */
+		panCamera: (dx, dy) =>
+			queue((t) => t.open(OP.CAMERA_PAN).f32(dx).f32(dy).close()),
+		/** Move along the view direction. A fraction of the eye→target gap. */
+		dollyCamera: (amount) =>
+			queue((t) => t.open(OP.CAMERA_DOLLY).f32(amount).close()),
+		/**
+		 * Frame an entity, or the selection when the id is left out.
+		 *
+		 * -1 is "whatever is selected" rather than a sentinel the
+		 * caller has to resolve, so a keyboard shortcut cannot disagree
+		 * with the engine about what the selection is.
+		 */
+		frameCamera: (id = -1) =>
+			queue((t) => t.open(OP.CAMERA_FRAME).i32(id).close()),
+		/** Hand the camera back to the scene's scripted one. */
+		resetCamera: () => queue((t) => t.open(OP.CAMERA_RESET).close()),
+
+		/**
+		 * Pick at a pixel and select what is there. A miss clears.
+		 *
+		 * Deliberately not a query: what a click wants is for the
+		 * selection to change, and the selection already has a
+		 * generation and a query with every panel watching it. Asking
+		 * for an id and sending it back as a select would be two
+		 * crossings and a window in which the editor holds a selection
+		 * the engine does not.
+		 */
+		pick: (x, y) => queue((t) => t.open(OP.PICK).f32(x).f32(y).close()),
+
+		/**
+		 * The GAME / EDITOR switch — the whole of the play/edit
+		 * handover. Entering pauses the simulation and lights the
+		 * selection outline; leaving resumes and stands the chrome down.
+		 */
+		setEditorMode: (on) =>
+			queue((t) => t.open(OP.EDITOR_MODE).i32(on ? 1 : 0).close()),
+
+		setGizmoMode: (mode) =>
+			queue((t) => t.open(OP.GIZMO_MODE).i32(mode).close()),
+		/** Snap increments. Zero on any of them means that mode is free. */
+		setGizmoSnap: (translate, rotateDegrees, scale) =>
+			queue((t) =>
+				t
+					.open(OP.GIZMO_SNAP)
+					.f32(translate)
+					.f32(rotateDegrees)
+					.f32(scale)
+					.close()
+			),
+		/**
+		 * One phase of a gizmo drag, at a pixel.
+		 *
+		 * BEGIN's answer — did the press grab a handle — comes back
+		 * through the viewport query rather than from here, because
+		 * nothing here can answer synchronously: the engine has not
+		 * seen the press until the next flush. See `dragSerial`.
+		 */
+		gizmoDrag: (phase, x, y) =>
+			queue((t) =>
+				t.open(OP.GIZMO_DRAG).i32(phase).f32(x).f32(y).close()
+			),
+		setGrid: (shown, spacing) =>
+			queue((t) =>
+				t.open(OP.GRID).i32(shown ? 1 : 0).f32(spacing).close()
+			),
+
 		/** Called after every flush that changed a generation or carried events. */
 		subscribe(listener) {
 			listeners.add(listener);
@@ -605,7 +756,8 @@ export function createBridge(module, options = {}) {
 		const moved =
 			before.scene !== generations.scene ||
 			before.selection !== generations.selection ||
-			before.history !== generations.history;
+			before.history !== generations.history ||
+			before.viewport !== generations.viewport;
 		if (moved || (reply.events?.length ?? 0) > 0 || reply.error) {
 			for (const listener of listeners) listener(reply);
 		}

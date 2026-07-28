@@ -24,8 +24,8 @@
 # There is nothing to bump here when kruddage/s7 cuts a new release — just
 # delete the cached artifacts in this directory (libs7-*.a, s7.h,
 # krudds7-linux-x86_64, plus their cached .sha256
-# sidecars) and re-run sync.sh (or krudd.sh) to force a re-fetch; sync.sh's own
-# sidecar-checksum comparison already refetches automatically once the cached
+# sidecars) and re-run sync.sh (or kruddmake.sh) to force a re-fetch; sync.sh's
+# own sidecar-checksum comparison already refetches automatically once the cached
 # artifact no longer matches the latest release's sidecar. S7_VERSION/S7_DATE
 # are kept as upstream provenance and may lag the actual latest release.
 

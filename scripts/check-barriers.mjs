@@ -28,12 +28,13 @@
 //      neither can see a spawn of a path or an env var read, which is what is
 //      left for a text match to do.
 //
-// Rule 3 used to carry a `krudd.sh` pattern as well, and no longer does. That
-// pattern was a package boundary drawn with a regex because the thing it
-// protected had no package to be inside of; krudd.sh is now a forwarding shim
-// over the entry point of one, so matching its name would be a second
-// mechanism for what rule 2 enforces. Two mechanisms for one rule is how the
-// second one rots.
+// Rule 3 used to carry a pattern matching the repo-root forwarding script's
+// name as well, and no longer does. That pattern was a package boundary drawn
+// with a regex because the thing it protected had no package to be inside of;
+// once the script forwarded to the entry point of one (#920), matching its
+// name would have been a second mechanism for what rule 2 already enforces.
+// Two mechanisms for one rule is how the second one rots — the script itself
+// is retired now too (#935).
 //
 // Run: pnpm check
 

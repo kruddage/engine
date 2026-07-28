@@ -21,8 +21,9 @@
 # hard error rather than a re-download. That is for a sandboxed or air-gapped
 # build: pre-fetch once where there is network, then build where there is none.
 #
-# Sourced (not executed) by krudd.sh and run-tests.sh, before the krudd host
-# tool exists to fetch anything for them — so this has to be plain POSIX shell.
+# Sourced (not executed) by kruddmake.sh and run-tests.sh, before the krudd
+# host tool exists to fetch anything for them — so this has to be plain POSIX
+# shell.
 # Expects $root (the repo root) to already be set by the sourcing script. On
 # success it exports the resolved artifact paths:
 #

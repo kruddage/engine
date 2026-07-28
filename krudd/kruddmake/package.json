@@ -2,7 +2,7 @@
 	"name": "@kruddage/kruddmake",
 	"version": "0.0.0",
 	"private": true,
-	"description": "The KRUDD build language: the Scheme that renders build.ninja from the directory specs, and the shell entry point that drives it. A dependency edge where there used to be a path to krudd.sh — its surface is the operations, not the five .scm modules behind them.",
+	"description": "The KRUDD build language: the Scheme that renders build.ninja from the directory specs, and the shell entry point that drives it. A dependency edge where there used to be a path to a root-level script — its surface is the operations, not the five .scm modules behind them.",
 	"license": "GPL-2.0-or-later",
 	"files": [
 		"*.scm",

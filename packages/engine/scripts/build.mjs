@@ -4,8 +4,9 @@
 //
 // This does not reimplement the engine build. It drives @kruddage/kruddmake —
 // the same generator CI has always run, reached now through this package's
-// declared dependency on it rather than through a path to ./krudd.sh (#920) —
-// and then harvests the outputs into dist/ with a manifest describing them.
+// declared dependency on it rather than through a path to the script that
+// used to live at the repo root (#920) — and then harvests the outputs into
+// dist/ with a manifest describing them.
 // kruddmake stays the build system for C and WASM; this is the wrapper that
 // turns its output into a package with a boundary around it.
 //

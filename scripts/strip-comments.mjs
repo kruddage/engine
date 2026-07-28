@@ -5,7 +5,7 @@
 // check-barriers.mjs needs this because the names it forbids are exactly the
 // names the surrounding prose has to discuss — the first thing the check did on
 // being written was fail its own author, over a comment explaining that the
-// file deliberately does not touch krudd.sh. A boundary check that cannot tell
+// file deliberately did not touch krudd.sh. A boundary check that cannot tell
 // code from commentary gets switched off within a week.
 //
 // Comments become spaces rather than vanishing, so byte offsets and line

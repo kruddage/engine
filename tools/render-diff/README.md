@@ -99,7 +99,7 @@ on the WebGPU path.** `diff` mode is built and waiting for it, not dead code.
 Against a local build:
 
 ```sh
-KRUDD_TARGET=wasm ./krudd.sh build
+KRUDD_TARGET=wasm krudd/kruddmake/kruddmake.sh build
 python3 -m http.server -d build 8000
 node tools/render-diff/diff.mjs
 ```

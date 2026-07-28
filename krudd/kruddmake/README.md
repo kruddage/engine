@@ -9,8 +9,8 @@ CMake, no emcmake, no second graph.
 
 This is a package so that "only `@kruddage/engine` may drive the engine build"
 is a dependency edge rather than a regex about a filename. It was previously
-reachable only as `./krudd.sh`, a build entry point that lived outside the build
-graph (#920).
+reachable only through a root-level shell script, a build entry point that
+lived outside the build graph (#920).
 
 ## Surface
 
@@ -31,8 +31,6 @@ There is no `clean` verb. Removing a build directory is `rm -rf` on whatever
 `KRUDD_BUILD_DIR` pointed at, and the artifact side of it —
 `packages/engine/dist` — belongs to `@kruddage/engine`, which has a `clean`
 script for exactly that.
-
-`./krudd.sh` at the repo root still works. It forwards here and holds no logic.
 
 ### Environment
 

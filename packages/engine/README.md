@@ -23,9 +23,10 @@ and SHA-256s, and the function exports read back out of the WASM module.
 
 It reaches kruddmake by resolving the dependency — `scripts/kruddmake.mjs` is
 the one place that knows kruddmake's layout — rather than by spelling a path to
-`./krudd.sh`. That is the barrier: "only `@kruddage/engine` may drive the engine
-build" is an edge in the package graph, and `pnpm check` reads it back (#920).
-Before, it was a regex matching the string `krudd.sh`.
+the script that used to live at the repo root. That is the barrier: "only
+`@kruddage/engine` may drive the engine build" is an edge in the package graph,
+and `pnpm check` reads it back (#920). Before, it was a regex matching that
+script's filename.
 
 Consumers import from the package, never from the build tree:
 
@@ -94,9 +95,10 @@ This is the first membrane, not the finished shape. In rough order of value:
    the tree copies (#919).
 4. ~~**Package the build system.**~~ Done. `krudd/kruddmake/` is
    `@kruddage/kruddmake`, and this package depends on it. The build entry point
-   moved out of `./krudd.sh` — which now forwards and holds no logic — into
-   `krudd/kruddmake/kruddmake.sh`, and "only `@kruddage/engine` may drive the
-   build" stopped being a regex about a filename (#920). Next of these is the
-   shader transpiler, which needs neither a compiler nor the engine (#921).
+   moved out of the script that used to live at the repo root — retired for
+   good in #935 — into `krudd/kruddmake/kruddmake.sh`, and "only
+   `@kruddage/engine` may drive the build" stopped being a regex about a
+   filename (#920). Next of these is the shader transpiler, which needs
+   neither a compiler nor the engine (#921).
 
 Each step is independently useful, and none of them require porting the engine.

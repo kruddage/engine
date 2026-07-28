@@ -124,11 +124,11 @@ test("catches a non-engine package reaching krudd/ by path", () => {
 	assert.match(problems[0], /krudd\/ by path/);
 });
 
-/* The rule that used to match this string is gone: krudd.sh is a forwarding
- * shim over @kruddage/kruddmake's entry point, and the dependency rule above is
- * what enforces who may drive the build (#920). Naming the shim is no longer
- * the interesting act — resolving the package is. */
-test("naming krudd.sh is not on its own a violation", () => {
+/* The rule that used to match this string is gone: it was the retired
+ * repo-root forwarding shim's name, and the dependency rule above is what
+ * enforces who may drive the build (#920). Naming the (now-deleted) shim is
+ * no longer the interesting act — resolving the package is. */
+test("naming the retired shim is not on its own a violation", () => {
 	assert.deepEqual(
 		check({
 			"packages/other/src/a.mjs": `const shim = "krudd.sh";\nexport { shim };\n`,

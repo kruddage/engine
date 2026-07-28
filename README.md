@@ -179,9 +179,6 @@ KRUDD_TARGET=wasm krudd/kruddmake/kruddmake.sh build   # -> build/
 python3 -m http.server -d build
 ```
 
-`./krudd.sh` at the repo root forwards to that entry point and holds no logic;
-it is kept for the muscle memory.
-
 ### Native build (tests only)
 
 The native build compiles the modules for unit testing. It does not run the

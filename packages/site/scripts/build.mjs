@@ -3,7 +3,7 @@
 // Stages the deployable site into packages/site/dist.
 //
 // Note what this file does *not* do: it never looks at <repo>/build, never runs
-// krudd.sh, and never derives the cache-busting hash itself. It asks
+// kruddmake, and never derives the cache-busting hash itself. It asks
 // @kruddage/engine what was built and what the hash is. That is the whole point
 // of the split — stage-site.sh ran `git rev-parse --short HEAD` and trusted that
 // it matched the hash the Scheme had independently baked into the shell

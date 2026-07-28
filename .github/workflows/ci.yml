@@ -69,9 +69,9 @@ jobs:
       - name: Trust the workspace
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      # krudd.sh picks clang first if it's on PATH, falling back to gcc then
-      # cc, so installing clang here makes CI build with it by default while
-      # keeping gcc as the fallback compiler. curl is required by
+      # kruddmake.sh picks clang first if it's on PATH, falling back to gcc
+      # then cc, so installing clang here makes CI build with it by default
+      # while keeping gcc as the fallback compiler. curl is required by
       # krudd/third_party/sync.sh to fetch the latest s7 release artifacts
       # (header + static libs + CLI), which are not committed to the repo.
       - name: Install a host compiler and ninja for krudd
@@ -98,13 +98,13 @@ jobs:
           fi
 
       # The build now enters through the pnpm workspace. @kruddage/engine still
-      # runs ./krudd.sh underneath — kruddmake remains the build system for C
-      # and WASM, generating build.ninja from the directory specs and driving
-      # ninja with emcc/em++ directly, no cmake and no emcmake. What the package
-      # adds is the boundary: it harvests the outputs into a dist/ with a
-      # manifest describing them, and everything downstream reads that instead
-      # of the build tree. KRUDD_VERSION comes from the version step above —
-      # see introspect.scm.
+      # runs krudd/kruddmake/kruddmake.sh underneath — kruddmake remains the
+      # build system for C and WASM, generating build.ninja from the directory
+      # specs and driving ninja with emcc/em++ directly, no cmake and no
+      # emcmake. What the package adds is the boundary: it harvests the
+      # outputs into a dist/ with a manifest describing them, and everything
+      # downstream reads that instead of the build tree. KRUDD_VERSION comes
+      # from the version step above — see introspect.scm.
       - uses: actions/setup-node@v4
         with:
           node-version: 22

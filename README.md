@@ -227,6 +227,14 @@ been watched for a while.
 
 ## Versioning and releases
 
+[`version.txt`](version.txt) is the single source of the version, not `package.json` —
+despite the pnpm workspace sitting at the root. `introspect.scm` stamps the number into
+the WASM build and the shell template, and the site's cache-busting hash derives from what
+that produces, so routing it through `package.json` would put Node in the path of a fact
+the C build needs. Every `package.json` in the repo, including the workspace root, pins
+`0.0.0`; that is not a stale placeholder, it is inert on purpose (see
+[`WORKSPACE.md`](WORKSPACE.md), Q3).
+
 Versioning is handled by [release-please](https://github.com/googleapis/release-please),
 driven by [Conventional Commits](https://www.conventionalcommits.org/). We squash-merge, so a
 PR's title *is* its commit message and the **pr-title** check enforces the format:

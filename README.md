@@ -118,10 +118,11 @@ nothing else, and the workspace never becomes a prerequisite for it.**
 where it stops, and why each of those was chosen over the alternatives.
 
 The engine builds through a pnpm workspace that wraps kruddmake rather than
-replacing it. `@kruddage/engine` declares a dependency on `@kruddage/kruddmake`
-and drives the build through it, then publishes the resulting artifacts behind a
-declared surface; everything downstream reads that surface instead of the build
-tree.
+replacing it. `@kruddage/engine` spawns `krudd/kruddmake/kruddmake.sh` and
+publishes the resulting artifacts behind a declared surface; everything
+downstream reads that surface instead of the build tree. `krudd/` itself is not
+in the workspace — it is a C tree with a shell entry point, and the one package
+allowed to reach it by path is the one that wraps it.
 
 `pnpm install` links the workspace and downloads nothing — it does not fetch
 the toolchain below. `pnpm build` still needs everything in Prerequisites,
@@ -145,21 +146,22 @@ and coverage jobs invoke. That the workspace can also reach it, as
 
 | Package | What it is |
 |---|---|
-| [`@kruddage/kruddmake`](krudd/kruddmake) | The build language: specs → `build.ninja`, and the entry point that drives it |
 | [`@kruddage/engine`](packages/engine) | The engine's WASM build, harvested into `dist/` with a manifest describing it |
 | [`@kruddage/site`](packages/site) | Stages the deployable static site from those artifacts (replaces `stage-site.sh`) |
 | [`@kruddage/render-diff`](tools/render-diff) | Screenshot oracle for the WebGPU port |
-| [`@kruddage/abi`](krudd/engine/abi) | The plugin vtables — a name and a surface over headers, no build |
 
 There are no third-party dependencies. `pnpm install` links the workspace and
 downloads nothing, matching how the rest of the repo treats its supply chain
 (vendored s7, a CDP client written against Node's built-in WebSocket, no CMake).
 
 The point of the split is the boundary, not the packaging. `pnpm check` fails
-the build when a package reaches into another by relative path — routing around
-the `exports` map — when anything but `@kruddage/engine` declares a dependency
-on `@kruddage/kruddmake`, or when anything but `@kruddage/engine` reaches the
-build tree by path or through the generator's environment. See
+the build on two things: a package reaching into another by relative path —
+routing around the `exports` map — and anything but `@kruddage/engine` reaching
+the build tree, by a path into `krudd/` or through the generator's environment.
+A third rule, "only `@kruddage/engine` may depend on `@kruddage/kruddmake`",
+went with the package it named when `krudd/` left the workspace; the path rule
+already covered the same ground with the same exemption, and two mechanisms for
+one rule is how the second one rots ([`WORKSPACE.md`](WORKSPACE.md), Q4). See
 [`packages/engine/README.md`](packages/engine/README.md) for what the barrier
 buys and where the next ones go.
 
@@ -215,7 +217,7 @@ the GPU-free tests record against.
 
 | Workflow · job | What it does |
 |---|---|
-| **ci · lint** | Style-checks `.scm` comments (`lint-scm-comments.py`) and indentation; runs the workspace suite and the package-boundary check |
+| **ci · lint** | Style-checks `.scm` comments (`lint-scm-comments.py`) and indentation; runs the workspace suite, the package-boundary check, and kruddmake's Scheme suite (which needs no compiler) |
 | **ci · build** | Builds the WASM module via Emscripten (`emsdk` container) through krudd's own Ninja build, then stages the site — both through the pnpm workspace |
 | **ci · deploy** | On push to `main`, publishes the staged site to GitHub Pages |
 | **ci · preview** | Deploys each PR's build to a `pr-preview/pr-<N>/` URL and tears it down on close |

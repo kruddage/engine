@@ -8,15 +8,7 @@ importers:
 
   .: {}
 
-  krudd/engine/abi: {}
-
-  krudd/kruddmake: {}
-
-  packages/engine:
-    dependencies:
-      '@kruddage/kruddmake':
-        specifier: workspace:*
-        version: link:../../krudd/kruddmake
+  packages/engine: {}
 
   packages/site:
     dependencies:

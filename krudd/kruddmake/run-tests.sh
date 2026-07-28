@@ -3,11 +3,11 @@
 #
 # kruddmake test harness.
 #
-# Stage 0+1 (always): run-scheme-tests.sh — kruddmake's own suite, and
-# @kruddage/kruddmake's `test` script. The codegen/embed helpers
-# (introspect_test.scm) and the resolver + emitter (resolve_test.scm), on the
-# fetched s7 CLI alone, no compiler. It also renders the build.ninja stage 2
-# builds, which is why KRUDD_NINJA_OUT is exported before it runs.
+# Stage 0+1 (always): run-scheme-tests.sh — kruddmake's own suite. The
+# codegen/embed helpers (introspect_test.scm) and the resolver + emitter
+# (resolve_test.scm), on the fetched s7 CLI alone, no compiler. It also renders
+# the build.ninja stage 2 builds, which is why KRUDD_NINJA_OUT is exported
+# before it runs.
 #
 # Stage 2 (when ninja + cc are present): render the real manifest to a
 # build.ninja and build the `native` target with ninja(1). Each test links and

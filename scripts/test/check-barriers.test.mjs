@@ -16,19 +16,18 @@ import { findViolations, packageDirs } from "../check-barriers.mjs";
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 /* A two-package workspace: `packages/engine` (privileged) and `packages/other`.
- * `extra` merges into a package's manifest, which is how the dependency rule is
- * exercised — that rule reads manifests rather than sources. */
-function workspace(files, extra = {}) {
+ * Both rules read sources, so a package here is a name and a `src/`. */
+function workspace(files) {
 	const root = mkdtempSync(join(tmpdir(), "krudd-ws-"));
 
-	for (const [name, manifest] of [
-		["engine", { name: "@kruddage/engine" }],
-		["other", { name: "@kruddage/other" }],
+	for (const [dir, name] of [
+		["engine", "@kruddage/engine"],
+		["other", "@kruddage/other"],
 	]) {
-		mkdirSync(join(root, "packages", name, "src"), { recursive: true });
+		mkdirSync(join(root, "packages", dir, "src"), { recursive: true });
 		writeFileSync(
-			join(root, "packages", name, "package.json"),
-			JSON.stringify({ ...manifest, ...(extra[name] ?? {}) })
+			join(root, "packages", dir, "package.json"),
+			JSON.stringify({ name })
 		);
 	}
 
@@ -43,8 +42,8 @@ function workspace(files, extra = {}) {
 	};
 }
 
-function check(files, extra) {
-	const { root, dirs } = workspace(files, extra);
+function check(files) {
+	const { root, dirs } = workspace(files);
 	return findViolations(root, dirs);
 }
 
@@ -85,49 +84,42 @@ test("catches a dynamic import that escapes the package", () => {
 	assert.match(problems[0], /escapes/);
 });
 
-test("catches a non-engine package depending on kruddmake", () => {
-	const problems = check(
-		{},
-		{ other: { dependencies: { "@kruddage/kruddmake": "workspace:*" } } }
-	);
-
-	assert.equal(problems.length, 1);
-	assert.match(problems[0], /declares @kruddage\/kruddmake in "dependencies"/);
-});
-
-test("the dependency rule reads every dependency field", () => {
-	const problems = check(
-		{},
-		{ other: { devDependencies: { "@kruddage/kruddmake": "workspace:*" } } }
-	);
-
-	assert.equal(problems.length, 1);
-	assert.match(problems[0], /"devDependencies"/);
-});
-
-test("the engine package may depend on kruddmake", () => {
-	assert.deepEqual(
-		check(
-			{},
-			{ engine: { dependencies: { "@kruddage/kruddmake": "workspace:*" } } }
-		),
-		[]
-	);
-});
-
+/* Rule 3 carries rule 2's weight since #934, so the cases below walk every
+ * subtree and every variable the patterns name rather than one of each. What
+ * used to be caught twice — once as a declared dependency on the build package,
+ * once as a path — is now caught only here. */
 test("catches a non-engine package reaching krudd/ by path", () => {
+	for (const path of [
+		"krudd/kruddmake/manifest.scm",
+		"krudd/engine/abi/build.scm",
+		"krudd/third_party/s7.h",
+	]) {
+		const problems = check({
+			"packages/other/src/a.mjs": `readFileSync("${path}");\n`,
+		});
+
+		assert.equal(problems.length, 1, path);
+		assert.match(problems[0], /krudd\/ by path/);
+	}
+});
+
+/* The path rule is what stands behind the deleted dependency rule: a package
+ * that wants to drive the build has to spell a path to reach kruddmake now that
+ * there is no package name to ask for, and that path is what this catches. */
+test("catches a non-engine package deriving the kruddmake entry point", () => {
 	const problems = check({
-		"packages/other/src/a.mjs": `readFileSync("krudd/kruddmake/manifest.scm");\n`,
+		"packages/other/src/a.mjs":
+			`const sh = join(REPO, "krudd/kruddmake/kruddmake.sh");\n` +
+			`spawnSync("sh", [sh, "build"]);\n`,
 	});
 
 	assert.equal(problems.length, 1);
 	assert.match(problems[0], /krudd\/ by path/);
 });
 
-/* The rule that used to match this string is gone: it was the retired
- * repo-root forwarding shim's name, and the dependency rule above is what
- * enforces who may drive the build (#920). Naming the (now-deleted) shim is
- * no longer the interesting act — resolving the package is. */
+/* The rule that used to match this string is gone: it was the repo-root
+ * forwarding shim's name, a package boundary drawn with a regex, and the shim
+ * itself is retired (#935). Naming a deleted file is not an act. */
 test("naming the retired shim is not on its own a violation", () => {
 	assert.deepEqual(
 		check({
@@ -138,19 +130,28 @@ test("naming the retired shim is not on its own a violation", () => {
 });
 
 test("catches a non-engine package setting the build environment", () => {
-	const problems = check({
-		"packages/other/src/a.mjs": `process.env.KRUDD_TARGET = "wasm";\n`,
-	});
+	for (const variable of ["KRUDD_TARGET", "KRUDD_BUILD_DIR"]) {
+		const problems = check({
+			"packages/other/src/a.mjs": `process.env.${variable} = "x";\n`,
+		});
 
-	assert.equal(problems.length, 1);
-	assert.match(problems[0], /kruddmake build environment/);
+		assert.equal(problems.length, 1, variable);
+		assert.match(problems[0], /kruddmake build environment/);
+	}
 });
 
+/* The exemption, which is now the only thing separating @kruddage/engine from
+ * every other package — see the note beside ENGINE_PRIVATE. It has to cover the
+ * real shape of packages/engine/scripts/kruddmake.mjs, which derives krudd/ from
+ * the repo root and spawns the entry point it finds there. */
 test("the engine package may do all of that", () => {
 	assert.deepEqual(
 		check({
 			"packages/engine/src/b.mjs":
-				`spawnSync("sh", [k, "build"], { env: { KRUDD_TARGET: "wasm" } });\n` +
+				`const sh = join(REPO, "krudd", "kruddmake", "kruddmake.sh");\n` +
+				`spawnSync("sh", [sh, "build"], {\n` +
+				`	env: { KRUDD_TARGET: "wasm", KRUDD_BUILD_DIR: out },\n` +
+				`});\n` +
 				`readFileSync("krudd/kruddmake/manifest.scm");\n`,
 		}),
 		[]
@@ -182,14 +183,34 @@ test("this workspace has no boundary violations", () => {
 	assert.deepEqual(findViolations(REPO), []);
 });
 
-/* The check discovers C packages the same way pnpm does — by finding a manifest
- * in the tree — so a module that joins the workspace cannot skip the boundary
- * check by not being added to a second list. */
-test("packages in the C tree are discovered, not listed", () => {
+/* The C tree left the workspace with #934, and this is what says so out loud.
+ * The list is asserted whole rather than by absence: `!includes("krudd/...")`
+ * would pass just as well if packageDirs returned nothing at all, and a
+ * boundary check over an empty list is the failure mode worth catching. */
+test("the C tree is not in the workspace", () => {
 	const dirs = packageDirs(REPO);
 
-	assert.ok(dirs.includes("krudd/engine/abi"));
-	assert.ok(dirs.includes("krudd/kruddmake"));
-	assert.ok(dirs.includes("packages/engine"));
-	assert.ok(!dirs.includes("krudd/engine/base"));
+	assert.deepEqual(dirs.sort(), [
+		"packages/engine",
+		"packages/site",
+		"tools/render-diff",
+	]);
+});
+
+/* `packages/*` is expanded off the filesystem, mirroring the glob of the same
+ * shape in pnpm-workspace.yaml: a new package under packages/ is inside the
+ * check the moment it exists, rather than when someone remembers this list. A
+ * package the boundary check does not know about is a package with no
+ * boundary. */
+test("packages/ is discovered, not enumerated", () => {
+	const root = mkdtempSync(join(tmpdir(), "krudd-ws-"));
+	for (const name of ["alpha", "beta"]) {
+		mkdirSync(join(root, "packages", name), { recursive: true });
+	}
+
+	assert.deepEqual(packageDirs(root).sort(), [
+		"packages/alpha",
+		"packages/beta",
+		"tools/render-diff",
+	]);
 });

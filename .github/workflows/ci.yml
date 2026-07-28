@@ -40,6 +40,14 @@ jobs:
       - name: Workspace boundaries
         run: pnpm check
 
+      # Replaces what `pnpm -r run test` used to reach: kruddmake's Scheme suite
+      # was a workspace package's `test` script until krudd/ left the workspace
+      # (#934). It needs no compiler — only the s7 CLI that sync.sh fetches with
+      # curl — so this job is still the right place for it, but it has to be
+      # named now rather than arriving as a side effect of `pnpm test`.
+      - name: kruddmake Scheme suite
+        run: sh krudd/kruddmake/run-scheme-tests.sh
+
       # .scm files are indented per CODING_STANDARD.md's Scheme section: spaces,
       # call arguments aligned under the first argument — Emacs scheme-mode's
       # stock indenter output, so there's a single mechanical arbiter instead of

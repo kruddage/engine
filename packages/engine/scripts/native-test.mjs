@@ -5,9 +5,8 @@
 // A two-line wrapper on purpose. The suite itself is kruddmake's
 // run-tests.sh: POSIX shell, no node in its path, and the thing CI's sanitizer
 // and coverage jobs invoke directly. This exists so the engine package reaches
-// it the same way it reaches the build — through the declared dependency on
-// @kruddage/kruddmake rather than a relative path into krudd/ (#920) — and so
-// there is one place that knows kruddmake's layout.
+// it the same way it reaches the build — through scripts/kruddmake.mjs (#934) —
+// and so there is one place that knows kruddmake's layout.
 //
 // If you have a compiler and no node, run it directly:
 //

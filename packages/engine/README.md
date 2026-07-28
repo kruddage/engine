@@ -3,10 +3,9 @@
 The KRUDD engine, as an npm package.
 
 The engine is not ported. It is still C, still built by
-[`@kruddage/kruddmake`](../../krudd/kruddmake) — the s7 Scheme build system that
-renders a `build.ninja` from per-directory specs and drives `emcc` through it.
-This package wraps that build and puts a declared surface in front of its
-output.
+[kruddmake](../../krudd/kruddmake) — the s7 Scheme build system that renders a
+`build.ninja` from per-directory specs and drives `emcc` through it. This
+package wraps that build and puts a declared surface in front of its output.
 
 ```sh
 pnpm --filter @kruddage/engine run build        # needs emsdk on PATH
@@ -16,17 +15,24 @@ pnpm --filter @kruddage/engine run test:native  # the C suite, no emsdk needed
 
 ## What it does
 
-`scripts/build.mjs` runs `kruddmake build` with `KRUDD_TARGET=wasm`, then
+`scripts/build.mjs` runs `kruddmake.sh build` with `KRUDD_TARGET=wasm`, then
 harvests the outputs into `dist/` alongside an `engine-manifest.json` that
 describes them: version, the cache-busting stem, the artifact list with sizes
 and SHA-256s, and the function exports read back out of the WASM module.
 
-It reaches kruddmake by resolving the dependency — `scripts/kruddmake.mjs` is
-the one place that knows kruddmake's layout — rather than by spelling a path to
-the script that used to live at the repo root. That is the barrier: "only
-`@kruddage/engine` may drive the engine build" is an edge in the package graph,
-and `pnpm check` reads it back (#920). Before, it was a regex matching that
-script's filename.
+It reaches kruddmake by path. `scripts/kruddmake.mjs` derives the repo root from
+its own location and joins `krudd/kruddmake/` onto it, and it is the only file
+in this package that does — every other module here asks it.
+
+That path is what `pnpm check` rule 3 forbids to every package but this one, and
+the exemption is the whole of the permission. It used to be the second of two
+gates: `krudd/kruddmake` was a package, this one declared a dependency on it,
+and a separate rule said no other package could. That rule went with the package
+when `krudd/` left the workspace (#934) — its ground was already covered by the
+path rule, under the same exemption, and two mechanisms for one rule is how the
+second one rots. The honest consequence is that the exemption now carries the
+barrier alone: there is one line between `krudd/` and the rest of the workspace,
+and it is the name check in `scripts/check-barriers.mjs`.
 
 Consumers import from the package, never from the build tree:
 
@@ -88,17 +94,21 @@ This is the first membrane, not the finished shape. In rough order of value:
    living inside the C tree because the emcc link needs the shell template as an
    input. Splitting it into `@kruddage/shell-web` — with the template staying an
    engine build input — would let the page evolve without touching kruddmake.
-3. ~~**Split the ABI.**~~ Done. `krudd/engine/abi/` is `@kruddage/abi`: an
-   `interface-library` in `manifest.scm` and a workspace package beside it, with
-   an empty dependency list and the module root as its surface. It compiles
-   nothing and it is the first C module in the workspace — the shape the rest of
-   the tree copies (#919).
-4. ~~**Package the build system.**~~ Done. `krudd/kruddmake/` is
-   `@kruddage/kruddmake`, and this package depends on it. The build entry point
-   moved out of the script that used to live at the repo root — retired for
-   good in #935 — into `krudd/kruddmake/kruddmake.sh`, and "only
-   `@kruddage/engine` may drive the build" stopped being a regex about a
-   filename (#920). Next of these is the shader transpiler, which needs
-   neither a compiler nor the engine (#921).
+3. ~~**Split the ABI.**~~ Done, on the C side, which was the half that mattered.
+   `krudd/engine/abi/` declares `(interface-library "abi" (interface "."))` in
+   its `build.scm` and sits first in `manifest.scm`: it compiles nothing, it is
+   headers every tier includes and nothing links, and the tier check reads that
+   position back (#919). It briefly also had a `package.json` and was the first
+   C module in the pnpm workspace. That half is reverted — see below.
+4. ~~**Package the build system.**~~ Reverted, deliberately, and what it was for
+   was kept. `krudd/kruddmake/kruddmake.sh` is the build entry point, and
+   `run-scheme-tests.sh` is a suite that runs on the s7 CLI with no compiler;
+   both landed with #920 and both stay. The `package.json` around them does
+   not (#934). Packaging the C tree meant 2 of its 23 modules had manifests
+   with no plan for the other 21, which is a worse state than none — a reader
+   cannot tell whether the rest are pending or excluded — and the barrier it
+   bought is enforced by path instead. Next of these is the shader transpiler,
+   which needs neither a compiler nor the engine (#921); it is JS, so it is a
+   package without any of that argument applying.
 
 Each step is independently useful, and none of them require porting the engine.

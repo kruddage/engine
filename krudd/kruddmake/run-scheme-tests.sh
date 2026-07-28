@@ -1,17 +1,20 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
-# kruddmake's own test suite — @kruddage/kruddmake's `test` script (#920).
+# kruddmake's own test suite.
 #
 # The build language is Scheme, and these are the checks that read it back:
 # introspect_test.scm exercises the codegen/embed helpers, resolve_test.scm the
 # resolver and the ninja emitter. Both run on the pinned krudds7 interpreter
 # that sync.sh fetches, so this needs no emsdk, no ninja and no C compiler —
-# which is the whole reason the build language is worth being a package rather
-# than a directory inside one.
+# which is why it is worth having apart from the native suite at all.
 #
-# run-tests.sh calls this as its first two stages rather than repeating them:
-# the native suite is kruddmake's own suite plus a toolchain.
+# Two callers, both by this path. run-tests.sh runs it as its first two stages
+# rather than repeating them: the native suite is this suite plus a toolchain.
+# CI's lint job runs it directly, because that job has no toolchain and used to
+# reach these checks through `pnpm -r run test` — which stopped reaching them
+# when krudd/ left the workspace and this stopped being a package's `test`
+# script (#934).
 #
 # Side effect, and the reason KRUDD_NINJA_OUT exists: resolve_test.scm renders
 # the real manifest to a build.ninja on its way through, which is what

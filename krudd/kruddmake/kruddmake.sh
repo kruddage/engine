@@ -8,16 +8,17 @@
 #   kruddmake run          build, then serve the site
 #   kruddmake new-project  scaffold a new project
 #
-# This is the whole of @kruddage/kruddmake's public surface: the operations,
-# not the five Scheme modules behind them (#920). It builds the krudd host tool
-# if it is missing or stale and execs it — the dispatch and the build itself
-# live in krudd.c and in the .scm files beside this script.
+# This is the whole of kruddmake's public surface: the operations, not the five
+# Scheme modules behind them (#920). It builds the krudd host tool if it is
+# missing or stale and execs it — the dispatch and the build itself live in
+# krudd.c and in the .scm files beside this script.
 #
-# Deliberately plain POSIX shell with no node in the path. A contributor
-# building or testing the engine is running kruddmake; that pnpm can also
-# invoke it, through @kruddage/engine's declared dependency on this package, is
-# incidental. `../../krudd.sh` at the repo root forwards here and is kept only
-# for the muscle memory (#905).
+# Deliberately plain POSIX shell with no node in the path. This path is the
+# entry point, not a convenience over one: a contributor building or testing the
+# engine runs this script, and nothing above it in the tree has to exist. That
+# @kruddage/engine can also invoke it — by this path, which is the only reach
+# into krudd/ the workspace's boundary check permits anyone (#934) — is the
+# second door, not the door (WORKSPACE.md, Q2).
 set -e
 
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)

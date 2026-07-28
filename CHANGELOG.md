@@ -1,5 +1,13 @@
 # Changelog
 
+## [19.2.1](https://github.com/kruddage/engine/compare/v19.2.0...v19.2.1) (2026-07-28)
+
+
+### Build System
+
+* **kruddmake:** @kruddage/kruddmake — the build language becomes a package ([#920](https://github.com/kruddage/engine/issues/920)) ([#930](https://github.com/kruddage/engine/issues/930)) ([cbf4d1d](https://github.com/kruddage/engine/commit/cbf4d1de4d088802a7fe7564eb11c3a944cf7048))
+* **workspace:** make the repository root tell the truth about how this thing builds ([#932](https://github.com/kruddage/engine/issues/932)) ([#942](https://github.com/kruddage/engine/issues/942)) ([f62f303](https://github.com/kruddage/engine/commit/f62f3031aa05fe0f07da4909cdd154967bf5951e))
+
 ## [19.2.0](https://github.com/kruddage/engine/compare/v19.1.0...v19.2.0) (2026-07-28)
 
 

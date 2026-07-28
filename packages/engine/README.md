@@ -67,13 +67,55 @@ to agree, in two languages, with nothing checking that they did — and a mismat
 showed up only as a 404 on the live site. The stem now comes out of the built
 HTML, so there is one derivation and the staging step reads it.
 
+## The boundary — `@kruddage/engine/bridge`
+
+The second entry point, and the one that ships to a browser.
+
+```js
+import { createBridge } from "@kruddage/engine/bridge";
+
+const bridge = createBridge(Module);
+const stop = bridge.watch("scene.tree");
+
+bridge.beginGesture("Move").setTransform(3, next).commitGesture();
+bridge.flush();                       // one crossing
+bridge.read("scene.tree");            // what the engine last said
+```
+
+**The engine owns the document; this reads and edits it.** Commands and queries
+go out together as one binary tape, and one JSON document comes back carrying
+the generation vector, any notices, and the answer to every query in the tape.
+[#944](https://github.com/kruddage/engine/issues/944)'s Q1 decided the shape and
+[#945](https://github.com/kruddage/engine/issues/945) built it;
+`krudd/engine/ui/bridge/include/bridge.h` carries the full reasoning.
+
+Three things are worth knowing from out here:
+
+- **There is no way to write to the cache.** Every mutator queues a command and
+  returns; the value moves when the engine says it moved, one flush later. That
+  is what makes a consumer a view rather than a second copy of the truth.
+- **There is no undo stack here.** `undo()` and `redo()` are ordinary commands.
+  The 128-entry ring in `world/edit` is the only history in the system (Q2).
+- **A query carries the generation the caller already holds**, so an unchanged
+  scene answers `fresh` and sends no payload. It is an ETag, and it is what
+  makes a JSON read model affordable at 60fps.
+
+### Why it is a separate export
+
+The package root is build-time code — it reads the filesystem to find artifacts,
+and imports `node:fs` and `node:path` to do it. `./bridge` is runtime code that
+ends up in a browser bundle and imports nothing at all. One entry point for both
+would mean a bundler dragging `node:fs` into the editor to get at the client,
+and nothing else in this workspace would have caught that.
+
 ## What this package is not
 
-It does not export a JS API onto the engine. The engine is a single emscripten
-link unit — one `index.js` glue file and one `index.wasm`, linked without
-`-sMODULARIZE` — so there is no finer seam to hand out that would not be
-invented. What is published is the artifact set, its metadata, and the real
-export surface.
+It does not export a JS API onto the engine's *internals*. The engine is a single
+emscripten link unit — one `index.js` glue file and one `index.wasm`, linked
+without `-sMODULARIZE` — so there is no finer seam to hand out that would not be
+invented. What is published is the artifact set, its metadata, the real export
+surface, and the boundary above — which is a declared protocol over four
+exported functions, not a window onto the engine's memory.
 
 `declaredExports` in the manifest mirrors `-sEXPORTED_FUNCTIONS` from
 `ninja.scm`; `wasmExports` is what `src/wasm-exports.mjs` actually found in the

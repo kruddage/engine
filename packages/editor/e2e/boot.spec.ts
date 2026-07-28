@@ -92,10 +92,17 @@ test.describe("engine boot", () => {
 		try {
 			await expect(phase).toHaveText(/running|ready/, { timeout: 45_000 });
 		} catch {
+			/* The console is a tab in the bottom dock now, and it is not the
+			 * raised one — so it has to be brought up before its scrollback
+			 * can be read into the failure message. */
+			await page
+				.getByTestId("tab-console")
+				.click({ timeout: 2_000 })
+				.catch(() => {});
 			const [last, engineLog] = await Promise.all([
 				phase.textContent(),
 				page
-					.getByTestId("engine-log")
+					.getByTestId("console-log")
 					.textContent()
 					.catch(() => null),
 			]);
@@ -112,7 +119,7 @@ test.describe("engine boot", () => {
 
 		/* Which backend is pinned by the query above, so this asserts the badge
 		 * was actually overwritten by the engine rather than left at its seed. */
-		await expect(page.getByTestId("status-renderer")).not.toHaveText(
+		await expect(page.getByTestId("badge-renderer")).not.toHaveText(
 			"renderer — booting…"
 		);
 	});

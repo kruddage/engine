@@ -1,20 +1,26 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
-// The application's two states: an engine that is there, and one that is not.
+// The application: the engine's two states, and the shell over both of them.
 //
 // The unbuilt branch is the one worth a test. It is the case a contributor
 // without emsdk hits on their first `pnpm dev`, it is the case CI's workspace
 // job runs in, and it is the one where rendering an empty box instead of an
 // explanation would be indistinguishable from the editor being broken.
+//
+// The shell's own behaviour is test/shell.test.tsx's. What is asserted here is
+// only what App is responsible for: registering the panels, booting the engine,
+// and handing both to the frame.
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+
+import { registerBuiltinPanels } from "../src/panels/index.js";
 
 import type { EngineInfo } from "../src/engine/types.js";
 
 const BUILT: EngineInfo = {
 	built: true,
-	version: "19.2.1",
+	version: "19.3.0",
 	exports: ["_main", "_krudd_load_game"],
 	base: "/engine/",
 	buildCommand: "pnpm --filter @kruddage/engine run build",
@@ -41,16 +47,32 @@ vi.mock("virtual:krudd-engine", () => ({
 
 const { App } = await import("../src/app.js");
 
+/*
+ * App registers the panels at module scope, which runs once — and the suite's
+ * afterEach clears the registry so one test's panels cannot leak into the next.
+ * Re-registering here is what reconciles the two. registerPanel is keyed by id,
+ * so calling it again is idempotent rather than a second set of panels.
+ */
+beforeEach(() => {
+	registerBuiltinPanels();
+});
+
 describe("App", () => {
-	it("shows the engine's identity when it is built", () => {
+	it("renders the shell with every panel registered", () => {
 		current.engine = BUILT;
 		render(<App />);
 
-		expect(screen.getByTestId("engine-version").textContent).toBe("19.2.1");
-		expect(screen.getByTestId("engine-exports").textContent).toContain(
-			"_krudd_load_game"
-		);
-		expect(screen.queryByTestId("engine-unbuilt")).toBeNull();
+		expect(screen.getByTestId("shell")).toBeTruthy();
+		for (const slot of ["left", "right", "bottom"]) {
+			expect(screen.getByTestId(`dock-${slot}`)).toBeTruthy();
+		}
+	});
+
+	it("shows the engine's version in the toolbar", () => {
+		current.engine = BUILT;
+		render(<App />);
+
+		expect(screen.getByTestId("engine-version").textContent).toBe("19.3.0");
 	});
 
 	it("says the engine is not built, and how to fix it", () => {
@@ -58,47 +80,34 @@ describe("App", () => {
 		render(<App />);
 
 		const notice = screen.getByTestId("engine-unbuilt");
-		expect(notice).toBeTruthy();
-		/* The command is the whole value of the notice. A message that said
-		 * "not built" without saying what to run would be an empty box with
-		 * extra words. */
-		expect(notice.textContent).toContain(
-			"pnpm --filter @kruddage/engine run build"
-		);
-		expect(screen.queryByTestId("engine-identity")).toBeNull();
-	});
-
-	it("reports the phase in the status strip", () => {
-		current.engine = UNBUILT;
-		render(<App />);
-
+		expect(notice.textContent).toContain("not built");
+		/* The command, verbatim, because a notice that says something is
+		 * missing without saying how to get it is half a notice. */
+		expect(notice.textContent).toContain(UNBUILT.buildCommand);
 		expect(screen.getByTestId("status-phase").textContent).toBe("not built");
 	});
 
-	it("always offers a canvas for the engine to take", () => {
-		current.engine = BUILT;
+	it("still offers the canvas when the engine is not built", () => {
+		/*
+		 * The engine looks its canvas up by selector at boot. If the element
+		 * only appeared once the module had loaded, there would be nothing for
+		 * it to find — so it exists in both states, and the notice sits over it.
+		 */
+		current.engine = UNBUILT;
 		render(<App />);
 
-		/* The viewport is where #949 hands this element to the engine. It exists
-		 * from the first render rather than appearing once the module loads —
-		 * boot.ts needs it before the loader is injected, not after. */
-		expect(screen.getByTestId("engine-canvas").tagName).toBe("CANVAS");
+		const canvas = screen.getByTestId("engine-canvas");
+		expect(canvas.tagName).toBe("CANVAS");
+		/* The id, not the test id. Ten call sites in the C tree hardcode
+		 * "#canvas" and renaming it costs the GL context and every pointer
+		 * callback, silently. */
+		expect(canvas.id).toBe("canvas");
 	});
 
-	/* The engine looks the canvas up by selector rather than taking a handle:
-	 * renderer_webgl.c creates the GL context against "#canvas", and
-	 * kruddgui.cpp binds every pointer callback and both sizing calls to it.
-	 * Rename the element and there is no context and no input, reported nowhere
-	 * near the cause — an unchecked create_context return, a subsystem that
-	 * logs "init" anyway, and a TypeError from the first glCreateShader.
-	 *
-	 * jsdom cannot catch that, so this asserts the contract directly. It is
-	 * cheap and it is the guard on three CI runs' worth of diagnosis. */
-	it("gives the canvas the id the engine looks it up by", () => {
+	it("mounts the canvas exactly once", () => {
 		current.engine = BUILT;
 		render(<App />);
 
-		expect(screen.getByTestId("engine-canvas").id).toBe("canvas");
-		expect(document.querySelector("#canvas")).not.toBeNull();
+		expect(screen.getAllByTestId("engine-canvas")).toHaveLength(1);
 	});
 });

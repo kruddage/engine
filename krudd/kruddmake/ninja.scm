@@ -241,7 +241,16 @@
      (string-append "mainflags = -sENVIRONMENT=web -sALLOW_MEMORY_GROWTH=1 "
                     "-sGROWABLE_ARRAYBUFFERS=0 -sMALLOC=mimalloc "
                     "-sFETCH=1 -sMAX_WEBGL_VERSION=2 --use-port=emdawnwebgpu "
-                    "-sEXPORTED_FUNCTIONS=_main,_krudd_load_game")
+                    ;;! The editor boundary's four entry points ride here
+                    ;;! beside _main and the launcher's loader (#945). They are
+                    ;;! the whole of the JS-callable surface: a page hands the
+                    ;;! module a tape at _krudd_bridge_buffer and calls
+                    ;;! _krudd_bridge_exchange once a frame. Mirrored in
+                    ;;! packages/engine's ENGINE_EXPORTED_FUNCTIONS, which the
+                    ;;! build checks against the real wasm export table.
+                    "-sEXPORTED_FUNCTIONS=_main,_krudd_load_game,"
+                    "_krudd_bridge_protocol,_krudd_bridge_buffer,"
+                    "_krudd_bridge_capacity,_krudd_bridge_exchange")
      ""
      "rule cc"
      "  command = $cc $cflags $extracflags $includes -MMD -MF $out.d -c $in -o $out"

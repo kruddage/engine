@@ -27,6 +27,12 @@ export default defineConfig({
 		 * plugin's own suite opts back out with a `@vitest-environment node`
 		 * docblock — it reads the filesystem, and a DOM would be scenery. */
 		environment: "jsdom",
+		/* CSS is processed rather than stubbed to an empty string, which is the
+		 * default. test/styles.test.ts reads the stylesheet's own text through
+		 * `?raw` to assert that it uses container queries and no fixed font
+		 * size — both #954 criteria — and with the default it would read "" and
+		 * pass on anything. Nothing else here depends on styles. */
+		css: true,
 		globals: false,
 		setupFiles: ["./test/setup.ts"],
 		include: ["test/**/*.test.ts", "test/**/*.test.tsx", "build/**/*.test.ts"],

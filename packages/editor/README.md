@@ -11,16 +11,91 @@ pnpm --filter @kruddage/editor run build      # typecheck, then a production bui
 
 ## What this is, at this stage
 
-**The package and its plumbing, and nothing that looks like an editor yet.**
-There are no docks, no panels and no command bar here. That is
-[#954](https://github.com/kruddage/engine/issues/954), which builds the shell on
-top of what this package proves works.
+**The shell, and panels that are honest about being empty.** Command bar,
+toolbar, rail, resizable docks around a viewport deck, and a status strip —
+built in [#954](https://github.com/kruddage/engine/issues/954) as far as it goes
+without the boundary, which turns out to be all the way, because none of the
+panels have contents yet.
 
-What it proves is [#946](https://github.com/kruddage/engine/issues/946)'s claim:
-that the editor can be a normal React application that consumes the engine's
-WASM artifact, builds, tests and ships through the same workspace as everything
-else. `src/app.tsx` renders the engine's version, its WASM exports, a canvas and
-a live status strip — and it is written to be deleted when the shell arrives.
+They are empty in the shipped editor today too. Every dock in
+`krudd/engine/core/editor_layout.scm` renders a heading and a one-line blurb;
+this shell renders the same headings and the same blurbs, plus the issue that
+fills each one in. What it adds is a frame the later panels mount into rather
+than replace.
+
+### The vocabulary
+
+Settled in `src/shell/vocabulary.ts`, one line each, and checked by the suite so
+it cannot quietly grow a synonym:
+
+**command bar, toolbar, rail, viewport deck, outliner, inspector, assets,
+console, build, status strip.**
+
+Use these words in code, comments, commit messages and PR bodies. "Sidebar" is
+not a rail and "tree" is not the outliner — a second name for one thing is how
+six PRs end up describing four different layouts. #855 fixed the board's
+vocabulary the same way and it is why board/node/wire/port/lane never became an
+argument.
+
+### A panel registers itself
+
+```ts
+registerPanel({ id: "outliner", title: "Outliner", home: "left", render: () => <Outliner /> });
+```
+
+The shell reads the registry and places what it finds, so
+[#950](https://github.com/kruddage/engine/issues/950),
+[#951](https://github.com/kruddage/engine/issues/951) and
+[#952](https://github.com/kruddage/engine/issues/952) each add a file and a line
+to `src/panels/index.tsx` and touch no part of the frame. `test/shell.test.tsx`
+asserts it, because that criterion is the difference between three small PRs and
+three PRs that each edit the layout everything else depends on.
+
+**A panel is mounted once and moves.** There is no path in the shell that
+constructs a second instance of one — #886's mockup grew three Inspectors that
+drifted apart, and that is the outcome this rule makes impossible rather than
+merely discouraged.
+
+### The layout is remembered, and a stale one is survivable
+
+Docks resize, collapse and restore; the arrangement persists across a reload and
+View > Reset Layout puts it back. The interesting half is `reconcile()` in
+`src/shell/layout.ts`: a reader's stored layout is always older than the build
+reading it, so a panel that no longer exists is dropped, a panel the store never
+heard of is placed at its home, and an unreadable store falls back to the
+default. A shell that crashed on any of those is one a reader fixes by clearing
+site data, which they will not know to do.
+
+### What is wired, and what says "coming soon"
+
+`reset-layout`, the panel toggles and the moves are real. **Every other menu
+action shows a transient hint** — the label with its `&` mnemonic stripped, then
+": coming soon" — which is exactly what `shell.html.in:1548` does today and what
+the native host does for an id it does not recognise. That is what makes a
+read-only shell honest rather than broken, and
+[#948](https://github.com/kruddage/engine/issues/948) replaces the hint path
+with #947's command layer without moving anything.
+
+The menu set, the labels and the shortcuts were **mined from
+`editor_layout.scm` and then the file was closed**. Nothing reads it at runtime
+(#944's Q3); `test/commands.test.ts` carries the spec transcribed by hand so a
+divergence is a decision someone made rather than one the suite let through.
+
+### Container queries, not media queries
+
+A panel answers to the frame it is in, not to the window, so a dock dragged
+narrow reflows while the window stays wide. Every dock body is a query
+container. #944 rules the phone out of scope and this goes in anyway: it costs
+days now and a rewrite of every panel later. `test/styles.test.ts` fails the
+build on a width media query, and on any font size fixed in pixels.
+
+### No boundary work
+
+Not one new engine export, no new `EM_JS`, and nothing in this package calls
+`@kruddage/engine/bridge` yet. The status strip's renderer badge and the
+console's scrollback come from push channels that already existed; fps and the
+resolution are measured from the page, and `src/engine/frame-stats.ts` explains
+why that is honest rather than a stand-in. Consuming the boundary is #948's.
 
 ## The end of zero-dep
 
@@ -41,12 +116,11 @@ package that feeds the C build acquired a registry dependency.
 
 ### Every dependency, and what replacing it would cost
 
-The list is short on purpose, and it is short because this PR deliberately did
-**not** add the packages #946 names for later work. `react-resizable-panels`,
-`@xyflow/react`, `react-arborist`, an accessible-primitives library and
-`@use-gesture/react` all arrive with the issues that use them — adding them here
-would mean five unused dependencies whose justifications nobody could check
-against real code.
+The rule is #944's: each entry arrives with the issue that uses it, and each
+carries a line saying what replacing it would cost. `@xyflow/react`,
+`react-arborist` and `@use-gesture/react` are still absent for that reason —
+they belong to #950 and to the node canvas, and adding them early would mean
+dependencies whose justifications nobody could check against real code.
 
 | Package | What it does here | Replacing it |
 |---|---|---|
@@ -57,6 +131,9 @@ against real code.
 | `vitest` | The component suite (#944, Q6) | A day to move to `node:test` + a DOM shim, and the shim is what Q6 rejected |
 | `jsdom` | The DOM Vitest runs components against | Interchangeable with `happy-dom`; a config line |
 | `@testing-library/react` + `@testing-library/dom` | Rendering and querying components in tests | Hand-rolled render helpers — a few hundred lines that drift |
+| `react-resizable-panels` | The dock splitters: keyboard-resizable separators with the right ARIA, pointer capture that survives leaving the window, collapse/expand, and constraint solving across nested groups | A week of pointer maths and a permanent source of off-by-a-pixel bugs, for a control nobody will ever compliment |
+| `@radix-ui/react-menubar` | The command bar: roving focus across the bar, arrow keys and type-ahead within a menu, Escape, focus restoration, `aria-expanded`, and submenus that flip rather than clip at the screen edge | A month, and a keyboard-accessible menu implementation to maintain forever. The menu *content* is entirely ours — Radix contributes behaviour, not vocabulary |
+| `@radix-ui/react-tabs` | The dock tab strips and the inspector's tab group: the `tablist`/`tab`/`tabpanel` roles wired to each other, and arrow-key navigation | A hand-rolled tab strip, which is the one a screen reader cannot use |
 | `@playwright/test` | The browser suite: real Chromium, real WASM | The vendored CDP client plus fixtures, retries, tracing and parallel workers. Considered and rejected in the Q6 decision — that is maintaining a browser-automation framework as a side effect of building an editor |
 | `@types/node`, `@types/react`, `@types/react-dom` | Types for the above | Nothing; they are types |
 | `@kruddage/engine` | Where the WASM artifact is. A `workspace:*` link, and a **dev** dependency — it is consulted at build time and none of it is bundled | It is the boundary; there is nothing to replace it with |
@@ -131,7 +208,7 @@ proven with real tests, because a configured-but-unused runner decides nothing.
 
 | | What runs there | Where in CI |
 |---|---|---|
-| **Vitest** (`pnpm test`) | Components, hooks, the boot path up to the module itself, the build plugin's path handling | The `workspace` job — no emsdk, no browser |
+| **Vitest** (`pnpm test`) | The layout model, the command table, the shell rendered, the boot path up to the module itself, the build plugin's path handling, and the stylesheet's own text | The `workspace` job — no emsdk, no browser |
 | **Playwright** (`pnpm test:e2e`) | The engine actually booting: WASM served as `application/wasm`, `main()` running, a live renderer reported | The `build` job, after the engine is built |
 
 **The rule: a test goes in Playwright when it would lie in Vitest, and not
@@ -153,9 +230,15 @@ ship a type error happily.
 
 ## What is deliberately not here
 
-- **The shell** — docks, panels, the command bar, the panel vocabulary. #954
-- **The boundary** — reading the scene, mutating it, hearing about changes.
-  #945. Nothing in this package is one, and `src/engine/boot.ts` says so out
-  loud so it is not mistaken for one later
-- **The node graph** — #944's Q5
-- **The five UI packages** — they arrive with the issues that use them
+- **Panel contents** — the outliner's tree (#950), the inspector's property grid
+  (#951), the asset browser (#952). Each is a placeholder that says so on screen
+- **The canvas handover** — camera and picking are #949. The viewport panel
+  holds the canvas and keeps its id; it does not yet drive it
+- **Driving the boundary** — `@kruddage/engine/bridge` exists as of #945, and
+  nothing here calls it. Wiring the command bar to #947's command layer and the
+  status strip to the boundary is #948
+- **The node graph** — #944's Q5 puts it here, in React, as one canvas. It
+  arrives after the panels
+- **A phone layout** — ruled out of #944 explicitly. Container queries and
+  mount-not-duplicate went in anyway, because they are cheap insurance rather
+  than a commitment

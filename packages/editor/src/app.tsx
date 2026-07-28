@@ -1,119 +1,49 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
-// The editor application, at the stage #946 leaves it.
+// The editor application.
 //
-// This is deliberately not the editor. There are no docks, no panels and no
-// command bar here — that is #954, which builds the shell into this package on
-// top of what this file proves works. What this proves is the one thing #946
-// exists to prove: the package builds, serves, tests, and boots a real engine.
+// #946 left a page that proved the package builds, serves, tests and boots an
+// engine, and said out loud that it was written to be replaced. #954 replaces
+// it: the shell is the app now, the viewport keeps the canvas and the useEngine
+// hook, and the identity block became the toolbar's badges and the status
+// strip.
 //
-// It is written to be replaced. When #954 lands its shell, the viewport keeps
-// the canvas and the useEngine hook, the identity block becomes the status
-// strip, and this file goes.
+// This file does three things and no more — boot the engine, register the
+// panels, and hand both to the shell. Everything else is in shell/ and panels/.
 
 import { engine } from "virtual:krudd-engine";
 
-import { ENGINE_CANVAS_ID } from "./engine/boot.js";
+import { EngineProvider } from "./engine/engine-context.js";
+import { useFrameStats } from "./engine/frame-stats.js";
 import { useEngine } from "./engine/use-engine.js";
-import type { EngineStatus } from "./engine/types.js";
+import { registerBuiltinPanels } from "./panels/index.js";
+import { panels } from "./shell/panels.js";
+import { Shell } from "./shell/shell.js";
+import { useShell } from "./shell/use-shell.js";
 
-const PHASE_LABEL: Record<EngineStatus["phase"], string> = {
-	unbuilt: "not built",
-	loading: "loading…",
-	running: "running",
-	ready: "ready",
-	failed: "failed",
-};
+/*
+ * At module scope, not in an effect. The registry is read during the shell's
+ * first render — registering from an effect would mean one frame of an editor
+ * with no panels, and a stored layout reconciled against an empty registry,
+ * which would helpfully "fix" it by dropping every panel in it.
+ */
+registerBuiltinPanels();
 
 export function App(): React.JSX.Element {
 	const { status, canvasRef, log } = useEngine(engine);
+	const definitions = panels();
+	const shell = useShell(definitions);
+	const stats = useFrameStats(canvasRef.current);
 
 	return (
-		<main className="app">
-			<header className="identity">
-				<h1>KRUDD Editor</h1>
-				<p className="subtitle">
-					The package skeleton. The shell is #954; the boundary is #945.
-				</p>
-			</header>
-
-			{engine.built ? (
-				<EngineIdentity />
-			) : (
-				<UnbuiltNotice command={engine.buildCommand} />
-			)}
-
-			<section className="viewport" aria-label="Viewport">
-				<canvas
-					ref={canvasRef}
-					/* Not cosmetic, and not ours to choose — the engine looks
-					 * this element up by selector rather than taking a handle,
-					 * for the GL context and for every pointer callback. See
-					 * ENGINE_CANVAS_ID. */
-					id={ENGINE_CANVAS_ID}
-					data-testid="engine-canvas"
-					/* The engine owns this element's size once it boots; the
-					 * attributes are a starting point, not a layout. */
-					width={1280}
-					height={720}
-				/>
-			</section>
-
-			<StatusStrip status={status} />
-
-			{log.length > 0 && (
-				<section className="log" aria-label="Engine output">
-					<pre data-testid="engine-log">{log.join("\n")}</pre>
-				</section>
-			)}
-		</main>
-	);
-}
-
-function EngineIdentity(): React.JSX.Element {
-	return (
-		<dl className="engine-identity" data-testid="engine-identity">
-			<dt>version</dt>
-			<dd data-testid="engine-version">{engine.version}</dd>
-			<dt>wasm exports</dt>
-			<dd data-testid="engine-exports">
-				{engine.exports.length > 0 ? engine.exports.join(", ") : "none"}
-			</dd>
-		</dl>
-	);
-}
-
-/*
- * Said plainly rather than rendered as an empty box. A contributor working on
- * the editor's chrome has no reason to have emsdk installed, and the difference
- * between "you have not built the engine" and "the editor is broken" is one
- * this page is the only thing positioned to explain.
- */
-function UnbuiltNotice({ command }: { command: string }): React.JSX.Element {
-	return (
-		<section className="unbuilt" data-testid="engine-unbuilt" role="status">
-			<h2>The engine is not built</h2>
-			<p>
-				The editor is running, but there is no WASM module to boot. Build
-				it and reload — this needs emsdk on your PATH:
-			</p>
-			<pre>{command}</pre>
-		</section>
-	);
-}
-
-function StatusStrip({ status }: { status: EngineStatus }): React.JSX.Element {
-	return (
-		<footer className="status-strip" data-testid="engine-status">
-			<span data-testid="status-phase">{PHASE_LABEL[status.phase]}</span>
-			<span data-testid="status-renderer">
-				{status.renderer ?? "renderer — booting…"}
-			</span>
-			{status.error !== null && (
-				<span className="status-error" data-testid="status-error">
-					{status.error}
-				</span>
-			)}
-		</footer>
+		<EngineProvider value={{ engine, status, log, canvasRef }}>
+			<Shell
+				shell={shell}
+				panels={definitions}
+				engine={engine}
+				status={status}
+				stats={stats}
+			/>
+		</EngineProvider>
 	);
 }

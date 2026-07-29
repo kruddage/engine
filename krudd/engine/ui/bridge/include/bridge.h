@@ -32,8 +32,9 @@
  *
  * Outbound is **JSON**. It is written once per frame, read by a runtime with a
  * native parser, and is the half a human has to be able to read in a devtools
- * pane at 2am. script_layout_json already established that a JSON document is
- * how this engine talks outward, and this is the same act with a reply channel.
+ * pane at 2am. #706's script_layout_json established that a JSON document is
+ * how this engine talks outward; this is the same act with a reply channel, and
+ * it outlived the thing it inherited the idea from (#953 retired that path).
  *
  * ## Generations, and why the reads are cheap anyway
  *

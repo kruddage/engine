@@ -8,7 +8,8 @@
  * because the reply's exact text *is* the contract — the editor's client
  * JSON.parses these bytes, and a test that reparses them with a different
  * reader would pass on documents no browser accepts. script_layout_json_test
- * asserts on its JSON the same way and for the same reason.
+ * asserted on its JSON the same way and for the same reason; #953 retired it
+ * with the chrome it served, and this suite is where the practice continues.
  */
 #include "bridge.h"
 

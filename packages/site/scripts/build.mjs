@@ -29,20 +29,27 @@ const OUT = process.argv[2]
 
 const manifest = readManifest();
 
-/* The editor is staged when it has been built and skipped, loudly, when it has
- * not. Skipping rather than failing is deliberate: the site is the engine's
- * deploy and predates the editor, so an unbuilt editor must not be able to take
- * the shell offline. CI builds it before it gets here, so the skip is a local
- * convenience rather than a state the deploy is ever in — which is exactly why
- * it says so on stdout instead of passing silently. */
-const editorBuilt = editorIsBuilt();
+/* An unbuilt editor used to be a note on stdout: the site was the engine's
+ * deploy, the editor was a skeleton at /editor/, and skipping it left the shell
+ * serving at the root exactly as before. #953 moved the editor to the root, so
+ * skipping it now stages a site whose entry document does not exist — a deploy
+ * that 404s on the way in and nowhere else. It is an error, and it is the kind
+ * worth being loud about, because the only way to hit it is to run the steps out
+ * of order. */
+if (!editorIsBuilt()) {
+	process.stderr.write(
+		`@kruddage/site: @kruddage/editor is not built, and it is the site root.\n` +
+			`  ${EDITOR_BUILD_COMMAND}\n`
+	);
+	process.exit(1);
+}
 
 const staged = stageSite({
 	artifacts: artifacts(),
 	outDir: OUT,
 	stem: manifest.cacheStem,
 	assetDir: assetDir(),
-	editorDir: editorBuilt ? editorDistDir : null,
+	editorDir: editorDistDir,
 });
 
 process.stdout.write(
@@ -50,10 +57,3 @@ process.stdout.write(
 		`(stem ${manifest.cacheStem})\n`
 );
 for (const name of staged) process.stdout.write(`  ${name}\n`);
-
-if (!editorBuilt) {
-	process.stdout.write(
-		`\n  note: @kruddage/editor is not built, so /editor/ was not staged.\n` +
-			`        ${EDITOR_BUILD_COMMAND}\n`
-	);
-}

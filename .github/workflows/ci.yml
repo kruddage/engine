@@ -170,8 +170,11 @@ jobs:
       # Module.locateFile hook rather than a second, independent `git rev-parse`
       # that merely had to agree with it. See packages/site/src/stage.mjs.
       #
-      # It also copies @kruddage/editor's output in under /editor/, which is why
-      # the editor build above has to come first.
+      # It also copies @kruddage/editor's output in as the site root, which is
+      # why the editor build above has to come first. Since #953 that ordering
+      # is enforced rather than assumed: the staging step exits non-zero on an
+      # unbuilt editor, because the root document is the editor's and a site
+      # staged without one 404s on the way in.
       - name: Stage site
         run: pnpm --filter @kruddage/site run build
 

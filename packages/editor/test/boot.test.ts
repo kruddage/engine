@@ -25,7 +25,7 @@ const BUILT: EngineInfo = {
 	built: true,
 	version: "19.2.1",
 	exports: ["_main"],
-	base: "/engine/",
+	base: "engine/",
 	buildCommand: "pnpm --filter @kruddage/engine run build",
 };
 
@@ -84,7 +84,39 @@ describe("bootEngine", () => {
 
 		const scripts = loaderScripts();
 		expect(scripts).toHaveLength(1);
-		expect(scripts[0]?.getAttribute("src")).toBe("/engine/index.js");
+		expect(scripts[0]?.getAttribute("src")).toBe(
+			new URL("engine/index.js", document.baseURI).href
+		);
+	});
+
+	/*
+	 * The page's own directory, when the page is not at the root.
+	 *
+	 * **This is documentation, not the regression guard, and the difference is
+	 * worth being exact about.** The bug it describes was an absolute
+	 * `engine.base`, and this test would have passed with one — jsdom resolves
+	 * the injected `src` against the document either way, so what it pins is
+	 * only that nothing here rewrites the URL on the way past. The guard is in
+	 * two other places: build/engine-artifacts.test.ts asserts the base cannot
+	 * be absolute, and the browser suite serves the build under a prefix
+	 * (playwright.config.ts) so a root-anchored path fails for real.
+	 *
+	 * A `<base href>` is how jsdom can be a page that lives in a subdirectory.
+	 */
+	it("resolves the loader against the page it is on", () => {
+		const tag = document.createElement("base");
+		tag.href = "https://example.test/engine/pr-preview/pr-966/";
+		document.head.appendChild(tag);
+
+		try {
+			bootEngine({ engine: BUILT, canvas: canvas(), onStatus: vi.fn() });
+
+			expect(loaderScripts()[0]?.src).toBe(
+				"https://example.test/engine/pr-preview/pr-966/engine/index.js"
+			);
+		} finally {
+			tag.remove();
+		}
 	});
 
 	it("maps locateFile to the identity", () => {

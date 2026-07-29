@@ -22,7 +22,7 @@ const BUILT: EngineInfo = {
 	built: true,
 	version: "19.3.0",
 	exports: ["_main", "_krudd_load_game"],
-	base: "/engine/",
+	base: "engine/",
 	buildCommand: "pnpm --filter @kruddage/engine run build",
 };
 
@@ -30,7 +30,7 @@ const UNBUILT: EngineInfo = {
 	built: false,
 	version: null,
 	exports: [],
-	base: "/engine/",
+	base: "engine/",
 	buildCommand: "pnpm --filter @kruddage/engine run build",
 };
 

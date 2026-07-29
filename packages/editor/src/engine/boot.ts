@@ -23,6 +23,35 @@
 // stem applied to files that were never renamed asks the browser for a URL that
 // was never staged, and it fails at runtime and nowhere else.
 //
+// ## Where the loader comes from
+//
+// `engine.base` is **relative to the page** (`ENGINE_DIR`, engine-artifacts.mts)
+// and is joined to `document.baseURI` here. It has to be relative for the same
+// reason vite.config.ts sets `base: "./"`: one build is served at the site root,
+// at a sub-route and under a PR-number prefix, and none of those tell it its own
+// URL.
+//
+// It was absolute, and that was invisible for exactly as long as every harness
+// served the editor at "/" — which the dev server and `vite preview` both did.
+// GitHub Pages serves this site under `/engine/`, where "/engine/index.js" is
+// not the page's own directory but the *Pages root*. Worse than a 404: the
+// repository is also called `engine`, so the request landed on the site root,
+// where the deploy's `keep_files` leaves stale bundles from old deploys. A 200
+// carrying the wrong JavaScript raises no `error` event, defines no `Module`,
+// and fires no `onRuntimeInitialized` — so the page sat on "loading…" with an
+// empty console, a black viewport and both panels saying "Waiting for the
+// engine". Nothing failed, so nothing was reported.
+//
+// Note what the join below does and does not buy. It makes the injected `src`
+// an absolute URL, which is what a reader debugging this wants to see — but a
+// relative `src` would resolve identically, and a base that began with "/"
+// would escape to the origin root through `new URL` just as it did through
+// string concatenation. **The property that fixes this is the base being
+// relative, not the join**, so that is what is pinned: build's own suite asserts
+// the shape (engine-artifacts.test.ts) and the browser suite now serves the
+// build under a prefix rather than at "/" (playwright.config.ts). A jsdom test
+// cannot catch it, because jsdom resolves a relative src the same way.
+//
 // ## The callbacks
 //
 // The engine's EM_JS bridges are written defensively — every one of them checks
@@ -307,7 +336,9 @@ export function bootEngine(options: BootOptions): BootHandle {
 
 	const script = document.createElement("script");
 	script.async = true;
-	script.src = engine.base + LOADER;
+	/* Joined to the page rather than concatenated into a path — see "Where the
+	 * loader comes from" above, including what this does not fix. */
+	script.src = new URL(engine.base + LOADER, document.baseURI).href;
 	script.addEventListener("error", () => {
 		update({
 			phase: "failed",

@@ -28,7 +28,7 @@ import type { Locator, Page } from "@playwright/test";
  * why the choice belongs to the test rather than to this helper.
  */
 async function booted(page: Page, query = ""): Promise<void> {
-	await page.goto(`/?renderer=webgl${query}`);
+	await page.goto(`./?renderer=webgl${query}`);
 	await expect(page.getByTestId("status-phase")).toHaveText(/running|ready/, {
 		timeout: 45_000,
 	});

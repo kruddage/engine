@@ -20,6 +20,7 @@ import { distDir } from "@kruddage/engine";
 
 import {
 	ENGINE_BASE,
+	ENGINE_DIR,
 	describeEngine,
 	resolveArtifactRequest,
 } from "./engine-artifacts.mjs";
@@ -68,8 +69,44 @@ describe("describeEngine", () => {
 	it("always tells the app where to look and how to fix it", () => {
 		const info = describeEngine();
 
-		expect(info.base).toBe(ENGINE_BASE);
+		expect(info.base).toBe(ENGINE_DIR);
 		expect(info.buildCommand).toContain("@kruddage/engine");
+	});
+
+	/*
+	 * The half of the deploy bug that belongs to this file. An absolute base is
+	 * indistinguishable from a relative one in every harness — the dev server
+	 * and `vite preview` both serve at "/" — and wrong on a site served under a
+	 * prefix, which is every deploy this repository has. Asserting the shape
+	 * rather than the value is deliberate: what matters is that it cannot name
+	 * the domain root, whatever the directory ends up being called.
+	 */
+	it("hands the app a page-relative base, never an absolute one", () => {
+		expect(describeEngine().base.startsWith("/")).toBe(false);
+		expect(ENGINE_DIR.startsWith("/")).toBe(false);
+		/* The dev mount is the opposite case and stays absolute: it is matched
+		 * against a request URL, which always begins at the root. */
+		expect(ENGINE_BASE.startsWith("/")).toBe(true);
+	});
+
+	/*
+	 * The same property stated as the outcome it protects, because that is the
+	 * form in which it actually went wrong. boot.ts joins this base to
+	 * `document.baseURI`; a deployed page's baseURI is a directory several
+	 * segments down, and an absolute base silently ignores every one of them.
+	 *
+	 * The URL below is the real one from the report that found this — a PR
+	 * preview on GitHub Pages, where the absolute form resolved to
+	 * `https://kruddage.github.io/engine/index.js`. That is not even a 404: the
+	 * repository is called `engine`, so it lands on the site root and gets a
+	 * stale bundle with a 200, which raises no error and boots nothing.
+	 */
+	it("lands in the page's own directory on a deployed page", () => {
+		const page = "https://kruddage.github.io/engine/pr-preview/pr-966/";
+
+		expect(new URL(describeEngine().base + "index.js", page).href).toBe(
+			"https://kruddage.github.io/engine/pr-preview/pr-966/engine/index.js"
+		);
 	});
 
 	it("keeps version and exports consistent with built", () => {

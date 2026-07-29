@@ -19,7 +19,13 @@ export interface EngineInfo {
 	version: string | null;
 	/** The function exports actually present in the module, or []. */
 	exports: readonly string[];
-	/** Where the loader is served from, whether or not it exists yet. */
+	/**
+	 * Where the loader is served from, whether or not it exists yet.
+	 *
+	 * **Relative to the page**, and resolved against `document.baseURI` by
+	 * boot.ts. An absolute path here works in every harness and breaks the
+	 * deployed site — see ENGINE_DIR in build/engine-artifacts.mts.
+	 */
 	base: string;
 	/** The one command that fixes `built: false`. */
 	buildCommand: string;

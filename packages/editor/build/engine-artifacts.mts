@@ -37,8 +37,36 @@ import type { EngineInfo } from "../src/engine/types.js";
 
 export type { EngineInfo };
 
-/** Where the engine's artifacts are served and shipped, relative to the site. */
+/**
+ * Where the dev server mounts the artifacts.
+ *
+ * A server path, absolute because that is what a request URL is. This is the
+ * middleware's business and nothing else's — in particular it is **not** what
+ * the app is told; see ENGINE_DIR.
+ */
 export const ENGINE_BASE = "/engine/";
+
+/**
+ * Where the app looks for the artifacts, relative to the page.
+ *
+ * **Relative, and that is the whole point of it existing separately.** Vite's
+ * `base` is "./" so that one build works at the site root, at a sub-route and
+ * under a PR-number prefix without knowing its own URL (see vite.config.ts).
+ * The engine's own base was left absolute, which quietly undid that: this
+ * package's every harness — the dev server and `vite preview` alike — serves at
+ * "/", so "/engine/index.js" was correct in all of them and wrong on the only
+ * thing that is not a harness.
+ *
+ * On the deployed site it asked `https://kruddage.github.io/engine/index.js`,
+ * the *Pages root* rather than the page's own directory. That path is not a
+ * 404 — the repository is called `engine`, so it lands at the site root, where
+ * `keep_files` leaves stale bundles from old deploys. A 200 with the wrong file
+ * gives no `error` event, so the editor sat on "loading…" forever with an empty
+ * console and a black viewport: no report, because nothing failed.
+ *
+ * Resolved against `document.baseURI` by boot.ts. Keep it relative.
+ */
+export const ENGINE_DIR = "engine/";
 
 /** The one command that fixes `built: false`. */
 export const ENGINE_BUILD_COMMAND = "pnpm --filter @kruddage/engine run build";
@@ -72,7 +100,7 @@ export function describeEngine(): EngineInfo {
 			built: false,
 			version: null,
 			exports: [],
-			base: ENGINE_BASE,
+			base: ENGINE_DIR,
 			buildCommand: ENGINE_BUILD_COMMAND,
 		};
 	}
@@ -82,7 +110,7 @@ export function describeEngine(): EngineInfo {
 		built: true,
 		version: manifest.version,
 		exports: manifest.wasmExports,
-		base: ENGINE_BASE,
+		base: ENGINE_DIR,
 		buildCommand: ENGINE_BUILD_COMMAND,
 	};
 }
@@ -118,9 +146,12 @@ export function resolveArtifactRequest(url: string): string | null {
  * Serve and ship @kruddage/engine's artifacts alongside the editor.
  *
  * @param outSubdir where the artifacts land inside the production output.
- *   Defaults to ENGINE_BASE without its slashes.
+ *   Defaults to ENGINE_DIR without its slash — the two have to agree, or the
+ *   page looks somewhere the build did not write.
  */
-export function engineArtifacts(outSubdir = "engine"): Plugin {
+export function engineArtifacts(
+	outSubdir = ENGINE_DIR.replace(/\/$/, "")
+): Plugin {
 	let config: ResolvedConfig;
 
 	return {

@@ -622,6 +622,37 @@ and it must not be "fixed" by copying the shell's version — a stem applied to
 files that were never renamed asks the browser for a URL that was never staged,
 and it fails at runtime and nowhere else. `test/boot.test.ts` guards it.
 
+### The engine's base is relative, and every harness hid that it wasn't
+
+`vite.config.ts` sets `base: "./"` so one build works at the site root, at a
+sub-route, and under a PR-number prefix without knowing its own URL. The
+engine's own base — where the page looks for `index.js` — was left absolute at
+`/engine/`, which quietly undid that for the one file the app fetches itself.
+
+It survived because **every harness this package has serves the editor at `/`**.
+The dev server does, `vite preview` did, and at the root `/engine/index.js` and
+`engine/index.js` name the same file. A deploy never does: GitHub Pages serves
+the site under `/engine/`, and a PR preview under
+`/engine/pr-preview/pr-<N>/` on top of that. There the absolute form asked the
+*Pages root* for the loader — and because the repository is also called
+`engine`, that is not a 404 but a stale bundle from an old deploy, served 200.
+Wrong JavaScript at 200 raises no `error` event, defines no `Module`, and fires
+no `onRuntimeInitialized`, so the editor sat on `loading…` with an empty
+console and a black viewport. Nothing failed, so nothing was reported.
+
+Two things keep it fixed, and neither is a jsdom test — jsdom resolves a
+relative `src` against the document either way, so it cannot tell the two
+apart:
+
+- `ENGINE_DIR` is relative and `build/engine-artifacts.test.ts` asserts both its
+  shape and where it lands on a real deployed URL. `ENGINE_BASE`, the dev
+  server's mount path, stays absolute — it is matched against a request URL,
+  which always starts at the root. Two names because they are two things.
+- The browser suite serves the build under a prefix rather than at `/`
+  (`playwright.config.ts`), so a root-anchored path fails for real. Every
+  navigation in `e2e/` is relative for the same reason; one that starts with `/`
+  climbs back out and stops testing this.
+
 ### An unbuilt engine is a supported state
 
 `pnpm --filter @kruddage/engine run build` needs emsdk, and a contributor

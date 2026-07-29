@@ -25,7 +25,7 @@ const ENGINE: EngineInfo = {
 	built: true,
 	version: "19.3.0",
 	exports: ["_main"],
-	base: "/engine/",
+	base: "engine/",
 	buildCommand: "pnpm --filter @kruddage/engine run build",
 };
 

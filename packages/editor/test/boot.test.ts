@@ -15,6 +15,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
 	bootEngine,
+	bootGame,
 	resetBootStateForTests,
 	wantsWebGPU,
 } from "../src/engine/boot.js";
@@ -149,10 +150,24 @@ describe("bootEngine", () => {
 		expect(host().kruddWantsWebGPU?.()).toBe(false);
 	});
 
-	it("leaves the launcher standing rather than auto-loading a game", () => {
-		bootEngine({ engine: BUILT, canvas: canvas(), onStatus: vi.fn() });
+	/* The engine reads this once, after the plugins register and before anything
+	 * on this side can correct it (krudd_boot_game, core/engine.c), so a page
+	 * that answers it late or not at all does not get a second attempt. */
+	it("answers the boot scene rather than leaving it to the engine", () => {
+		bootEngine({
+			engine: BUILT,
+			canvas: canvas(),
+			onStatus: vi.fn(),
+			bootGame: "none",
+		});
 
 		expect(host().kruddBootGame?.()).toBe("none");
+	});
+
+	it("boots into a scene by default", () => {
+		bootEngine({ engine: BUILT, canvas: canvas(), onStatus: vi.fn() });
+
+		expect(host().kruddBootGame?.()).toBe("chess");
 	});
 
 	it("refuses to boot a second module on a remount", () => {
@@ -211,5 +226,30 @@ describe("wantsWebGPU", () => {
 	it("ignores any other renderer value", () => {
 		expect(wantsWebGPU("?renderer=webgpu")).toBe(true);
 		expect(wantsWebGPU("?game=chess")).toBe(true);
+	});
+});
+
+/* Copied from the generated shell for the same reason, and pinned here for the
+ * same reason: the editor and the shell must not disagree about what the page
+ * is about to show. */
+describe("bootGame", () => {
+	it("defaults to chess", () => {
+		expect(bootGame("")).toBe("chess");
+		expect(bootGame("?renderer=webgl")).toBe("chess");
+	});
+
+	/* Verbatim, including case: the engine matches the name against the label a
+	 * game registered under and does it case-insensitively (game_find), so
+	 * normalising here would only add a second opinion about the comparison. */
+	it("honours ?game= as the choice", () => {
+		expect(bootGame("?game=Chess")).toBe("Chess");
+	});
+
+	/* Not special-cased here — "none" is only meaningful to the engine, which
+	 * treats every name no game registered under the same way. This asserts the
+	 * value reaches it unaltered, which is what makes the old behaviour still
+	 * reachable. */
+	it("passes ?game=none through", () => {
+		expect(bootGame("?game=none")).toBe("none");
 	});
 });

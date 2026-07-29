@@ -634,6 +634,33 @@ browser suite against an engine that is not there, rather than skipping quietly.
 A skipped browser suite reports green, and a green suite that never booted a
 module is precisely what #946 warned about.
 
+### The editor boots into chess, and that is temporary
+
+`window.kruddBootGame` is the engine's question "which scene do I open once the
+subsystems are up", and the editor answers it with the shell's own rule: chess
+by default, `?game=<name>` for another registered game, `?game=none` for no
+scene at all.
+
+It used to answer `none` unconditionally, on the reasoning that an editor opens
+a project rather than starting to play one. The reasoning is right; the answer
+was wrong, because of what `none` leaves on *this* page. In the shell it leaves
+the launcher standing — a real choice offered to a reader. Here there is no
+launcher: the overlay is DOM the shell owns, and `game_launcher_add` is written
+to no-op when it cannot find `#launcher-games` so that a host page without the
+overlay gets no buttons rather than a crash. So `none` did not mean "pick a
+scene" here, it meant "no scene, and nothing offering one" — and a cold start
+has nothing in the project store either, so File > Open had nothing to offer
+alongside it. Every route to a populated scene was closed at once.
+
+**The default is a placeholder for the project this editor cannot open yet.**
+When it opens real projects, the boot scene goes back to being the reader's
+choice and this returns to `none`. `?game=none` reaches that state today, which
+is what keeps this a default rather than a decision.
+
+One thing it is not: a claim about *what* the editor edits. A game's scene is
+the only populated world reachable on boot, not the kind of document the editor
+is for.
+
 ## Where the page comes from
 
 **The site root. The engine's own page is `game/` under it.**

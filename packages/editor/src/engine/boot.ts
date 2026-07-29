@@ -47,6 +47,37 @@
 // its chrome and the backend never disagree; the editor needs the same property
 // for the same reason, and having a second page silently disagree with it about
 // the default would be worse than either choice.
+//
+// ## What the editor boots into
+//
+// Chess, by the shell's rule — see bootGame below.
+//
+// This answered "none" unconditionally until now, on the reasoning that the
+// editor opens a project rather than starting to play one. The reasoning is
+// still right and the answer was still wrong, because of what "none" actually
+// leaves on *this* page. In the generated shell it leaves the launcher
+// standing, which is a real choice offered to a reader. Here there is no
+// launcher to leave standing: the overlay is DOM the shell owns — `#launcher`
+// and `#launcher-games` live in shell.html.in, and `game_launcher_add`
+// (game/host/game.c) is written to no-op when it cannot find them, so a host
+// page without the overlay gets no buttons rather than a crash. The editor's
+// "none" therefore did not mean "pick a scene"; it meant "no scene, and
+// nothing offering one", and what a reader got on first load was the demo
+// scene seed_demo_scene leaves behind and no way to reach a game from inside
+// the editor at all.
+//
+// A boot scene is a placeholder for the project this editor cannot open yet.
+// A cold start has nothing in the project store (document/project-store.ts)
+// until the reader has saved something, so File > Open has nothing to offer on
+// a fresh page either — leaving the reader with no route to a populated scene
+// from any direction. Landing on chess gives the outliner, the inspector and
+// the gizmo something to be about, which is the whole reason those panels are
+// worth looking at before the editor can open assets of its own.
+//
+// **This is temporary, and the shape of its removal is known.** When the editor
+// opens real projects, the boot scene goes back to being the reader's choice
+// and this returns to "none". `?game=none` reaches that state today, so the
+// previous behaviour is one query parameter away rather than gone.
 
 import type { BridgeModule } from "@kruddage/engine/bridge";
 
@@ -102,6 +133,11 @@ export interface BootOptions {
 	 * wantsWebGPU below. Passed explicitly only by tests.
 	 */
 	wantsWebGPU?: boolean;
+	/**
+	 * Which scene to boot into. Defaults to the shell's own rule — see bootGame
+	 * below. Passed explicitly only by tests.
+	 */
+	bootGame?: string;
 }
 
 /**
@@ -127,6 +163,37 @@ export function wantsWebGPU(search: string = window.location.search): boolean {
 		return true;
 	}
 }
+
+/**
+ * The scene this page boots into, by the shell's rule.
+ *
+ * Chess by default, `?game=<name>` for another registered game — matched
+ * case-insensitively against the label it registered under (game_find in
+ * game/host/game.c) — and `?game=none`, or any name no game registered under,
+ * for no scene at all.
+ *
+ * Deliberately a copy of `window.kruddBootGame` in the generated shell rather
+ * than an improvement on it, for the same reason wantsWebGPU is one: two host
+ * pages driving one engine must not disagree about what the page is about to
+ * show. The engine reads this once, after every game has registered and the
+ * scene api is live (krudd_boot_game, core/engine.c), so there is no second
+ * chance to answer it differently.
+ *
+ * Note what it does *not* do: check the name against anything. The registry
+ * lives in the wasm module and is not populated when this is called, and an
+ * unknown name already has a defined meaning — the launcher stands, which here
+ * means no scene loads. A guess about which games exist would be a second copy
+ * of that list, in the wrong language, free to drift.
+ */
+export function bootGame(search: string = window.location.search): string {
+	try {
+		return new URLSearchParams(search).get("game") ?? DEFAULT_GAME;
+	} catch {
+		return DEFAULT_GAME;
+	}
+}
+
+const DEFAULT_GAME = "chess";
 
 /** A handle that stops the boot's effects on the page. */
 export interface BootHandle {
@@ -228,9 +295,15 @@ export function bootEngine(options: BootOptions): BootHandle {
 	host.kruddSetRendererFailed = (name, why) =>
 		update({ phase: "failed", renderer: name, error: why });
 
-	/* "none" leaves the launcher standing instead of auto-loading chess. The
-	 * editor opens a project; it does not start playing one. */
-	host.kruddBootGame = () => "none";
+	/*
+	 * The scene to land on, answered rather than left to the engine's default
+	 * for the same reason the backend is — the engine's own fallback is chess
+	 * either way, but a host page that leaves it to a catch is a host page that
+	 * cannot be told otherwise. See "What the editor boots into" above for why
+	 * this is a scene at all, and why it is temporary.
+	 */
+	const game = options.bootGame ?? bootGame();
+	host.kruddBootGame = () => game;
 
 	const script = document.createElement("script");
 	script.async = true;

@@ -425,6 +425,104 @@ before they let go rather than after.
   been driven at four rows and inherits `react-arborist`'s bound rather than
   proving its own.
 
+## The inspector, and the form nobody wrote
+
+[#951](https://github.com/kruddage/engine/issues/951) is the smallest panel in
+the initiative and it carries the idea with the longest reach: **adding a
+parameter to an asset must not require editor code.** The engine's asset scripts
+already declare their editing metadata —
+
+```scheme
+(edit color)
+(edit range 0 1)
+```
+
+— GLSL and WGSL emission both ignore that clause entirely, and that is the point
+of it. It exists so an inspector can derive its UI from the asset. This panel is
+where that either became true or quietly did not.
+
+### The constraint is what the function is given
+
+`src/panels/inspector/controls.ts` is a pure function of `(edit, type,
+components)`. It is handed no name, no asset path and no slot, which means it
+**cannot** special-case a parameter — the property is enforced by the signature
+rather than by a reviewer noticing a `switch`. `param-control.tsx` is the same:
+it takes a `ControlSpec` and a value and renders, and it has no idea what an
+asset is.
+
+The authored hint is consulted before the type, so a `vec3` tagged `(edit
+color)` is a colour well rather than three number boxes; a file that asked the
+type first would silently ignore every hint on a multi-component field. A field
+with **no** hint still gets a number entry, because most authored params have
+none and rendering nothing would make them invisible.
+
+`test/inspector.test.tsx` closes the loop: a parameter named `wobbliness`
+appears in no source file in this package — grep for it and the suite is the
+only hit — and it has to become a working, labelled, bounded control with no
+code written for it. It is asserted for a single entity and again across a
+multi-selection, because "zero editor code" holding for one entity and not for
+two would be the same failure arriving later.
+
+### A selection of several, merged by declaration
+
+The tempting reading of "shared parameter" is same slot, same field index, and
+it is wrong. Two entities can carry different meshes that both declare `width`
+at different offsets, and the boundary addresses a write **by index** — so
+merging by index edits `width` on one entity and `segments` on the other.
+
+`merge.ts` matches on the declaration instead: name, type, component count, and
+the authored hint with its bounds. Each entity keeps its own `(slot, field)`
+pair and an edit fans out to all of them inside one gesture, so setting a shared
+parameter across four entities is one undo step. Two entities whose `width` is
+bounded `0..1` on one asset and `0..10` on the other are deliberately *not*
+shared: one slider cannot be honest about both, and showing the primary's bounds
+would clamp the other's value to a range its asset never asked for.
+
+Everything the merge drops is counted and said out loud — a parameter only some
+of the selection declares, a slot only one of them carries, an entity the engine
+has not answered for yet. A panel that silently showed the intersection would
+read as an asset with fewer parameters than it has, which is the same failure
+the `truncated` warning already exists to prevent.
+
+### Every slider has a number beside it
+
+A range input cannot render a value outside its bounds — the thumb sits at the
+bound whatever you do. A slider alone would therefore report an older project's
+`5` for a `0..1` parameter as `1`, which is the engine's answer replaced by a
+plausible one. So a bounded parameter gets both controls over one value: the
+slider for the gesture, the entry for the truth. The entry is the labelled one
+and the slider is `aria-hidden`, because they are one control and a screen
+reader announcing this parameter twice is worse than either.
+
+It is also the only place an out-of-range value can be *typed*, and every
+refusal is a sentence tied to its input by `aria-describedby` rather than a red
+border: "not a number", "outside 0–1, clamped", "rounded to a whole number". A
+colour is not a reason, and it is invisible to a reader using a screen reader or
+one of the several common forms of colour blindness.
+
+### Drag-to-scrub, and where it stops
+
+A press on an **unfocused** number field that travels three pixels becomes a
+drag on the value. Focused is left alone deliberately: a field being typed in is
+a text field, and taking away select-by-dragging inside it costs more than the
+scrub gains. A press that never travels focuses the field, so click-to-type
+still works. Touch is excluded entirely — a scrub and a scroll begin with the
+same gesture, and a panel the reader cannot scroll is the worse trade.
+
+### Deliberately not done
+
+- **Boolean, string, enum and asset-reference controls.** The issue asks for
+  "whatever the metadata vocabulary can express", and the vocabulary is
+  `none`, `color` and `range` over `float`, `int` and `vec2`..`vec4` —
+  `script-field-edit` in `krudd/engine/world/entity/entity_script.scm` is the
+  whole of it. Every one of those is rendered. Adding a `(edit bool)` is an
+  engine change first, and the control that follows it is a `controlFor` case
+  and nothing else.
+- **Texture parameters.** The texture an entity draws with is named inside its
+  material's wire form rather than by a ref on the entity, and that form varies
+  by material kind. The bridge's shape carries a slot name, so a fourth slot is
+  an addition rather than a rework.
+
 ## The end of zero-dep
 
 `pnpm-lock.yaml` used to be 23 lines. Its only entry was a `workspace:*` link,

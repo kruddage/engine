@@ -548,6 +548,18 @@ body {
  * Panels
  * ------------------------------------------------------------------ */
 
+/*
+ * What a panel says when it has nothing to show. Shared by every panel that
+ * has such a state — "nothing selected" and "waiting for the engine" are the
+ * same kind of sentence and must not drift into looking like different kinds
+ * of thing.
+ */
+.panel__empty {
+	margin: 0;
+	color: var(--muted);
+	font-size: 0.8125rem;
+}
+
 .placeholder {
 	display: grid;
 	gap: 0.5rem;
@@ -600,10 +612,179 @@ body {
 	color: var(--fg);
 }
 
+/*
+ * The panel is a two-column grid of label and control, and the columns are
+ * declared once on the body rather than per row: a grid gives every row the
+ * same label column whatever the widest label turns out to be, which is what
+ * makes a form nobody wrote line up like one someone did. `minmax(0, 1fr)` on
+ * the second column rather than `1fr` — without it a four-component vector
+ * pushes the panel wider than its dock instead of shrinking.
+ */
 .inspector__body {
 	flex: 1;
 	min-height: 0;
 	overflow: auto;
+	display: grid;
+	grid-template-columns: minmax(4rem, auto) minmax(0, 1fr);
+	align-content: start;
+	gap: 0.25rem var(--gap);
+}
+
+.inspector__facts,
+.inspector__source,
+.inspector__warning,
+.inspector__body > .panel__empty {
+	grid-column: 1 / -1;
+}
+
+.inspector__facts {
+	display: grid;
+	grid-template-columns: minmax(4rem, auto) minmax(0, 1fr);
+	gap: 0.125rem var(--gap);
+	margin: 0;
+}
+
+.inspector__facts dt {
+	color: var(--muted);
+	font-size: 0.75rem;
+}
+
+.inspector__facts dd {
+	margin: 0;
+	font-size: 0.75rem;
+	overflow-wrap: anywhere;
+}
+
+.inspector__source {
+	margin: 0 0 0.25rem;
+	color: var(--muted);
+	font-size: 0.6875rem;
+	overflow-wrap: anywhere;
+}
+
+.inspector__warning {
+	margin: 0 0 0.25rem;
+	color: var(--error);
+	font-size: 0.6875rem;
+}
+
+/* ------------------------------------------------------------------ *
+ * A parameter row (#951)
+ *
+ * Every row is the same two cells whatever control it holds, because the
+ * control was chosen from the asset's declaration and this file cannot know
+ * which one that was. Styling per control kind — and never per parameter —
+ * is the same rule the derivation runs on, applied to the stylesheet.
+ * ------------------------------------------------------------------ */
+
+.param {
+	display: grid;
+	grid-column: 1 / -1;
+	grid-template-columns: subgrid;
+	align-items: center;
+	min-height: 1.5rem;
+}
+
+.param__label {
+	color: var(--muted);
+	font-size: 0.75rem;
+	overflow-wrap: anywhere;
+}
+
+.param__inputs {
+	display: flex;
+	gap: 0.25rem;
+	min-width: 0;
+}
+
+/* The control and whatever the control has to say about itself. */
+.param__field {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: 0.125rem;
+	min-width: 0;
+}
+
+/*
+ * A slider and the entry that carries its value. The entry keeps a fixed share
+ * rather than shrinking to fit, because a number box too narrow to show "0.375"
+ * is the one thing the slider cannot make up for.
+ */
+.param__pair {
+	display: flex;
+	gap: 0.25rem;
+	align-items: center;
+	min-width: 0;
+}
+
+.param__pair > .param__slider {
+	flex: 1 1 60%;
+}
+
+.param__pair > .param__number {
+	flex: 1 1 40%;
+}
+
+.param__number {
+	width: 100%;
+	min-width: 2.5rem;
+	appearance: none;
+	background: var(--bg);
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	color: var(--fg);
+	font: inherit;
+	font-size: 0.75rem;
+	padding: 0.0625rem 0.25rem;
+	/* The scrub. A press that travels drags the value, so the field
+	 * advertises that before it is pressed — and reverts to a caret once it
+	 * is focused, because a focused field is one being typed in. */
+	cursor: ew-resize;
+}
+
+.param__number:focus {
+	cursor: text;
+}
+
+.param__number.is-invalid {
+	border-color: var(--error);
+}
+
+.param__slider {
+	width: 100%;
+	min-width: 3rem;
+	accent-color: var(--accent);
+}
+
+.param__color {
+	width: 100%;
+	min-width: 2.5rem;
+	height: 1.25rem;
+	appearance: none;
+	background: none;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	padding: 0;
+}
+
+/*
+ * Mixed, said twice on purpose: the word below the control is the answer for
+ * everyone, and the dashed edge is what makes a panel of thirty rows scannable
+ * at a glance. Neither is load-bearing alone — the word is there for a reader
+ * who cannot see the border, the border for one who is not reading every note.
+ */
+.param [data-mixed] {
+	border-style: dashed;
+}
+
+.param__note {
+	color: var(--muted);
+	font-size: 0.6875rem;
+}
+
+.param__note.is-refused {
+	color: var(--error);
 }
 
 .console {

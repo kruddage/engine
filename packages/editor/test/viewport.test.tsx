@@ -65,7 +65,7 @@ function stubDocument(state: ViewportState | null): Stub {
 
 const BUILT: EngineInfo = {
 	built: true,
-	base: "/engine/",
+	base: "engine/",
 	version: "0.0.0",
 	exports: [],
 	buildCommand: "pnpm --filter @kruddage/engine run build",

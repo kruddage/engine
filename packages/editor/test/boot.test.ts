@@ -15,6 +15,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
 	bootEngine,
+	bootGame,
 	resetBootStateForTests,
 	wantsWebGPU,
 } from "../src/engine/boot.js";
@@ -24,7 +25,7 @@ const BUILT: EngineInfo = {
 	built: true,
 	version: "19.2.1",
 	exports: ["_main"],
-	base: "/engine/",
+	base: "engine/",
 	buildCommand: "pnpm --filter @kruddage/engine run build",
 };
 
@@ -83,7 +84,39 @@ describe("bootEngine", () => {
 
 		const scripts = loaderScripts();
 		expect(scripts).toHaveLength(1);
-		expect(scripts[0]?.getAttribute("src")).toBe("/engine/index.js");
+		expect(scripts[0]?.getAttribute("src")).toBe(
+			new URL("engine/index.js", document.baseURI).href
+		);
+	});
+
+	/*
+	 * The page's own directory, when the page is not at the root.
+	 *
+	 * **This is documentation, not the regression guard, and the difference is
+	 * worth being exact about.** The bug it describes was an absolute
+	 * `engine.base`, and this test would have passed with one — jsdom resolves
+	 * the injected `src` against the document either way, so what it pins is
+	 * only that nothing here rewrites the URL on the way past. The guard is in
+	 * two other places: build/engine-artifacts.test.ts asserts the base cannot
+	 * be absolute, and the browser suite serves the build under a prefix
+	 * (playwright.config.ts) so a root-anchored path fails for real.
+	 *
+	 * A `<base href>` is how jsdom can be a page that lives in a subdirectory.
+	 */
+	it("resolves the loader against the page it is on", () => {
+		const tag = document.createElement("base");
+		tag.href = "https://example.test/engine/pr-preview/pr-966/";
+		document.head.appendChild(tag);
+
+		try {
+			bootEngine({ engine: BUILT, canvas: canvas(), onStatus: vi.fn() });
+
+			expect(loaderScripts()[0]?.src).toBe(
+				"https://example.test/engine/pr-preview/pr-966/engine/index.js"
+			);
+		} finally {
+			tag.remove();
+		}
 	});
 
 	it("maps locateFile to the identity", () => {
@@ -149,10 +182,24 @@ describe("bootEngine", () => {
 		expect(host().kruddWantsWebGPU?.()).toBe(false);
 	});
 
-	it("leaves the launcher standing rather than auto-loading a game", () => {
-		bootEngine({ engine: BUILT, canvas: canvas(), onStatus: vi.fn() });
+	/* The engine reads this once, after the plugins register and before anything
+	 * on this side can correct it (krudd_boot_game, core/engine.c), so a page
+	 * that answers it late or not at all does not get a second attempt. */
+	it("answers the boot scene rather than leaving it to the engine", () => {
+		bootEngine({
+			engine: BUILT,
+			canvas: canvas(),
+			onStatus: vi.fn(),
+			bootGame: "none",
+		});
 
 		expect(host().kruddBootGame?.()).toBe("none");
+	});
+
+	it("boots into a scene by default", () => {
+		bootEngine({ engine: BUILT, canvas: canvas(), onStatus: vi.fn() });
+
+		expect(host().kruddBootGame?.()).toBe("chess");
 	});
 
 	it("refuses to boot a second module on a remount", () => {
@@ -211,5 +258,30 @@ describe("wantsWebGPU", () => {
 	it("ignores any other renderer value", () => {
 		expect(wantsWebGPU("?renderer=webgpu")).toBe(true);
 		expect(wantsWebGPU("?game=chess")).toBe(true);
+	});
+});
+
+/* Copied from the generated shell for the same reason, and pinned here for the
+ * same reason: the editor and the shell must not disagree about what the page
+ * is about to show. */
+describe("bootGame", () => {
+	it("defaults to chess", () => {
+		expect(bootGame("")).toBe("chess");
+		expect(bootGame("?renderer=webgl")).toBe("chess");
+	});
+
+	/* Verbatim, including case: the engine matches the name against the label a
+	 * game registered under and does it case-insensitively (game_find), so
+	 * normalising here would only add a second opinion about the comparison. */
+	it("honours ?game= as the choice", () => {
+		expect(bootGame("?game=Chess")).toBe("Chess");
+	});
+
+	/* Not special-cased here — "none" is only meaningful to the engine, which
+	 * treats every name no game registered under the same way. This asserts the
+	 * value reaches it unaltered, which is what makes the old behaviour still
+	 * reachable. */
+	it("passes ?game=none through", () => {
+		expect(bootGame("?game=none")).toBe("none");
 	});
 });

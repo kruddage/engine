@@ -59,15 +59,19 @@ test.describe("engine boot", () => {
 		/* A browser refuses to streaming-compile a module served as anything
 		 * else, and getting this wrong fails at runtime and nowhere else. The
 		 * dev server sets the type explicitly; here it comes from whatever
-		 * serves the built output, which is what a deploy will do. */
-		const response = await request.get("/engine/index.wasm");
+		 * serves the built output, which is what a deploy will do.
+		 *
+		 * Relative, like every navigation in this suite: the server mounts the
+		 * build under a prefix (playwright.config.ts) precisely so a path that
+		 * begins at the root is a failing test rather than a passing one. */
+		const response = await request.get("engine/index.wasm");
 
 		expect(response.status()).toBe(200);
 		expect(response.headers()["content-type"]).toBe("application/wasm");
 	});
 
 	test("reports the engine's identity from the real manifest", async ({ page }) => {
-		await page.goto("/");
+		await page.goto("./");
 
 		/* Not a fixed string: the version comes from version.txt through the C
 		 * build, and pinning it here would mean a release had to remember to
@@ -82,7 +86,7 @@ test.describe("engine boot", () => {
 	test("boots the module and reports a live renderer", async ({ page }) => {
 		const { report } = collect(page);
 
-		await page.goto("/?renderer=webgl");
+		await page.goto("./?renderer=webgl");
 
 		const phase = page.getByTestId("status-phase");
 
@@ -121,6 +125,40 @@ test.describe("engine boot", () => {
 		 * was actually overwritten by the engine rather than left at its seed. */
 		await expect(page.getByTestId("badge-renderer")).not.toHaveText(
 			"renderer — booting…"
+		);
+	});
+
+	/*
+	 * The boot scene, which only a browser can answer: `kruddBootGame` is read
+	 * inside the module, the game it names registers inside the module, and the
+	 * scene it loads is read back across the bridge. Every step is one Vitest
+	 * can only assert the editor's half of — test/boot.test.ts pins the string
+	 * this page hands over, and nothing below the string.
+	 */
+	test("lands on the boot scene rather than on the demo seed", async ({
+		page,
+	}) => {
+		await page.goto("./?renderer=webgl");
+		await expect(page.getByTestId("status-phase")).toHaveText(
+			/running|ready/,
+			{ timeout: 45_000 }
+		);
+
+		const outliner = page.getByTestId("outliner");
+
+		/*
+		 * A name only the chess scene defines, not merely "the tree has rows".
+		 * scene_renderer seeds a demo scene when nothing else has claimed the
+		 * world, so a populated outliner is exactly what the *unanswered* boot
+		 * game produced too — asserting rows would pass against the behaviour
+		 * this replaced.
+		 *
+		 * Filtered first because the tree is virtualized: chess is some eighty
+		 * entities and the row would otherwise be scrolled out of the DOM.
+		 */
+		await outliner.getByTestId("outliner-search").fill("board-base");
+		await expect(outliner.getByText("board-base", { exact: true })).toBeVisible(
+			{ timeout: 10_000 }
 		);
 	});
 });

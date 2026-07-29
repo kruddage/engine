@@ -22,6 +22,6 @@ export const engine: EngineInfo = {
 	built: true,
 	version: "19.2.1",
 	exports: ["_main", "_krudd_load_game"],
-	base: "/engine/",
+	base: "engine/",
 	buildCommand: "pnpm --filter @kruddage/engine run build",
 };

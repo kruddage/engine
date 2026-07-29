@@ -21,6 +21,21 @@ const PORT = 4173;
  * the note on webServer.command below for why this is not simply "localhost". */
 const HOST = "127.0.0.1";
 
+/**
+ * The prefix the build is served under, and it is not "/" on purpose.
+ *
+ * Every harness this package had served the editor at the domain root, and a
+ * deploy never does — GitHub Pages puts the site under `/engine/`, and a PR
+ * preview under `/engine/pr-preview/pr-<N>/` on top of that. That gap hid a
+ * real bug for as long as it existed: the engine's base was absolute, which is
+ * indistinguishable from relative at "/" and asks the wrong origin-relative
+ * path everywhere else (see boot.ts, "Where the loader comes from").
+ *
+ * Two segments rather than one, so a fix that reaches for a single `../` is
+ * still wrong here. The value is arbitrary; being non-empty is the test.
+ */
+const PREFIX = "/site/preview/";
+
 export default defineConfig({
 	testDir: "./e2e",
 	/* A WASM engine booting a renderer is not a 5-second operation on a cold CI
@@ -33,7 +48,13 @@ export default defineConfig({
 	retries: process.env["CI"] ? 2 : 0,
 	reporter: process.env["CI"] ? [["github"], ["list"]] : [["list"]],
 	use: {
-		baseURL: `http://${HOST}:${PORT}`,
+		/* Trailing slash included, and load-bearing: Playwright resolves a
+		 * test's URL against this the way the browser would, so dropping it
+		 * would make "?renderer=webgl" resolve against the parent directory.
+		 * For the same reason no test below may navigate to a path starting
+		 * with "/" — that would climb back out to the root and stop testing
+		 * what this prefix exists to test. */
+		baseURL: `http://${HOST}:${PORT}${PREFIX}`,
 		trace: "on-first-retry",
 		video: "retain-on-failure",
 	},
@@ -67,8 +88,12 @@ export default defineConfig({
 		 * waiting on a server that started fine — a failure that reproduces
 		 * only in CI and blames the wrong thing when it does. Naming one
 		 * address in both places is what makes them agree. */
-		command: `pnpm exec vite preview --host ${HOST} --port ${PORT} --strictPort`,
-		url: `http://${HOST}:${PORT}`,
+		/* --base mounts the same build under PREFIX. It needs no rebuild: the
+		 * production `base` is "./", so every URL in the output is relative to
+		 * wherever the document lands. That is exactly the property this is
+		 * here to keep honest. */
+		command: `pnpm exec vite preview --host ${HOST} --port ${PORT} --strictPort --base ${PREFIX}`,
+		url: `http://${HOST}:${PORT}${PREFIX}`,
 		reuseExistingServer: !process.env["CI"],
 		stdout: "pipe",
 		stderr: "pipe",

@@ -29,8 +29,9 @@
 // `typeof window.x === 'function'` or wraps the call in try/catch — so a host
 // page implements the ones it wants and the rest are no-ops. We take the ones
 // that report boot state and the renderer, and deliberately leave the rest
-// alone: kruddBuildEditor in particular is the old Scheme chrome's entry point,
-// and answering it would be the editor growing a second shell (#953 retires it).
+// alone. kruddBuildEditor was the one that mattered — the old Scheme chrome's
+// entry point, which answering would have made this editor grow a second shell.
+// #953 retired it on the engine side, so there is nothing left to decline.
 //
 // ## kruddWantsWebGPU is not optional, whatever the guard says
 //

@@ -6,7 +6,12 @@
 
 A game engine written in C, compiled to WebAssembly via Emscripten and served as a static site.
 
-**[Live demo →](https://kruddage.github.io/engine)**
+**[The editor →](https://kruddage.github.io/engine)** &middot;
+**[the game host →](https://kruddage.github.io/engine/game/)**
+
+The site root is the editor — a TypeScript application ([#944](https://github.com/kruddage/engine/issues/944)),
+not the engine decorating a page at boot. `game/` is the engine on its own: a
+canvas, a scene launcher, and nothing around it.
 
 ## Overview
 
@@ -69,10 +74,10 @@ krudd/
                  null/, frame_graph/, particles/, scene_renderer/, plus renderer.scm
                  (the backend interface spec) and shader/ (the shader DSL)
     audio/       The mixer and its device backends
-    ui/          Editor chrome — kruddgui/, viewport/, gizmo/, kruddboard/,
-                 and bridge/ (the boundary the TypeScript editor drives)
+    ui/          In-canvas UI — kruddgui/ (the game's GUI), viewport/, gizmo/,
+                 kruddboard/, and bridge/ (the boundary the TypeScript editor drives)
     game/        host/ is the launcher registry; its siblings register with it
-    shell/       The host the engine runs inside — web/
+    shell/       The host the engine runs inside — web/ (the game host page)
 ```
 
 The tiers are listed in dependency order: a module may only reach for one in a tier above

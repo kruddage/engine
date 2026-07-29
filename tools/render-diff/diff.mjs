@@ -54,7 +54,9 @@ render-diff — WebGPU vs WebGL screenshot oracle
 
   node tools/render-diff/diff.mjs [options]
 
-  --base <url>    site root to test (default http://127.0.0.1:8000)
+  --base <url>    site root to test (default http://127.0.0.1:8000). The
+                  engine's own page is game/ under it, and this tool appends
+                  that itself — pass the root, not the game host.
                   a PR preview works too, so no local emsdk is needed:
                   --base https://kruddage.github.io/engine/pr-preview/pr-123/
   --scene <id>    run one scene from scenes.json instead of all
@@ -630,7 +632,15 @@ if (args.scene) {
 mkdirSync(OUT, { recursive: true });
 mkdirSync(SHOTS, { recursive: true });
 
-const base = args.base.endsWith('/') ? args.base : args.base + '/';
+/*
+ * --base is the *site* root, and the engine's page is a route under it: #953
+ * moved the editor to the root and staged the game host at game/ (see
+ * packages/site/src/stage.mjs, ENGINE_PREFIX). This tool screenshots the
+ * engine's canvas, so it appends the prefix itself rather than making every
+ * caller — the README, CI, a local `python3 -m http.server` — remember to.
+ */
+const siteRoot = args.base.endsWith('/') ? args.base : args.base + '/';
+const base = siteRoot + 'game/';
 const { cdp, kill } = await launchChrome();
 const results = [];
 

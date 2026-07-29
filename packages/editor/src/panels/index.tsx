@@ -12,8 +12,9 @@
 // directory rather than a function here.
 //
 // The remaining placeholders say so on screen with the issue that fills each
-// one in. They are empty in the shipped editor today too — that is #954's
-// premise, not a shortcut it took.
+// one in. They were empty in the shell this replaced too — that was #954's
+// premise, not a shortcut it took, and #953 has since retired that shell. #952
+// is the one panel still outstanding.
 //
 // The outliner is `src/panels/outliner/`, a directory rather than a function
 // here, for the same reason the viewport is: the tree, its view state and its

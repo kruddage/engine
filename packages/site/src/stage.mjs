@@ -77,17 +77,40 @@ export function planSite(artifacts, stem) {
 }
 
 /**
+ * Where the engine's own artifacts live on the staged site.
+ *
+ * #946 put the editor at `editor/` and left the engine's shell at the root,
+ * because at that point the editor was a skeleton and the shell was the only
+ * editor that existed. #953 reverses it: the editor is the site, and the shell
+ * is the engine's game host at its own route.
+ *
+ * Every reference the engine's page makes to its siblings is relative — the
+ * loader `<script>`, `manifest.webmanifest` (whose `start_url` and `scope` are
+ * both "."), `sw.js`, the icons and the runtime assets — so the whole set moves
+ * together by being copied into one subdirectory, and nothing inside it has to
+ * learn its own URL. The service worker's scope narrows to this prefix with it,
+ * which is correct: it caches the game host, and the editor is not its business.
+ */
+export const ENGINE_PREFIX = "game";
+
+/**
  * Apply a plan to disk.
  *
- * Returns the staged filenames, in the order they were written.
+ * Returns the staged paths, in the order they were written.
  *
  * `editorDir`, when given, is @kruddage/editor's production output, copied in
- * whole under `editor/`. It is a directory rather than an artifact list because
+ * whole to the site root. It is a directory rather than an artifact list because
  * the editor is a bundler's output — hashed chunk names nobody declares in
  * advance — which is the opposite of the engine's case, where the whitelist
  * exists precisely because the build directory also holds objects and archives
  * that must never reach the Pages branch. A Vite `outDir` holds only what Vite
  * put there.
+ *
+ * The two can no longer collide: the engine stages under ENGINE_PREFIX and the
+ * editor at the root, so `index.html` means the editor's and nothing overwrites
+ * anything. That is also why the editor is copied last — if the invariant ever
+ * broke, the failure would be the editor winning at the root, which is the
+ * outcome a reader can actually see and report.
  */
 export function stageSite({
 	artifacts,
@@ -97,9 +120,10 @@ export function stageSite({
 	editorDir = null,
 }) {
 	const plan = planSite(artifacts, stem);
+	const engineDir = join(outDir, ENGINE_PREFIX);
 
 	rmSync(outDir, { recursive: true, force: true });
-	mkdirSync(outDir, { recursive: true });
+	mkdirSync(engineDir, { recursive: true });
 
 	const staged = [];
 	for (const { artifact, to } of plan.entries) {
@@ -110,25 +134,21 @@ export function stageSite({
 			for (const r of plan.rewrites) {
 				html = rewrite(html, r.from, r.to, "index.html");
 			}
-			writeFileSync(join(outDir, to), html);
+			writeFileSync(join(engineDir, to), html);
 		} else {
-			cpSync(artifact.path, join(outDir, to));
+			cpSync(artifact.path, join(engineDir, to));
 		}
-		staged.push(to);
+		staged.push(`${ENGINE_PREFIX}/${to}`);
 	}
 
 	if (assetDir) {
-		cpSync(assetDir, join(outDir, "assets"), { recursive: true });
-		staged.push("assets/");
+		cpSync(assetDir, join(engineDir, "assets"), { recursive: true });
+		staged.push(`${ENGINE_PREFIX}/assets/`);
 	}
 
-	/* The editor sits beside the shell at its own route rather than replacing
-	 * it (#946). Copied after the engine's own files so that if the two ever
-	 * did collide it would be visible here, in one place, rather than depending
-	 * on which of them ran last. */
 	if (editorDir) {
-		cpSync(editorDir, join(outDir, "editor"), { recursive: true });
-		staged.push("editor/");
+		cpSync(editorDir, outDir, { recursive: true });
+		staged.push("./");
 	}
 
 	return staged;

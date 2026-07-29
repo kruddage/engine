@@ -4,10 +4,11 @@
 //
 // The editor is an application, not a library, so this is the whole of what it
 // offers another package — one directory and the question of whether anything
-// is in it. @kruddage/site needs exactly that to stage the editor beside the
-// shell, and the workspace boundary check requires it to ask through the
-// package name rather than reaching in by relative path. That rule is why this
-// file exists rather than @kruddage/site joining "../editor/dist" together.
+// is in it. @kruddage/site needs exactly that to stage the editor as the site
+// root (#953; it was staged beside the shell at editor/ before), and the
+// workspace boundary check requires it to ask through the package name rather
+// than reaching in by relative path. That rule is why this file exists rather
+// than @kruddage/site joining "../editor/dist" together.
 //
 // Nothing in here is bundled, imported by the app, or reachable from a browser.
 // It is the mirror of @kruddage/engine's much larger surface, kept deliberately

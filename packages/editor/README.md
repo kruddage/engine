@@ -21,10 +21,12 @@ existed, and it has not moved since. Every panel that has arrived has arrived by
 adding a file and a line to `src/panels/index.tsx`, which is the property that
 whole issue was about.
 
-The panels that are still empty are empty in the shipped editor today too. Every
-dock in `krudd/engine/core/editor_layout.scm` renders a heading and a one-line
-blurb; this shell renders the same headings and the same blurbs, plus the issue
-that fills each one in.
+The panels that are still empty were empty in the old shell too — every dock in
+`editor_layout.scm` rendered a heading and a one-line blurb, and this shell
+renders the same headings and the same blurbs plus the issue that fills each one
+in. #953 retired that shell, so the comparison is now with git rather than with
+something running: the asset browser is the one panel this editor still owes,
+and [#952](https://github.com/kruddage/engine/issues/952) owns it.
 
 ### The vocabulary
 
@@ -80,9 +82,10 @@ read-only shell honest rather than broken, and
 with #947's command layer without moving anything.
 
 The menu set, the labels and the shortcuts were **mined from
-`editor_layout.scm` and then the file was closed**. Nothing reads it at runtime
-(#944's Q3); `test/commands.test.ts` carries the spec transcribed by hand so a
-divergence is a decision someone made rather than one the suite let through.
+`editor_layout.scm` and then the file was closed**. Nothing read it at runtime
+(#944's Q3), and #953 has since deleted it — `test/commands.test.ts` carries the
+spec transcribed by hand, which is what made retiring the original a deletion
+rather than a loss.
 
 ### Container queries, not media queries
 
@@ -633,20 +636,24 @@ module is precisely what #946 warned about.
 
 ## Where the page comes from
 
-**Beside the existing shell, at its own route — not replacing it.**
+**The site root. The engine's own page is `game/` under it.**
 
-The generated shell is stamped by the C build: the version, the cache-busting
-hook and the Scheme-derived chrome all arrive from kruddmake. Replacing it would
-mean moving those into Vite, which is the coupling the root `package.json`
-already forbids. Mounting into it would mean the React app inheriting a DOM
-another system builds at boot.
+#946 built this beside the old shell at `/editor/` and left the shell at the
+root, because the editor was a skeleton and the shell was the only editor that
+existed. That was the right order and it had one cost nobody priced: nothing
+linked the two, so eight merged PRs' worth of editor was live and unreachable
+unless you knew to type the path. [#953](https://github.com/kruddage/engine/issues/953)
+swapped them.
 
-Sitting beside it costs nothing, keeps the existing shell working while the
-editor is a skeleton, and is what lets
-[#953](https://github.com/kruddage/engine/issues/953) retire the old chrome as a
-deliberate step rather than as this PR's side effect. `base` is `"./"` so the
-same output works at `/editor/` on the deployed site, at `/` under `vite
-preview`, and under a preview deploy's PR-number prefix, without a second build.
+The engine's page is still generated and still stamped by the C build — the
+version and the cache-busting hook arrive from kruddmake, which is why it stays
+a kruddmake output rather than becoming a Vite one. What it no longer carries is
+chrome: the menu bar, toolbar, docks and status bar it built at boot from
+`editor_layout.scm` are gone, and it is a canvas with a scene launcher.
+
+`base` stays `"./"`, and it is doing more work than before: the same output now
+serves at `/` on the deployed site, at `/` under `vite preview`, and under a
+preview deploy's PR-number prefix, without a second build.
 
 ## How this is tested
 

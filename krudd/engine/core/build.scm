@@ -2,16 +2,15 @@
 ;;! version.h.in is the header every binary reports itself by, substituted from
 ;;! git. runtime.scm is the prelude script.c evaluates first into the s7 image —
 ;;! embedded rather than loaded from disk, because in the browser there is none.
-;;! editor_layout.scm is the editor chrome's spec, embedded the same way and for
-;;! the same reason: script.c evaluates it to serialize the tree for the web
-;;! shell. It lives here rather than beside the shell because `script` is a
-;;! library every module may link, so it may not reach into a shell for its own
-;;! generated header (#786 lists shell/ last precisely so nothing reaches into
-;;! it). A shell reaching the other way, into core's generated header, is
-;;! allowed.
+;;!
+;;! editor_layout.scm was embedded here too, for the same reason, and #953
+;;! retired it with the rest of the Scheme chrome: the editor is a TypeScript
+;;! application now and reads its own dock list out of its own source. The
+;;! mechanism was good — a menu added to the spec reached the page with no edit
+;;! to the markup — and it lost to a substrate decision (#944 Q3), not to a
+;;! flaw. It is recoverable from the commit before this one.
 ((configure-file "version.h.in" "version.h")
  (embed "runtime.scm" "runtime_scm.h" "RUNTIME_SCM")
- (embed "editor_layout.scm" "editor_layout_scm.h" "LAYOUT_SCM")
 
  (library "subsystem"
    (sources "subsystem.c")
@@ -68,16 +67,4 @@
   (executable "shader_transpile_test"
               (sources "shader_transpile_test.c")
               (link "script"))
-  (test "shader_transpile" "shader_transpile_test")
-
-  ;;! The s7->JS layout serialization primitive (script_json /
-  ;;! script_layout_json in script.c), exercised browser- and GPU-free: it
-  ;;! serializes hand-built s7 values and the embedded editor_layout.scm spec and
-  ;;! asserts on the JSON the web chrome (#706 part C) will JSON.parse. Needs
-  ;;! ../third_party for s7.h to build the test values; the primitive itself
-  ;;! rides in the linked script library. Part B of #706 / #723.
-  (executable "script_layout_json_test"
-              (sources "script_layout_json_test.c")
-              (private "include" (raw "../third_party"))
-              (link "script"))
-  (test "script_layout_json" "script_layout_json_test")))
+  (test "shader_transpile" "shader_transpile_test")))

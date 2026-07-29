@@ -20,9 +20,15 @@
 import { expect, test } from "@playwright/test";
 import type { Locator, Page } from "@playwright/test";
 
-/** The engine up and drawing, which every test below needs first. */
-async function booted(page: Page): Promise<void> {
-	await page.goto("/?renderer=webgl");
+/**
+ * The engine up and drawing, which every test below needs first.
+ *
+ * `query` appends to the page's own parameters, and exactly one test uses it —
+ * see "clicking empty space clears the selection" for what it is choosing and
+ * why the choice belongs to the test rather than to this helper.
+ */
+async function booted(page: Page, query = ""): Promise<void> {
+	await page.goto(`/?renderer=webgl${query}`);
 	await expect(page.getByTestId("status-phase")).toHaveText(/running|ready/, {
 		timeout: 45_000,
 	});
@@ -230,13 +236,32 @@ test.describe("the pointer over the canvas", () => {
 
 test.describe("picking and the selection", () => {
 	test("clicking empty space clears the selection", async ({ page }) => {
-		await booted(page);
+		/*
+		 * The one test that picks its own scene, because it is the one test
+		 * whose premise is about the scene rather than about the pick: it needs
+		 * somewhere the raycast reliably hits nothing, and "a corner" is only
+		 * that in a scene which leaves its corners empty.
+		 *
+		 * The editor now boots into chess (boot.ts, "What the editor boots
+		 * into"), and that scene opens with a "wide matte ground plane"
+		 * (game/chess/scene.scm) under the board — so there is no empty pixel
+		 * to click, in a corner or anywhere else, and the pick correctly finds
+		 * the ground. That is the boot default working rather than the pick
+		 * failing, which is why the answer is to choose a scene rather than to
+		 * move the click: no coordinate is empty in that one, and one tuned to
+		 * a gap in some future scene would be a mystery the first time
+		 * anything about it moved.
+		 *
+		 * `?game=none` is the same page with no game loaded, leaving the demo
+		 * scene this test was written against. It is also the only place in
+		 * either suite that exercises the opt-out at all.
+		 */
+		await booted(page, "&game=none");
 
 		/*
 		 * The engine's own answer, not the editor's: the pick raycasts, calls
 		 * set_selected, and the inspector renders whatever the selection query
-		 * comes back with. A corner of the viewport is the one place a scene
-		 * reliably has nothing in it.
+		 * comes back with.
 		 */
 		const surface = page.getByTestId("viewport-surface");
 		const box = await surface.boundingBox();

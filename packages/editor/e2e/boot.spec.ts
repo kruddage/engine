@@ -123,4 +123,38 @@ test.describe("engine boot", () => {
 			"renderer — booting…"
 		);
 	});
+
+	/*
+	 * The boot scene, which only a browser can answer: `kruddBootGame` is read
+	 * inside the module, the game it names registers inside the module, and the
+	 * scene it loads is read back across the bridge. Every step is one Vitest
+	 * can only assert the editor's half of — test/boot.test.ts pins the string
+	 * this page hands over, and nothing below the string.
+	 */
+	test("lands on the boot scene rather than on the demo seed", async ({
+		page,
+	}) => {
+		await page.goto("/?renderer=webgl");
+		await expect(page.getByTestId("status-phase")).toHaveText(
+			/running|ready/,
+			{ timeout: 45_000 }
+		);
+
+		const outliner = page.getByTestId("outliner");
+
+		/*
+		 * A name only the chess scene defines, not merely "the tree has rows".
+		 * scene_renderer seeds a demo scene when nothing else has claimed the
+		 * world, so a populated outliner is exactly what the *unanswered* boot
+		 * game produced too — asserting rows would pass against the behaviour
+		 * this replaced.
+		 *
+		 * Filtered first because the tree is virtualized: chess is some eighty
+		 * entities and the row would otherwise be scrolled out of the DOM.
+		 */
+		await outliner.getByTestId("outliner-search").fill("board-base");
+		await expect(outliner.getByText("board-base", { exact: true })).toBeVisible(
+			{ timeout: 10_000 }
+		);
+	});
 });

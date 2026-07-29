@@ -45,6 +45,7 @@ import type {
  */
 export {
 	DRAG_PHASE,
+	ENTITY_FLAG,
 	GIZMO_AXIS,
 	GIZMO_MODE,
 } from "@kruddage/engine/bridge";
@@ -68,8 +69,14 @@ export interface CommandSpec<P> {
 
 export interface CommandPayloads {
 	"selection.set": { id: number };
+	"selection.add": { id: number };
+	"selection.remove": { id: number };
+	"selection.clear": Record<string, never>;
 	"entity.create": { parent: number; transform?: TransformLike; mask?: number };
 	"entity.destroy": { id: number };
+	"entity.parent": { id: number; parent: number };
+	"entity.duplicate": { id: number };
+	"entity.flags": { id: number; flags: number };
 	"entity.transform": { id: number; transform: TransformLike };
 	"entity.rename": { id: number; name: string };
 	"entity.mesh": { id: number; ref: number };
@@ -128,6 +135,33 @@ export const COMMANDS: Table = {
 		continuity: "discrete",
 		run: (bridge, { id }) => bridge.select(id),
 	},
+	/*
+	 * The modifier conventions, as three commands rather than a flag on
+	 * Select (#950). "Add to the selection" and "replace the selection"
+	 * are different edits, and a single command with a boolean is one a
+	 * caller gets backwards silently — the log would say "Select" for
+	 * both.
+	 *
+	 * There is still no selection state on this side. The outliner reads
+	 * `selection.ids` back from the engine exactly as the viewport reads
+	 * `selection.id`, which is what lets ctrl-clicking a row and picking
+	 * in the viewport be two views of one answer.
+	 */
+	"selection.add": {
+		label: "Add to Selection",
+		continuity: "discrete",
+		run: (bridge, { id }) => bridge.selectAdd(id),
+	},
+	"selection.remove": {
+		label: "Remove from Selection",
+		continuity: "discrete",
+		run: (bridge, { id }) => bridge.selectRemove(id),
+	},
+	"selection.clear": {
+		label: "Clear Selection",
+		continuity: "discrete",
+		run: (bridge) => bridge.selectClear(),
+	},
 	"entity.create": {
 		label: "Create Entity",
 		continuity: "discrete",
@@ -138,6 +172,39 @@ export const COMMANDS: Table = {
 		label: "Delete Entity",
 		continuity: "discrete",
 		run: (bridge, { id }) => bridge.destroyEntity(id),
+	},
+	/*
+	 * Reparent, and the whole of the outliner's drag (#950). Discrete, so
+	 * a drag is one undo step — the engine records one entry per call and
+	 * the outliner brackets a multi-row drag in a gesture.
+	 *
+	 * `parent` is -1 for the root. A drop that would put an entity inside
+	 * itself is refused by the engine, which emits `command.rejected`; this
+	 * side does not pre-check, because the tree it would check against is
+	 * a frame old and the engine's answer is the only one that counts.
+	 */
+	"entity.parent": {
+		label: "Reparent",
+		continuity: "discrete",
+		run: (bridge, { id, parent }) => bridge.setParent(id, parent),
+	},
+	"entity.duplicate": {
+		label: "Duplicate",
+		continuity: "discrete",
+		run: (bridge, { id }) => bridge.duplicateEntity(id),
+	},
+	/*
+	 * Hidden and locked. A command like any other, and deliberately not an
+	 * undoable one on the far side: the engine keeps these off its history
+	 * ring, so pressing Undo after hiding a light undoes the edit before
+	 * it rather than un-hiding. That is the right behaviour — how someone
+	 * is looking at a scene is not a change to the scene — and it is why
+	 * this is worth saying out loud rather than leaving to be discovered.
+	 */
+	"entity.flags": {
+		label: "Show/Hide",
+		continuity: "discrete",
+		run: (bridge, { id, flags }) => bridge.setEntityFlags(id, flags),
 	},
 	"entity.transform": {
 		label: "Move",

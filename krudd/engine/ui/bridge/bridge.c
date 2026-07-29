@@ -327,6 +327,7 @@ static uint64_t fingerprint_scene(const struct bridge *b)
 		h = fnv(h, &w->mask[i], sizeof(w->mask[i]));
 		h = fnv(h, &w->parent[i], sizeof(w->parent[i]));
 		h = fnv(h, &w->local[i], sizeof(w->local[i]));
+		h = fnv(h, &w->flags[i], sizeof(w->flags[i]));
 		h = fnv(h, &w->render_ref[i], sizeof(w->render_ref[i]));
 		h = fnv(h, &w->material_ref[i], sizeof(w->material_ref[i]));
 		h = fnv(h, &w->script_ref[i], sizeof(w->script_ref[i]));
@@ -345,13 +346,36 @@ static uint64_t fingerprint_scene(const struct bridge *b)
 	return h;
 }
 
+/*
+ * The whole selection, not just its primary (#950).
+ *
+ * Hashing only `get_selected` would hold this domain's generation still while
+ * a reader ctrl-clicked four more rows — every one of them a change the
+ * outliner has to redraw for. The walk is over the same used prefix
+ * fingerprint_scene already covers, and it reads one byte per entity.
+ */
 static uint64_t fingerprint_selection(const struct bridge *b)
 {
-	int32_t id = -1;
+	const struct world *w;
+	uint64_t            h = FNV64_OFFSET;
+	int32_t             id = -1;
+	uint32_t            i;
 
 	if (b->host.entity && b->host.entity->get_selected)
 		id = b->host.entity->get_selected();
-	return fnv(FNV64_OFFSET, &id, sizeof(id));
+	h = fnv(h, &id, sizeof(id));
+
+	if (!b->host.entity || !b->host.entity->get_world)
+		return h;
+	w = b->host.entity->get_world();
+	if (!w)
+		return h;
+	for (i = 0; i < w->count && i < WORLD_MAX_ENTITIES; i++) {
+		uint8_t on = (w->alive[i] && w->selected_set[i]) ? 1u : 0u;
+
+		h = fnv(h, &on, sizeof(on));
+	}
+	return h;
 }
 
 /*
@@ -548,6 +572,31 @@ static int32_t apply_command(struct bridge *b, uint16_t op, struct tape *t)
 			en->set_selected(id);
 		return BRIDGE_OK;
 
+	/*
+	 * The three set operations (#950). Each is a no-op on a host whose
+	 * entity_api predates them, exactly like every other optional service
+	 * here — a build without them keeps a one-entity selection working
+	 * rather than failing the batch.
+	 */
+	case BRIDGE_OP_SELECT_ADD:
+		if (!tape_i32(t, &id))
+			return BRIDGE_ERR_PAYLOAD;
+		if (en && en->select_add)
+			en->select_add(id);
+		return BRIDGE_OK;
+
+	case BRIDGE_OP_SELECT_REMOVE:
+		if (!tape_i32(t, &id))
+			return BRIDGE_ERR_PAYLOAD;
+		if (en && en->select_remove)
+			en->select_remove(id);
+		return BRIDGE_OK;
+
+	case BRIDGE_OP_SELECT_CLEAR:
+		if (en && en->select_clear)
+			en->select_clear();
+		return BRIDGE_OK;
+
 	case BRIDGE_OP_ENTITY_CREATE:
 		if (!tape_i32(t, &parent) || !tape_transform(t, &xf) ||
 		    !tape_u32(t, &mask) || !tape_u32(t, &ref))
@@ -564,6 +613,39 @@ static int32_t apply_command(struct bridge *b, uint16_t op, struct tape *t)
 			return BRIDGE_ERR_PAYLOAD;
 		if (en && en->destroy_entity)
 			en->destroy_entity(id);
+		return BRIDGE_OK;
+
+	case BRIDGE_OP_ENTITY_PARENT:
+		if (!tape_i32(t, &id) || !tape_i32(t, &parent))
+			return BRIDGE_ERR_PAYLOAD;
+		/*
+		 * A refused drop is a notice, not a failed batch. Dropping a
+		 * node onto its own descendant is something a reader does by
+		 * accident with the mouse, and it has to come back as a thing
+		 * the editor can say out loud rather than as a tape error that
+		 * discards every other command in the frame.
+		 */
+		if (en && en->set_parent && en->set_parent(id, parent) < 0)
+			bridge_emit(b, "command.rejected",
+				    BRIDGE_OP_ENTITY_PARENT,
+				    "that drop would put an entity inside itself");
+		return BRIDGE_OK;
+
+	case BRIDGE_OP_ENTITY_DUPLICATE:
+		if (!tape_i32(t, &id))
+			return BRIDGE_ERR_PAYLOAD;
+		if (en && en->duplicate_entity &&
+		    en->duplicate_entity(id) < 0)
+			bridge_emit(b, "command.rejected",
+				    BRIDGE_OP_ENTITY_DUPLICATE,
+				    "the copy does not fit — the world is full");
+		return BRIDGE_OK;
+
+	case BRIDGE_OP_ENTITY_FLAGS:
+		if (!tape_i32(t, &id) || !tape_u32(t, &mask))
+			return BRIDGE_ERR_PAYLOAD;
+		if (en && en->set_entity_flags)
+			en->set_entity_flags(id, mask);
 		return BRIDGE_OK;
 
 	case BRIDGE_OP_ENTITY_TRANSFORM:
@@ -926,7 +1008,51 @@ static void write_tree_node(struct jw *w, const struct world *world,
 	jw_put(w, ",");
 	jw_key(w, "script");
 	jw_u32(w, world->script_ref[id]);
+	jw_put(w, ",");
+	/*
+	 * The editor flags ride the tree rather than getting a query of their
+	 * own: the outliner is the only thing that renders them, it is already
+	 * reading every row, and a second keyed query would be one more
+	 * round-trip per row for two bits.
+	 */
+	jw_key(w, "flags");
+	jw_u32(w, world->flags[id]);
 	jw_put(w, "}");
+}
+
+/*
+ * The selection: a primary and the set it belongs to.
+ *
+ * `id` is kept, and kept first, because it is what every reader before #950
+ * asked for and what the inspector and the gizmo still want — the one entity a
+ * tool that acts on one entity acts on. `ids` is the whole set, ascending, and
+ * it always contains `id` when there is one, so a client can render highlights
+ * from `ids` alone without cross-referencing.
+ */
+static void write_selection(struct bridge *b, struct jw *w)
+{
+	const struct world *world;
+	uint32_t            i;
+	int32_t             first = 1;
+
+	jw_put(w, "{");
+	jw_key(w, "id");
+	jw_i32(w, b->host.entity && b->host.entity->get_selected ?
+		      b->host.entity->get_selected() : -1);
+	jw_put(w, ",");
+	jw_key(w, "ids");
+	jw_put(w, "[");
+	world = b->host.entity && b->host.entity->get_world
+		? b->host.entity->get_world() : NULL;
+	for (i = 0; world && i < world->count && i < WORLD_MAX_ENTITIES; i++) {
+		if (!world->alive[i] || !world->selected_set[i])
+			continue;
+		if (!first)
+			jw_put(w, ",");
+		first = 0;
+		jw_u32(w, i);
+	}
+	jw_put(w, "]}");
 }
 
 static void write_tree(struct bridge *b, struct jw *w)
@@ -1311,11 +1437,7 @@ static int32_t answer_query(struct bridge *b, struct jw *w, uint16_t op,
 		write_entity(b, w, id);
 		break;
 	case BRIDGE_OP_QUERY_SELECTION:
-		jw_put(w, "{");
-		jw_key(w, "id");
-		jw_i32(w, b->host.entity && b->host.entity->get_selected ?
-			      b->host.entity->get_selected() : -1);
-		jw_put(w, "}");
+		write_selection(b, w);
 		break;
 	case BRIDGE_OP_QUERY_SCENE_TEXT:
 		write_scene_text(b, w);
@@ -1412,9 +1534,13 @@ static int32_t op_fixed_bytes(uint16_t op, int32_t *out)
 		*out = 0;
 		return 1;
 	case BRIDGE_OP_CAMERA_RESET:
+	case BRIDGE_OP_SELECT_CLEAR:
 		*out = 0;
 		return 1;
 	case BRIDGE_OP_SELECT:
+	case BRIDGE_OP_SELECT_ADD:
+	case BRIDGE_OP_SELECT_REMOVE:
+	case BRIDGE_OP_ENTITY_DUPLICATE:
 	case BRIDGE_OP_ENTITY_DESTROY:
 	case BRIDGE_OP_SET_PAUSED:
 	case BRIDGE_OP_CAMERA_DOLLY:
@@ -1428,6 +1554,8 @@ static int32_t op_fixed_bytes(uint16_t op, int32_t *out)
 	case BRIDGE_OP_QUERY_VIEWPORT:
 		*out = 4;
 		return 1;
+	case BRIDGE_OP_ENTITY_PARENT:
+	case BRIDGE_OP_ENTITY_FLAGS:
 	case BRIDGE_OP_ENTITY_RENDER_REF:
 	case BRIDGE_OP_ENTITY_MATERIAL_REF:
 	case BRIDGE_OP_ENTITY_SCRIPT_REF:

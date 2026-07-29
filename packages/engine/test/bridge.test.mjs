@@ -1008,3 +1008,88 @@ test("a viewport generation moving on its own still notifies", () => {
 	bridge.flush();
 	assert.equal(heard, 1);
 });
+
+/* ------------------------------------------------------------------ *
+ * The outliner (#950)
+ * ------------------------------------------------------------------ */
+
+test("the selection modifiers are three opcodes, not a flag on select", () => {
+	const module = fakeModule();
+	const bridge = createBridge(module);
+
+	bridge.select(1);
+	bridge.selectAdd(4);
+	bridge.selectRemove(1);
+	bridge.selectClear();
+	bridge.flush();
+
+	const [tape] = module.tapes;
+	assert.deepEqual(
+		tape.map((r) => r.op),
+		[OP.SELECT, OP.SELECT_ADD, OP.SELECT_REMOVE, OP.SELECT_CLEAR]
+	);
+	assert.equal(payloadReader(tape[1].payload).i32(), 4);
+	/* Clear carries nothing — there is no id to clear to. */
+	assert.equal(tape[3].payload.length, 0);
+});
+
+test("reparenting to the root is -1, not a sentinel of its own", () => {
+	const module = fakeModule();
+	const bridge = createBridge(module);
+
+	bridge.setParent(3, 7);
+	bridge.setParent(3, -1);
+	bridge.flush();
+
+	const [tape] = module.tapes;
+	assert.deepEqual(
+		tape.map((r) => r.op),
+		[OP.ENTITY_PARENT, OP.ENTITY_PARENT]
+	);
+
+	const first = payloadReader(tape[0].payload);
+	assert.equal(first.i32(), 3);
+	assert.equal(first.i32(), 7);
+
+	const second = payloadReader(tape[1].payload);
+	assert.equal(second.i32(), 3);
+	assert.equal(second.i32(), -1);
+});
+
+test("duplicate carries the id and nothing else", () => {
+	const module = fakeModule();
+	const bridge = createBridge(module);
+
+	bridge.duplicateEntity(9);
+	bridge.flush();
+
+	const [tape] = module.tapes;
+	assert.deepEqual(
+		tape.map((r) => r.op),
+		[OP.ENTITY_DUPLICATE]
+	);
+	assert.equal(payloadReader(tape[0].payload).i32(), 9);
+});
+
+test("a selection answer carries the whole set", () => {
+	const module = fakeModule();
+	const bridge = createBridge(module);
+
+	bridge.watch("selection");
+	module.willAnswer(
+		reply({
+			generations: { scene: 0, selection: 3, history: 0, viewport: 0 },
+			results: [
+				{
+					kind: "selection",
+					generation: 3,
+					fresh: false,
+					value: { id: 4, ids: [2, 4] },
+				},
+			],
+		})
+	);
+	bridge.flush();
+
+	assert.deepEqual(bridge.read("selection"), { id: 4, ids: [2, 4] });
+});

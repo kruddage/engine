@@ -11,29 +11,24 @@
 // camera and the picking live (#949) — it is the one panel big enough to be a
 // directory rather than a function here.
 //
-// Every panel below except the viewport and the inspector is a placeholder, and
-// each says so on screen with the issue that fills it in. They are empty in the
-// shipped editor today too — that is #954's premise, not a shortcut it took.
+// The remaining placeholders say so on screen with the issue that fills each
+// one in. They are empty in the shipped editor today too — that is #954's
+// premise, not a shortcut it took.
+//
+// The outliner is `src/panels/outliner/`, a directory rather than a function
+// here, for the same reason the viewport is: the tree, its view state and its
+// pure model are three files and a suite (#950).
 
 import { useEngineContext } from "../engine/engine-context.js";
 import { registerPanel } from "../shell/panels.js";
 import { Viewport } from "../viewport/viewport.js";
 import { Inspector } from "./inspector/inspector.js";
+import { Outliner } from "./outliner/outliner.js";
 import { Placeholder } from "./placeholder.js";
 
 /* ------------------------------------------------------------------ *
  * The docked panels
  * ------------------------------------------------------------------ */
-
-function Outliner(): React.JSX.Element {
-	return (
-		<Placeholder
-			heading="Scene Tree"
-			blurb="The entity hierarchy of the open project — pick a node to edit it in the Inspector."
-			issue={950}
-		/>
-	);
-}
 
 function Assets(): React.JSX.Element {
 	return (

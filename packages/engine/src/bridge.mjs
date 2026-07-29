@@ -38,8 +38,12 @@
  *
  * 2 added the viewport domain (#949) — the camera commands, the pick, the
  * gizmo and the editor-mode switch, plus a fourth generation in the reply.
+ *
+ * 3 is the outliner (#950) — reparent and duplicate, and a selection that is
+ * a set rather than one id. `selection`'s value grew an `ids` array, so a
+ * client that spoke 2 would highlight one row out of four.
  */
-export const BRIDGE_PROTOCOL = 2;
+export const BRIDGE_PROTOCOL = 3;
 
 /** 'K' 'B' 'R' 'G', little-endian. */
 export const TAPE_MAGIC = 0x47524248;
@@ -56,6 +60,9 @@ export const OP = Object.freeze({
 	UNDO: 0x0010,
 	REDO: 0x0011,
 	SELECT: 0x0020,
+	SELECT_ADD: 0x0021,
+	SELECT_REMOVE: 0x0022,
+	SELECT_CLEAR: 0x0023,
 	ENTITY_CREATE: 0x0030,
 	ENTITY_DESTROY: 0x0031,
 	ENTITY_TRANSFORM: 0x0032,
@@ -64,6 +71,9 @@ export const OP = Object.freeze({
 	ENTITY_MATERIAL_REF: 0x0035,
 	ENTITY_SCRIPT_REF: 0x0036,
 	ENTITY_PARAM: 0x0037,
+	ENTITY_PARENT: 0x0038,
+	ENTITY_DUPLICATE: 0x0039,
+	ENTITY_FLAGS: 0x003a,
 	SET_PAUSED: 0x0040,
 	SCENE_LOAD: 0x0050,
 	VIEWPORT_SIZE: 0x0060,
@@ -102,6 +112,18 @@ export const GIZMO_AXIS = Object.freeze({
 	Y: 1,
 	Z: 2,
 	ALL: 3,
+});
+
+/**
+ * Per-entity editor flags (#950). Mirrors enum world_entity_flag.
+ *
+ * Runtime only — never saved, never undoable. Hidden is skipped by the
+ * renderer and by picking; locked is skipped by picking alone, so a locked
+ * entity is still a visible backdrop that a click cannot land on.
+ */
+export const ENTITY_FLAG = Object.freeze({
+	HIDDEN: 1,
+	LOCKED: 2,
 });
 
 /** The phases of a gizmo drag. Mirrors enum bridge_drag_phase. */
@@ -422,6 +444,16 @@ export function createBridge(module, options = {}) {
 		redo: () => queue((t) => t.open(OP.REDO).close()),
 
 		select: (id) => queue((t) => t.open(OP.SELECT).i32(id).close()),
+		/*
+		 * The set operations (#950). `select` is still the unmodified
+		 * click — it replaces — and these three are what the outliner's
+		 * modifiers send. The engine holds the set; nothing here keeps
+		 * a copy to add to.
+		 */
+		selectAdd: (id) => queue((t) => t.open(OP.SELECT_ADD).i32(id).close()),
+		selectRemove: (id) =>
+			queue((t) => t.open(OP.SELECT_REMOVE).i32(id).close()),
+		selectClear: () => queue((t) => t.open(OP.SELECT_CLEAR).close()),
 		setPaused: (paused) =>
 			queue((t) => t.open(OP.SET_PAUSED).i32(paused ? 1 : 0).close()),
 
@@ -469,6 +501,24 @@ export function createBridge(module, options = {}) {
 			),
 		destroyEntity: (id) =>
 			queue((t) => t.open(OP.ENTITY_DESTROY).i32(id).close()),
+		/*
+		 * Reparent. -1 is the root, and the engine refuses a drop that
+		 * would make a cycle — it emits "command.rejected" and changes
+		 * nothing, rather than this client testing ancestry against a
+		 * tree that is already a frame old.
+		 */
+		setParent: (id, parent) =>
+			queue((t) => t.open(OP.ENTITY_PARENT).i32(id).i32(parent).close()),
+		duplicateEntity: (id) =>
+			queue((t) => t.open(OP.ENTITY_DUPLICATE).i32(id).close()),
+		/*
+		 * Hidden and locked. These reach the engine because the engine
+		 * draws and picks — but they are not document state, and the
+		 * engine treats them that way: never saved, never on the undo
+		 * ring, and cleared when a scene is opened.
+		 */
+		setEntityFlags: (id, flags) =>
+			queue((t) => t.open(OP.ENTITY_FLAGS).i32(id).u32(flags).close()),
 		setTransform: (id, transform) =>
 			queue((t) =>
 				t.open(OP.ENTITY_TRANSFORM).i32(id).transform(transform).close()

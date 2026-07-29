@@ -25,7 +25,13 @@
 // with the same dependencies is how a panel ends up watching something after it
 // is gone.
 
-import { createContext, useCallback, useContext, useSyncExternalStore } from "react";
+import {
+	createContext,
+	useCallback,
+	useContext,
+	useRef,
+	useSyncExternalStore,
+} from "react";
 
 import type {
 	EntityDetail,
@@ -109,6 +115,65 @@ export function useQuery<K extends QueryKind>(
 		() => null
 	);
 }
+
+/**
+ * Watch one query across several ids at once.
+ *
+ * `useQuery` in a loop is the shape this replaces and it is not available:
+ * a selection is a set whose size changes, and a hook count that changes with
+ * it is the one thing React forbids. So this is one subscription over the whole
+ * set — every id watched for exactly as long as it is in the set, by the same
+ * mounted-means-watched rule the single form uses.
+ *
+ * The snapshot is cached and returned by identity while every entry is
+ * unchanged. That is not an optimisation: useSyncExternalStore re-renders on
+ * `Object.is` inequality, and a fresh array each call would re-render every
+ * frame forever.
+ */
+export function useQueryEach<K extends QueryKind>(
+	kind: K,
+	ids: readonly number[]
+): (QueryValues[K] | null)[] {
+	const document = useOptionalDocument();
+	/* The dependency, as a value. `ids` is a fresh array whenever the
+	 * selection object is, and re-subscribing on identity would drop and
+	 * re-take every watch on a frame where nothing about the set changed. */
+	const key = ids.join(",");
+	const cache = useRef<(QueryValues[K] | null)[]>([]);
+
+	const subscribe = useCallback(
+		(onChange: () => void) => {
+			if (!document) return () => {};
+			const watched = key === "" ? [] : key.split(",").map(Number);
+			const unwatch = watched.map((id) => document.bridge.watch(kind, id));
+			const off = document.subscribe(onChange);
+			return () => {
+				off();
+				for (const stop of unwatch) stop();
+			};
+		},
+		[document, kind, key]
+	);
+
+	const snapshot = useCallback((): (QueryValues[K] | null)[] => {
+		const next = ids.map((id) => document?.bridge.read(kind, id) ?? null);
+		const previous = cache.current;
+		const same =
+			previous.length === next.length &&
+			previous.every((value, index) => value === next[index]);
+		if (same) return previous;
+		cache.current = next;
+		return next;
+	}, [document, kind, ids]);
+
+	return useSyncExternalStore(subscribe, snapshot, EMPTY_SNAPSHOT);
+}
+
+/* One shared array, so the server snapshot is stable by identity too. There
+ * is no server — the editor is a client-only app — but the argument is
+ * required when a component might hydrate. */
+const EMPTY: never[] = [];
+const EMPTY_SNAPSHOT = (): never[] => EMPTY;
 
 /** The scene as a flat list of entities, parent-before-child. */
 export function useSceneTree(): SceneTree | null {

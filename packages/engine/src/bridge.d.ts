@@ -67,6 +67,19 @@ export interface Transform {
 	scale: [number, number, number];
 }
 
+/**
+ * Per-entity editor flags. Mirrors enum world_entity_flag.
+ *
+ * Runtime only: the engine never writes them to a scene, never snapshots them
+ * and never puts them on the undo ring. They cross the boundary at all because
+ * the engine is what draws and what picks — an editor-side "hidden" would dim
+ * a row while the entity carried on rendering.
+ */
+export declare const ENTITY_FLAG: Readonly<{
+	HIDDEN: 1;
+	LOCKED: 2;
+}>;
+
 /** A row in the scene tree. Deliberately without a transform — see the C side. */
 export interface TreeNode {
 	id: number;
@@ -76,6 +89,8 @@ export interface TreeNode {
 	render: number;
 	material: number;
 	script: number;
+	/** ENTITY_FLAG bits: hidden, locked. */
+	flags: number;
 }
 
 export interface SceneTree {
@@ -88,8 +103,20 @@ export interface EntityDetail extends TreeNode {
 	world: Transform;
 }
 
+/**
+ * The selection: a primary and the set it belongs to (#950).
+ *
+ * `id` is the one entity a tool that acts on one entity acts on — the gizmo,
+ * the inspector, Frame Selection — and is -1 when nothing is selected. `ids`
+ * is the whole set in ascending order, and always contains `id` when there is
+ * one, so a view can render highlights from `ids` alone.
+ *
+ * Both come from the engine. Neither is derived here, and there is no setter:
+ * selecting is a command, and what comes back is what the engine agreed to.
+ */
 export interface SelectionState {
 	id: number;
+	ids: number[];
 }
 
 export interface HistoryState {
@@ -258,7 +285,13 @@ export interface Bridge {
 	abortGesture(): Bridge;
 	undo(): Bridge;
 	redo(): Bridge;
+	/** Replace the selection with one id — the unmodified click. */
 	select(id: number): Bridge;
+	/** Add to the selection and make it primary. */
+	selectAdd(id: number): Bridge;
+	/** Drop one member; the lowest survivor becomes primary. */
+	selectRemove(id: number): Bridge;
+	selectClear(): Bridge;
 	setPaused(paused: boolean): Bridge;
 	/**
 	 * Set one field of one parameter block. `slot` indexes the blocks in the
@@ -279,6 +312,17 @@ export interface Bridge {
 		renderRef?: number
 	): Bridge;
 	destroyEntity(id: number): Bridge;
+	/**
+	 * Move an entity under `parent`, or to the root with -1, keeping its
+	 * local transform. The engine refuses a drop that would make a cycle and
+	 * says so through a `command.rejected` event; nothing is thrown here,
+	 * because the answer arrives a flush later like every other one.
+	 */
+	setParent(id: number, parent: number): Bridge;
+	/** Deep-copy an entity and its subtree beside it, overrides included. */
+	duplicateEntity(id: number): Bridge;
+	/** Set an entity's editor flags (see ENTITY_FLAG). Runtime only. */
+	setEntityFlags(id: number, flags: number): Bridge;
 	setTransform(id: number, transform: TransformLike): Bridge;
 	setName(id: number, name: string): Bridge;
 	setRenderRef(id: number, ref: number): Bridge;
@@ -340,6 +384,9 @@ export declare const OP: Readonly<{
 	UNDO: number;
 	REDO: number;
 	SELECT: number;
+	SELECT_ADD: number;
+	SELECT_REMOVE: number;
+	SELECT_CLEAR: number;
 	ENTITY_CREATE: number;
 	ENTITY_DESTROY: number;
 	ENTITY_TRANSFORM: number;

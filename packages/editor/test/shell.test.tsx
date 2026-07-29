@@ -205,9 +205,30 @@ describe("panels", () => {
 		withBuiltins();
 		mount();
 
+		/*
+		 * The assets panel, since #950 gave the outliner real contents. The
+		 * assertion is about the *placeholder*, not about which panel is one —
+		 * so it follows whichever is still empty rather than being deleted with
+		 * the panel it happened to name.
+		 */
+		const bottom = within(screen.getByTestId("dock-bottom"));
+		expect(bottom.getByText("Asset Browser")).toBeTruthy();
+		expect(bottom.getByText(/Not built yet/)).toBeTruthy();
+	});
+
+	it("mounts the outliner rather than a placeholder", () => {
+		withBuiltins();
+		mount();
+
+		/*
+		 * This shell suite renders without a document, so what the outliner
+		 * shows here is its waiting state — which is the point: the panel is
+		 * real, it is placed at its home dock, and it says what it knows
+		 * instead of rendering an empty box. What it does with a document is
+		 * test/outliner.test.tsx's.
+		 */
 		const left = within(screen.getByTestId("dock-left"));
-		expect(left.getByText("Scene Tree")).toBeTruthy();
-		expect(left.getByText(/Not built yet/)).toBeTruthy();
+		expect(left.getByTestId("outliner-waiting")).toBeTruthy();
 	});
 
 	it("gives the inspector one dock rather than three", () => {

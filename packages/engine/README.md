@@ -133,6 +133,42 @@ every frame of an orbit and nothing outside the engine draws from it, so a
 generation that tracked it would invalidate the cache sixty times a second to
 report the same row of buttons.
 
+### The outliner half
+
+[#950](https://github.com/kruddage/engine/issues/950) took the wire to **3**, and
+the bump is required rather than polite for the same reason 2's was: the
+`selection` query's value grew an `ids` array, and a client speaking 2 would
+highlight one of a reader's four selected rows.
+
+```js
+bridge.selectAdd(id);              // extend the selection; this id becomes primary
+bridge.selectRemove(id);           // the lowest survivor becomes primary
+bridge.setParent(id, parent);      // -1 is the root
+bridge.duplicateEntity(id);        // the subtree, overrides included
+bridge.setEntityFlags(id, flags);  // ENTITY_FLAG.HIDDEN | .LOCKED
+```
+
+- **The selection is a set, and `id` is still its primary** — the one entity a
+  tool that acts on one entity acts on. Every reader that predates the set keeps
+  working against `id` unchanged; only the ones that want the whole set read
+  `ids`. There is deliberately no "set the selection to this list" command: the
+  primary is whatever was added last, so a caller says what it means by the
+  order it adds in.
+- **The cycle test is the engine's.** `setParent` refuses a parent that is a
+  descendant of the entity being moved, emits `command.rejected`, and changes
+  nothing. A client could compute the same answer, from a tree that is a frame
+  old, and be wrong.
+- **Duplicate is one opcode** rather than the caller walking the tree and
+  replaying creates: that walk would be against a snapshot the engine has moved
+  past, and every param override would have to cross the boundary to come
+  straight back.
+- **`ENTITY_FLAG` crosses but is not document state.** Hidden and locked reach
+  the engine because the engine is what draws and what picks — an editor-side
+  "hidden" would dim a row while the entity kept rendering. The engine never
+  saves them, never snapshots them and never puts them on the undo ring, and it
+  clears them when a scene is ingested. Remembering them across a reload is the
+  editor's job, not this one's.
+
 ### Why it is a separate export
 
 The package root is build-time code — it reads the filesystem to find artifacts,

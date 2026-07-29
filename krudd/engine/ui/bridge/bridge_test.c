@@ -75,6 +75,7 @@ static void fake_destroy(int32_t id)
 	for (i = 0; i < g_world.count; i++)
 		if (g_world.parent[i] == id)
 			fake_destroy((int32_t)i);
+	g_world.selected_set[id] = 0;
 	if (g_world.selected == id)
 		g_world.selected = -1;
 }
@@ -128,12 +129,92 @@ static int32_t fake_get_selected(void)
 	return g_world.selected;
 }
 
+/*
+ * The selection set, kept by hand like the rest of this fake world.
+ *
+ * Deliberately not world.c's implementation: the point of the fake is that the
+ * bridge is exercised against a host it does not share code with, so a bridge
+ * that read the columns directly rather than asking the vtable would show up
+ * here as a difference rather than agreeing with itself.
+ */
 static void fake_set_selected(int32_t id)
 {
-	if (id < 0)
-		g_world.selected = -1;
-	else if (live(id))
+	uint32_t i;
+
+	if (id >= 0 && !live(id))
+		return;
+	for (i = 0; i < g_world.count; i++)
+		g_world.selected_set[i] = 0;
+	g_world.selected = -1;
+	if (id >= 0) {
+		g_world.selected_set[id] = 1;
 		g_world.selected = id;
+	}
+}
+
+static void fake_select_add(int32_t id)
+{
+	if (!live(id))
+		return;
+	g_world.selected_set[id] = 1;
+	g_world.selected = id;
+}
+
+static void fake_select_remove(int32_t id)
+{
+	uint32_t i;
+
+	if (id < 0 || (uint32_t)id >= g_world.count)
+		return;
+	g_world.selected_set[id] = 0;
+	if (g_world.selected != id)
+		return;
+	g_world.selected = -1;
+	for (i = 0; i < g_world.count; i++) {
+		if (g_world.alive[i] && g_world.selected_set[i]) {
+			g_world.selected = (int32_t)i;
+			return;
+		}
+	}
+}
+
+static void fake_select_clear(void)
+{
+	fake_set_selected(-1);
+}
+
+static int32_t fake_is_selected(int32_t id)
+{
+	return live(id) && g_world.selected_set[id];
+}
+
+/* Refuses the two cycles, exactly as world_set_parent does. */
+static int32_t fake_set_parent(int32_t id, int32_t parent)
+{
+	int32_t up;
+
+	if (!live(id) || (parent >= 0 && !live(parent)) || parent == id)
+		return -1;
+	for (up = parent; up >= 0; up = g_world.parent[up])
+		if (up == id)
+			return -1;
+	g_world.parent[id] = parent;
+	return 0;
+}
+
+/* One entity, not a subtree — enough to prove the opcode lands somewhere. */
+static int32_t g_duplicated = -1;
+
+static int32_t fake_duplicate(int32_t id)
+{
+	int32_t copy;
+
+	if (!live(id))
+		return -1;
+	copy = fake_create(g_world.parent[id], &g_world.local[id],
+			   g_world.mask[id], g_world.render_ref[id]);
+	g_duplicated = id;
+	return copy;
 }
 
 static int32_t fake_get_paused(void)
@@ -261,8 +342,14 @@ static const struct entity_api g_entity = {
 	.set_render_ref   = fake_set_render_ref,
 	.set_material_ref = fake_set_material_ref,
 	.set_script_ref   = fake_set_script_ref,
+	.set_parent       = fake_set_parent,
+	.duplicate_entity = fake_duplicate,
 	.get_selected     = fake_get_selected,
 	.set_selected     = fake_set_selected,
+	.select_add       = fake_select_add,
+	.select_remove    = fake_select_remove,
+	.select_clear     = fake_select_clear,
+	.is_selected      = fake_is_selected,
 	.get_paused       = fake_get_paused,
 	.set_paused       = fake_set_paused,
 	.set_mesh_params  = fake_set_mesh_params,
@@ -587,6 +674,7 @@ static void reset_all(void)
 	memset(&g_world, 0, sizeof(g_world));
 	g_world.selected = -1;
 	g_world.outline  = -1;
+	g_duplicated     = -1;
 	g_paused         = 0;
 	g_begins = g_commits = g_aborts = g_undos = g_redos = 0;
 	g_can_undo = g_can_redo = 0;
@@ -846,7 +934,7 @@ static void test_selection_and_history_queries(void)
 	r = exchange(&b);
 
 	has(r, "\"kind\":\"selection\"");
-	has(r, "\"value\":{\"id\":1}");
+	has(r, "\"value\":{\"id\":1,\"ids\":[1]}");
 	has(r, "\"canUndo\":true");
 	has(r, "\"canRedo\":false");
 	has(r, "\"undoLabel\":\"Move\"");
@@ -1913,6 +2001,187 @@ static void test_viewport_without_services(void)
 	printf("ok: a viewport with no services answers rather than crashing\n");
 }
 
+
+/* ------------------------------------------------------------------ *
+ * The outliner (#950)
+ * ------------------------------------------------------------------ */
+
+/* The three set operations, and the ids array they move. */
+static void test_multi_select_opcodes(void)
+{
+	struct builder b;
+	const char    *r;
+	struct transform origin = {
+		.position = { 0.0f, 0.0f, 0.0f },
+		.rotation = { 0.0f, 0.0f, 0.0f, 1.0f },
+		.scale    = { 1.0f, 1.0f, 1.0f },
+	};
+
+	reset_all();
+	assert(fake_create(-1, &origin, 0, 0) == 2);
+
+	/* A plain select replaces; add extends and moves the primary. */
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_SELECT);
+	b_i32(&b, 0);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_SELECT_ADD);
+	b_i32(&b, 2);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_QUERY_SELECTION);
+	b_u32(&b, 0);
+	b_close(&b);
+	r = exchange(&b);
+	has(r, "\"value\":{\"id\":2,\"ids\":[0,2]}");
+
+	/* Remove drops one and promotes the lowest survivor. */
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_SELECT_REMOVE);
+	b_i32(&b, 2);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_QUERY_SELECTION);
+	b_u32(&b, 0);
+	b_close(&b);
+	r = exchange(&b);
+	has(r, "\"value\":{\"id\":0,\"ids\":[0]}");
+
+	/* Clear empties both halves. */
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_SELECT_CLEAR);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_QUERY_SELECTION);
+	b_u32(&b, 0);
+	b_close(&b);
+	r = exchange(&b);
+	has(r, "\"value\":{\"id\":-1,\"ids\":[]}");
+	printf("ok: the selection is a set on the wire\n");
+}
+
+/* A second row selected moves the selection generation, so the tree redraws. */
+static void test_adding_to_the_selection_moves_the_generation(void)
+{
+	struct builder b;
+	const char    *r;
+	uint32_t       gen;
+
+	reset_all();
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_SELECT);
+	b_i32(&b, 0);
+	b_close(&b);
+	exchange(&b);
+	gen = bridge_generation(&g_bridge, BRIDGE_SELECTION);
+
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_SELECT_ADD);
+	b_i32(&b, 1);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_QUERY_SELECTION);
+	b_u32(&b, gen);
+	b_close(&b);
+	r = exchange(&b);
+
+	assert(bridge_generation(&g_bridge, BRIDGE_SELECTION) != gen);
+	/* The primary did move too, but the point is that the *set* is hashed:
+	 * a stale generation would have answered fresh with no value at all. */
+	lacks(r, "\"fresh\":true");
+	has(r, "\"ids\":[0,1]");
+	printf("ok: a second selected row invalidates the cache\n");
+}
+
+/* Reparenting lands on the entity api and shows up in the tree. */
+static void test_reparent(void)
+{
+	struct builder   b;
+	const char      *r;
+	struct transform origin = {
+		.position = { 0.0f, 0.0f, 0.0f },
+		.rotation = { 0.0f, 0.0f, 0.0f, 1.0f },
+		.scale    = { 1.0f, 1.0f, 1.0f },
+	};
+
+	reset_all();
+	assert(fake_create(-1, &origin, 0, 0) == 2);
+
+	/* Move the child (1) off root (0) and under the new root (2). */
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_ENTITY_PARENT);
+	b_i32(&b, 1);
+	b_i32(&b, 2);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_QUERY_TREE);
+	b_u32(&b, 0);
+	b_close(&b);
+	r = exchange(&b);
+
+	assert(g_world.parent[1] == 2);
+	has(r, "\"id\":1,\"parent\":2");
+	lacks(r, "\"error\":\"opcode\"");
+
+	/* Unparenting to the root is -1, not a sentinel of its own. */
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_ENTITY_PARENT);
+	b_i32(&b, 1);
+	b_i32(&b, -1);
+	b_close(&b);
+	exchange(&b);
+	assert(g_world.parent[1] == -1);
+	printf("ok: reparenting crosses the boundary\n");
+}
+
+/* A drop that would make a cycle comes back as a notice, not a dead batch. */
+static void test_reparent_cycle_is_an_event(void)
+{
+	struct builder b;
+	const char    *r;
+
+	reset_all();
+
+	/* 0 is 1's parent; dropping 0 onto 1 would close the loop. */
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_ENTITY_PARENT);
+	b_i32(&b, 0);
+	b_i32(&b, 1);
+	b_close(&b);
+	b_open(&b, BRIDGE_OP_SELECT);
+	b_i32(&b, 1);
+	b_close(&b);
+	r = exchange(&b);
+
+	assert(g_world.parent[0] == -1);          /* nothing moved */
+	has(r, "\"type\":\"command.rejected\"");
+	has(r, "\"error\":null");                 /* the batch still applied */
+	assert(g_world.selected == 1);            /* including what came after */
+	printf("ok: a cycle-making drop is refused out loud\n");
+}
+
+/* Duplicate reaches the entity api and reports a refusal. */
+static void test_duplicate(void)
+{
+	struct builder b;
+	const char    *r;
+
+	reset_all();
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_ENTITY_DUPLICATE);
+	b_i32(&b, 1);
+	b_close(&b);
+	r = exchange(&b);
+
+	assert(g_duplicated == 1);
+	assert(g_world.count == 3);
+	lacks(r, "\"type\":\"command.rejected\"");
+
+	/* A dead id is a notice rather than silence. */
+	b_reset(&b);
+	b_open(&b, BRIDGE_OP_ENTITY_DUPLICATE);
+	b_i32(&b, 99);
+	b_close(&b);
+	r = exchange(&b);
+	has(r, "\"type\":\"command.rejected\"");
+	printf("ok: duplicate crosses the boundary\n");
+}
+
 int main(void)
 {
 	/*
@@ -1955,6 +2224,13 @@ int main(void)
 	test_scene_load_rejection_is_an_event();
 	test_load_then_save_in_one_batch();
 	test_no_services_is_survivable();
+
+	/* The outliner (#950). */
+	test_multi_select_opcodes();
+	test_adding_to_the_selection_moves_the_generation();
+	test_reparent();
+	test_reparent_cycle_is_an_event();
+	test_duplicate();
 
 	/* The viewport domain (#949). */
 	test_camera_commands();

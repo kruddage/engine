@@ -80,6 +80,22 @@ struct entity_api {
 				 uint32_t mask, uint32_t render_ref);
 	/* Tombstone id and its subtree; clears a selection it tombstones. */
 	void    (*destroy_entity)(int32_t id);
+	/*
+	 * Move id under `parent` (-1 = root), keeping its local transform.
+	 * Returns 0, or -1 without changing anything when id is not live, when
+	 * parent is neither -1 nor live, or when parent is id itself or a
+	 * descendant of it — the drop that would make a cycle. Records an undo
+	 * step, so a drag in the outliner is one press of Undo.
+	 */
+	int32_t (*set_parent)(int32_t id, int32_t parent);
+	/*
+	 * Deep-copy id and its subtree under id's own parent and return the new
+	 * root's id, or -1 if it would not fit. Every column is copied, param
+	 * overrides included, so the copy draws identically the frame it
+	 * appears. Records an undo step; the selection is left alone, because
+	 * what the copy should be is the caller's policy.
+	 */
+	int32_t (*duplicate_entity)(int32_t id);
 	/* Overwrite id's local transform (visible after the next tick). */
 	void    (*set_transform)(int32_t id, const struct transform *local);
 	/* Rename id; NULL/empty clears its name. */
@@ -153,9 +169,37 @@ struct entity_api {
 	void    (*set_texture_params)(int32_t id, const uint8_t *bytes,
 				      uint32_t len);
 
-	/* Shared selection: -1 = none. set ignores stale/out-of-range ids. */
+	/*
+	 * Shared selection: a set, with `get_selected` naming its primary
+	 * member — the one entity a tool that acts on one entity acts on.
+	 * -1 = nothing selected. set replaces the set with one id, and ignores
+	 * stale/out-of-range ids.
+	 *
+	 * The set arrived with the outliner (#950), and it lives here rather
+	 * than in the editor for the reason every other piece of document state
+	 * does: the gizmo, the outline pass and a game's own rules all read the
+	 * selection, and a second copy in TypeScript is two views that can
+	 * disagree about what is selected.
+	 */
 	int32_t (*get_selected)(void);
 	void    (*set_selected)(int32_t id);
+	/* Add id to the selection and make it primary. Ignores stale ids. */
+	void    (*select_add)(int32_t id);
+	/* Drop id; the lowest remaining member becomes primary. */
+	void    (*select_remove)(int32_t id);
+	void    (*select_clear)(void);
+	/* Whether id is in the selection — the question the outline pass asks. */
+	int32_t (*is_selected)(int32_t id);
+
+	/*
+	 * Per-entity editor flags: hidden and locked (enum world_entity_flag).
+	 * Runtime only — never saved, never snapshotted, never on the undo
+	 * history. They are here rather than in the editor because the engine
+	 * is what draws and what picks: an editor-side "hidden" would dim a row
+	 * while the entity carried on rendering.
+	 */
+	void     (*set_entity_flags)(int32_t id, uint32_t flags);
+	uint32_t (*entity_flags)(int32_t id);
 
 	/*
 	 * Game-driven outline target: the entity the renderer outlines in-game,

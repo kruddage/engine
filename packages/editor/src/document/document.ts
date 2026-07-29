@@ -63,6 +63,17 @@ export interface DocumentState {
 	dirty: boolean;
 	/** How many gestures are open. Non-zero during a drag. */
 	gestureDepth: number;
+	/**
+	 * How many documents have been loaded into this session.
+	 *
+	 * Not a version and not a generation — the scene's generation is the
+	 * engine's and already crosses the boundary. This counts one specific
+	 * event: **the world was replaced**, so every entity id now means
+	 * something else. A panel holding anything keyed by id — the outliner's
+	 * expanded rows (#950) — has to drop it, and there is otherwise no signal
+	 * that says so: a load moves the scene generation exactly as an edit does.
+	 */
+	loads: number;
 }
 
 export interface KruddDocument {
@@ -131,10 +142,11 @@ export function createDocument(options: DocumentOptions): KruddDocument {
 	 */
 	let savedGeneration: number | null = null;
 	let gestureDepth = 0;
+	let loads = 0;
 
 	const listeners = new Set<(reply: BridgeReply) => void>();
 	const stateListeners = new Set<() => void>();
-	let state: DocumentState = { dirty: false, gestureDepth: 0 };
+	let state: DocumentState = { dirty: false, gestureDepth: 0, loads: 0 };
 
 	/*
 	 * A new object only when something actually changed.
@@ -148,7 +160,8 @@ export function createDocument(options: DocumentOptions): KruddDocument {
 	function publish(next: Partial<DocumentState>): void {
 		const merged = { ...state, ...next };
 		if (merged.dirty === state.dirty &&
-		    merged.gestureDepth === state.gestureDepth) {
+		    merged.gestureDepth === state.gestureDepth &&
+		    merged.loads === state.loads) {
 			return;
 		}
 		state = merged;
@@ -222,7 +235,8 @@ export function createDocument(options: DocumentOptions): KruddDocument {
 		 */
 		await bridge.ask("selection");
 		savedGeneration = bridge.generations.scene;
-		publish({ dirty: false, gestureDepth });
+		loads += 1;
+		publish({ dirty: false, gestureDepth, loads });
 	}
 
 	return {

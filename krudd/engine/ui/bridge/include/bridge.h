@@ -70,8 +70,15 @@
  * The bump is required rather than polite — the reply's `generations` object
  * grew a key, and a client that does not know about it would read a `viewport`
  * query's stamp as 0 and re-fetch the whole thing every frame.
+ *
+ * 3 is the outliner (#950): reparent and duplicate on the way in, and a
+ * selection that is a set rather than one id in both directions. The bump is
+ * required for the same reason — `selection`'s value grew an `ids` array, and
+ * a client that read only `id` would render one highlighted row out of four
+ * and look, from the reader's side, like a tree that had dropped their
+ * selection.
  */
-#define BRIDGE_PROTOCOL 2
+#define BRIDGE_PROTOCOL 3
 
 /* 'K' 'B' 'R' 'G' little-endian — the tape's first four bytes. */
 #define BRIDGE_TAPE_MAGIC 0x47524248u
@@ -120,7 +127,22 @@ enum bridge_op {
 	BRIDGE_OP_UNDO			= 0x0010,
 	BRIDGE_OP_REDO			= 0x0011,
 
+	/*
+	 * Selection. SELECT replaces the set with one id — the unmodified
+	 * click; the other three are the modifier conventions the outliner
+	 * needs (#950), and they are separate opcodes rather than a flag on
+	 * SELECT because "add" and "replace" are different edits and a client
+	 * that got the flag wrong would silently do the other one.
+	 *
+	 * The engine holds the set. Nothing here is a hint the editor could
+	 * have computed itself, because the gizmo, the outline pass and a
+	 * game's own rules all read the same selection and a copy on the far
+	 * side of this boundary is two views that can disagree.
+	 */
 	BRIDGE_OP_SELECT		= 0x0020,
+	BRIDGE_OP_SELECT_ADD		= 0x0021,
+	BRIDGE_OP_SELECT_REMOVE		= 0x0022,
+	BRIDGE_OP_SELECT_CLEAR		= 0x0023,
 
 	BRIDGE_OP_ENTITY_CREATE		= 0x0030,
 	BRIDGE_OP_ENTITY_DESTROY	= 0x0031,
@@ -138,6 +160,36 @@ enum bridge_op {
 	 * of that rule, and the first divergence would be silent.
 	 */
 	BRIDGE_OP_ENTITY_PARAM		= 0x0037,
+	/*
+	 * Reparent (#950): move an entity under another, or to the root with
+	 * -1. The engine keeps the entity's local transform and refuses a drop
+	 * that would make a cycle, emitting "command.rejected" rather than
+	 * failing quietly — a drag that appears to do nothing is
+	 * indistinguishable from one the editor dropped on the floor.
+	 *
+	 * The cycle test is the engine's because the hierarchy is, and a
+	 * second implementation in TypeScript would be a second answer to
+	 * "is this a descendant" reading a tree that is already one frame old.
+	 */
+	BRIDGE_OP_ENTITY_PARENT		= 0x0038,
+	/*
+	 * Duplicate an entity and its subtree. One opcode rather than the
+	 * editor walking the tree and replaying creates: the walk would be
+	 * against a snapshot the engine has moved past, and every param
+	 * override would have to cross the boundary to come straight back.
+	 */
+	BRIDGE_OP_ENTITY_DUPLICATE	= 0x0039,
+	/*
+	 * The editor flags — hidden and locked (#950).
+	 *
+	 * These cross the boundary at all because the engine is what draws and
+	 * what picks; they are nonetheless *not* document state, and the engine
+	 * treats them accordingly: never saved, never snapshotted, never on the
+	 * undo ring. The editor is what remembers them across a reload, which
+	 * is the right place for a preference about how someone is looking at a
+	 * scene.
+	 */
+	BRIDGE_OP_ENTITY_FLAGS		= 0x003a,
 
 	BRIDGE_OP_SET_PAUSED		= 0x0040,
 

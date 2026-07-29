@@ -623,6 +623,349 @@ static void test_texture_params_snapshot(void)
 	world_snapshot_free(snap, &test_mem);
 }
 
+
+/*
+ * A child reparented under an entity with a HIGHER id — the case the old
+ * parent-before-child ordering made unrepresentable, and the one a designer
+ * makes by dragging a row down the outliner.
+ */
+static void test_reparent_upward_id(void)
+{
+	struct transform t;
+	int32_t          a, b, c;
+
+	make_identity(&t);
+	world_reset(&w);
+
+	a = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+	b = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+	c = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+
+	/* Move a (the lowest id) under c (the highest). */
+	t.position[0] = 5.0f;
+	world_set_transform(&w, c, &t);
+	make_identity(&t);
+	t.position[0] = 2.0f;
+	world_set_transform(&w, a, &t);
+
+	assert(world_set_parent(&w, a, c) == 0);
+	assert(w.parent[a] == c);
+
+	/* set_parent recomposes the subtree straight away, without a tick. */
+	assert(feq(w.world_xform[a].position[0], 7.0f));
+
+	/* And a full propagate agrees, walking an out-of-order column. */
+	world_propagate_transforms(&w, 0.0f);
+	assert(feq(w.world_xform[a].position[0], 7.0f));
+	assert(feq(w.world_xform[c].position[0], 5.0f));
+	assert(feq(w.world_xform[b].position[0], 0.0f));
+
+	/* The local transform is what survives a reparent, by design. */
+	assert(feq(w.local[a].position[0], 2.0f));
+}
+
+/* Cycles are refused rather than clamped, and nothing moves when they are. */
+static void test_reparent_refuses_cycles(void)
+{
+	struct transform t;
+	int32_t          a, b, c;
+
+	make_identity(&t);
+	world_reset(&w);
+
+	a = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+	b = world_create_entity(&w, a, &t, 0u);
+	c = world_create_entity(&w, b, &t, 0u);
+
+	assert(world_is_ancestor(&w, a, c));
+	assert(!world_is_ancestor(&w, c, a));
+
+	/* Onto itself. */
+	assert(world_set_parent(&w, a, a) == -1);
+	assert(w.parent[a] == WORLD_NO_PARENT);
+
+	/* Onto its own child, and onto its own grandchild. */
+	assert(world_set_parent(&w, a, b) == -1);
+	assert(world_set_parent(&w, a, c) == -1);
+	assert(w.parent[a] == WORLD_NO_PARENT);
+
+	/* A tombstoned parent is refused too. */
+	world_destroy_entity(&w, c);
+	assert(world_set_parent(&w, b, c) == -1);
+
+	/* Unparenting to root always works. */
+	assert(world_set_parent(&w, b, WORLD_NO_PARENT) == 0);
+	assert(w.parent[b] == WORLD_NO_PARENT);
+}
+
+/* The destroy cascade still reaches a subtree whose ids run backwards. */
+static void test_destroy_cascade_out_of_order(void)
+{
+	struct transform t;
+	int32_t          a, b, c;
+
+	make_identity(&t);
+	world_reset(&w);
+
+	a = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+	b = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+	c = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+
+	/* c -> b -> a, so every parent sits above its child. */
+	assert(world_set_parent(&w, b, c) == 0);
+	assert(world_set_parent(&w, a, b) == 0);
+
+	world_destroy_entity(&w, c);
+	assert(!w.alive[a] && !w.alive[b] && !w.alive[c]);
+}
+
+/* Export re-establishes parent-before-child even when the world is not. */
+static void test_export_is_topological(void)
+{
+	struct transform t;
+	struct scene    *s;
+	int32_t          a, b, c;
+	uint32_t         i;
+
+	make_identity(&t);
+	world_reset(&w);
+
+	a = world_create_entity(&w, WORLD_NO_PARENT, &t, COMPONENT_NAME);
+	b = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+	c = world_create_entity(&w, WORLD_NO_PARENT, &t, COMPONENT_NAME);
+	world_set_name(&w, a, "leaf");
+	world_set_name(&w, c, "root");
+
+	assert(world_set_parent(&w, b, c) == 0);
+	assert(world_set_parent(&w, a, b) == 0);
+
+	s = world_export_scene(&w, &test_mem);
+	assert(s && s->count == 3);
+
+	/* The file-format contract: every parent index is below its child's. */
+	for (i = 0; i < s->count; i++)
+		assert(s->entities[i].parent < (int32_t)i);
+
+	/* c was the world's highest id and is the file's first record. */
+	assert(s->entities[0].parent == -1);
+	assert(strcmp(s->names + s->entities[0].name_off, "root") == 0);
+	assert(s->entities[2].parent == 1);
+	assert(strcmp(s->names + s->entities[2].name_off, "leaf") == 0);
+
+	/* And it survives a round trip through ingest. */
+	assert(world_ingest_scene(&w, s) == 0);
+	assert(w.count == 3);
+
+	test_mem.free(s->entities);
+	test_mem.free(s->names);
+	test_mem.free(s);
+}
+
+/* Duplicate deep-copies the subtree, overrides and names included. */
+static void test_duplicate_subtree(void)
+{
+	static const uint8_t ov[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+	struct transform     t;
+	int32_t              a, b, copy;
+	const uint8_t       *got;
+	uint32_t             len = 0, before;
+
+	make_identity(&t);
+	world_reset(&w);
+
+	a = world_create_entity(&w, WORLD_NO_PARENT, &t, COMPONENT_NAME);
+	world_set_name(&w, a, "crate");
+	world_set_render_ref(&w, a, 7u);
+	world_set_mesh_params(&w, a, ov, sizeof(ov));
+
+	t.position[1] = 3.0f;
+	b = world_create_entity(&w, a, &t, 0u);
+	world_set_material_ref(&w, b, 4u);
+
+	before = w.count;
+	copy = world_duplicate_entity(&w, a);
+	assert(copy >= 0 && copy != a);
+	assert(w.count == before + 2);          /* the subtree, not just a */
+
+	/* The copy is a sibling of the original, not its child. */
+	assert(w.parent[copy] == w.parent[a]);
+	assert(strcmp(world_entity_name(&w, (uint32_t)copy), "crate") == 0);
+	assert(w.render_ref[copy] == 7u);
+	got = world_mesh_params(&w, (uint32_t)copy, &len);
+	assert(got && len == sizeof(ov) && memcmp(got, ov, sizeof(ov)) == 0);
+
+	/* The child came too, reparented onto the copy rather than the original. */
+	assert(w.parent[copy + 1] == copy);
+	assert(w.material_ref[copy + 1] == 4u);
+	assert(feq(w.local[copy + 1].position[1], 3.0f));
+
+	/* Editing the copy does not touch the original. */
+	world_set_name(&w, copy, "crate-2");
+	assert(strcmp(world_entity_name(&w, (uint32_t)a), "crate") == 0);
+
+	/* Duplicating is not selecting. */
+	assert(world_get_selected(&w) == -1);
+
+	/* A dead id duplicates to nothing and changes nothing. */
+	before = w.count;
+	world_destroy_entity(&w, a);
+	assert(world_duplicate_entity(&w, a) == -1);
+	assert(w.count == before);
+}
+
+/*
+ * Hidden and locked are runtime state: set, read, cleared on create and on
+ * ingest, and deliberately absent from both the snapshot and the export.
+ */
+static void test_entity_flags_are_runtime_only(void)
+{
+	struct transform       t;
+	struct world_snapshot *snap;
+	struct scene          *sc;
+	int32_t                a, b;
+
+	make_identity(&t);
+	world_reset(&w);
+	a = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+	b = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+
+	assert(world_entity_flags(&w, a) == 0);
+	world_set_entity_flags(&w, a, WORLD_ENTITY_HIDDEN | WORLD_ENTITY_LOCKED);
+	assert(world_entity_flags(&w, a) ==
+	       (WORLD_ENTITY_HIDDEN | WORLD_ENTITY_LOCKED));
+	assert(world_entity_flags(&w, b) == 0);
+
+	/* Unknown bits are dropped rather than stored. */
+	world_set_entity_flags(&w, b, 0xFFu);
+	assert(world_entity_flags(&w, b) ==
+	       (WORLD_ENTITY_HIDDEN | WORLD_ENTITY_LOCKED));
+
+	/* A dead id reads 0 and ignores a write. */
+	world_destroy_entity(&w, b);
+	world_set_entity_flags(&w, b, WORLD_ENTITY_HIDDEN);
+	assert(world_entity_flags(&w, b) == 0);
+
+	/*
+	 * Undo must not unhide. The snapshot does not carry the flags, so
+	 * restoring one taken before the hide leaves the entity hidden.
+	 */
+	snap = world_snapshot_capture(&w, &test_mem);
+	assert(snap != NULL);
+	world_set_entity_flags(&w, a, 0u);
+	world_snapshot_restore(&w, snap);
+	assert(world_entity_flags(&w, a) == 0);
+	world_snapshot_free(snap, &test_mem);
+
+	/* Nor does a save carry them: struct scene has no room for one. */
+	world_set_entity_flags(&w, a, WORLD_ENTITY_HIDDEN);
+	sc = world_export_scene(&w, &test_mem);
+	assert(sc && sc->count == 1);
+	assert(world_ingest_scene(&w, sc) == 0);
+	assert(world_entity_flags(&w, 0) == 0);   /* opened visible */
+	test_mem.free(sc->entities);
+	test_mem.free(sc->names);
+	test_mem.free(sc);
+}
+
+/* The selection is a set, with the most recent addition as primary. */
+static void test_multi_selection(void)
+{
+	struct transform t;
+	int32_t          e0, e1, e2, ids[4];
+
+	make_identity(&t);
+	world_reset(&w);
+
+	e0 = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+	e1 = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+	e2 = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+
+	/* A plain set replaces the set and is its own primary. */
+	world_set_selected(&w, e1);
+	assert(world_selection(&w, ids, 4) == 1 && ids[0] == e1);
+	assert(world_is_selected(&w, e1) && !world_is_selected(&w, e0));
+
+	world_select_add(&w, e0);
+	world_select_add(&w, e2);
+	assert(world_selection(&w, ids, 4) == 3);
+	assert(ids[0] == e0 && ids[1] == e1 && ids[2] == e2);  /* ascending */
+	assert(world_get_selected(&w) == e2);                  /* newest */
+
+	/* Re-adding a member moves the primary without growing the set. */
+	world_select_add(&w, e0);
+	assert(world_selection(&w, ids, 4) == 3);
+	assert(world_get_selected(&w) == e0);
+
+	/* Removing the primary promotes the lowest survivor. */
+	world_select_remove(&w, e0);
+	assert(world_selection(&w, ids, 4) == 2);
+	assert(world_get_selected(&w) == e1);
+
+	/* A short buffer still reports the true count. */
+	assert(world_selection(&w, ids, 1) == 2);
+
+	/* A replacing set drops everything else. */
+	world_set_selected(&w, e2);
+	assert(world_selection(&w, ids, 4) == 1 && ids[0] == e2);
+
+	/* Destroying a member drops it from the set and promotes a survivor. */
+	world_select_add(&w, e1);
+	world_destroy_entity(&w, e1);
+	assert(!world_is_selected(&w, e1));
+	assert(world_get_selected(&w) == e2);
+
+	world_select_clear(&w);
+	assert(world_selection(&w, ids, 4) == 0);
+	assert(world_get_selected(&w) == -1);
+}
+
+/* A snapshot carries the whole selection, not just the primary. */
+static void test_selection_snapshot(void)
+{
+	struct transform       t;
+	struct world_snapshot *snap;
+	int32_t                e0, e1, ids[4];
+
+	make_identity(&t);
+	world_reset(&w);
+
+	e0 = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+	e1 = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+
+	world_set_selected(&w, e0);
+	world_select_add(&w, e1);
+
+	snap = world_snapshot_capture(&w, &test_mem);
+	assert(snap != NULL);
+
+	world_select_clear(&w);
+	assert(world_selection(&w, ids, 4) == 0);
+
+	world_snapshot_restore(&w, snap);
+	assert(world_selection(&w, ids, 4) == 2);
+	assert(world_get_selected(&w) == e1);
+
+	world_snapshot_free(snap, &test_mem);
+}
+
+/* A fresh world does not inherit the previous one's selection flags. */
+static void test_reset_clears_selection_flags(void)
+{
+	struct transform t;
+	int32_t          e0, ids[4];
+
+	make_identity(&t);
+	world_reset(&w);
+	e0 = world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+	world_set_selected(&w, e0);
+	assert(world_selection(&w, ids, 4) == 1);
+
+	world_reset(&w);
+	world_create_entity(&w, WORLD_NO_PARENT, &t, 0u);
+	assert(world_selection(&w, ids, 4) == 0);
+	assert(world_get_selected(&w) == -1);
+}
+
 int main(void)
 {
 	mem_init();
@@ -644,6 +987,15 @@ int main(void)
 	test_material_params_snapshot();
 	test_mesh_params_snapshot();
 	test_texture_params_snapshot();
+	test_reparent_upward_id();
+	test_reparent_refuses_cycles();
+	test_destroy_cascade_out_of_order();
+	test_export_is_topological();
+	test_duplicate_subtree();
+	test_entity_flags_are_runtime_only();
+	test_multi_selection();
+	test_selection_snapshot();
+	test_reset_clears_selection_flags();
 
 	mem_shutdown();
 	printf("entity tests passed\n");

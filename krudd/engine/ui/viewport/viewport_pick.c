@@ -54,6 +54,16 @@ int32_t viewport_pick_entity(const struct world *w,
 
 		if (!w->alive[e] || !(w->mask[e] & COMPONENT_RENDER))
 			continue;
+		/*
+		 * Hidden and locked are both unpickable (#950), and for the
+		 * same reason from the reader's side: a click should land on
+		 * the thing they can see and are allowed to move. Hidden is
+		 * not drawn at all, so picking it would select something
+		 * invisible; locked is drawn precisely so it can be a backdrop
+		 * to work in front of.
+		 */
+		if (w->flags[e] & (WORLD_ENTITY_HIDDEN | WORLD_ENTITY_LOCKED))
+			continue;
 		src = (const char *)asset->get_data(w->render_ref[e], NULL);
 		if (!src)
 			continue;

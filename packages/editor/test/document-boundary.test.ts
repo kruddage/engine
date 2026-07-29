@@ -67,7 +67,7 @@ describe("the boundary has one door", () => {
 		 * would be a mutation nothing can describe, log or route.
 		 */
 		const mutators =
-			/\bbridge\.(select|createEntity|destroyEntity|setTransform|setName|setRenderRef|setMaterialRef|setScriptRef|setPaused|loadScene|undo|redo|setViewportSize|orbitCamera|panCamera|dollyCamera|frameCamera|resetCamera|pick|setEditorMode|setGizmoMode|setGizmoSnap|gizmoDrag|setGrid)\s*\(/;
+			/\bbridge\.(select|selectAdd|selectRemove|selectClear|createEntity|destroyEntity|setParent|duplicateEntity|setEntityFlags|setTransform|setName|setRenderRef|setMaterialRef|setScriptRef|setPaused|loadScene|undo|redo|setViewportSize|orbitCamera|panCamera|dollyCamera|frameCamera|resetCamera|pick|setEditorMode|setGizmoMode|setGizmoSnap|gizmoDrag|setGrid)\s*\(/;
 
 		const callers = Object.entries(SOURCES)
 			.filter(([, text]) => mutators.test(stripComments(text)))

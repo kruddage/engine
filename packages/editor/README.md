@@ -11,17 +11,20 @@ pnpm --filter @kruddage/editor run build      # typecheck, then a production bui
 
 ## What this is, at this stage
 
-**The shell, and panels that are honest about being empty.** Command bar,
-toolbar, rail, resizable docks around a viewport deck, and a status strip —
-built in [#954](https://github.com/kruddage/engine/issues/954) as far as it goes
-without the boundary, which turns out to be all the way, because none of the
-panels have contents yet.
+**The shell, the viewport, the inspector and the outliner.** The asset browser
+and the build panel are still placeholders that say so on screen.
 
-They are empty in the shipped editor today too. Every dock in
-`krudd/engine/core/editor_layout.scm` renders a heading and a one-line blurb;
-this shell renders the same headings and the same blurbs, plus the issue that
-fills each one in. What it adds is a frame the later panels mount into rather
-than replace.
+The frame — command bar, toolbar, rail, resizable docks around a viewport deck,
+and a status strip — was built in
+[#954](https://github.com/kruddage/engine/issues/954) before the boundary
+existed, and it has not moved since. Every panel that has arrived has arrived by
+adding a file and a line to `src/panels/index.tsx`, which is the property that
+whole issue was about.
+
+The panels that are still empty are empty in the shipped editor today too. Every
+dock in `krudd/engine/core/editor_layout.scm` renders a heading and a one-line
+blurb; this shell renders the same headings and the same blurbs, plus the issue
+that fills each one in.
 
 ### The vocabulary
 
@@ -257,6 +260,171 @@ push channels that predate the boundary; fps and the resolution are still
 measured from the page, and `src/engine/frame-stats.ts` explains why that is
 honest rather than a stand-in.
 
+## The outliner, and what it cost the engine
+
+[#950](https://github.com/kruddage/engine/issues/950) is the smallest issue in
+the initiative and the one that pushed the most change down into the C tree. The
+reason is worth stating up front: **an outliner is not a view of a list, it is a
+second view of the document**, and three of the things it does — select several
+entities, move one under another, hide one — had no representation on the far
+side of the boundary at all.
+
+### The selection is a set, and the set lives in the engine
+
+`SelectionState` carried one id. #949 said so and said that multi-select "is a
+boundary change before it is a viewport one, and it belongs with whatever adds
+it". This is whatever adds it.
+
+`struct world` grew a `selected_set` flag column beside the `selected` id, and
+`selected` kept its meaning exactly: **the primary member — the one entity a
+tool that acts on one entity acts on.** The gizmo, Frame Selection, the
+inspector and a game reading the picked piece all still read it and none of them
+changed. What changed is that the outline pass now asks `is_selected` per entity
+rather than comparing against the primary, so all four of a reader's ctrl-clicked
+rows get a ring.
+
+The alternative was a selection set in TypeScript, and it fails the first time
+anything else looks: a C-side gizmo, a script, an undo. Two views that can
+disagree about what is selected is the failure #947 exists to prevent, and the
+outliner is the panel that would have introduced it.
+
+### Ids are stable; the columns are no longer topological
+
+`world.h` used to promise that a parent's index was always below its child's,
+and every hierarchy walk in `entity.c` was one forward sweep on the strength of
+it. Reparenting ends that promise, and it could not have done anything else:
+moving an entity under one that happens to sit at a higher index can preserve
+the ordering **or** the ids, and not both.
+
+**Ids won.** The selection, the undo snapshots, the outliner's rows and the
+bridge all name entities by id, and an id that moved under a drag would silently
+mean a different entity in all four.
+
+What that cost, in full:
+
+| | Was | Is |
+|---|---|---|
+| `world_propagate_transforms` | one forward sweep | each entity resolved after its ancestors, by climbing to the first resolved one. Still linear in the live count |
+| `propagate_subtree`, the destroy cascade | one forward sweep | sweep to a fixed point — as many passes as the subtree is deep |
+| `world_export_scene` | indices in id order | indices assigned parent-before-child |
+
+That last row is the one that matters and is easy to miss: `struct scene`'s
+ordering (`scene.h`) is a **file format** guarantee, not an implementation
+detail — a decoder resolves parents in one pass and would read a forward
+reference as a parent that does not exist yet. So the ordering is re-established
+at the one place it is actually promised, and `scene_save.c` needed no change at
+all because it already recursed from the roots.
+
+Cycles were the failure the old ordering made unrepresentable. `world_set_parent`
+is now what makes them so: it refuses a parent that is a descendant of the entity
+being moved, and every walk is depth-capped besides, so a corrupt column degrades
+rather than spinning.
+
+**A reparent keeps the entity's local transform**, so it is a pure hierarchy edit
+that inverts exactly. Preserving the world pose was the alternative and it needs
+a divide by the new parent's scale, which is undefined for the zero-scale
+entities scenes legitimately contain.
+
+### Hidden and locked: engine state, editor memory, not the document
+
+The issue calls these "editor-side state that does not belong in the document"
+and asks where they live and whether they survive a save. Both halves are true
+at once, and pretending otherwise is what makes this worth a section.
+
+**They reach the engine, because the engine is what draws and what picks.** An
+editor-side "hidden" would dim a row in a list while the entity carried on
+rendering — that is not hiding it. So `struct world` grew a `flags` column;
+hidden is skipped by the forward pass, the shadow pass and picking, and locked is
+skipped by picking alone (a locked entity is a visible backdrop that a click
+cannot land on, which is what locking is *for*).
+
+**They are not document state, and the engine treats them accordingly:** never
+exported, never captured in an undo snapshot, never on the history ring, and
+cleared when a scene is ingested.
+
+- **Does a save carry them? No.** A level that shipped with something invisible
+  nobody could find is the failure that decides it.
+- **Does Undo un-hide? No.** The snapshot does not carry them, so pressing Undo
+  after hiding a light undoes the edit before it. How someone is looking at a
+  scene is not a change to the scene.
+- **Do they survive a reload? Yes**, and that is the editor's doing:
+  `src/panels/outliner/view-state.ts` mirrors them into browser storage beside
+  the dock layout and replays them onto a scene once, per document.
+
+The mirror is memory and never truth. A row renders from `scene.tree`'s answer,
+exactly as its highlight renders from the engine's selection.
+
+### Expansion state, and the one line that bounds it
+
+Expansion belongs to `react-arborist`'s own store. It survives a selection change
+for free, because nothing remounts the tree on one — #950's criterion. It does
+**not** survive a scene load, and that takes one line rather than none: the panel
+keys the tree on `DocumentState.loads`, a counter the document bumps when a load
+lands. Restoring "row 12 was open" onto a scene whose id 12 is something else is
+the failure that rules out persisting it.
+
+`loads` is a new field and deliberately not a generation: the scene's generation
+is the engine's and moves for every edit. This counts one specific event — **the
+world was replaced, so every id now means something else** — and nothing else
+says that.
+
+### One selection, two owners, and the deviation
+
+`react-arborist` keeps a selection of its own. Its keyboard navigation, its ARIA
+and its drag all read it, and its click handling is already ctrl-to-toggle and
+shift-for-a-range — the conventions the issue asks for. Turning it off would mean
+hand-rolling the behaviour the dependency exists to provide.
+
+So the split is: **the library decides what the gesture meant; the engine decides
+what is selected.** `onSelect` becomes `selection.set` / `.add` / `.clear`
+commands, and an effect pushes the engine's answer back into the library whenever
+the two differ — in that direction only. Nothing reads the library's copy to
+decide what is selected; the rows highlight from `useSelection()`.
+
+Two echoes have to be swallowed for that to terminate, and both are guarded and
+tested: `setSelection` calls `onSelect` back synchronously with the *previous*
+selection, and the library deselects everything on mount when given no
+`selection` prop. Unguarded, opening a dock with something already selected would
+clear it.
+
+### What is one undo step
+
+A drag is one, however many rows moved: `onMove` opens a gesture, dispatches one
+`entity.parent` per row and commits, and the engine's ring folds them together —
+the same mechanism a gizmo drag uses. Delete and duplicate of a multi-selection
+are the same shape. Rows whose parent is also in the gesture are dropped first,
+because reparenting a child that is already travelling with its parent would
+flatten the hierarchy the reader was trying to move intact.
+
+**Deleting a parent deletes its children.** That is what the engine's destroy has
+always done — it cascades — and the criterion is to say which, not to change it.
+
+### Wire version 3
+
+The reply's `selection` value grew an `ids` array and the tape grew five
+opcodes: `SELECT_ADD`, `SELECT_REMOVE`, `SELECT_CLEAR`, `ENTITY_PARENT`,
+`ENTITY_DUPLICATE` and `ENTITY_FLAGS`. The bump is required rather than polite —
+a client speaking 2 would highlight one row out of four.
+
+A refused drop comes back as a `command.rejected` event rather than as a failed
+batch: dropping a node onto its own descendant is something a reader does by
+accident with the mouse, and it must not discard every other command in the
+frame. The editor greys the drop cursor out as well, so the refusal arrives
+before they let go rather than after.
+
+### Deliberately not done
+
+- **Search by type.** The issue offers it "if it is cheap" and it is not: the
+  mask would have to be decoded into words nobody has agreed on. Name and id are
+  in, and an unnamed entity renders as `Entity 12` so the id is a string a reader
+  can actually see and type.
+- **A row count assertion in Vitest.** How many rows a 5,000-entity tree keeps in
+  the DOM is a virtualization question, jsdom reports every element as
+  zero-sized, and a component test that claimed it would be lying. It is
+  Playwright's, and until it is written the honest statement is that this has
+  been driven at four rows and inherits `react-arborist`'s bound rather than
+  proving its own.
+
 ## The end of zero-dep
 
 `pnpm-lock.yaml` used to be 23 lines. Its only entry was a `workspace:*` link,
@@ -277,10 +445,12 @@ package that feeds the C build acquired a registry dependency.
 ### Every dependency, and what replacing it would cost
 
 The rule is #944's: each entry arrives with the issue that uses it, and each
-carries a line saying what replacing it would cost. `@xyflow/react` and
-`react-arborist` are still absent for that reason — they belong to #950 and to
-the node canvas, and adding them early would mean dependencies whose
-justifications nobody could check against real code.
+carries a line saying what replacing it would cost.
+
+`@xyflow/react` is still absent for that reason — it belongs to the node
+canvas, and adding it early would mean a dependency whose justification nobody
+could check against real code. `react-arborist` arrived with #950, which is the
+rule working as intended.
 
 **`@use-gesture/react` is absent for a different reason, and it is a
 deviation worth stating.** #949 names it for the camera, on the strength of
@@ -312,6 +482,7 @@ written about.
 | `@testing-library/react` + `@testing-library/dom` | Rendering and querying components in tests | Hand-rolled render helpers — a few hundred lines that drift |
 | `react-resizable-panels` | The dock splitters: keyboard-resizable separators with the right ARIA, pointer capture that survives leaving the window, collapse/expand, and constraint solving across nested groups | A week of pointer maths and a permanent source of off-by-a-pixel bugs, for a control nobody will ever compliment |
 | `@radix-ui/react-menubar` | The command bar: roving focus across the bar, arrow keys and type-ahead within a menu, Escape, focus restoration, `aria-expanded`, and submenus that flip rather than clip at the screen edge | A month, and a keyboard-accessible menu implementation to maintain forever. The menu *content* is entirely ours — Radix contributes behaviour, not vocabulary |
+| `react-arborist` | The outliner's tree: virtualization, drag-and-drop with a drop cursor, keyboard navigation with type-ahead, and the ctrl/shift selection conventions a designer already has in their fingers | A hand-rolled tree, which is fine at 50 rows and unusable at 5,000 — #892's zoo level is the 5,000 case. The selection *conventions* are the part that surprises: they are a week of edge cases, and the library already had them |
 | `@radix-ui/react-tabs` | The dock tab strips and the inspector's tab group: the `tablist`/`tab`/`tabpanel` roles wired to each other, and arrow-key navigation | A hand-rolled tab strip, which is the one a screen reader cannot use |
 | `@playwright/test` | The browser suite: real Chromium, real WASM | The vendored CDP client plus fixtures, retries, tracing and parallel workers. Considered and rejected in the Q6 decision — that is maintaining a browser-automation framework as a side effect of building an editor |
 | `@types/node`, `@types/react`, `@types/react-dom` | Types for the above | Nothing; they are types |
@@ -409,9 +580,9 @@ ship a type error happily.
 
 ## What is deliberately not here
 
-- **Panel contents** — the outliner's tree (#950) and the asset browser (#952).
-  Each is a placeholder that says so on screen. The inspector (#951) and the
-  viewport (#949) are real
+- **Panel contents** — the asset browser and the build panel (#952). Each is a
+  placeholder that says so on screen. The viewport (#949), the inspector (#951)
+  and the outliner (#950) are real
 - **Marquee select** — the issue offers it "if it is cheap" and it is not; see
   the viewport section above for why it is a boundary change first
 - **The node graph** — #944's Q5 puts it here, in React, as one canvas. It

@@ -14,59 +14,17 @@
  * these parallel columns (see world_ingest_scene).
  *
  * Hierarchy is the int32_t parent[] column (-1 = root), never pointers.
- * Creation appends and destruction tombstones a slot (and its descendants)
- * without shifting any index, so the parent refs stored in surviving entities
- * stay valid — a naive swap-remove would shift indices and silently corrupt
- * the hierarchy. **An id, once handed out, means that entity forever.**
- *
- * ## Ids are stable; index order is not topological (#950)
- *
- * This used to say the columns were kept in topological order — parent index
- * always below child index — and every hierarchy walk here was one forward
- * sweep on the strength of it. world_set_parent ended that, and it could not
- * have done anything else: reparenting an entity under one that happens to sit
- * at a higher index can preserve the ordering or it can preserve the ids, and
- * it cannot preserve both. Ids win, because the selection, the undo snapshots,
- * the editor's outliner rows and the bridge all name entities by id, and an id
- * that moved under a reparent would silently mean a different entity in every
- * one of them.
- *
- * So `parent[e]` may be any live id, above or below e. What that costs is
- * spelled out at each walk in entity.c — propagation resolves each entity after
- * its ancestors rather than by index, and the destroy cascade and the subtree
- * walks sweep to a fixed point instead of once. What it does not cost is the
- * export contract: world_export_scene still emits parent-before-child, because
- * struct scene's ordering (scene.h) is a file format and stays one.
- *
- * Cycles are the failure this ordering used to make unrepresentable, and
- * world_set_parent is now what makes them so: it refuses a parent that is a
- * descendant of the entity being moved. Every walk below is depth-capped
- * regardless, so a corrupt column degrades rather than spinning.
+ * Entities are stored in topological order (parent index < child index),
+ * which lets world_propagate_transforms resolve every world transform in a
+ * single forward pass. Creation appends, preserving that order; destruction
+ * tombstones a slot (and its descendants) without shifting any index, so the
+ * parent refs stored in surviving entities stay valid — a naive swap-remove
+ * would shift indices and silently corrupt the hierarchy.
  *
  * enum component_bit, struct scene, struct scene_entity and SCENE_NO_NAME
  * come from scene.h; the runtime mask mirrors the file mask exactly so ingest
  * stays a near-memcpy. A transform is implicit on every entity (no bit).
  */
-
-/*
- * Per-entity editor flags — hidden and locked (#950).
- *
- * Runtime only, and that is the whole design. They are **not** exported by
- * world_export_scene or scene_save, **not** captured by a snapshot, and **not**
- * recorded on the undo history: hiding a light to see behind it is a property
- * of how someone is looking at a scene, not of the scene, and a hidden flag in
- * the file is how a level ships with something invisible that nobody can find.
- *
- * They live here rather than in the editor because the engine is what draws and
- * what picks. An editor-side "hidden" would dim a row in a list while the
- * entity carried on rendering, which is not hiding it — it is lying about it.
- */
-enum world_entity_flag {
-	/* Skipped by the renderer and by picking. */
-	WORLD_ENTITY_HIDDEN = 1u << 0,
-	/* Skipped by picking, so a click cannot land a gizmo on it. */
-	WORLD_ENTITY_LOCKED = 1u << 1,
-};
 
 #define WORLD_MAX_ENTITIES 4096
 #define WORLD_NAME_BYTES   4096
@@ -120,27 +78,11 @@ enum world_entity_flag {
 struct world {
 	uint32_t         count;       /* high-water mark, not the live count */
 	uint32_t         name_bytes;  /* bytes used in names */
-	/*
-	 * The editor selection's primary member: -1 when nothing is selected,
-	 * else the live id everything that acts on one entity acts on — the
-	 * gizmo, the inspector, Frame Selection. It is always a member of
-	 * `selected_set` below, and it is the most recently added one.
-	 */
-	int32_t          selected;
+	int32_t          selected;    /* editor selection: -1 none, else live id */
 	int32_t          outline;     /* game outline: -1 none, else live id */
 	uint8_t          alive[WORLD_MAX_ENTITIES];        /* 0 = tombstoned */
-	/*
-	 * The rest of the selection (#950). A flag column rather than a list of
-	 * ids: membership is the question every reader actually asks — the
-	 * outline pass asks it once per drawable entity per frame — and a column
-	 * answers it in O(1), snapshots with the used prefix like every other
-	 * column, and cannot hold a duplicate.
-	 */
-	uint8_t          selected_set[WORLD_MAX_ENTITIES];
-	/* enum world_entity_flag OR-set. Runtime only — see the note above. */
-	uint8_t          flags[WORLD_MAX_ENTITIES];
 	uint32_t         mask[WORLD_MAX_ENTITIES];         /* component_bit OR-set */
-	int32_t          parent[WORLD_MAX_ENTITIES];       /* -1 = root; any live id */
+	int32_t          parent[WORLD_MAX_ENTITIES];       /* -1 root; parent<child */
 	struct transform local[WORLD_MAX_ENTITIES];        /* authored, relative */
 	struct transform world_xform[WORLD_MAX_ENTITIES];  /* derived each tick */
 	uint32_t         name_off[WORLD_MAX_ENTITIES];     /* into names; NO_NAME=none */
@@ -163,50 +105,11 @@ void world_reset(struct world *w);
 
 /*
  * Append a new entity and return its id, or -1 if the world is full or parent
- * is neither -1 nor a live existing entity. The new id is always above every
- * id handed out before it; that is a property of appending, not a hierarchy
- * invariant, and world_set_parent may put the entity under a higher id later.
+ * is neither -1 nor a live existing entity. Appending keeps the parent-before-
+ * child ordering: parent (when >= 0) is always less than the new id.
  */
 int32_t world_create_entity(struct world *w, int32_t parent,
 			    const struct transform *local, uint32_t mask);
-
-/*
- * Whether `a` is an ancestor of `e` — the question a reparent has to answer
- * before it can accept one. False when either id is out of range, when they
- * are equal, and when the walk from e runs deeper than the world can nest
- * (which a cycle in a corrupt column is the only way to do).
- */
-int32_t world_is_ancestor(const struct world *w, int32_t a, int32_t e);
-
-/*
- * Move a live entity under `parent` (-1 = root), keeping its **local**
- * transform, and recompose its subtree's world transforms off the new
- * ancestry. Returns 0, or -1 without touching anything when e is not live,
- * when parent is neither -1 nor live, when parent is e itself, or when parent
- * is a descendant of e — the drop that would make a cycle. A caller reports
- * that refusal; it is not a silent no-op, because a drag that appears to do
- * nothing is indistinguishable from one the editor dropped on the floor.
- *
- * Keeping the local transform rather than the world one is the deliberate
- * half: `local` is what the scene file holds and what the inspector shows, so
- * a reparent stays a pure hierarchy edit that inverts exactly. Preserving the
- * world pose would mean dividing by the new parent's scale, which is undefined
- * for the zero-scale entities scenes legitimately contain.
- */
-int32_t world_set_parent(struct world *w, int32_t e, int32_t parent);
-
-/*
- * Deep-copy entity e and every live descendant, appending the copies under e's
- * own parent, and return the new subtree root's id (-1 if e is not live, if the
- * copies would not fit WORLD_MAX_ENTITIES, or if their names would not fit the
- * blob). Nothing is created unless all of it fits: a half-copied subtree is
- * worse than a refused one.
- *
- * Every column is copied, overrides included, so the copy draws identically the
- * frame it appears. The selection is not: duplicating does not select, because
- * what the copy should be is the caller's policy and the editor has one.
- */
-int32_t world_duplicate_entity(struct world *w, int32_t e);
 
 /*
  * Tombstone entity e and, transitively, every entity parented under it. Slots
@@ -339,67 +242,12 @@ const uint8_t *world_texture_params(const struct world *w, uint32_t e,
 				    uint32_t *len);
 
 /*
- * Editor selection model — a set, with one member singled out as primary.
- *
- * ## Why a set, and why the primary survives it
- *
- * The selection was one id until #950 needed the outliner to select several
- * rows at once. It could not answer that editor-side: the viewport, the gizmo
- * and the inspector all read the selection from here, and a second copy living
- * in the editor is exactly the "two views that disagree" failure #947 exists to
- * prevent. So the set lives where the single id lived.
- *
- * `selected` stays, and stays meaning what it meant: the one entity a tool that
- * acts on one entity acts on. Every existing reader — the gizmo, the outline
- * pass, Frame Selection, a game reading the picked piece — keeps working
- * against it unchanged, and only the readers that want the whole set ask for
- * it. The primary is the most recently added member, which is what makes
- * ctrl-clicking a fourth row put the gizmo on that row.
- *
- * set accepts -1 (none) or a live entity id; any other value (out of range or
- * tombstoned) is ignored, leaving the selection unchanged. It **replaces** the
- * set, which is what an unmodified click means.
+ * Editor selection model. set accepts -1 (none) or a live entity id; any
+ * other value (out of range or tombstoned) is ignored, leaving the selection
+ * unchanged. get returns the current selection (-1 when none).
  */
 void    world_set_selected(struct world *w, int32_t e);
 int32_t world_get_selected(const struct world *w);
-
-/*
- * Add a live entity to the selection and make it primary. A no-op for an id
- * that is not live, and for one already in the set it still moves the primary —
- * ctrl-clicking a row that is already selected is how a reader says "act on
- * this one".
- */
-void    world_select_add(struct world *w, int32_t e);
-
-/*
- * Drop an entity from the selection. When it was the primary, the lowest
- * remaining member becomes primary (-1 when the set is now empty). Lowest
- * rather than "the one added before it" because the world keeps no add order,
- * and inventing one to hold a stack would be state that only this case reads.
- */
-void    world_select_remove(struct world *w, int32_t e);
-
-/* Empty the selection. The primary goes to -1. */
-void    world_select_clear(struct world *w);
-
-/*
- * The editor flags — hidden and locked. Setting them on a dead or out-of-range
- * id is ignored; reading one answers 0. Neither is undoable and neither is
- * saved; both are cleared when an entity is created and when a scene is
- * ingested, so opening a project starts with everything visible and unlocked.
- */
-void    world_set_entity_flags(struct world *w, int32_t e, uint32_t flags);
-uint32_t world_entity_flags(const struct world *w, int32_t e);
-
-/* Whether e is in the selection. False for out-of-range and tombstoned ids. */
-int32_t world_is_selected(const struct world *w, int32_t e);
-
-/*
- * The selection's members in ascending id order, written into `out` (up to
- * `cap` of them), returning how many there are — which may exceed `cap`, so a
- * caller that cares can tell a full buffer from a complete answer.
- */
-uint32_t world_selection(const struct world *w, int32_t *out, uint32_t cap);
 
 /*
  * The game-driven outline target: the entity the renderer's selection-outline
@@ -447,16 +295,10 @@ void world_snapshot_free(struct world_snapshot *s,
 /*
  * Export the world's live entities as an at-rest struct scene — the inverse of
  * world_ingest_scene, and the serialization side of scene_encode.  Tombstoned
- * slots are dropped and parent indices remapped onto the compacted ordering.
- *
- * **The output is topologically ordered even though the world is not** (#950):
- * indices are assigned parent-before-child rather than by id, because struct
- * scene's ordering (scene.h) is a file-format guarantee that a decoder on the
- * other side of a version boundary reads in one pass.  Siblings keep ascending
- * id order within that, so the same world exports byte-identically every time.
- *
- * Names are re-packed into a gap-free blob.  The editor selection is
- * session-local and is deliberately not exported.
+ * slots are dropped and parent indices remapped onto the compacted ordering
+ * (which stays topological: a live entity never has a tombstoned parent, since
+ * destroy cascades).  Names are re-packed into a gap-free blob.  The editor
+ * selection is session-local and is deliberately not exported.
  *
  * Allocates through mem; on success the caller owns the result and frees
  * entities, names, then the struct — matching scene_decode's contract.  An
@@ -467,14 +309,10 @@ struct scene *world_export_scene(const struct world *w,
 				 const struct memory_api *mem);
 
 /*
- * Resolve world_xform for every live entity: roots (parent -1) copy their local
- * transform, children compose parent-world * local. dt is unused but kept to
+ * Resolve world_xform for every live entity in one forward pass, relying on
+ * the parent-before-child ordering. Roots (parent -1) copy their local
+ * transform; children compose parent-world * local. dt is unused but kept to
  * match the system signature.
- *
- * Each entity is resolved after its ancestors rather than in index order, since
- * #950 stopped the columns being topological — see entity.c. The walk is still
- * linear in the live entity count: an ancestor chain is climbed only until it
- * reaches one already resolved, and every entity is resolved exactly once.
  */
 void world_propagate_transforms(struct world *w, float dt);
 

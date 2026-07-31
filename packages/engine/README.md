@@ -67,124 +67,13 @@ to agree, in two languages, with nothing checking that they did — and a mismat
 showed up only as a 404 on the live site. The stem now comes out of the built
 HTML, so there is one derivation and the staging step reads it.
 
-## The boundary — `@kruddage/engine/bridge`
-
-The second entry point, and the one that ships to a browser.
-
-```js
-import { createBridge } from "@kruddage/engine/bridge";
-
-const bridge = createBridge(Module);
-const stop = bridge.watch("scene.tree");
-
-bridge.beginGesture("Move").setTransform(3, next).commitGesture();
-bridge.flush();                       // one crossing
-bridge.read("scene.tree");            // what the engine last said
-```
-
-**The engine owns the document; this reads and edits it.** Commands and queries
-go out together as one binary tape, and one JSON document comes back carrying
-the generation vector, any notices, and the answer to every query in the tape.
-[#944](https://github.com/kruddage/engine/issues/944)'s Q1 decided the shape and
-[#945](https://github.com/kruddage/engine/issues/945) built it;
-`krudd/engine/ui/bridge/include/bridge.h` carries the full reasoning.
-
-Three things are worth knowing from out here:
-
-- **There is no way to write to the cache.** Every mutator queues a command and
-  returns; the value moves when the engine says it moved, one flush later. That
-  is what makes a consumer a view rather than a second copy of the truth.
-- **There is no undo stack here.** `undo()` and `redo()` are ordinary commands.
-  The 128-entry ring in `world/edit` is the only history in the system (Q2).
-- **A query carries the generation the caller already holds**, so an unchanged
-  scene answers `fresh` and sends no payload. It is an ETag, and it is what
-  makes a JSON read model affordable at 60fps.
-
-### The viewport half
-
-[#949](https://github.com/kruddage/engine/issues/949) added a fourth domain, and
-with it the camera, the pick, the gizmo and the GAME / EDITOR switch. The wire
-version went to **2** for it: the reply's `generations` object grew a key, and a
-client that did not know about it would read a `viewport` query's stamp as 0 and
-re-fetch the whole thing every frame.
-
-```js
-bridge.setViewportSize(rect.width, rect.height);  // what a pick is answered against
-bridge.orbitCamera(dyaw, dpitch);                 // a gesture, not a pose
-bridge.pick(x, y);                                // raycast, and select what is there
-bridge.watch("viewport");                         // mode, snap, grid, editor mode
-```
-
-Two of those are shaped the way they are on purpose:
-
-- **The camera takes gestures, not poses.** The renderer owns the camera and
-  fights for it — a scripted scene camera is copied into the eye every frame
-  until something navigates — so a client that computed a pose and pushed it
-  would be pushing against that copy, and would be a second implementation of
-  the framing arithmetic besides.
-- **A pick is a command, not a query.** What a click wants is for the selection
-  to change, and the selection already has a generation, a query and every panel
-  watching it. Asking for an id and sending it back as a `select` would be two
-  crossings and a window in which the caller holds a selection the engine does
-  not.
-
-The camera's *pose* is deliberately absent from the `viewport` query. It moves
-every frame of an orbit and nothing outside the engine draws from it, so a
-generation that tracked it would invalidate the cache sixty times a second to
-report the same row of buttons.
-
-### The outliner half
-
-[#950](https://github.com/kruddage/engine/issues/950) took the wire to **3**, and
-the bump is required rather than polite for the same reason 2's was: the
-`selection` query's value grew an `ids` array, and a client speaking 2 would
-highlight one of a reader's four selected rows.
-
-```js
-bridge.selectAdd(id);              // extend the selection; this id becomes primary
-bridge.selectRemove(id);           // the lowest survivor becomes primary
-bridge.setParent(id, parent);      // -1 is the root
-bridge.duplicateEntity(id);        // the subtree, overrides included
-bridge.setEntityFlags(id, flags);  // ENTITY_FLAG.HIDDEN | .LOCKED
-```
-
-- **The selection is a set, and `id` is still its primary** — the one entity a
-  tool that acts on one entity acts on. Every reader that predates the set keeps
-  working against `id` unchanged; only the ones that want the whole set read
-  `ids`. There is deliberately no "set the selection to this list" command: the
-  primary is whatever was added last, so a caller says what it means by the
-  order it adds in.
-- **The cycle test is the engine's.** `setParent` refuses a parent that is a
-  descendant of the entity being moved, emits `command.rejected`, and changes
-  nothing. A client could compute the same answer, from a tree that is a frame
-  old, and be wrong.
-- **Duplicate is one opcode** rather than the caller walking the tree and
-  replaying creates: that walk would be against a snapshot the engine has moved
-  past, and every param override would have to cross the boundary to come
-  straight back.
-- **`ENTITY_FLAG` crosses but is not document state.** Hidden and locked reach
-  the engine because the engine is what draws and what picks — an editor-side
-  "hidden" would dim a row while the entity kept rendering. The engine never
-  saves them, never snapshots them and never puts them on the undo ring, and it
-  clears them when a scene is ingested. Remembering them across a reload is the
-  editor's job, not this one's.
-
-### Why it is a separate export
-
-The package root is build-time code — it reads the filesystem to find artifacts,
-and imports `node:fs` and `node:path` to do it. `./bridge` is runtime code that
-ends up in a browser bundle and imports nothing at all. One entry point for both
-would mean a bundler dragging `node:fs` into the editor to get at the client,
-and nothing else in this workspace would have caught that.
-
 ## What this package is not
 
-It does not export a JS API onto the engine's *internals*. The engine is a single
-emscripten link unit — one `index.js` glue file and one `index.wasm`, linked
-without `-sMODULARIZE` — so there is no finer seam to hand out that would not be
-invented. What is published is the artifact set, its metadata, the real export
-surface, and the boundary above — which is a declared protocol over four
-exported functions, not a window onto the engine's memory.
+It does not export a JS API onto the engine. The engine is a single emscripten
+link unit — one `index.js` glue file and one `index.wasm`, linked without
+`-sMODULARIZE` — so there is no finer seam to hand out that would not be
+invented. What is published is the artifact set, its metadata, and the real
+export surface.
 
 `declaredExports` in the manifest mirrors `-sEXPORTED_FUNCTIONS` from
 `ninja.scm`; `wasmExports` is what `src/wasm-exports.mjs` actually found in the

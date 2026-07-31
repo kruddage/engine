@@ -778,59 +778,6 @@ static void camera_reset_view(void)
 	g_cam_user_controlled = 0;
 }
 
-/*
- * Frame a world-space sphere (#949): look at `centre`, from far enough back
- * that a ball of `radius` fills the vertical field of view with a little air
- * around it, along the direction the camera is already looking.
- *
- * Keeping the direction is the whole design. A frame-selection that also chose
- * an angle would throw away the view the reader had spent the last minute
- * setting up, which is exactly the moment they press the key — they want to see
- * *this* thing, from where they already are.
- */
-static void camera_frame(const float centre[3], float radius)
-{
-	float back[3];
-	float dist;
-
-	if (!centre || radius <= 0.0f)
-		return;
-
-	/* The current view direction, reversed: eye - target. */
-	back[0] = g_cam.eye[0] - g_cam.target[0];
-	back[1] = g_cam.eye[1] - g_cam.target[1];
-	back[2] = g_cam.eye[2] - g_cam.target[2];
-	if (cam_norm3(back) <= 1e-4f) {
-		/* Degenerate pose — no direction to keep. Any is better than
-		 * none, and looking down -Z is the scene's default. */
-		back[0] = 0.0f;
-		back[1] = 0.0f;
-		back[2] = 1.0f;
-	}
-
-	/*
-	 * The distance at which a sphere of `radius` subtends the vertical
-	 * field of view, with 1.6 of margin so the selection has air around it
-	 * rather than touching the top and bottom of the dock.
-	 */
-	dist = radius * 1.6f / tanf(0.5f * g_cam.fov_y);
-	if (dist < g_cam.near * 4.0f)
-		dist = g_cam.near * 4.0f;
-
-	g_cam.target[0] = centre[0];
-	g_cam.target[1] = centre[1];
-	g_cam.target[2] = centre[2];
-	g_cam.eye[0]    = centre[0] + back[0] * dist;
-	g_cam.eye[1]    = centre[1] + back[1] * dist;
-	g_cam.eye[2]    = centre[2] + back[2] * dist;
-	/*
-	 * Detached, like orbit/pan/dolly. Framing a selection that the demo's
-	 * scripted orbit snaps away from on the next tick is not framing it.
-	 */
-	g_cam_user_controlled = 1;
-	camera_update(&g_cam);
-}
-
 static const struct camera_api g_camera_api = {
 	camera_get_view_proj,
 	camera_get_eye,
@@ -839,7 +786,6 @@ static const struct camera_api g_camera_api = {
 	camera_pan,
 	camera_dolly,
 	camera_reset_view,
-	camera_frame,
 };
 
 /*
@@ -2603,11 +2549,6 @@ static void shadow_pass(struct fg_pass_ctx *ctx, void *userdata)
 		if (!w->alive[i] || !(w->mask[i] & COMPONENT_RENDER) ||
 		    !(w->mask[i] & COMPONENT_MATERIAL))
 			continue;
-		/* A hidden entity casts no shadow either — a shadow with
-		 * nothing above it is the tell that "hidden" only reached
-		 * half the renderer. */
-		if (w->flags[i] & WORLD_ENTITY_HIDDEN)
-			continue;
 		mp = entity_mesh_params(w, i, &mplen);
 		m  = find_mesh(w->render_ref[i], mp, mplen);
 		if (!m)
@@ -2734,11 +2675,6 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 		gpu_pipeline_t                pso;
 
 		if (!w->alive[i] || !(w->mask[i] & COMPONENT_RENDER))
-			continue;
-		/* Hidden is the editor's (#950), and it is runtime-only: the
-		 * flag is never saved, so a scene cannot ship with something
-		 * invisible that nobody can find. */
-		if (w->flags[i] & WORLD_ENTITY_HIDDEN)
 			continue;
 		if (!(w->mask[i] & COMPONENT_MATERIAL))
 			continue; /* mesh stays pickable/collidable; just not drawn */
@@ -2872,95 +2808,76 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 }
 
 /*
- * Whether entity `id` belongs in the silhouette mask this frame.
- *
- * In editor chrome the outline follows the editor selection; in-game (chrome
- * off) it follows the game's own outline target — the piece the chess rules
- * picked up, set through entity_api.set_outline — so the ring shows in play,
- * not just in the editor. Either source must still name a live, drawable mesh
- * to be worth the pass.
- *
- * The editor half asks is_selected rather than comparing against get_selected,
- * because #950 made the selection a set and every member gets a ring: a reader
- * who ctrl-clicked four rows and saw one of them outlined would reasonably
- * conclude the other three had not taken. get_selected is the fallback for a
- * host whose entity_api predates the set.
+ * The selected entity's id when it is a live, drawable mesh worth outlining, or
+ * 0-return when there is no such selection. Selection is read through the scene
+ * api's get_selected (absent in headless test harnesses, which then never take
+ * the outline path).
  */
-static int outline_wants(const struct world *w, uint32_t id)
+static int outline_selected_entity(const struct world *w, uint32_t *out_id)
 {
-	if (!g_scene || id >= w->count)
-		return 0;
-	if (!w->alive[id] || !(w->mask[id] & COMPONENT_RENDER))
-		return 0;
-	if (w->flags[id] & WORLD_ENTITY_HIDDEN)
-		return 0;
-
-	if (EDITOR_CHROME()) {
-		if (g_scene->is_selected)
-			return g_scene->is_selected((int32_t)id) ? 1 : 0;
-		return g_scene->get_selected &&
-		       g_scene->get_selected() == (int32_t)id;
-	}
-	return g_scene->get_outline && g_scene->get_outline() == (int32_t)id;
-}
-
-/*
- * Whether anything at all is worth outlining, which is what decides whether
- * the frame graph grows the two extra passes.
- *
- * In-game it is still one id and still O(1) — a shipped game must not start
- * paying a per-entity sweep for a feature the editor uses. In editor chrome it
- * is a scan, bounded by the same high-water mark the bridge's fingerprint
- * already walks once a frame.
- */
-static int outline_any(const struct world *w)
-{
-	uint32_t i;
-	int32_t  target;
+	int32_t sel;
 
 	if (!g_scene)
 		return 0;
-	if (!EDITOR_CHROME()) {
-		target = g_scene->get_outline ? g_scene->get_outline() : -1;
-		return target >= 0 && outline_wants(w, (uint32_t)target);
+	/*
+	 * In editor chrome the outline follows the editor selection; in-game
+	 * (chrome off) it follows the game's own outline target — the piece the
+	 * chess rules picked up, set through entity_api.set_outline — so the ring
+	 * shows in play, not just in the editor. Either source must still name a
+	 * live, drawable mesh to be worth the pass.
+	 */
+	if (EDITOR_CHROME()) {
+		if (!g_scene->get_selected)
+			return 0;
+		sel = g_scene->get_selected();
+	} else {
+		if (!g_scene->get_outline)
+			return 0;
+		sel = g_scene->get_outline();
 	}
-	for (i = 0; i < w->count; i++) {
-		if (outline_wants(w, i))
-			return 1;
-	}
-	return 0;
+	if (sel < 0 || (uint32_t)sel >= w->count)
+		return 0;
+	if (!w->alive[sel] || !(w->mask[sel] & COMPONENT_RENDER))
+		return 0;
+	*out_id = (uint32_t)sel;
+	return 1;
 }
 
 /*
- * Mask pass: draw every outlined entity, flat white, into the silhouette
+ * Mask pass: draw the selected entity alone, flat white, into the silhouette
  * target (cleared to black by the pass). No material, no texture, no depth —
- * the union of their triangles is all the composite needs. Reuses the shared
- * Camera UBO with each entity's transform.
- *
- * The composite that follows edge-detects the mask as a whole, so a
- * multi-selection whose members touch reads as one outline around the group
- * rather than a seam between them. That falls out of drawing into one target
- * and is the behaviour a reader expects from a box select.
+ * the union of its triangles is all the composite needs. Reuses the shared
+ * Camera UBO with the selected entity's transform.
  */
 static void mask_pass(struct fg_pass_ctx *ctx, void *userdata)
 {
 	const struct gpu_api        *gpu = fg_ctx_gpu(ctx);
 	gpu_cmd_buf_t                 cmd = fg_ctx_cmd(ctx);
 	const struct world          *w;
-	uint32_t                     i;
+	uint32_t                     sel, plen = 0;
+	const uint8_t               *pbytes;
+	struct mesh_gpu             *m;
+	struct mat4                  model;
 	struct mat4                  cam_vp;
 	float                        ubo[SCENE_UBO_FLOATS];
-	int                          bound = 0;
+	struct gpu_draw_indexed_args draw;
+	uint32_t                     slot, uoff;
 
 	(void)userdata;
 	if (!gpu || !g_scene || !g_mask_pso)
 		return;
 	w = g_scene->get_world();
-	if (!w)
+	if (!w || !outline_selected_entity(w, &sel))
+		return;
+	pbytes = entity_mesh_params(w, sel, &plen);
+	m = find_mesh(w->render_ref[sel], pbytes, plen);
+	if (!m)
 		return;
 
 	cam_vp = camera_clip_vp(gpu);
 	memcpy(&ubo[0], cam_vp.m, 16 * sizeof(float));
+	mat4_from_transform(&model, &w->world_xform[sel]);
+	memcpy(&ubo[16], model.m, 16 * sizeof(float));
 	/* The mask shader reads only the matrices, but the block is uploaded
 	 * whole — fill cam_pos so no uninitialised stack reaches the buffer. */
 	ubo[SCENE_UBO_CAMPOS + 0] = g_cam.eye[0];
@@ -2968,46 +2885,21 @@ static void mask_pass(struct fg_pass_ctx *ctx, void *userdata)
 	ubo[SCENE_UBO_CAMPOS + 2] = g_cam.eye[2];
 	ubo[SCENE_UBO_CAMPOS + 3] = 0.0f;
 
-	for (i = 0; i < w->count; i++) {
-		const uint8_t               *pbytes;
-		struct mesh_gpu             *m;
-		struct mat4                  model;
-		struct gpu_draw_indexed_args draw;
-		uint32_t                     plen = 0, slot, uoff;
+	if (!ring_take_slot(&slot))
+		return; /* overflow: skip this draw */
+	uoff = slot * (uint32_t)UBO_STRIDE;
 
-		if (!outline_wants(w, i))
-			continue;
-		pbytes = entity_mesh_params(w, i, &plen);
-		m = find_mesh(w->render_ref[i], pbytes, plen);
-		if (!m)
-			continue;
+	gpu->cmd_set_pipeline(cmd, g_mask_pso);
+	gpu->buffer_update(g_ubo_ring, uoff, ubo, (uint32_t)sizeof(ubo));
+	gpu->cmd_bind_uniform_buffer(cmd, 0, g_ubo_ring, uoff,
+				     (uint32_t)sizeof(ubo));
+	gpu->cmd_bind_vertex_buffer(cmd, 0, m->vbo, 0);
+	gpu->cmd_bind_index_buffer(cmd, m->ebo, 0, GPU_INDEX_FORMAT_UINT16);
 
-		mat4_from_transform(&model, &w->world_xform[i]);
-		memcpy(&ubo[16], model.m, 16 * sizeof(float));
-
-		if (!ring_take_slot(&slot))
-			return; /* overflow: the rest of the mask is skipped */
-		uoff = slot * (uint32_t)UBO_STRIDE;
-
-		/* Once for the pass rather than once per entity: the pipeline
-		 * is the same for all of them, and a redundant set_pipeline is
-		 * a state change some backends do not filter. */
-		if (!bound) {
-			gpu->cmd_set_pipeline(cmd, g_mask_pso);
-			bound = 1;
-		}
-		gpu->buffer_update(g_ubo_ring, uoff, ubo, (uint32_t)sizeof(ubo));
-		gpu->cmd_bind_uniform_buffer(cmd, 0, g_ubo_ring, uoff,
-					     (uint32_t)sizeof(ubo));
-		gpu->cmd_bind_vertex_buffer(cmd, 0, m->vbo, 0);
-		gpu->cmd_bind_index_buffer(cmd, m->ebo, 0,
-					   GPU_INDEX_FORMAT_UINT16);
-
-		memset(&draw, 0, sizeof(draw));
-		draw.index_count    = m->index_count;
-		draw.instance_count = 1;
-		gpu->cmd_draw_indexed(cmd, &draw);
-	}
+	memset(&draw, 0, sizeof(draw));
+	draw.index_count    = m->index_count;
+	draw.instance_count = 1;
+	gpu->cmd_draw_indexed(cmd, &draw);
 }
 
 /*
@@ -3192,6 +3084,7 @@ static void scene_renderer_tick(void)
 	fg_resource_t       shadow;
 	fg_pass_t           spass;
 	const struct world *w;
+	uint32_t            sel = 0;
 	int                 outline;
 
 	if (!g_ready || !g_fg_api || !g_scene)
@@ -3267,7 +3160,7 @@ static void scene_renderer_tick(void)
 	 */
 	outline = w && g_mask_pso && g_outline_pso &&
 		  g_view_w > 0.0f && g_view_h > 0.0f &&
-		  outline_any(w);
+		  outline_selected_entity(w, &sel);
 
 	fg = g_fg_api->create();
 	if (!fg)

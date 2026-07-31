@@ -25,10 +25,6 @@
 ;;!   (script "PATH")   bind an entity behavior script by catalog path
 ;;!   (at X Y Z)        authored position       (default 0 0 0)
 ;;!   (rotate X Y Z)    authored euler degrees   (default 0 0 0)
-;;!   (quat X Y Z W)    authored rotation as a quaternion, overriding (rotate)
-;;!                     when both are present. What scene-save writes, because
-;;!                     the world stores a quaternion and a trip through euler
-;;!                     degrees is not the identity (#947, scene_save.h)
 ;;!   (scale X Y Z)     authored scale          (default 1 1 1)
 ;;!   (children E ...)  nested (entity ...) forms, spawned under this one — their
 ;;!                     transforms are local to it, so a group moves as a unit
@@ -42,18 +38,6 @@
         (if (and (pair? xs) (pair? (cdr xs))) (cadr xs) b)
         (if (and (pair? xs) (pair? (cdr xs)) (pair? (cddr xs))) (caddr xs) c)))
 
-;;! (scene-vec4 xs a b c d) -> the first four of XS, defaulting componentwise —
-;;! scene-vec3's arity-four twin, for the (quat ...) clause. Separate rather than
-;;! generalized because both are called with a literal default list and a shared
-;;! variadic version would read worse at both call sites than two do.
-(define (scene-vec4 xs a b c d)
-  (let ((nth (lambda (n fallback)
-               (let loop ((l xs) (i 0))
-                 (cond ((not (pair? l)) fallback)
-                       ((= i n) (car l))
-                       (else (loop (cdr l) (+ i 1))))))))
-    (list (nth 0 a) (nth 1 b) (nth 2 c) (nth 3 d))))
-
 ;;! (scene-entity-build e parent) -> subtree entity count: spawn one
 ;;! (entity CLAUSE ...) under PARENT (an id, or -1 for a root), apply its clauses,
 ;;! then recurse into any (children ...). Transform clauses accumulate into
@@ -64,7 +48,7 @@
 ;;! report the true total.
 (define (scene-entity-build e parent)
   (let ((id  (scene-spawn parent))
-        (pos '()) (rot '()) (scl '()) (quat #f) (kids '()) (count 1))
+        (pos '()) (rot '()) (scl '()) (kids '()) (count 1))
     (for-each
      (lambda (c)
        (when (pair? c)
@@ -75,7 +59,6 @@
            ((script)   (scene-script!   id (cadr c)))
            ((at)       (set! pos (cdr c)))
            ((rotate)   (set! rot (cdr c)))
-           ((quat)     (set! quat (cdr c)))
            ((scale)    (set! scl (cdr c)))
            ((children) (set! kids (cdr c)))
            (else #f))))
@@ -83,10 +66,6 @@
     (apply scene-xform! id (append (scene-vec3 pos 0 0 0)
                                    (scene-vec3 rot 0 0 0)
                                    (scene-vec3 scl 1 1 1)))
-    ;;! After scene-xform!, never instead of it: the quaternion overrides only
-    ;;! the rotation the euler clause just wrote, and position and scale still
-    ;;! come from the one call they always did.
-    (when quat (apply scene-rotq! id (scene-vec4 quat 0 0 0 1)))
     (for-each
      (lambda (k)
        (when (and (pair? k) (eq? (car k) 'entity))

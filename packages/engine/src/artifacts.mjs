@@ -94,16 +94,7 @@ export const ENGINE_ASSET_DIR = "assets";
  * in ninja.scm's $mainflags; kept here so a consumer can assert against the
  * surface it codes to instead of reading the generated loader. Verified against
  * the real build output by scripts/build.mjs. */
-export const ENGINE_EXPORTED_FUNCTIONS = [
-	"_main",
-	"_krudd_load_game",
-	/* The editor boundary (#945). See src/bridge.mjs, which is the only
-	 * thing that calls them. */
-	"_krudd_bridge_protocol",
-	"_krudd_bridge_buffer",
-	"_krudd_bridge_capacity",
-	"_krudd_bridge_exchange",
-];
+export const ENGINE_EXPORTED_FUNCTIONS = ["_main", "_krudd_load_game"];
 
 /* Name of the self-describing index written beside the artifacts. */
 export const ENGINE_MANIFEST_FILE = "engine-manifest.json";

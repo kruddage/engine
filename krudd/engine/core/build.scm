@@ -3,14 +3,17 @@
 ;;! git. runtime.scm is the prelude script.c evaluates first into the s7 image —
 ;;! embedded rather than loaded from disk, because in the browser there is none.
 ;;!
-;;! editor_layout.scm was embedded here too, for the same reason, and #953
-;;! retired it with the rest of the Scheme chrome: the editor is a TypeScript
-;;! application now and reads its own dock list out of its own source. The
-;;! mechanism was good — a menu added to the spec reached the page with no edit
-;;! to the markup — and it lost to a substrate decision (#944 Q3), not to a
-;;! flaw. It is recoverable from the commit before this one.
+;;! editor_layout.scm is the editor chrome's spec and its reader, embedded the
+;;! same way and for the same reason: script.c evaluates it into the shared
+;;! image so (editor-layout) and its accessors are bound wherever s7 is up. It
+;;! lives here rather than beside a shell because `script` is a library every
+;;! module may link, so it may not reach into a shell for its own generated
+;;! header (#786 lists shell/ last precisely so nothing reaches into it). A
+;;! shell — or ui/kruddgui, which draws this spec — reaching the other way,
+;;! into core's generated header, is allowed.
 ((configure-file "version.h.in" "version.h")
  (embed "runtime.scm" "runtime_scm.h" "RUNTIME_SCM")
+ (embed "editor_layout.scm" "editor_layout_scm.h" "LAYOUT_SCM")
 
  (library "subsystem"
    (sources "subsystem.c")
@@ -67,4 +70,18 @@
   (executable "shader_transpile_test"
               (sources "shader_transpile_test.c")
               (link "script"))
-  (test "shader_transpile" "shader_transpile_test")))
+  (test "shader_transpile" "shader_transpile_test")
+
+  ;;! The chrome spec and its reader (editor_layout.scm), exercised browser-
+  ;;! and GPU-free: script_init has already evaluated the image into the shared
+  ;;! interpreter, so this drives (editor-layout) and the accessors over it
+  ;;! directly and asserts on what a renderer will walk. It needs
+  ;;! ../third_party for s7.h to read the returned values; the image itself
+  ;;! rides in the linked script library. The reader is the half both chrome
+  ;;! renderers share, which is what makes one test over it worth more than a
+  ;;! test per renderer.
+  (executable "editor_layout_test"
+              (sources "editor_layout_test.c")
+              (private "include" (raw "../third_party"))
+              (link "script"))
+  (test "editor_layout" "editor_layout_test")))

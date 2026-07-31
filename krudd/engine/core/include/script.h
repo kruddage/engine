@@ -49,12 +49,17 @@ const char *script_shader_transpile(const char *src, const char *stage);
 const char *script_shader_transpile_wgsl(const char *src, const char *stage);
 
 /*
- * The s7->JS JSON seam (script_json / script_layout_json) was retired with the
- * Scheme chrome in #953. It served exactly one caller — the editor layout tree
- * on its way to window.kruddBuildEditor — and the editor that consumed it is
- * now a TypeScript application talking to ui/bridge, which carries its own
- * encoding. It is recoverable from the commit before this one; nothing else in
- * the tree ever called it.
+ * The editor chrome spec lives in the image, not behind a C entry point.
+ * script_init evaluates core/editor_layout.scm, which binds (editor-layout)
+ * and the editor-layout-* accessors over the tree it returns; a consumer calls
+ * them through script_s7() like any other Scheme value.
+ *
+ * There is deliberately no C accessor here. The s7->JS JSON seam
+ * (script_json / script_layout_json) existed to carry this one tree to a DOM
+ * builder and was retired with it in #953; the spec's consumers now read it in
+ * Scheme, on the same side of the interpreter it is defined on, so a serializer
+ * would have no caller. Both are recoverable from d2f3b7a if a DOM chrome ever
+ * wants them back.
  */
 
 /*

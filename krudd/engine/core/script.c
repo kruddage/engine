@@ -21,6 +21,7 @@
 #include "texture_script_scm.h"
 #include "sound_script_scm.h"
 #include "scene_script_scm.h"
+#include "editor_layout_scm.h"
 
 #include <stddef.h>
 #include <stdio.h>
@@ -101,6 +102,17 @@ void script_init(void)
 	 * this image before they exist is fine, exactly like the entity image.
 	 */
 	script_eval(SCENE_SCRIPT_SCM);
+	/*
+	 * Load the editor chrome spec and its reader: (editor-layout) and the
+	 * editor-layout-* accessors over the tree it returns. It calls no host
+	 * primitive and touches no engine state — it is data and the procedures
+	 * that read it — so it loads here, unconditionally, and every consumer
+	 * of the shared interpreter finds it already bound. ui/kruddgui's chrome
+	 * renderers are the consumers today; #953's script_layout_json, which
+	 * serialized this tree across the s7->JS seam for a DOM builder, is not
+	 * restored — the reader is Scheme now and the seam is gone with it.
+	 */
+	script_eval(LAYOUT_SCM);
 }
 
 s7_scheme *script_s7(void)

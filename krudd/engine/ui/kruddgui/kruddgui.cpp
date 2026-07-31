@@ -1632,16 +1632,31 @@ static void kruddgui_tick(void)
 	}
 
 	/*
+	 * The editor chrome: core/editor_layout.scm's menu bar, toolbar, docks
+	 * and status fields, drawn by the image's chrome section. It is the one
+	 * piece of the editor's panel set that is *not* parked — the parked set
+	 * (kruddgui-draw) waits on the krudd-* accessors that went with
+	 * kruddboard in #661, and the chrome reads nothing but the spec and the
+	 * kgui-* primitives registered here, so it has nothing to wait for.
+	 *
+	 * Gated on editor mode, unlike the two calls below it: this is chrome by
+	 * definition, and a game's clean play view must draw none of it.
+	 */
+	if (krudd_editor_mode())
+		call_scm_panel("kruddgui-chrome-tick");
+
+	/*
 	 * The GAME / EDITOR switch. Like the perf HUD below it draws every
 	 * tick in both modes — it is the only way back out of either one, so
 	 * suppressing it in a game's play view would strand the player there.
 	 * It owns its own input region (kgui-panel-begin), so the tap that
-	 * flips it never falls through to the board underneath.
+	 * flips it never falls through to the board underneath. Drawn after the
+	 * chrome, so it sits on top of the band the chrome reserves for it.
 	 *
 	 * The editor's own panel set (kruddgui-draw) is still parked: the
 	 * krudd-* accessors it reads went with kruddboard in #661 and have not
-	 * been rebuilt, so editor mode is the page's DOM chrome for now and
-	 * this is the switch that will drive both once they are back.
+	 * been rebuilt, and this is the switch that will drive it once they are
+	 * back.
 	 */
 	call_scm_panel("kruddgui-modeswitch-draw");
 

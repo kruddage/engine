@@ -2998,6 +2998,712 @@
              (- w (* 2 kruddgui-perf-pad)) kruddgui-perf-graph-h)
             (kgui-panel-end)))))))
 
+;;! ------------------------------------------------------------------
+;;! Editor chrome — core/editor_layout.scm, drawn kruddgui's way
+;;! ------------------------------------------------------------------
+;;!
+;;! The chrome spec (core/editor_layout.scm) says what the editor's shell
+;;! contains: a menu bar, a toolbar, four docks and a row of status fields. It
+;;! does not say what any of that looks like, which is the point — this section
+;;! is one answer, and it is kruddgui's answer.
+;;!
+;;! kruddgui's answer is touch-first, because kruddgui is. A desktop chrome
+;;! would draw the menu bar as a strip of drop-downs, the docks as splitter-
+;;! resizable regions on four edges, and the status fields as a hairline gutter.
+;;! None of that survives a thumb. So the same spec comes out as:
+;;!
+;;!   - the menu bar as a rail of pill chips, each opening a *sheet* of finger-
+;;!     sized rows rather than a drop-down. A sheet is modal by position, not by
+;;!     a grab: it covers the main area, and a tap outside it dismisses it;
+;;!
+;;!   - the docks as tray pills, one open at a time, through the same arbiter
+;;!     the log / stats / scene consoles already go through — two near-full-width
+;;!     panels cannot stack and occlude on a phone. The spec's (tabbed-with …)
+;;!     becomes a group sharing one pill with a tab row inside it, and (raise)
+;;!     picks which member of that group the pill opens on;
+;;!
+;;!   - the toolbar's badges as chips in a band under the rail, with (spacer)
+;;!     doing what it says — everything declared after it sits against the
+;;!     trailing edge;
+;;!
+;;!   - the status fields as a bottom strip, each field's live text written by
+;;!     id, which is the contract the spec describes.
+;;!
+;;! Everything above reads the spec through the editor-layout-* accessors and
+;;! nothing else. There is no menu, dock title, action id or status label
+;;! written down in this file: add a dock to the .scm and a pill appears here
+;;! and a toggle appears in the View menu, with no edit below this line. That is
+;;! #706's whole claim, and drawing the tree a second way is what tests it.
+;;!
+;;! This is chrome, so it draws only in editor mode — the GAME / EDITOR switch
+;;! and the perf HUD stay outside it, as they already do.
+
+;;! Chrome geometry. The rail carries the finger targets and is sized like the
+;;! mode-bar's chips; the badge and status bands are read-only text, so they are
+;;! sized to the type instead.
+(define kruddgui-chrome-rail-h   44)
+(define kruddgui-chrome-band-h   28)
+(define kruddgui-chrome-row-h    44)
+(define kruddgui-chrome-pad      10)
+(define kruddgui-chrome-menu-w   96)
+(define kruddgui-chrome-sheet-w  280)
+(define kruddgui-chrome-tab-h    32)
+(define kruddgui-chrome-rule-h   1)
+
+;;! Chrome palette. The sheet and the dock card sit above the viewport, so they
+;;! are near-opaque; the bands behind the rail are translucent like the rest of
+;;! the layer.
+(define kruddgui-chrome-sheet-bg '(0.08 0.09 0.11 0.97))
+(define kruddgui-chrome-card-bg  '(0.06 0.07 0.09 0.94))
+(define kruddgui-chrome-band-bg  '(0.05 0.05 0.07 0.72))
+(define kruddgui-chrome-rule     '(0.24 0.26 0.30 1.0))
+(define kruddgui-chrome-dim-fg   '(0.58 0.61 0.67 1.0))
+(define kruddgui-chrome-head-fg  '(0.62 0.80 0.98 1.0))
+
+;;! How a standard-key shortcut symbol prints. The spec names keys abstractly
+;;! (`save-as`, `paste`) because it does not know the platform; the rail draws
+;;! the caret form beside the row so a sheet reads like the menu it stands for.
+;;! A symbol with no entry here — `none`, or a key added to the spec before it
+;;! is added below — simply prints nothing. The forms are ASCII on purpose: the
+;;! atlas is baked 0x20..0x7E (kgui_font.h), so a shift glyph would be a hole.
+(define kruddgui-chrome-keys
+  '((new . "^N") (open . "^O") (save . "^S") (save-as . "^+S")
+    (quit . "^Q") (undo . "^Z") (redo . "^+Z") (cut . "^X")
+    (copy . "^C") (paste . "^V")))
+
+;;! The mark a dock toggle carries when its dock is showing. Also ASCII, and
+;;! also for the atlas's sake — a check mark would draw as nothing at all,
+;;! which is the same thing the row says when the dock is hidden.
+(define kruddgui-chrome-shown-mark "ON")
+
+;;! Which menu's sheet is open (its index in the menus section) or #f.
+(define kruddgui-chrome-menu #f)
+;;! Which dock is open in the main area (its id string) or #f.
+(define kruddgui-chrome-open #f)
+;;! Dock ids the View menu has hidden. A hidden dock keeps its toggle — that is
+;;! how it comes back — but loses its pill and cannot be the open one.
+(define kruddgui-chrome-hidden '())
+;;! Live text the host writes by id: badges by badge id, status fields by field
+;;! id. The spec's own text is the seed, shown until something overwrites it.
+(define kruddgui-chrome-live '())
+;;! The trailing note in the status strip. An action id the chrome has not
+;;! wired lands here rather than doing nothing silently, which is the "coming
+;;! soon" hint the spec's doc describes.
+(define kruddgui-chrome-hint "")
+
+;;! (kruddgui-chrome-spec) -> the layout tree, or #f when core's chrome image is
+;;! not in this interpreter. Guarded the same way kgui-safe-insets is: a native
+;;! test image that loads only this file still draws everything else.
+(define (kruddgui-chrome-spec)
+  (and (defined? 'editor-layout) (editor-layout)))
+
+;;! (kruddgui-chrome-ascii s) -> S with the typography the spec is written in
+;;! folded down to what the atlas can draw. kgui_font bakes 0x20..0x7E and
+;;! kgui_batch skips any code point outside it, so an em dash in "renderer —
+;;! booting…" would come out as a hole rather than as a dash. Folding beats
+;;! either alternative: rewriting the spec in ASCII would make a data file serve
+;;! one renderer's font, and leaving it alone would draw the spec wrong.
+;;!
+;;! The three substitutions are the ones this spec actually uses — em dash,
+;;! ellipsis, multiplication sign. Anything else non-ASCII is dropped whole, by
+;;! its UTF-8 lead byte's continuation count, so a stray code point costs its
+;;! own glyph and never desynchronizes the scan into mojibake. s7 strings are
+;;! byte strings, which is why this walks bytes rather than characters.
+(define (kruddgui-chrome-ascii s)
+  (let ((n (string-length s)))
+    (let loop ((i 0) (out ""))
+      (if (>= i n)
+          out
+          (let ((b (char->integer (string-ref s i))))
+            (cond ((< b #x80)
+                   (loop (+ i 1) (string-append out (substring s i (+ i 1)))))
+                  ((and (= b #xE2) (< (+ i 2) n)
+                        (= (char->integer (string-ref s (+ i 1))) #x80)
+                        (= (char->integer (string-ref s (+ i 2))) #x94))
+                   (loop (+ i 3) (string-append out "-")))
+                  ((and (= b #xE2) (< (+ i 2) n)
+                        (= (char->integer (string-ref s (+ i 1))) #x80)
+                        (= (char->integer (string-ref s (+ i 2))) #xA6))
+                   (loop (+ i 3) (string-append out "...")))
+                  ((and (= b #xC3) (< (+ i 1) n)
+                        (= (char->integer (string-ref s (+ i 1))) #x97))
+                   (loop (+ i 2) (string-append out "x")))
+                  ((>= b #xF0) (loop (+ i 4) out))
+                  ((>= b #xE0) (loop (+ i 3) out))
+                  ((>= b #xC0) (loop (+ i 2) out))
+                  (else (loop (+ i 1) out))))))))
+
+;;! (kruddgui-chrome-label s) -> a spec string ready to draw: its mnemonic
+;;! markers stripped and its typography folded. Every string this chrome takes
+;;! from the spec goes through here, so neither concern is remembered per call
+;;! site.
+(define (kruddgui-chrome-label s)
+  (kruddgui-chrome-ascii (editor-layout-mnemonic s)))
+
+;;! (kruddgui-chrome-set! id text) write the live text for badge or status field
+;;! ID. The host calls this; so does a test.
+(define (kruddgui-chrome-set! id text)
+  (set! kruddgui-chrome-live
+        (cons (cons id text)
+              (let loop ((l kruddgui-chrome-live) (out '()))
+                (cond ((null? l) (reverse out))
+                      ((string=? (caar l) id) (loop (cdr l) out))
+                      (else (loop (cdr l) (cons (car l) out))))))))
+
+;;! (kruddgui-chrome-text id seed) -> the live text for ID, falling back to the
+;;! spec's SEED while nothing has overwritten it.
+(define (kruddgui-chrome-text id seed)
+  (let ((e (assoc id kruddgui-chrome-live)))
+    (if (pair? e) (cdr e) seed)))
+
+;;! (kruddgui-chrome-hidden? id) -> #t when the View menu has hidden that dock.
+(define (kruddgui-chrome-hidden? id)
+  (let loop ((h kruddgui-chrome-hidden))
+    (cond ((null? h) #f)
+          ((string=? (car h) id) #t)
+          (else (loop (cdr h))))))
+
+;;! (kruddgui-chrome-visible layout) -> the docks the tray may show, in
+;;! declaration order.
+(define (kruddgui-chrome-visible layout)
+  (let loop ((ds (editor-layout-docks layout)) (out '()))
+    (cond ((null? ds) (reverse out))
+          ((kruddgui-chrome-hidden? (editor-layout-dock-id (car ds)))
+           (loop (cdr ds) out))
+          (else (loop (cdr ds) (cons (car ds) out))))))
+
+;;! (kruddgui-chrome-group-has? group id) -> #t when GROUP holds the dock ID.
+(define (kruddgui-chrome-group-has? group id)
+  (let loop ((g group))
+    (cond ((null? g) #f)
+          ((string=? (editor-layout-dock-id (car g)) id) #t)
+          (else (loop (cdr g))))))
+
+;;! (kruddgui-chrome-join groups id dock) add DOCK to whichever of GROUPS holds
+;;! ID, or start a group for it when none does. GROUPS and each group are held
+;;! reversed while building, so consing appends. A (tabbed-with …) naming a dock
+;;! that is hidden or absent degrades to a group of its own rather than
+;;! vanishing: a spec edit should not be able to make a panel unreachable.
+(define (kruddgui-chrome-join groups id dock)
+  (let loop ((gs groups) (out '()) (hit #f))
+    (cond ((null? gs)
+           (if hit (reverse out) (cons (list dock) (reverse out))))
+          ((kruddgui-chrome-group-has? (car gs) id)
+           (loop (cdr gs) (cons (cons dock (car gs)) out) #t))
+          (else (loop (cdr gs) (cons (car gs) out) hit)))))
+
+;;! (kruddgui-chrome-groups layout) -> the visible docks as tab groups: a list
+;;! of lists, one per pill, in declaration order. A dock with no (tabbed-with …)
+;;! opens its own group; one with it joins the group holding the dock it names.
+(define (kruddgui-chrome-groups layout)
+  (let loop ((ds (kruddgui-chrome-visible layout)) (out '()))
+    (if (null? ds)
+        (map reverse (reverse out))
+        (let* ((d (car ds))
+               (t (editor-layout-dock-tabbed-with d)))
+          (loop (cdr ds)
+                (if t
+                    (kruddgui-chrome-join out t d)
+                    (cons (list d) out)))))))
+
+;;! (kruddgui-chrome-group-front group) -> the member a pill opens on: the one
+;;! the spec raises, else the group's leader.
+(define (kruddgui-chrome-group-front group)
+  (let loop ((g group))
+    (cond ((null? g) (car group))
+          ((editor-layout-dock-raise? (car g)) (car g))
+          (else (loop (cdr g))))))
+
+;;! (kruddgui-chrome-group-open? group) -> #t when the open dock is in GROUP.
+(define (kruddgui-chrome-group-open? group)
+  (and kruddgui-chrome-open
+       (kruddgui-chrome-group-has? group kruddgui-chrome-open)))
+
+;;! (kruddgui-chrome-open! group) toggle GROUP: tapping the open group's pill
+;;! closes it, tapping any other opens that group on its front member. The same
+;;! one-at-a-time arbiter the consoles use, for the same reason.
+(define (kruddgui-chrome-open! group)
+  (set! kruddgui-chrome-open
+        (if (kruddgui-chrome-group-open? group)
+            #f
+            (editor-layout-dock-id (kruddgui-chrome-group-front group)))))
+
+;;! (kruddgui-chrome-toggle-id id) -> the dock id inside a "toggle:…" action id,
+;;! or #f for any other action. The spec builds these ids in
+;;! editor-layout-dock-toggle, so this is the matching half of that contract.
+(define (kruddgui-chrome-toggle-id id)
+  (and (> (string-length id) 7)
+       (string=? (substring id 0 7) "toggle:")
+       (substring id 7 (string-length id))))
+
+;;! (kruddgui-chrome-toggle-dock! id) show or hide the dock ID. Hiding the dock
+;;! that is currently open closes the main area too, so the chrome never holds a
+;;! panel open that the tray no longer offers a way back to.
+(define (kruddgui-chrome-toggle-dock! id)
+  (if (kruddgui-chrome-hidden? id)
+      (set! kruddgui-chrome-hidden
+            (let loop ((h kruddgui-chrome-hidden) (out '()))
+              (cond ((null? h) (reverse out))
+                    ((string=? (car h) id) (loop (cdr h) out))
+                    (else (loop (cdr h) (cons (car h) out))))))
+      (begin
+        (set! kruddgui-chrome-hidden (cons id kruddgui-chrome-hidden))
+        (when (and kruddgui-chrome-open
+                   (string=? kruddgui-chrome-open id))
+          (set! kruddgui-chrome-open #f)))))
+
+;;! (kruddgui-chrome-reset!) View > Reset Layout: every dock visible again and
+;;! nothing open, which is the state the chrome boots into.
+(define (kruddgui-chrome-reset!)
+  (set! kruddgui-chrome-hidden '())
+  (set! kruddgui-chrome-open #f))
+
+;;! (kruddgui-chrome-act! id) run the action ID names. The dock toggles and
+;;! Reset Layout are the chrome's own; undo and redo forward to the shared edit
+;;! accessors when the host has registered them, which is what the toolbar's own
+;;! chips already do. Anything else is not wired yet and says so in the status
+;;! strip — the spec is explicit that which ids a host has wired is the host's
+;;! business, not the spec's, so an unknown id is a hint and never an error.
+(define (kruddgui-chrome-act! id)
+  (let ((dock (kruddgui-chrome-toggle-id id)))
+    (set! kruddgui-chrome-hint "")
+    (cond (dock (kruddgui-chrome-toggle-dock! dock))
+          ((string=? id "reset-layout") (kruddgui-chrome-reset!))
+          ((and (string=? id "undo") (defined? 'krudd-undo)) (krudd-undo))
+          ((and (string=? id "redo") (defined? 'krudd-redo)) (krudd-redo))
+          (else
+           (set! kruddgui-chrome-hint (string-append id " — coming soon"))))))
+
+;;! (kruddgui-chrome-key shortcut) -> the printed form of a standard-key symbol,
+;;! or "" when the spec names none.
+(define (kruddgui-chrome-key shortcut)
+  (let ((e (assq shortcut kruddgui-chrome-keys)))
+    (if (pair? e) (cdr e) "")))
+
+;;! (kruddgui-chrome-text-left x y w h str c) draw STR left-aligned and
+;;! vertically centred in the box, the counterpart to kruddgui-label's centring.
+;;! Sheet rows and status fields both read as text runs on a baseline, not as
+;;! captions in a button.
+(define (kruddgui-chrome-text-left x y w h str c)
+  (let* ((m  (kgui-text-metrics str))
+         (ty (+ y (/ (- h (cadr m)) 2))))
+    (kgui-text (+ x kruddgui-chrome-pad) ty str
+               (car c) (cadr c) (caddr c) (cadddr c))))
+
+;;! (kruddgui-chrome-text-right x y w h str c) the same, against the trailing
+;;! edge — the shortcut column in a sheet, and the hint in the status strip.
+(define (kruddgui-chrome-text-right x y w h str c)
+  (let* ((m  (kgui-text-metrics str))
+         (ty (+ y (/ (- h (cadr m)) 2))))
+    (kgui-text (- (+ x w) kruddgui-chrome-pad (car m)) ty str
+               (car c) (cadr c) (caddr c) (cadddr c))))
+
+;;! (kruddgui-chrome-rail-draw D layout) the menu rail: one pill per menu,
+;;! reserved off the top of the free rect. The open menu's pill reads as the
+;;! bright accent. Tapping a pill opens its sheet; tapping the open one closes
+;;! it — the same toggle the dock pills use, so the two rows behave alike.
+(define (kruddgui-chrome-rail-draw D layout)
+  (let* ((menus (editor-layout-menus layout))
+         (n     (length menus))
+         (g     kruddgui-gap)
+         (h     kruddgui-chrome-rail-h)
+         (band  (kruddgui-dock-reserve! D 'top h))
+         (bx    (car band)) (by (cadr band)) (bw (caddr band))
+         (pw    (min kruddgui-chrome-menu-w
+                     (/ (- bw (* (- n 1) g)) (max n 1)))))
+    (when (> n 0)
+      (kgui-panel-begin "kgui-chrome-rail" bx by bw h)
+      (kruddgui-rect* (list bx by bw h) kruddgui-chrome-band-bg)
+      (let loop ((ms menus) (i 0))
+        (when (pair? ms)
+          (let ((x   (+ bx (* i (+ pw g))))
+                (act (eqv? kruddgui-chrome-menu i)))
+            (kruddgui-rect* (list x by pw h)
+                            (if act kruddgui-active-bg kruddgui-idle-bg))
+            (kruddgui-label x by pw h
+                            (kruddgui-chrome-label
+                             (editor-layout-menu-label (car ms)))
+                            (if act kruddgui-active-fg kruddgui-idle-fg))
+            (when (kgui-button x by pw h)
+              (set! kruddgui-chrome-menu (if act #f i))))
+          (loop (cdr ms) (+ i 1))))
+      (kgui-panel-end))))
+
+;;! (kruddgui-chrome-badges-draw D layout) the toolbar band: the spec's badges
+;;! and items laid left to right until (spacer), then the rest measured and
+;;! packed against the trailing edge. Badges are read-only live labels, so they
+;;! declare no button; an (item …) does, and runs its action.
+(define (kruddgui-chrome-badges-draw D layout)
+  (let* ((bar  (editor-layout-toolbar layout))
+         (h    kruddgui-chrome-band-h)
+         (band (kruddgui-dock-reserve! D 'top h))
+         (bx   (car band)) (by (cadr band)) (bw (caddr band)))
+    (when (pair? bar)
+      (kgui-panel-begin "kgui-chrome-badges" bx by bw h)
+      (kruddgui-rect* (list bx by bw h) kruddgui-chrome-band-bg)
+      (kruddgui-chrome-bar-run bar bx by bw h #t)
+      (kruddgui-chrome-bar-run (kruddgui-chrome-after-spacer bar)
+                               bx by bw h #f)
+      (kgui-panel-end))))
+
+;;! (kruddgui-chrome-after-spacer items) -> the items declared after the first
+;;! (spacer), or () when the bar declares none.
+(define (kruddgui-chrome-after-spacer items)
+  (let loop ((is items))
+    (cond ((null? is) '())
+          ((eq? (editor-layout-kind (car is)) 'spacer) (cdr is))
+          (else (loop (cdr is))))))
+
+;;! (kruddgui-chrome-bar-width items) -> the packed width of ITEMS, so the
+;;! trailing run can be placed by measuring it rather than by guessing.
+(define (kruddgui-chrome-bar-width items)
+  (let loop ((is items) (w 0))
+    (cond ((null? is) w)
+          ((eq? (editor-layout-kind (car is)) 'spacer) w)
+          ((eq? (editor-layout-kind (car is)) 'separator)
+           (loop (cdr is) (+ w kruddgui-gap)))
+          (else
+           (loop (cdr is)
+                 (+ w (kruddgui-chrome-cell-width (car is))
+                    kruddgui-gap))))))
+
+;;! (kruddgui-chrome-cell-width item) -> one badge's or item's drawn width: its
+;;! text, padded on both sides.
+(define (kruddgui-chrome-cell-width item)
+  (let ((s (kruddgui-chrome-cell-text item)))
+    (+ (car (kgui-text-metrics s)) (* 2 kruddgui-chrome-pad))))
+
+;;! (kruddgui-chrome-cell-text item) -> the string a badge or item shows: the
+;;! badge's live text by id (seeded from the spec), or the item's label.
+(define (kruddgui-chrome-cell-text item)
+  (kruddgui-chrome-ascii
+   (if (eq? (editor-layout-kind item) 'badge)
+       (kruddgui-chrome-text (editor-layout-badge-id item)
+                             (editor-layout-badge-text item))
+       (editor-layout-mnemonic (editor-layout-item-label item)))))
+
+;;! (kruddgui-chrome-bar-run items x y w h leading?) draw one run of the toolbar
+;;! band. LEADING? packs from the left and stops at the first (spacer); the
+;;! trailing run is placed by its own measured width, which is what makes
+;;! (spacer) elastic without the spec naming a width.
+(define (kruddgui-chrome-bar-run items x y w h leading?)
+  (let ((x0 (if leading?
+                x
+                (- (+ x w) (kruddgui-chrome-bar-width items)))))
+    (let loop ((is items) (cx x0))
+      (when (pair? is)
+        (let ((item (car is)))
+          (cond ((eq? (editor-layout-kind item) 'spacer)
+                 ;;! The leading run ends here — everything past the spacer
+                 ;;! belongs to the trailing one, which is drawn separately.
+                 (when (not leading?)
+                   (loop (cdr is) cx)))
+                ((eq? (editor-layout-kind item) 'separator)
+                 (kruddgui-rect* (list cx (+ y 4) 1 (- h 8))
+                                 kruddgui-chrome-rule)
+                 (loop (cdr is) (+ cx kruddgui-gap)))
+                (else
+                 (let ((cw (kruddgui-chrome-cell-width item)))
+                   (kruddgui-chrome-text-left cx y cw h
+                                              (kruddgui-chrome-cell-text item)
+                                              kruddgui-chrome-dim-fg)
+                   (when (and (eq? (editor-layout-kind item) 'item)
+                              (kgui-button cx y cw h))
+                     (kruddgui-chrome-act! (editor-layout-item-id item)))
+                   (loop (cdr is) (+ cx cw kruddgui-gap))))))))))
+
+;;! (kruddgui-chrome-status-draw D layout) the status strip: the spec's fields
+;;! left to right in their live text, with the unwired-action hint against the
+;;! trailing edge. Reserved off the bottom, so it is the last thing above the
+;;! home indicator and the main area sits clear of it.
+(define (kruddgui-chrome-status-draw D layout)
+  (let* ((fs   (editor-layout-statusbar layout))
+         (h    kruddgui-chrome-band-h)
+         (band (kruddgui-dock-reserve! D 'bottom h))
+         (bx   (car band)) (by (cadr band)) (bw (caddr band)))
+    (when (pair? fs)
+      (kgui-panel-begin "kgui-chrome-status" bx by bw h)
+      (kruddgui-rect* (list bx by bw h) kruddgui-chrome-band-bg)
+      (let loop ((l fs) (cx bx))
+        (when (pair? l)
+          (let* ((f (car l))
+                 (s (kruddgui-chrome-ascii
+                     (kruddgui-chrome-text (editor-layout-field-id f)
+                                           (editor-layout-field-text f))))
+                 (cw (+ (car (kgui-text-metrics s))
+                        (* 2 kruddgui-chrome-pad))))
+            (kruddgui-chrome-text-left cx by cw h s kruddgui-chrome-dim-fg)
+            (loop (cdr l) (+ cx cw)))))
+      (when (> (string-length kruddgui-chrome-hint) 0)
+        (kruddgui-chrome-text-right bx by bw h
+                                    (kruddgui-chrome-ascii
+                                     kruddgui-chrome-hint)
+                                    kruddgui-chrome-head-fg))
+      (kgui-panel-end))))
+
+;;! (kruddgui-chrome-tray-draw D layout) the dock tray: one pill per tab group,
+;;! reserved off the top of what is left. Labelled by the group's front member,
+;;! so a group of one reads as its dock's title and a group of two reads as
+;;! whichever the spec raises.
+(define (kruddgui-chrome-tray-draw D layout)
+  (let* ((gs   (kruddgui-chrome-groups layout))
+         (n    (length gs))
+         (g    kruddgui-gap)
+         (h    kruddgui-tray-h)
+         (band (kruddgui-dock-reserve! D 'top h))
+         (bx   (car band)) (by (cadr band)) (bw (caddr band))
+         (pw   (min kruddgui-tray-pill-w
+                    (/ (- bw (* (- n 1) g)) (max n 1)))))
+    (when (> n 0)
+      (kgui-panel-begin "kgui-chrome-tray" bx by bw h)
+      (let loop ((l gs) (i 0))
+        (when (pair? l)
+          (let ((x   (+ bx (* i (+ pw g))))
+                (act (kruddgui-chrome-group-open? (car l))))
+            (kruddgui-rect* (list x by pw h)
+                            (if act kruddgui-active-bg kruddgui-idle-bg))
+            (kruddgui-label x by pw h
+                            (kruddgui-chrome-label
+                             (editor-layout-dock-title
+                              (kruddgui-chrome-group-front (car l))))
+                            (if act kruddgui-active-fg kruddgui-idle-fg))
+            (when (kgui-button x by pw h)
+              (kruddgui-chrome-open! (car l))))
+          (loop (cdr l) (+ i 1))))
+      (kgui-panel-end))))
+
+;;! (kruddgui-chrome-group-of layout id) -> the tab group holding dock ID, or #f.
+(define (kruddgui-chrome-group-of layout id)
+  (let loop ((gs (kruddgui-chrome-groups layout)))
+    (cond ((null? gs) #f)
+          ((kruddgui-chrome-group-has? (car gs) id) (car gs))
+          (else (loop (cdr gs))))))
+
+;;! (kruddgui-chrome-dock-draw D layout) the open dock's card in the main rect:
+;;! a tab row when its group has more than one member, then the spec's panel
+;;! heading and blurb. The heading and blurb are the spec's placeholder copy —
+;;! this chrome draws what the spec says the panel is, and #944's initiative is
+;;! what fills the panels in.
+(define (kruddgui-chrome-dock-draw D layout)
+  (when kruddgui-chrome-open
+    (let* ((group (kruddgui-chrome-group-of layout kruddgui-chrome-open))
+           (dock  (and group
+                       (editor-layout-dock-find layout kruddgui-chrome-open)))
+           (r     (kruddgui-dock-rect D))
+           (x     (car r)) (y (cadr r)) (w (caddr r)) (h (cadddr r)))
+      (when (and dock (> w 0) (> h 0))
+        (kgui-panel-begin "kgui-chrome-dock" x y w h)
+        (kruddgui-rect* r kruddgui-chrome-card-bg)
+        (let ((ty (if (> (length group) 1)
+                      (begin
+                        (kruddgui-chrome-tabs-draw group x y w)
+                        (+ y kruddgui-chrome-tab-h))
+                      y)))
+          (kruddgui-chrome-text-left x (+ ty kruddgui-chrome-pad) w
+                                     kruddgui-chrome-row-h
+                                     (kruddgui-chrome-label
+                                      (editor-layout-dock-panel dock))
+                                     kruddgui-chrome-head-fg)
+          (kgui-clip x ty w (- h (- ty y)))
+          (kruddgui-chrome-blurb-draw
+           x (+ ty kruddgui-chrome-pad kruddgui-chrome-row-h) w
+           (kruddgui-chrome-label (editor-layout-dock-blurb dock)))
+          (kgui-clip-none))
+        (kgui-panel-end)))))
+
+;;! (kruddgui-chrome-tabs-draw group x y w) the tab row for a group of more than
+;;! one dock: one chip per member, the open one lit. Tapping a chip switches the
+;;! group's open member without closing the group, which is what (tabbed-with …)
+;;! asks for.
+(define (kruddgui-chrome-tabs-draw group x y w)
+  (let* ((n  (length group))
+         (tw (/ w (max n 1)))
+         (h  kruddgui-chrome-tab-h))
+    (let loop ((l group) (i 0))
+      (when (pair? l)
+        (let* ((d   (car l))
+               (id  (editor-layout-dock-id d))
+               (tx  (+ x (* i tw)))
+               (act (string=? id kruddgui-chrome-open)))
+          (kruddgui-rect* (list tx y tw h)
+                          (if act kruddgui-idle-bg kruddgui-chrome-card-bg))
+          (kruddgui-label tx y tw h
+                          (kruddgui-chrome-label (editor-layout-dock-title d))
+                          (if act kruddgui-idle-fg kruddgui-chrome-dim-fg))
+          (when (kgui-button tx y tw h)
+            (set! kruddgui-chrome-open id)))
+        (loop (cdr l) (+ i 1))))
+    (kruddgui-rect* (list x (+ y h) w kruddgui-chrome-rule-h)
+                    kruddgui-chrome-rule)))
+
+;;! (kruddgui-chrome-blurb-draw x y w text) the dock's one-line description,
+;;! wrapped to the card. Wrapping is measured rather than counted in characters,
+;;! because the atlas is proportional — a run that fits at one width does not at
+;;! another, and the card's width is the viewport's.
+(define (kruddgui-chrome-blurb-draw x y w text)
+  (let ((limit (- w (* 2 kruddgui-chrome-pad)))
+        (lh    (+ (cadr (kgui-text-metrics "M")) 6)))
+    (let loop ((words (kruddgui-chrome-split text)) (line "") (ly y))
+      (cond ((null? words)
+             (when (> (string-length line) 0)
+               (kruddgui-chrome-text-left x ly w lh line
+                                          kruddgui-chrome-dim-fg)))
+            (else
+             (let ((try (if (= (string-length line) 0)
+                            (car words)
+                            (string-append line " " (car words)))))
+               (if (or (= (string-length line) 0)
+                       (<= (car (kgui-text-metrics try)) limit))
+                   (loop (cdr words) try ly)
+                   (begin
+                     (kruddgui-chrome-text-left x ly w lh line
+                                                kruddgui-chrome-dim-fg)
+                     (loop (cdr words) (car words) (+ ly lh))))))))))
+
+;;! (kruddgui-chrome-split text) -> TEXT's space-separated words. The atlas has
+;;! no glyph outside its baked set, so nothing here normalizes: the spec's copy
+;;! is split and drawn as written.
+(define (kruddgui-chrome-split text)
+  (let ((n (string-length text)))
+    (let loop ((i 0) (start 0) (out '()))
+      (cond ((>= i n)
+             (reverse (if (> i start) (cons (substring text start i) out) out)))
+            ((char=? (string-ref text i) #\space)
+             (loop (+ i 1) (+ i 1)
+                   (if (> i start) (cons (substring text start i) out) out)))
+            (else (loop (+ i 1) start out))))))
+
+;;! (kruddgui-chrome-sheet-draw D layout) the open menu's sheet, drawn last so
+;;! it sits over the tray and the dock card. It is placed under its own pill and
+;;! sized to its rows; the panel region covers the whole free rect, so a tap
+;;! anywhere off the sheet dismisses it rather than falling through to whatever
+;;! is underneath — the touch equivalent of a menu's grab.
+;;!
+;;! The three buttons are declared innermost-first because kgui-button consumes
+;;! the tap it claims: the rows get first refusal, then the sheet's own card
+;;! swallows a tap on its padding, and only what neither claimed reaches the
+;;! full-rect dismiss. Declaring the dismiss first would make every row
+;;! unreachable — the catcher would eat every tap in the frame.
+(define (kruddgui-chrome-sheet-draw D layout)
+  (when kruddgui-chrome-menu
+    (let* ((menus (editor-layout-menus layout))
+           (menu  (and (< kruddgui-chrome-menu (length menus))
+                       (list-ref menus kruddgui-chrome-menu)))
+           (items (and menu
+                       (editor-layout-menu-items
+                        menu (editor-layout-docks layout))))
+           (r     (kruddgui-dock-rect D))
+           (fx    (car r)) (fy (cadr r)) (fw (caddr r)) (fh (cadddr r)))
+      (if (not (pair? items))
+          (set! kruddgui-chrome-menu #f)
+          (let* ((sw (min kruddgui-chrome-sheet-w fw))
+                 (sx (min (+ fx (* kruddgui-chrome-menu
+                                   (+ kruddgui-chrome-menu-w kruddgui-gap)))
+                          (- (+ fx fw) sw)))
+                 (sh (min fh (kruddgui-chrome-sheet-height items))))
+            (kgui-panel-begin "kgui-chrome-sheet" fx fy fw fh)
+            (kruddgui-rect* (list sx fy sw sh) kruddgui-chrome-sheet-bg)
+            (kgui-clip sx fy sw sh)
+            (kruddgui-chrome-rows-draw items sx fy sw)
+            (kgui-clip-none)
+            (kgui-button sx fy sw sh)
+            (when (kgui-button fx fy fw fh)
+              (set! kruddgui-chrome-menu #f))
+            (kgui-panel-end))))))
+
+;;! (kruddgui-chrome-sheet-height items) -> the sheet's height: a row per action
+;;! and a rule per separator, plus the padding above and below.
+(define (kruddgui-chrome-sheet-height items)
+  (let loop ((is items) (h (* 2 kruddgui-chrome-pad)))
+    (cond ((null? is) h)
+          ((eq? (editor-layout-kind (car is)) 'separator)
+           (loop (cdr is) (+ h kruddgui-gap)))
+          (else (loop (cdr is) (+ h kruddgui-chrome-row-h))))))
+
+;;! (kruddgui-chrome-rows-draw items x y w) the sheet's rows. An action
+;;! draws its label and, when the spec names one, its shortcut against the
+;;! trailing edge; a tap runs it and closes the sheet. A separator draws a rule.
+;;! A dock toggle shows a check mark when its dock is visible, which is the
+;;! whole reason the View menu is a list of docks.
+(define (kruddgui-chrome-rows-draw items x y w)
+  (let loop ((is items) (ry (+ y kruddgui-chrome-pad)))
+    (when (pair? is)
+      (let ((item (car is)))
+        (cond ((eq? (editor-layout-kind item) 'separator)
+               (kruddgui-rect* (list (+ x kruddgui-chrome-pad)
+                                     (+ ry (/ kruddgui-gap 2))
+                                     (- w (* 2 kruddgui-chrome-pad))
+                                     kruddgui-chrome-rule-h)
+                               kruddgui-chrome-rule)
+               (loop (cdr is) (+ ry kruddgui-gap)))
+              (else
+               (kruddgui-chrome-row-draw item x ry w)
+               (loop (cdr is) (+ ry kruddgui-chrome-row-h))))))))
+
+;;! (kruddgui-chrome-row-draw item x y w) one action row. Its trailing column is
+;;! the shortcut for an ordinary action and the show/hide state for a dock
+;;! toggle — a toggle has no shortcut, so the two never compete for the column.
+(define (kruddgui-chrome-row-draw item x y w)
+  (let* ((id    (editor-layout-action-id item))
+         (dock  (kruddgui-chrome-toggle-id id))
+         (trail (if dock
+                    (if (kruddgui-chrome-hidden? dock)
+                        ""
+                        kruddgui-chrome-shown-mark)
+                    (kruddgui-chrome-key
+                     (editor-layout-action-shortcut item))))
+         (h     kruddgui-chrome-row-h))
+    (kruddgui-chrome-text-left x y w h
+                               (kruddgui-chrome-label
+                                (editor-layout-action-label item))
+                               kruddgui-idle-fg)
+    (when (> (string-length trail) 0)
+      (kruddgui-chrome-text-right x y w h trail kruddgui-chrome-dim-fg))
+    (when (kgui-button x y w h)
+      (kruddgui-chrome-act! id)
+      (set! kruddgui-chrome-menu #f))))
+
+;;! (kruddgui-chrome-draw D) the chrome, into the dock shell: the menu rail and
+;;! toolbar band off the top, the status strip off the bottom, the dock tray off
+;;! what is left, the open dock's card in the main rect, and the open menu's
+;;! sheet over all of it. A no-op when core's chrome image is absent.
+;;!
+;;! The sheet is drawn last on purpose. It is the only piece that overlaps
+;;! another — everything else has a band reserved for it — so drawing order is
+;;! what puts it on top, and declaring its region last is what makes a tap on it
+;;! win over the tray pill underneath.
+(define (kruddgui-chrome-draw D)
+  (let ((layout (kruddgui-chrome-spec)))
+    (when (pair? layout)
+      (kruddgui-chrome-rail-draw D layout)
+      (kruddgui-chrome-badges-draw D layout)
+      (kruddgui-chrome-status-draw D layout)
+      (kruddgui-chrome-tray-draw D layout)
+      (kruddgui-chrome-dock-draw D layout)
+      (kruddgui-chrome-sheet-draw D layout))))
+
+;;! (kruddgui-chrome-tick) the host's per-tick entry point for the chrome, and
+;;! the reason it is separate from (kruddgui-draw): the panel set that
+;;! kruddgui-draw lays out is still parked on the krudd-* accessors that went
+;;! with kruddboard in #661, while the chrome reads nothing but the spec and the
+;;! kgui-* primitives. Gating it on that parked set would mean the spec draws
+;;! nowhere, so kruddgui.cpp calls this one directly whenever editor mode is
+;;! lit — the same shape kruddgui-perf-hud-draw already uses, one level up from
+;;! its own layout-begin.
+;;!
+;;! The band the GAME / EDITOR switch occupies is reserved off the bottom before
+;;! anything is placed. The switch draws itself, unconditionally and after this,
+;;! because it is the way out of either mode; reserving its band here is how the
+;;! status strip ends up above it instead of under it.
+(define (kruddgui-chrome-tick)
+  (let* ((vp (kgui-viewport-size))
+         (vw (car vp))
+         (vh (cadr vp)))
+    (when (and (> vw 0) (> vh 0))
+      (let ((D (kruddgui-layout-begin vw vh)))
+        (kruddgui-dock-reserve! D 'bottom kruddgui-modeswitch-h)
+        (kruddgui-chrome-draw D)))))
+
 ;;! (kruddgui-draw) the whole layer — the host's per-tick entry point, laid out
 ;;! through the dock shell. Off a safe frame it reserves the top toolbar band
 ;;! (undo, redo), then the bottom mode-bar band (only with a selection),

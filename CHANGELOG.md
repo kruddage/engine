@@ -1,5 +1,29 @@
 # Changelog
 
+## [20.0.0](https://github.com/kruddage/engine/compare/v19.2.1...v20.0.0) (2026-07-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* reset the tree to 19.2.1, before the TypeScript editor ([#969](https://github.com/kruddage/engine/issues/969))
+
+### revert
+
+* reset the tree to 19.2.1, before the TypeScript editor ([#969](https://github.com/kruddage/engine/issues/969)) ([01706e7](https://github.com/kruddage/engine/commit/01706e7cbc12115c596926d83ba5b1e162df3986))
+
+
+### Features
+
+* **editor:** @kruddage/editor — the application, and the end of zero-dep ([#955](https://github.com/kruddage/engine/issues/955)) ([0499470](https://github.com/kruddage/engine/commit/049947060749c4d7e0fcf22e5cd7cf0dc7d9f3e5))
+* **editor:** boot into a scene, and fetch the engine from the page's own directory ([#966](https://github.com/kruddage/engine/issues/966)) ([1df09b3](https://github.com/kruddage/engine/commit/1df09b300f287f2f59383cfeadf0ca084d19c3cd))
+* **editor:** the boundary, and the read-only shell over it ([#945](https://github.com/kruddage/engine/issues/945), [#954](https://github.com/kruddage/engine/issues/954)) ([#957](https://github.com/kruddage/engine/issues/957)) ([6d695f0](https://github.com/kruddage/engine/commit/6d695f05a88144d095b321191be658d0f295a59f))
+* **editor:** the document model, and the shell wired to it ([#947](https://github.com/kruddage/engine/issues/947), [#948](https://github.com/kruddage/engine/issues/948)) ([#958](https://github.com/kruddage/engine/issues/958)) ([737260b](https://github.com/kruddage/engine/commit/737260b3ed77f4b5c7f028c2c332075373f52b63))
+* **editor:** the inspector across a selection, and the edges [#951](https://github.com/kruddage/engine/issues/951) left ([#963](https://github.com/kruddage/engine/issues/963)) ([d2f3b7a](https://github.com/kruddage/engine/commit/d2f3b7a933f36cce6c52e160e78d91a1b65e5536))
+* **editor:** the inspector, derived from the asset ([#951](https://github.com/kruddage/engine/issues/951)) ([#960](https://github.com/kruddage/engine/issues/960)) ([aceccff](https://github.com/kruddage/engine/commit/aceccffd7d46fd1ef4167ab79bc56027219d5102))
+* **editor:** the outliner, and the selection becoming a set ([#950](https://github.com/kruddage/engine/issues/950)) ([#962](https://github.com/kruddage/engine/issues/962)) ([ec45850](https://github.com/kruddage/engine/commit/ec45850244d520000fa459a978b3f13f395cc6da))
+* **editor:** the viewport — canvas handover, camera, picking and the gizmo ([#949](https://github.com/kruddage/engine/issues/949)) ([#961](https://github.com/kruddage/engine/issues/961)) ([d2cbfd7](https://github.com/kruddage/engine/commit/d2cbfd74ec3ed88f6d5f35f2e524a7f73a9f72d6))
+* **shell:** retire the Scheme chrome, and the editor becomes the site ([#953](https://github.com/kruddage/engine/issues/953)) ([#965](https://github.com/kruddage/engine/issues/965)) ([40b23e2](https://github.com/kruddage/engine/commit/40b23e2d583e377feae660dcf17025a4f681f5f2))
+
 ## [19.2.1](https://github.com/kruddage/engine/compare/v19.2.0...v19.2.1) (2026-07-28)
 
 

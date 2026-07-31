@@ -10,29 +10,6 @@ pnpm --filter @kruddage/site run build /tmp/out # or anywhere
 This is what CI uploads and what `gh-pages` serves. It replaces
 `.github/scripts/stage-site.sh`.
 
-## The layout it stages
-
-```
-/            @kruddage/editor's build — the editor is the site
-/game/       the engine's own page: shell.html.in, its loader, its WASM,
-             the PWA files and the runtime assets
-```
-
-#946 had these the other way round: the engine held the root and the editor sat
-at `/editor/`, because the editor was a skeleton and the shell was the only
-editor that existed. #953 reversed it once the editor did the job.
-
-Everything the engine's page references is relative — the loader tag,
-`manifest.webmanifest` (`start_url` and `scope` are both `"."`), `sw.js`, the
-icons, `assets/` — so the whole set moves by being copied into one directory and
-nothing inside it has to learn its own URL. The service worker's scope narrows
-with it, which is right: it caches the game host, and the editor is not its
-business.
-
-An unbuilt editor is now an **error** rather than a note. It used to be
-skippable — the engine still served at the root without it — but the root is the
-editor's document now, so skipping stages a site that 404s on the way in.
-
 ## What it does
 
 Copies the whitelisted artifacts into a clean output directory, renaming the

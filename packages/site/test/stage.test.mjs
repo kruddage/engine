@@ -14,7 +14,7 @@ import { test } from "node:test";
 
 import { ENGINE_ARTIFACTS } from "@kruddage/engine";
 
-import { ENGINE_PREFIX, planSite, stageSite } from "../src/stage.mjs";
+import { planSite, stageSite } from "../src/stage.mjs";
 
 const STEM = "abc1234";
 
@@ -57,7 +57,7 @@ test("renames only the artifacts declared cache-busting", () => {
 
 	stageSite({ artifacts, outDir: out, stem: STEM });
 
-	assert.deepEqual(readdirSync(join(out, ENGINE_PREFIX)).sort(), [
+	assert.deepEqual(readdirSync(out).sort(), [
 		"icon-192.png",
 		"icon-512.png",
 		"index.abc1234.js",
@@ -73,7 +73,7 @@ test("rewrites the loader reference in the entry document", () => {
 	const out = mkdtempSync(join(tmpdir(), "krudd-out-"));
 
 	stageSite({ artifacts, outDir: out, stem: STEM });
-	const html = readFileSync(join(out, ENGINE_PREFIX, "index.html"), "utf8");
+	const html = readFileSync(join(out, "index.html"), "utf8");
 
 	assert.match(html, /src="index\.abc1234\.js"/);
 	assert.doesNotMatch(html, /src="index\.js"/);
@@ -88,7 +88,7 @@ test("leaves the error overlay's mention of index.wasm alone", () => {
 	const out = mkdtempSync(join(tmpdir(), "krudd-out-"));
 
 	stageSite({ artifacts, outDir: out, stem: STEM });
-	const html = readFileSync(join(out, ENGINE_PREFIX, "index.html"), "utf8");
+	const html = readFileSync(join(out, "index.html"), "utf8");
 
 	assert.match(html, /<span class="error-source">index\.wasm<\/span>/);
 });
@@ -101,14 +101,14 @@ test("the staged wasm name is the one locateFile will request", () => {
 
 	stageSite({ artifacts, outDir: out, stem: STEM });
 
-	const html = readFileSync(join(out, ENGINE_PREFIX, "index.html"), "utf8");
+	const html = readFileSync(join(out, "index.html"), "utf8");
 	const hook = html.match(/'\.([^.']+)\.wasm'/);
 	assert.ok(hook, "staged HTML kept its locateFile hook");
 
 	const requested = `index.${hook[1]}.wasm`;
 	assert.ok(
-		readdirSync(join(out, ENGINE_PREFIX)).includes(requested),
-		`locateFile requests ${requested}, staged: ${readdirSync(join(out, ENGINE_PREFIX)).join(", ")}`
+		readdirSync(out).includes(requested),
+		`locateFile requests ${requested}, staged: ${readdirSync(out).join(", ")}`
 	);
 });
 
@@ -119,7 +119,7 @@ test("the PWA files keep their literal names", () => {
 	const out = mkdtempSync(join(tmpdir(), "krudd-out-"));
 
 	stageSite({ artifacts, outDir: out, stem: STEM });
-	const staged = readdirSync(join(out, ENGINE_PREFIX));
+	const staged = readdirSync(out);
 
 	for (const name of ["sw.js", "manifest.webmanifest", "icon-192.png"]) {
 		assert.ok(staged.includes(name), `${name} kept its name`);
@@ -135,7 +135,7 @@ test("copies the runtime asset directory when there is one", () => {
 	const out = mkdtempSync(join(tmpdir(), "krudd-out-"));
 	stageSite({ artifacts, outDir: out, stem: STEM, assetDir: assets });
 
-	assert.equal(readFileSync(join(out, ENGINE_PREFIX, "assets", "chess.mesh"), "utf8"), "mesh");
+	assert.equal(readFileSync(join(out, "assets", "chess.mesh"), "utf8"), "mesh");
 });
 
 test("fails loudly when the entry document lost its loader reference", () => {
@@ -170,96 +170,4 @@ test("staging is idempotent", () => {
 	const second = stageSite({ artifacts, outDir: out, stem: STEM });
 
 	assert.deepEqual(first, second);
-});
-
-/* The editor and the engine are two writers into one output directory. Until
- * #953 the engine held the root and the editor sat at `editor/`; now it is the
- * other way round. These check the arrangement itself, and that neither writer
- * disturbs the other — which is the whole risk in staging two builds together.
- *
- * The bug the last of them exists for is the one the user hit: a site that
- * staged and deployed cleanly while the root still served the old shell, so
- * eight merged PRs' worth of editor was live and unreachable. */
-function fakeEditor() {
-	const editor = mkdtempSync(join(tmpdir(), "krudd-editor-"));
-	mkdirSync(join(editor, "assets"), { recursive: true });
-	writeFileSync(join(editor, "index.html"), "<!doctype html>editor\n");
-	writeFileSync(join(editor, "assets", "index-abc.js"), "/* bundle */\n");
-	return editor;
-}
-
-test("stages the editor at the site root", () => {
-	const { artifacts } = fakeBuild();
-	const out = mkdtempSync(join(tmpdir(), "krudd-out-"));
-
-	const staged = stageSite({
-		artifacts,
-		outDir: out,
-		stem: STEM,
-		editorDir: fakeEditor(),
-	});
-
-	assert.ok(staged.includes("./"));
-	assert.equal(
-		readFileSync(join(out, "index.html"), "utf8"),
-		"<!doctype html>editor\n"
-	);
-	/* The bundler's own hashed output comes across whole — the engine's
-	 * artifact whitelist does not apply to it and must not be made to. */
-	assert.ok(readdirSync(join(out, "assets")).includes("index-abc.js"));
-});
-
-test("the engine's page is the one under the engine's route", () => {
-	const { artifacts } = fakeBuild();
-	const out = mkdtempSync(join(tmpdir(), "krudd-out-"));
-
-	stageSite({ artifacts, outDir: out, stem: STEM, editorDir: fakeEditor() });
-
-	/* Two documents both called index.html, and each has to be the right one.
-	 * A regression that reversed the two would leave the site serving the game
-	 * host at the root and the editor at /game/, which is exactly the state
-	 * #953 was opened to end. */
-	assert.match(readFileSync(join(out, "index.html"), "utf8"), /editor/);
-	assert.match(
-		readFileSync(join(out, ENGINE_PREFIX, "index.html"), "utf8"),
-		/locateFile/
-	);
-});
-
-test("the editor's output does not disturb the engine's", () => {
-	const { artifacts } = fakeBuild();
-	const withoutEditor = mkdtempSync(join(tmpdir(), "krudd-out-"));
-	const withEditor = mkdtempSync(join(tmpdir(), "krudd-out-"));
-
-	const before = stageSite({ artifacts, outDir: withoutEditor, stem: STEM });
-	const after = stageSite({
-		artifacts,
-		outDir: withEditor,
-		stem: STEM,
-		editorDir: fakeEditor(),
-	});
-
-	assert.deepEqual(
-		after.filter((name) => name !== "./"),
-		before
-	);
-	assert.equal(
-		readFileSync(join(withEditor, ENGINE_PREFIX, "index.html"), "utf8"),
-		readFileSync(join(withoutEditor, ENGINE_PREFIX, "index.html"), "utf8")
-	);
-});
-
-test("stages nothing at the root when the editor is not built", () => {
-	/* stageSite still tolerates a null editor, because it is a pure staging
-	 * function and this is a real state a local build reaches. It is
-	 * scripts/build.mjs that refuses to ship it — a site with no root document
-	 * is a 404 on the way in, and that judgement belongs to the deploy step
-	 * rather than to the thing that copies files. */
-	const { artifacts } = fakeBuild();
-	const out = mkdtempSync(join(tmpdir(), "krudd-out-"));
-
-	const staged = stageSite({ artifacts, outDir: out, stem: STEM, editorDir: null });
-
-	assert.ok(!staged.includes("./"));
-	assert.deepEqual(readdirSync(out), [ENGINE_PREFIX]);
 });

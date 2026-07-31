@@ -6,12 +6,7 @@
 
 A game engine written in C, compiled to WebAssembly via Emscripten and served as a static site.
 
-**[The editor →](https://kruddage.github.io/engine)** &middot;
-**[the game host →](https://kruddage.github.io/engine/game/)**
-
-The site root is the editor — a TypeScript application ([#944](https://github.com/kruddage/engine/issues/944)),
-not the engine decorating a page at boot. `game/` is the engine on its own: a
-canvas, a scene launcher, and nothing around it.
+**[Live demo →](https://kruddage.github.io/engine)**
 
 ## Overview
 
@@ -74,10 +69,9 @@ krudd/
                  null/, frame_graph/, particles/, scene_renderer/, plus renderer.scm
                  (the backend interface spec) and shader/ (the shader DSL)
     audio/       The mixer and its device backends
-    ui/          In-canvas UI — kruddgui/ (the game's GUI), viewport/, gizmo/,
-                 kruddboard/, and bridge/ (the boundary the TypeScript editor drives)
+    ui/          Editor chrome — kruddgui/, viewport/, kruddboard/
     game/        host/ is the launcher registry; its siblings register with it
-    shell/       The host the engine runs inside — web/ (the game host page)
+    shell/       The host the engine runs inside — web/
 ```
 
 The tiers are listed in dependency order: a module may only reach for one in a tier above
@@ -156,24 +150,14 @@ Q2).
 | Package | What it is |
 |---|---|
 | [`@kruddage/engine`](packages/engine) | The engine's WASM build, harvested into `dist/` with a manifest describing it |
-| [`@kruddage/editor`](packages/editor) | The editor application: React over the WASM artifact. The only package with third-party dependencies |
 | [`@kruddage/site`](packages/site) | Stages the deployable static site from those artifacts (replaces `stage-site.sh`) |
 | [`@kruddage/barriers`](tools/barriers) | The boundary check itself: `pnpm check` |
 | [`@kruddage/render-diff`](tools/render-diff) | Screenshot oracle for the WebGPU port |
 | [`@kruddage/dawn-smoke`](tools/dawn-smoke) | Proves a native Dawn build works offscreen; no `build` script, needs an out-of-tree Dawn install (`pnpm --filter @kruddage/dawn-smoke run smoke`) |
 
-**`pnpm install` downloads a dependency graph.** It did not until
-`@kruddage/editor` arrived (#946), and the change was deliberate rather than
-incidental: an editor built without packages is an editor that ships years late,
-so #944 spent the zero-dependency position on a dock splitter, a virtualized
-tree and a node canvas that the ecosystem has already written.
-
-The rest of the repo is unchanged and stays that way — s7 is still vendored, the
-CDP client is still written against Node's built-in WebSocket, and there is
-still no CMake. **Only `@kruddage/editor` has third-party dependencies**, every
-one of them is justified in a line in
-[`packages/editor/README.md`](packages/editor/README.md), and nothing the
-engine builds with went near a registry.
+There are no third-party dependencies. `pnpm install` links the workspace and
+downloads nothing, matching how the rest of the repo treats its supply chain
+(vendored s7, a CDP client written against Node's built-in WebSocket, no CMake).
 
 The point of the split is the boundary, not the packaging. `pnpm check` fails
 the build on two things: a package reaching into another by relative path —

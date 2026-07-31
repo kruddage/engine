@@ -35,24 +35,4 @@ int32_t viewport_pick_entity(const struct world *w,
 			     const struct asset_api *asset,
 			     const struct memory_api *mem);
 
-/*
- * A world-space bounding sphere for one entity's drawn mesh: the centre into
- * centre[3] and the radius into *radius. Returns 1 on success, 0 when the
- * entity is dead, has no COMPONENT_RENDER, or its mesh could not be generated.
- *
- * Frame-selection (#949) is the consumer, and it lives beside the raycast for
- * one reason: it measures the mesh through the same asset->get_data and
- * mesh_script_generate path with the same per-entity parameter override. A
- * second way to ask "how big is this thing" would drift from the pick and the
- * draw exactly as a second hit-test would, and framing a selection onto a
- * bound that no longer matches it is the visible form of that drift.
- *
- * A sphere rather than a box because the only caller wants a radius to back the
- * camera off by, and a box would have to be reduced to one anyway.
- */
-int32_t viewport_entity_bounds(const struct world *w, int32_t entity,
-			       float centre[3], float *radius,
-			       const struct asset_api *asset,
-			       const struct memory_api *mem);
-
 #endif /* VIEWPORT_PICK_H */

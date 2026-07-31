@@ -58,22 +58,6 @@ struct camera_api {
 	/* Reattach to the scripted scene camera, dropping the user's pose. Called
 	 * after loading a new scene so its authored camera takes over. */
 	void (*reset_view)(void);
-
-	/*
-	 * Frame a world-space sphere (#949) — point the camera at `centre` and
-	 * back the eye off far enough that a ball of `radius` fits the vertical
-	 * field of view, keeping the current view direction. This is
-	 * frame-selection, and it is here rather than composed out of
-	 * pan + dolly by the caller because the arithmetic needs fov_y and the
-	 * eye→target distance, and both are the camera's own.
-	 *
-	 * It detaches from the scripted camera exactly as orbit/pan/dolly do:
-	 * framing a selection the demo's orbit would immediately fight is not
-	 * framing it. A non-positive radius is ignored; NULL centre is ignored.
-	 *
-	 * A no-op on a NULL/older api, like the three above.
-	 */
-	void (*frame)(const float centre[3], float radius);
 };
 
 #endif /* CAMERA_API_H */

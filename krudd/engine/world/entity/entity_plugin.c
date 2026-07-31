@@ -5,7 +5,6 @@
 #include "scene_script.h"
 #include "scene.h"
 #include "scene_edit.h"
-#include "scene_save.h"
 #include "edit_api.h"
 #include "asset_api.h"
 #include "asset_codec_api.h"
@@ -107,18 +106,6 @@ static int32_t scene_build_scm(const char *src)
 }
 
 /*
- * Write the live world back out as a (scene ...) form (see scene_save.c).
- *
- * The catalog goes in because the form binds assets by path and the world holds
- * numeric refs — without it the geometry still saves and the bindings do not,
- * which is why g_asset is passed rather than checked for.
- */
-static int32_t scene_save_scm(char *out, int32_t cap)
-{
-	return scene_save_write(&g_world, g_asset, "scene", out, cap);
-}
-
-/*
  * Run an image function with the live world bound (see scene_script_call). The
  * event-driven twin of scene_build_scm: a game's Scheme rules mutate the world
  * in response to a click. Not recorded on the undo history — gameplay is not an
@@ -166,41 +153,6 @@ static void scene_destroy_entity(int32_t id)
 		scene_edit_record(g_edit, g_mem, &g_world, before,
 				  "Delete Entity", 0);
 	}
-}
-
-/*
- * Reparent, as one history entry.
- *
- * SCENE_EDIT_NONE rather than a field tag of its own, so two drags of the same
- * entity are two undo steps. Coalescing is for a value a drag sweeps through
- * sixty times a second; a reparent is a discrete answer to "where does this
- * belong", and folding two of them together would make the first
- * un-undoable.
- */
-static int32_t scene_set_parent(int32_t id, int32_t parent)
-{
-	struct world_snapshot *before = entity_is_live(id) ? edit_before() : NULL;
-
-	if (world_set_parent(&g_world, id, parent) != 0) {
-		world_snapshot_free(before, g_mem);
-		return -1;
-	}
-	scene_edit_record(g_edit, g_mem, &g_world, before, "Reparent Entity", 0);
-	return 0;
-}
-
-static int32_t scene_duplicate_entity(int32_t id)
-{
-	struct world_snapshot *before = entity_is_live(id) ? edit_before() : NULL;
-	int32_t                copy;
-
-	copy = world_duplicate_entity(&g_world, id);
-	if (copy < 0) {
-		world_snapshot_free(before, g_mem);
-		return -1;
-	}
-	scene_edit_record(g_edit, g_mem, &g_world, before, "Duplicate Entity", 0);
-	return copy;
 }
 
 static void scene_set_transform(int32_t id, const struct transform *local)
@@ -326,52 +278,9 @@ static int32_t scene_get_selected(void)
 	return world_get_selected(&g_world);
 }
 
-/*
- * The selection, and none of it is recorded on the history.
- *
- * That is unchanged from when the selection was one id, and it is the right
- * answer for a set too: undo walks the document back, and what a reader had
- * highlighted is not part of the document. A snapshot restore does bring the
- * selection back with it, because the snapshot is whole-world — which is what
- * makes undoing a delete re-select what the delete had selected.
- */
 static void scene_set_selected(int32_t id)
 {
 	world_set_selected(&g_world, id);
-}
-
-static void scene_select_add(int32_t id)
-{
-	world_select_add(&g_world, id);
-}
-
-static void scene_select_remove(int32_t id)
-{
-	world_select_remove(&g_world, id);
-}
-
-static void scene_select_clear(void)
-{
-	world_select_clear(&g_world);
-}
-
-static int32_t scene_is_selected(int32_t id)
-{
-	return world_is_selected(&g_world, id);
-}
-
-/*
- * Hidden and locked. No snapshot, no history entry — undo walks the document
- * back, and how someone is looking at it is not part of the document.
- */
-static void scene_set_entity_flags(int32_t id, uint32_t flags)
-{
-	world_set_entity_flags(&g_world, id, flags);
-}
-
-static uint32_t scene_entity_flags(int32_t id)
-{
-	return world_entity_flags(&g_world, id);
 }
 
 static int32_t scene_get_outline(void)
@@ -398,13 +307,10 @@ static const struct entity_api g_entity_api = {
 	.get_world      = scene_get_world,
 	.load_scene     = scene_load,
 	.build_scene_scm = scene_build_scm,
-	.save_scene_scm = scene_save_scm,
 	.dispatch_scm   = scene_dispatch_scm,
 	.clear_world    = scene_clear_world,
 	.create_entity  = scene_create_entity,
 	.destroy_entity = scene_destroy_entity,
-	.set_parent     = scene_set_parent,
-	.duplicate_entity = scene_duplicate_entity,
 	.set_transform  = scene_set_transform,
 	.set_name       = scene_set_name,
 	.set_render_ref = scene_set_render_ref,
@@ -416,12 +322,6 @@ static const struct entity_api g_entity_api = {
 	.set_texture_params = scene_set_texture_params,
 	.get_selected   = scene_get_selected,
 	.set_selected   = scene_set_selected,
-	.select_add     = scene_select_add,
-	.select_remove  = scene_select_remove,
-	.select_clear   = scene_select_clear,
-	.is_selected    = scene_is_selected,
-	.set_entity_flags = scene_set_entity_flags,
-	.entity_flags   = scene_entity_flags,
 	.get_outline    = scene_get_outline,
 	.set_outline    = scene_set_outline,
 	.get_paused     = scene_get_paused,

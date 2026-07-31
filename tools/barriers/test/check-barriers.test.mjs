@@ -209,7 +209,6 @@ test("the C tree is not in the workspace", () => {
 	const dirs = packageDirs(REPO);
 
 	assert.deepEqual(dirs.sort(), [
-		"packages/editor",
 		"packages/engine",
 		"packages/site",
 		"tools/barriers",
@@ -259,35 +258,4 @@ test("a missing tools/ directory is not an error", () => {
 	mkdirSync(join(root, "packages", "alpha"), { recursive: true });
 
 	assert.deepEqual(packageDirs(root), ["packages/alpha"]);
-});
-
-/* The rules are only as wide as the extensions they read, and a missed one
- * shrinks the check silently rather than failing it — the check still prints
- * "workspace boundaries OK", just having looked at less. @kruddage/editor
- * (#946) is the case that made this concrete: a React package is mostly .tsx,
- * so before this list grew, rule 1 would have read the editor's handful of .ts
- * files, skipped every component, and reported a clean workspace.
- *
- * The assertion is per-extension rather than over a bundle, so a future
- * narrowing names the extension it dropped. */
-test("every source extension is read by the rules", () => {
-	for (const ext of ["mjs", "cjs", "js", "jsx", "mts", "cts", "ts", "tsx"]) {
-		const problems = check({
-			[`packages/other/src/a.${ext}`]: `import { x } from "${ESCAPING_SPECIFIER}";\n`,
-		});
-
-		assert.equal(problems.length, 1, `.${ext} was not read by rule 1`);
-		assert.match(problems[0], /escapes @kruddage\/other/);
-	}
-});
-
-/* Rule 3 reads the same list, so it gets the same guarantee. Checked separately
- * because the two rules could drift apart if one ever grew its own walk. */
-test("rule 3 reads a .tsx source too", () => {
-	const problems = check({
-		"packages/other/src/a.tsx": `const dir = "${ENGINE_PATH}shell";\nexport { dir };\n`,
-	});
-
-	assert.equal(problems.length, 1);
-	assert.match(problems[0], /private to @kruddage\/engine/);
 });

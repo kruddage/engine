@@ -91,8 +91,7 @@ on the WebGPU path.** `diff` mode is built and waiting for it, not dead code.
 ## Usage
 
 ```
---base <url>    site root (default http://127.0.0.1:8000). The engine's page
-                is game/ under it and this tool appends that itself (#953).
+--base <url>    site root (default http://127.0.0.1:8000)
 --scene <id>    run one scene instead of all
 --accept        promote this run's output to the reference shots
 ```

@@ -15,13 +15,8 @@
 			"types": "./src/index.d.ts",
 			"default": "./src/index.mjs"
 		},
-		"./bridge": {
-			"types": "./src/bridge.d.ts",
-			"default": "./src/bridge.mjs"
-		},
 		"./package.json": "./package.json"
 	},
-	"//exports": "Two entry points, and the split is load-bearing rather than tidy. The root is build-time code: it reads the filesystem to find artifacts, and it imports node:fs and node:path to do it. ./bridge is runtime code that ships to a browser, and it imports nothing at all. Merging them would mean a bundler pulling node:fs into the editor to get at the boundary client (#945).",
 	"files": [
 		"src",
 		"dist",

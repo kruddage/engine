@@ -71,9 +71,7 @@ void renderer_webgpu_release_frame(void);
 void fg_plugin_entry(struct subsystem_manager *mgr);
 void scene_renderer_plugin_entry(struct subsystem_manager *mgr);
 void viewport_plugin_entry(struct subsystem_manager *mgr);
-void gizmo_plugin_entry(struct subsystem_manager *mgr);
 void kruddgui_plugin_entry(struct subsystem_manager *mgr);
-void bridge_plugin_entry(struct subsystem_manager *mgr);
 void audio_scriptnode_plugin_entry(struct subsystem_manager *mgr);
 void chess_plugin_entry(struct subsystem_manager *mgr);
 
@@ -100,22 +98,7 @@ static const struct {
 	 * kruddgui's very first tick rather than one frame late.
 	 */
 	{ "viewport",       viewport_plugin_entry       },
-	/*
-	 * The gizmo resolves "camera", "scene" and "viewport" — the last of
-	 * which is the entry immediately above — and registers its own kruddgui
-	 * overlay from its first tick, so it sits here for the same reason the
-	 * viewport does (#949). Overlays draw in registration order, so the
-	 * handles compose over the viewport's, which draws nothing.
-	 */
-	{ "gizmo",          gizmo_plugin_entry          },
 	{ "kruddgui",       kruddgui_plugin_entry       },
-	/*
-	 * The editor boundary resolves "scene" and "edit", both of which are up
-	 * by now. It has no tick — it does its work inside the exchange the
-	 * editor drives — so where it sits here costs nothing beyond having the
-	 * two services it reads already registered (#945).
-	 */
-	{ "bridge",         bridge_plugin_entry         },
 	/*
 	 * Built-in games register last: they resolve the "scene" api (entity
 	 * plugin) and register on the launcher, which needs the asset catalog the
@@ -233,16 +216,22 @@ EM_JS(int, krudd_wants_webgpu, (void), {
 })
 
 /*
- * #706's chrome push lived here: krudd_build_editor handed the serialized
- * editor_layout.scm tree to window.kruddBuildEditor, which walked it into
- * menus, toolbar, docks and status fields. #953 retired the whole path. The
- * editor is a TypeScript application that owns its own layout, and the only
- * page this engine still boots into is a game host with no chrome to build.
+ * Hand the serialized editor layout to the shell so it can build its DOM
+ * chrome (#706 part C). The
+ * layout is authored once in editor_layout.scm; script_layout_json() evaluates
+ * it and serializes the tree, and window.kruddBuildEditor (shell.html) walks
+ * that JSON into menus, toolbar, docks and status fields. Passing the data
+ * rather than literals is what keeps the chrome declarative: a menu or dock
+ * added to the .scm reaches the page with no edit on this side.
  *
- * Nothing replaced it, on purpose: a push at boot is the wrong shape for an
- * editor that outlives any one scene. What the editor needs from the engine now
- * goes through ui/bridge (#945), which is bidirectional and batched.
+ * kruddBuildEditor is defined before main() runs, so a missing hook is only
+ * possible if the shell has been swapped out — a safe no-op, like the other
+ * bridges. UTF8ToString decodes the em dashes and ellipses the layout carries.
  */
+EM_JS(void, krudd_build_editor, (const char *json), {
+	if (typeof window.kruddBuildEditor === 'function')
+		window.kruddBuildEditor(UTF8ToString(json));
+})
 #endif
 
 #ifdef __EMSCRIPTEN__
@@ -331,6 +320,19 @@ void engine_init(void)
 	phase = emscripten_get_now();
 	script_init();
 	stats_record_phase("script_init", phase);
+
+	/*
+	 * Build the editor chrome before any plugin boots. A backend reports its
+	 * renderer through window.kruddSetRenderer from its init (finish_plugin_boot
+	 * below on the GL path), which needs the toolbar's renderer badge already in
+	 * the DOM — so the layout has to reach the shell here, not after boot.
+	 */
+	{
+		const char *layout_json = script_layout_json();
+
+		if (layout_json)
+			krudd_build_editor(layout_json);
+	}
 
 	/*
 	 * Register the statically-linked plugins now that core services exist,

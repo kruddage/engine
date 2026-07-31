@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 
 /*
- * viewport — the game viewport's bridge to the scene, and the editor's.
+ * viewport — the game viewport's bridge to the scene.
  *
  * Two jobs, both game-critical and both run once per kruddgui tick:
  *
@@ -32,24 +32,6 @@
  * mesh_script_generate geometry, with its per-entity mesh-param override so the
  * hit-box matches the box that was drawn.
  *
- * ## One owner of the pointer, and which one (#949)
- *
- * The React editor is a page beside the canvas. Its pointer events land on the
- * canvas element and reach kruddgui through emscripten's callbacks, so without
- * a rule the overlay below and the editor would both act on the same press —
- * and the editor's would be a frame later, so a click would select twice and
- * the second answer would win.
- *
- * The rule is the mode: **in game mode kruddgui owns the pointer over the
- * viewport; in editor mode the editor does.** So the click-to-pick below stands
- * down whenever editor mode is lit, and the editor asks for a pick through
- * viewport_api's pick() instead. The aspect sync stands down with it, because
- * the size the editor reports through set_size is the one it also picks
- * against, and two writers of one number is the same bug in a different place.
- *
- * The vtable itself is the other half of #949: a pick the editor can ask for,
- * a size it can report, and a bounding sphere for frame-selection.
- *
  * wasm-only: native builds host no games, no canvas, and no kruddgui pointer.
  */
 
@@ -57,22 +39,9 @@
 #include "subsystem_manager.h"
 #include "log_api.h"
 #include "log_level.h"
-#include "viewport_api.h"
 
 static const struct log_api           *g_log;
 static const struct subsystem_manager *g_mgr;
-
-/*
- * The size a pick is answered against, in CSS pixels.
- *
- * Held here rather than read from kruddgui at the point of use so that there is
- * exactly one number, whoever last wrote it. In game mode the overlay below
- * writes it from kruddgui's own measurement every tick; in editor mode the
- * editor writes it from the rect its layout gave the canvas. Zero until
- * something has said, which makes a pick before the first frame miss rather
- * than divide by nothing.
- */
-static float g_view_w, g_view_h;
 
 #ifdef __EMSCRIPTEN__
 #include "kruddgui_api.h"
@@ -93,45 +62,28 @@ static const struct asset_api    *g_asset;
 static const struct memory_api   *g_mem;    /* for the click-to-pick mesh gen */
 static int                        g_registered;
 
-/* Editor mode — the flag that says whose pointer this is. */
-int krudd_editor_mode(void);
-
 /*
  * Click-to-pick: cast a ray from the clicked pixel and return the live render
  * entity whose mesh it strikes nearest the camera, or -1 when the ray misses
  * everything. The raycast itself is the shared viewport_pick_entity (#697); here
- * we feed it the exact view·projection the renderer draws with and the size last
- * reported, so a click lands on the pixels a mesh was drawn to.
+ * we feed it the exact view·projection the renderer draws with and the kruddgui
+ * viewport size, so a click lands on the pixels a mesh was drawn to.
  */
 static int32_t pick_entity_at(float sx, float sy)
 {
 	const struct world *w;
 	struct mat4         vp;
+	float               dw, dh;
 
-	if (!g_camera || !g_scene || !g_asset || !g_mem)
-		return -1;
-	if (g_view_w <= 0.0f || g_view_h <= 0.0f)
+	if (!g_camera || !g_scene || !g_asset || !g_mem || !g_kgui)
 		return -1;
 	w = g_scene->get_world();
 	if (!w)
 		return -1;
 
 	g_camera->get_view_proj(&vp);
-	return viewport_pick_entity(w, &vp, sx, sy, g_view_w, g_view_h,
-				    g_asset, g_mem);
-}
-
-static int32_t bounds_of(int32_t entity, float centre[3], float *radius)
-{
-	const struct world *w;
-
-	if (!g_scene || !g_asset || !g_mem)
-		return 0;
-	w = g_scene->get_world();
-	if (!w)
-		return 0;
-	return viewport_entity_bounds(w, entity, centre, radius, g_asset,
-				      g_mem);
+	g_kgui->viewport(&dw, &dh);
+	return viewport_pick_entity(w, &vp, sx, sy, dw, dh, g_asset, g_mem);
 }
 
 /*
@@ -140,26 +92,19 @@ static int32_t bounds_of(int32_t entity, float centre[3], float *radius)
  * selection on a miss, so a game's edge detection resets). A tap kruddgui routed
  * to a panel is not our click — pointer_clicked reports only the unclaimed
  * pointer, and over_ui guards the rest — so this never steals a UI gesture.
- *
- * All of it stands down in editor mode: the editor owns the pointer there, and
- * it reports the size it picks against itself. See the note at the top.
  */
 static void viewport_overlay(void *userdata)
 {
 	float px, py;
 
 	(void)userdata;
-	if (!g_kgui || krudd_editor_mode())
+	if (!g_kgui)
 		return;
 
 	{
 		float dw, dh;
 
 		g_kgui->viewport(&dw, &dh);
-		if (dw > 0.0f && dh > 0.0f) {
-			g_view_w = dw;
-			g_view_h = dh;
-		}
 		if (g_camera && g_camera->set_viewport)
 			g_camera->set_viewport(dw, dh);
 	}
@@ -171,44 +116,6 @@ static void viewport_overlay(void *userdata)
 		return;
 	g_scene->set_selected(pick_entity_at(px, py));
 }
-/* ------------------------------------------------------------------ *
- * The vtable
- * ------------------------------------------------------------------ */
-
-static void api_set_size(float width, float height)
-{
-	/*
-	 * Non-positive is ignored rather than stored. A canvas measured while
-	 * its dock is collapsed reports zero, and adopting that would make
-	 * every pick until the next resize divide by it.
-	 */
-	if (width <= 0.0f || height <= 0.0f)
-		return;
-	g_view_w = width;
-	g_view_h = height;
-	/*
-	 * The aspect goes with it. In editor mode nothing else is writing it
-	 * — the overlay above stood down — so this is the one place the
-	 * projection learns the shape of the canvas it is drawn into.
-	 */
-	if (g_camera && g_camera->set_viewport)
-		g_camera->set_viewport(width, height);
-}
-
-static void api_get_size(float *width, float *height)
-{
-	if (width)
-		*width = g_view_w;
-	if (height)
-		*height = g_view_h;
-}
-
-static const struct viewport_api g_api = {
-	api_set_size,
-	api_get_size,
-	pick_entity_at,
-	bounds_of,
-};
 #endif /* __EMSCRIPTEN__ */
 
 static void viewport_init(void)
@@ -247,16 +154,6 @@ static void viewport_shutdown(void)
 
 static const struct subsystem desc = {
 	.name     = "viewport",
-	/*
-	 * The vtable exists only where there is a canvas to answer about. The
-	 * library is wasm-only, so the other case is unreachable today — the
-	 * guard is here because every other declaration in this file carries
-	 * one, and a lone unguarded reference is how the next native build of
-	 * this module fails to link for a reason nobody expects.
-	 */
-#ifdef __EMSCRIPTEN__
-	.api      = &g_api,
-#endif
 	.init     = viewport_init,
 	.tick     = viewport_tick,
 	.shutdown = viewport_shutdown,

@@ -390,6 +390,15 @@ static void test_tab_bar_and_selection(void)
 	click(menu_item_w("Assets") + 8.0f, tabs_y + TITLE_H / 2);
 	draw();
 	assert(truthy("(pair? kruddgui-ig-front)"));
+
+	/*
+	 * State changes on the tick that consumes the click; the *drawing*
+	 * catches up on the next one. A node resolves which member it is showing
+	 * before it draws its tab bar, so this tick still paints the old body.
+	 * Immediate mode has no second pass — one more tick is what makes the
+	 * change visible.
+	 */
+	draw();
 	assert(rec_has("text Scheme REPL"));
 	assert(!rec_has("text Asset Browser"));
 }
@@ -457,6 +466,13 @@ static void test_toggle_removes_a_node(void)
 	click(menu_item_x(2, "View") + 60.0f, CONTENT_Y + FRAME_PAD + ROW_H / 2);
 	draw();
 	assert(truthy("(kruddgui-ig-hidden? \"dock.scene\")"));
+
+	/*
+	 * Same frame lag as the tab bar: the dockspace paints before the popup
+	 * that sits over it, so the node the click removes was already drawn by
+	 * the time the row fired. One more tick is the frame that omits it.
+	 */
+	draw();
 	assert(!rec_has("panel kgui-ig-node:dock.scene"));
 	assert(rec_has("panel kgui-ig-node:dock.inspector"));
 	assert(rec_count("panel kgui-ig-node:") == 2);

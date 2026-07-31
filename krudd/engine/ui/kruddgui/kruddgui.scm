@@ -3682,7 +3682,7 @@
 (define (kruddgui-ig-wrap-draw x y w text)
   (let ((limit (- w (* 2 kruddgui-ig-frame-pad)))
         (lh    (+ (cadr (kgui-text-metrics "M")) 4)))
-    (let loop ((words (kruddgui-ig-split text)) (line "") (ly y))
+    (let loop ((words (kruddgui-ig-words text)) (line "") (ly y))
       (cond ((null? words)
              (when (> (string-length line) 0)
                (kruddgui-ig-text-left x ly w lh line kruddgui-ig-text-dim)))
@@ -3698,8 +3698,11 @@
                                             kruddgui-ig-text-dim)
                      (loop (cdr words) (car words) (+ ly lh))))))))))
 
-;;! (kruddgui-ig-split text) -> TEXT's space-separated words.
-(define (kruddgui-ig-split text)
+;;! (kruddgui-ig-words text) -> TEXT's space-separated words. Named for what it
+;;! returns rather than what it does, so it cannot collide with
+;;! kruddgui-ig-split — the dockspace's splitter width, which is a different
+;;! sense of the same word and was the name this procedure used to share.
+(define (kruddgui-ig-words text)
   (let ((n (string-length text)))
     (let loop ((i 0) (start 0) (out '()))
       (cond ((>= i n)

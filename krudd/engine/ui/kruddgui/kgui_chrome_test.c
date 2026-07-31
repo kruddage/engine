@@ -425,7 +425,15 @@ static void test_toggle_hides_a_dock(void)
 	draw();
 	assert(truthy("(kruddgui-chrome-hidden? \"dock.scene\")"));
 
-	/* The sheet closed with the tap, so this tick is the tray alone. */
+	/*
+	 * State changes on the tick that consumes the tap; the *drawing* catches
+	 * up on the next one. The sheet had already painted its "Scene" row by
+	 * the time that row's button fired, so this tick's record still holds it.
+	 * Immediate mode has no second pass — one more tick is what makes the
+	 * change visible, and asserting before it would be asserting on a frame
+	 * the user never sees settled.
+	 */
+	draw();
 	assert(!rec_has("text Scene"));
 	assert(rec_has("text Inspector"));
 	assert(truthy("(= (length (kruddgui-chrome-groups (editor-layout))) 2)"));
@@ -463,11 +471,18 @@ static void test_group_pill_and_tabs(void)
 	/* The card shows the raised member's heading from the spec. */
 	assert(rec_has("text Asset Browser"));
 
-	/* The tab row: two chips across the card, Console on the right. */
+	/*
+	 * The tab row: two chips across the card, Console on the right. The card
+	 * resolves which dock it is showing before it draws its tabs, so the tap
+	 * moves the selection but this tick still paints the old body — one more
+	 * tick shows the new one.
+	 */
 	tap(FRAME_X + FRAME_W * 0.75f, MAIN_Y + TAB_H / 2);
 	draw();
 	assert(truthy("(string=? kruddgui-chrome-open \"dock.console\")"));
+	draw();
 	assert(rec_has("text Scheme REPL"));
+	assert(!rec_has("text Asset Browser"));
 }
 
 /* Tapping the open group's pill again closes the main area. */

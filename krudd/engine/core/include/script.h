@@ -43,21 +43,6 @@ int script_eval(const char *src);
 const char *script_shader_transpile(const char *src, const char *stage);
 
 /*
- * The WGSL twin of script_shader_transpile, for the WebGPU backend. Same
- * rotating-buffer / NULL-on-miss contract; returns WGSL text for the stage.
- */
-const char *script_shader_transpile_wgsl(const char *src, const char *stage);
-
-/*
- * The s7->JS JSON seam (script_json / script_layout_json) was retired with the
- * Scheme chrome in #953. It served exactly one caller — the editor layout tree
- * on its way to window.kruddBuildEditor — and the editor that consumed it is
- * now a TypeScript application talking to ui/bridge, which carries its own
- * encoding. It is recoverable from the commit before this one; nothing else in
- * the tree ever called it.
- */
-
-/*
  * One editable parameter of a source-declared parameter block — a shader's
  * Material uniform block (script_shader_material_params) or a script's params
  * clause (script_entity_params); both report this same shape. `components` is
@@ -130,19 +115,6 @@ int script_mesh_params(const char *src, struct shader_param *out,
  */
 int script_texture_params(const char *src, struct shader_param *out,
 			  uint32_t max, uint32_t *total_size);
-
-/*
- * Introspect a sound script's (params ...) clause as editable parameters, the
- * audio-side twin of script_texture_params: same tight packing, same reported
- * shape, so one marshaller and one set of editor widgets serve sounds too. The
- * sound_script driver also reads the (duration ...) field through this to size
- * a bake. Fills out[] with up to `max` fields (in declaration order), writes the
- * tight-packed block size to *total_size (may be NULL), and returns the field
- * count (>= 0), or -1 on the same failure conditions. A sound with no params
- * yields 0 fields — not an error. SRC is the (sound ...) source.
- */
-int script_sound_params(const char *src, struct shader_param *out,
-			uint32_t max, uint32_t *total_size);
 
 /* Call the Scheme (tick) procedure if the image defines one. */
 void script_tick(void);

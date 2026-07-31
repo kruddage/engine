@@ -1,36 +1,18 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
 #
-# krudd/third_party/sync.sh — fetch (and verify) the latest s7 artifacts.
+# krudd/third_party/sync.sh — verify (and, if needed, fetch) the pinned s7 amalgamation.
 #
-# s7 is no longer vendored as source. This downloads the prebuilt artifacts for
-# the *latest* kruddage/s7 GitHub Release (see s7.artifact) and verifies each
-# one against the ".sha256" sidecar published beside it, so every build links
-# the same bytes CI does. Idempotent: once an artifact is present and matches
-# its sidecar checksum, no network I/O happens on the next run — but since the
-# sidecar is re-fetched every run, a new kruddage/s7 release is picked up (and
-# the stale cached artifact replaced) the next time this runs.
+# s7.c / s7.h are committed at the pin in s7.artifact; this checks their
+# sha256 so every build compiles the same bytes CI does, and re-downloads
+# from the pinned commit if a file is missing or doesn't match (e.g. after
+# bumping the pin). Idempotent: once a file matches its pinned checksum, no
+# network I/O happens on the next run.
 #
-# The artifacts are not committed to this repo (see .gitignore); a fresh
-# checkout fetches them on the first build. This needs network the first time —
-# the download host is github.com, reachable from CI and normal dev machines.
-#
-# Set KRUDD_S7_OFFLINE=1 to run with no network at all: every artifact is then
-# taken from this directory and verified against the ".sha256" sidecar an
-# earlier online run cached beside it, and a missing or mismatched file is a
-# hard error rather than a re-download. That is for a sandboxed or air-gapped
-# build: pre-fetch once where there is network, then build where there is none.
-#
-# Sourced (not executed) by kruddmake.sh and run-tests.sh, before the krudd
-# host tool exists to fetch anything for them — so this has to be plain POSIX
-# shell.
-# Expects $root (the repo root) to already be set by the sourcing script. On
-# success it exports the resolved artifact paths:
-#
-#   S7_HEADER       s7.h                   (its dir is the -I include path)
-#   S7_NATIVE_LIB   libs7-linux-x86_64.a   (link into native binaries)
-#   S7_WASM_LIB     libs7-wasm32.a         (link into the wasm module)
-#   S7_CLI          krudds7-linux-x86_64   (kruddmake's bootstrap interpreter)
+# Sourced (not executed) by krudd.sh and the two run-tests.sh harnesses, each
+# of which compiles s7.c directly, before krudd itself exists to fetch
+# anything for them — this has to be plain shell. Expects $root (the repo
+# root) to already be set by the sourcing script.
 
 s7_dir="$root/krudd/third_party"
 # shellcheck source=s7.artifact
@@ -48,84 +30,25 @@ s7_sha256() {
 }
 
 s7_download() {
-	# $1 url, $2 dest — returns non-zero on failure without leaving a partial.
-	#
-	# Retries a few times, 20s apart: since we now track the latest
-	# kruddage/s7 release rather than a pinned tag, a fetch can land in the
-	# few-minute gap between release-please cutting a new release and its
-	# build workflow finishing the asset upload, where the release exists but
-	# an asset request 404s. That gap clears on its own, so it is worth
-	# waiting out here rather than failing the whole build over it.
-	tries=0
-	while :; do
-		if command -v curl >/dev/null 2>&1; then
-			curl -fsSL -o "$2" "$1" && return 0
-		elif command -v wget >/dev/null 2>&1; then
-			wget -q -O "$2" "$1" && return 0
-		else
-			echo "krudd/third_party: no curl or wget found" >&2
-			return 1
-		fi
-		rm -f "$2"
-		tries=$((tries + 1))
-		[ "$tries" -ge 6 ] && return 1
-		echo "krudd/third_party: fetch of $1 failed, retrying in 20s ($tries/6)" >&2
-		sleep 20
-	done
+	# $1 url, $2 dest
+	if command -v curl >/dev/null 2>&1; then
+		curl -fsSL -o "$2" "$1"
+	elif command -v wget >/dev/null 2>&1; then
+		wget -q -O "$2" "$1"
+	else
+		echo "krudd/third_party: no curl or wget found" >&2
+		exit 1
+	fi
 }
 
-# Fetch $2 (asset filename) into $s7_dir, verifying it against its published
-# "<asset>.sha256" sidecar. Skips the download when the file is already present
-# and matches. Sets $s7_asset_path to the resolved path.
+# Fetch $2 (url) to $3 (dest) unless it's already there with the pinned
+# checksum $4; verify after downloading either way.
 s7_sync_one() {
-	name=$1
-	dest="$s7_dir/$name"
-	url="$S7_BASE_URL/$name"
-	sidecar="$dest.sha256"
-	sidecar_url="$url.sha256"
-
-	# Read the pinned checksum from the sidecar. The sidecar is small and
-	# release-scoped, so re-fetching it to confirm a cached artifact is cheap;
-	# it is the integrity anchor for the (uncommitted) binary next to it. It
-	# is kept on disk next to the artifact it describes so an offline run has
-	# something to verify against.
-	if [ -n "${KRUDD_S7_OFFLINE:-}" ]; then
-		if [ ! -f "$dest" ] || [ ! -f "$sidecar" ]; then
-			echo "krudd/third_party: KRUDD_S7_OFFLINE is set but $name (or its cached $name.sha256) is missing from $s7_dir" >&2
-			echo "krudd/third_party: run sync.sh once with network access to populate it" >&2
-			exit 1
-		fi
-	else
-		tmp_sum="$sidecar.tmp.$$"
-		if ! s7_download "$sidecar_url" "$tmp_sum"; then
-			rm -f "$tmp_sum"
-			echo "krudd/third_party: failed to fetch checksum for $name from $sidecar_url" >&2
-			exit 1
-		fi
-		mv "$tmp_sum" "$sidecar"
-	fi
-	# GitHub publishes sidecars in "sha256sum" form ("<hash>  <filename>");
-	# take the first field so a differing filename column never trips us up.
-	want=$(cut -d ' ' -f 1 "$sidecar")
-	if [ -z "$want" ]; then
-		echo "krudd/third_party: empty checksum in sidecar for $name" >&2
-		exit 1
-	fi
-
+	name=$1 url=$2 dest=$3 want=$4
 	if [ -f "$dest" ] && [ "$(s7_sha256 "$dest")" = "$want" ]; then
-		s7_asset_path="$dest"
 		return 0
 	fi
-
-	# Offline, the cached pair is all there is: a mismatch here means the
-	# cache is corrupt or half-updated, and there is no re-download to fall
-	# back on. Fail loudly rather than link bytes nothing vouches for.
-	if [ -n "${KRUDD_S7_OFFLINE:-}" ]; then
-		echo "krudd/third_party: cached $name does not match its cached checksum, and KRUDD_S7_OFFLINE forbids re-fetching" >&2
-		exit 1
-	fi
-
-	echo "krudd/third_party: fetching $name (latest kruddage/s7 release, s7 $S7_VERSION)" >&2
+	echo "krudd/third_party: fetching $name ($S7_VERSION, $S7_DATE)" >&2
 	tmp="$dest.tmp.$$"
 	if ! s7_download "$url" "$tmp"; then
 		rm -f "$tmp"
@@ -139,18 +62,7 @@ s7_sync_one() {
 		exit 1
 	fi
 	mv "$tmp" "$dest"
-	s7_asset_path="$dest"
 }
 
-s7_sync_one "$S7_HEADER_ASSET"
-S7_HEADER="$s7_asset_path"
-s7_sync_one "$S7_NATIVE_LIB_ASSET"
-S7_NATIVE_LIB="$s7_asset_path"
-s7_sync_one "$S7_WASM_LIB_ASSET"
-S7_WASM_LIB="$s7_asset_path"
-s7_sync_one "$S7_CLI_ASSET"
-S7_CLI="$s7_asset_path"
-# The CLI is fetched as a plain asset; make it runnable.
-chmod +x "$S7_CLI" 2>/dev/null || true
-
-export S7_HEADER S7_NATIVE_LIB S7_WASM_LIB S7_CLI
+s7_sync_one "s7.c" "$S7_C_URL" "$s7_dir/s7.c" "$S7_C_SHA256"
+s7_sync_one "s7.h" "$S7_H_URL" "$s7_dir/s7.h" "$S7_H_SHA256"

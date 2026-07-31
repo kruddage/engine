@@ -48,7 +48,7 @@ struct fg_resource {
 	uint8_t       imported;    /* 1 = external (backbuffer); graph binds but never owns */
 	uint32_t      reader_count;
 	uint32_t      first_write; /* sorted-order index; UINT32_MAX if unset */
-	uint32_t      last_use;    /* last pass to read OR write it; UINT32_MAX if unset */
+	uint32_t      last_read;   /* sorted-order index; UINT32_MAX if unset */
 };
 
 struct fg_pass {
@@ -64,18 +64,6 @@ struct fg_pass {
 	float         color_clear[GPU_MAX_COLOR_ATTACHMENTS][4];
 	gpu_load_op   depth_load_op;
 	float         depth_clear;
-	/*
-	 * A write entry may be a resolve target rather than a render target:
-	 * write_is_resolve[j] flags it, and write_resolve_color[j] is the color
-	 * attachment index it resolves. Modelling resolves as writes lets the
-	 * existing cull / topo-sort / lifetime machinery treat them like any
-	 * other produced resource (readers depend on this pass, storage is freed
-	 * after the last reader); execute emits them as resolve_target instead of
-	 * a fresh color attachment. Zero-initialised, so a pass with no resolve is
-	 * unaffected.
-	 */
-	uint8_t       write_is_resolve[FG_MAX_PASS_DEPS];
-	uint32_t      write_resolve_color[FG_MAX_PASS_DEPS];
 	uint32_t      ref_count;  /* readers of our outputs among alive passes */
 	uint32_t      in_degree;  /* for Kahn's topo sort */
 	int           alive;
@@ -105,29 +93,6 @@ struct fg *fg_create(const struct gpu_api *gpu)
 
 void fg_destroy(struct fg *fg)
 {
-	uint32_t i;
-
-	if (!fg)
-		return;
-
-	/*
-	 * Belt-and-suspenders: execute frees every transient at its last use, so
-	 * nothing should still be allocated here. But a graph that was declared
-	 * and never executed (an early-out before compile/execute) would still
-	 * hold no allocations, and one that half-executed must not leak the GL
-	 * textures it created. Release anything the graph still owns before the
-	 * struct goes — imported resources are never owned, so skip them.
-	 */
-	for (i = 0; i < fg->resource_count; i++) {
-		struct fg_resource *r = &fg->resources[i];
-
-		if (r->allocated && !r->imported) {
-			fg->gpu->texture_destroy(r->handle);
-			r->handle    = NULL;
-			r->allocated = 0;
-		}
-	}
-
 	g_mem->free(fg);
 }
 
@@ -148,7 +113,7 @@ fg_resource_t fg_declare_transient(struct fg *fg, const char *name,
 	r->imported    = 0;
 	r->reader_count = 0;
 	r->first_write = UINT32_MAX;
-	r->last_use    = UINT32_MAX;
+	r->last_read   = UINT32_MAX;
 	return r;
 }
 
@@ -173,7 +138,7 @@ fg_resource_t fg_import_backbuffer(struct fg *fg)
 	r->imported    = 1;
 	r->reader_count = 0;
 	r->first_write = UINT32_MAX;
-	r->last_use    = UINT32_MAX;
+	r->last_read   = UINT32_MAX;
 	return r;
 }
 
@@ -227,36 +192,6 @@ void fg_pass_set_depth_clear(fg_pass_t pass, float depth)
 {
 	pass->depth_load_op = GPU_LOAD_OP_CLEAR;
 	pass->depth_clear   = depth;
-}
-
-/*
- * Append the resolve target as a flagged write so the graph schedules and
- * lifetimes it exactly like a produced resource (a later pass reading it depends
- * on this one; storage frees after its last read), while execute knows to emit
- * it as color[color_index].resolve_target rather than a new attachment.
- */
-void fg_pass_set_resolve(fg_pass_t pass, uint32_t color_index,
-			  fg_resource_t resolve_target)
-{
-	uint32_t idx;
-
-	if (!pass || !resolve_target)
-		return;
-	if (color_index >= GPU_MAX_COLOR_ATTACHMENTS) {
-		g_log->write(LOG_LEVEL_ERROR,
-			     "fg: resolve color index %u out of range", color_index);
-		return;
-	}
-	if (pass->write_count >= FG_MAX_PASS_DEPS) {
-		g_log->write(LOG_LEVEL_ERROR,
-			     "fg: pass '%s' write limit reached; resolve dropped",
-			     pass->name);
-		return;
-	}
-	idx = pass->write_count++;
-	pass->writes[idx]              = resolve_target;
-	pass->write_is_resolve[idx]    = 1;
-	pass->write_resolve_color[idx] = color_index;
 }
 
 /* --- Compile ------------------------------------------------------------- */
@@ -402,28 +337,19 @@ void fg_compile(struct fg *fg)
 	/* Compute transient resource lifetimes in sorted execution order */
 	for (i = 0; i < fg->resource_count; i++) {
 		fg->resources[i].first_write = UINT32_MAX;
-		fg->resources[i].last_use    = UINT32_MAX;
+		fg->resources[i].last_read   = UINT32_MAX;
 	}
 	for (i = 0; i < fg->sorted_count; i++) {
 		struct fg_pass *p = &fg->passes[fg->sorted[i]];
 
-		/*
-		 * A write is a use: a resource must stay alive through the pass
-		 * that renders into it, even when nothing later reads it. A pure
-		 * attachment (a depth buffer sampled by no one) is written and
-		 * never read, so gating its free on reads alone would allocate it
-		 * every frame and never free it — a per-frame leak. Fold writes
-		 * into last_use so execute frees it after its last touch either way.
-		 */
 		for (j = 0; j < p->write_count; j++) {
 			struct fg_resource *r = p->writes[j];
 
 			if (r->first_write == UINT32_MAX)
 				r->first_write = i;
-			r->last_use = i;
 		}
 		for (j = 0; j < p->read_count; j++)
-			p->reads[j]->last_use = i;
+			p->reads[j]->last_read = i;
 	}
 }
 
@@ -485,20 +411,6 @@ void fg_execute(struct fg *fg)
 		for (j = 0; j < p->write_count; j++) {
 			struct fg_resource *r = p->writes[j];
 
-			/*
-			 * A resolve target is not its own attachment: it rides on
-			 * the color attachment it resolves. Indexed by the explicit
-			 * resolve color, so it is order-independent from the color
-			 * write that sets that attachment's texture/load/clear.
-			 */
-			if (p->write_is_resolve[j]) {
-				uint32_t rc = p->write_resolve_color[j];
-
-				if (rc < GPU_MAX_COLOR_ATTACHMENTS)
-					rp.color[rc].resolve_target = r->handle;
-				continue;
-			}
-
 			if (r->desc.format == GPU_FORMAT_DEPTH32_FLOAT) {
 				rp.depth          = r->handle;
 				rp.depth_load_op  = p->depth_load_op;
@@ -525,12 +437,12 @@ void fg_execute(struct fg *fg)
 
 		gpu->cmd_end_render_pass(cmd);
 
-		/* Free transients whose last use falls on this pass.
+		/* Free transients whose last read falls on this pass.
 		 * Imported resources are never owned, so never freed. */
 		for (j = 0; j < fg->resource_count; j++) {
 			struct fg_resource *r = &fg->resources[j];
 
-			if (r->last_use == i && r->allocated) {
+			if (r->last_read == i && r->allocated) {
 				gpu->texture_destroy(r->handle);
 				r->handle    = NULL;
 				r->allocated = 0;
@@ -582,7 +494,6 @@ static const struct fg_api g_fg_api = {
 	.pass_set_execute     = fg_pass_set_execute,
 	.pass_set_color_clear = fg_pass_set_color_clear,
 	.pass_set_depth_clear = fg_pass_set_depth_clear,
-	.pass_set_resolve     = fg_pass_set_resolve,
 	.compile              = fg_compile,
 	.execute              = fg_execute,
 };

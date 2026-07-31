@@ -9,8 +9,7 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
-    # prefix "ci" makes Dependabot's squash title a Conventional Commit
-    # (ci: ...), which release-please records in the changelog without bumping
-    # the version — the successor to the old release:chore label.
+    labels:
+      - "release:chore"
     commit-message:
       prefix: "ci"

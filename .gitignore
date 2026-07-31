@@ -4,30 +4,3 @@
 *.o
 krudd/krudd
 public/
-
-# s7 artifacts fetched from the kruddage/s7 release by
-# krudd/third_party/sync.sh (see krudd/third_party/VENDOR.md) — pinned in
-# s7.artifact and checksum-verified, not committed. The .sha256 sidecars are
-# cached beside them so an offline run (KRUDD_S7_OFFLINE=1) still has an
-# integrity anchor to verify against.
-/krudd/third_party/s7.h
-/krudd/third_party/libs7-linux-x86_64.a
-/krudd/third_party/libs7-wasm32.a
-/krudd/third_party/krudds7-linux-x86_64
-/krudd/third_party/*.sha256
-
-/tools/render-diff/out/
-/tools/dawn-smoke/out/
-
-# agent worktrees (isolated subagent checkouts)
-.claude/worktrees/
-
-# pnpm workspace
-node_modules/
-/packages/*/dist/
-
-# @kruddage/editor's browser suite (#946). Playwright writes both on failure —
-# traces, videos and the HTML report — and CI uploads them as an artifact
-# instead. Neither belongs in the tree.
-/packages/editor/playwright-report/
-/packages/editor/test-results/

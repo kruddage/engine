@@ -19,11 +19,8 @@
 #include "entity_script_scm.h"
 #include "mesh_script_scm.h"
 #include "texture_script_scm.h"
-#include "sound_script_scm.h"
-#include "scene_script_scm.h"
 
 #include <stddef.h>
-#include <stdio.h>
 #include <string.h>
 
 static s7_scheme *g_s7;
@@ -85,22 +82,6 @@ void script_init(void)
 	 * *params* slot come from the entity-script image both reuse.
 	 */
 	script_eval(TEXTURE_SCRIPT_SCM);
-	/*
-	 * Load the sound-script dispatcher: the (sound ...) form, the snd-*
-	 * oscillator/envelope vocabulary, and sound-script-generate. The asset
-	 * plugin's sound_script.c calls it to bake a bound ASSET_TYPE_SOUND
-	 * asset's source into a sound_blob. Like the texture image, it reuses
-	 * the entity-script (params ...) reader and *params* slot, so it loads
-	 * after them.
-	 */
-	script_eval(SOUND_SCRIPT_SCM);
-	/*
-	 * Load the scene-script builder: the (scene ...) form and scene-build.
-	 * The entity plugin registers the scene-* host primitives its clauses
-	 * call (scene_script_init); those only run during a build, so loading
-	 * this image before they exist is fine, exactly like the entity image.
-	 */
-	script_eval(SCENE_SCRIPT_SCM);
 }
 
 s7_scheme *script_s7(void)
@@ -158,41 +139,6 @@ const char *script_shader_transpile(const char *src, const char *stage)
 	n   = strlen(out);
 	buf = g_glsl[slot];
 	if (n + 1 > sizeof(g_glsl[0]))
-		return NULL;
-	memcpy(buf, out, n + 1);
-	slot = (slot + 1) & 1;
-	return buf;
-}
-
-/*
- * The WGSL twin of script_shader_transpile: call (shader-transpile-wgsl SRC
- * STAGE) for the WebGPU backend. Same rotating-buffer contract so a caller can
- * hold the vertex and fragment WGSL at once; NULL on #f / down interpreter /
- * oversized result.
- */
-const char *script_shader_transpile_wgsl(const char *src, const char *stage)
-{
-	static char g_wgsl[2][16384];
-	static int  slot;
-	s7_pointer  fn, res;
-	const char *out;
-	size_t      n;
-	char       *buf;
-
-	if (!g_s7 || !src || !stage)
-		return NULL;
-	fn = s7_name_to_value(g_s7, "shader-transpile-wgsl");
-	if (!s7_is_procedure(fn))
-		return NULL;
-	res = s7_call(g_s7, fn,
-		      s7_list(g_s7, 2, s7_make_string(g_s7, src),
-			      s7_make_string(g_s7, stage)));
-	if (!s7_is_string(res))
-		return NULL;
-	out = s7_string(res);
-	n   = strlen(out);
-	buf = g_wgsl[slot];
-	if (n + 1 > sizeof(g_wgsl[0]))
 		return NULL;
 	memcpy(buf, out, n + 1);
 	slot = (slot + 1) & 1;
@@ -308,12 +254,6 @@ int script_texture_params(const char *src, struct shader_param *out,
 			  uint32_t max, uint32_t *total_size)
 {
 	return query_params("texture-script-params", src, out, max, total_size);
-}
-
-int script_sound_params(const char *src, struct shader_param *out,
-			uint32_t max, uint32_t *total_size)
-{
-	return query_params("sound-script-params", src, out, max, total_size);
 }
 
 void script_tick(void)

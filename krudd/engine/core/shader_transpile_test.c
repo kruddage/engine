@@ -62,66 +62,6 @@ int main(void)
 	assert(script_shader_transpile(SCENE, "compute") == NULL);
 
 	/*
-	 * The WGSL twin path (the WebGPU backend's bind-time seam): the same DSL
-	 * lowers to WGSL, with struct-based IO, the qualified uniform read, and
-	 * the same missing-stage NULL contract.
-	 */
-	{
-		const char *wvs = script_shader_transpile_wgsl(SCENE, "vertex");
-		const char *wfs = script_shader_transpile_wgsl(SCENE, "fragment");
-
-		assert(wvs != NULL);
-		assert(strstr(wvs, "@vertex") != NULL);
-		assert(strstr(wvs,
-			      "fn vs_main(in : VertexInput) -> VertexOutput") != NULL);
-		assert(strstr(wvs,
-			      "out.position = (u_Camera.view_proj * u_Camera.model"
-			      " * vec4<f32>(in.a_pos, 1.0));") != NULL);
-
-		assert(wfs != NULL);
-		assert(strstr(wfs, "@fragment") != NULL);
-		assert(strstr(wfs,
-			      "fn fs_main(in : FragmentInput) -> FragmentOutput")
-		       != NULL);
-
-		assert(script_shader_transpile_wgsl(SCENE, "compute") == NULL);
-	}
-
-	/*
-	 * fwidth and the opt-in fragment precision — the two DSL additions
-	 * kruddgui's overlay shaders needed, checked through the real runtime
-	 * image on both lowerings. fwidth is spelled the same in GLSL and WGSL,
-	 * so it rides the generic call emit; (precision highp) is GLSL-only,
-	 * because WGSL has no precision qualifiers to map it onto.
-	 */
-	{
-		static const char *SDF =
-			"(shader sdf (precision highp)"
-			"  (uniforms (u_tex sampler2D))"
-			"  (varyings (v_uv vec2))"
-			"  (targets (frag vec4 (location 0)))"
-			"  (fragment"
-			"    (let* ((d (swizzle (sample u_tex v_uv) a))"
-			"           (w (max (fwidth d) 0.00390625)))"
-			"      (set frag (vec4 w w w d)))))";
-		const char *g = script_shader_transpile(SDF, "fragment");
-		const char *w = script_shader_transpile_wgsl(SDF, "fragment");
-
-		assert(g != NULL);
-		assert(strstr(g, "precision highp float;") != NULL);
-		assert(strstr(g, "float w = max(fwidth(d), 0.00390625);") != NULL);
-
-		assert(w != NULL);
-		assert(strstr(w, "let w = max(fwidth(d), 0.00390625);") != NULL);
-		/* WGSL carries no precision qualifier for the declaration to become. */
-		assert(strstr(w, "precision") == NULL);
-
-		/* Omitting the declaration leaves the mediump default in place —
-		 * every shader that predates it is byte-for-byte unchanged. */
-		assert(strstr(fs, "precision mediump float;") != NULL);
-	}
-
-	/*
 	 * The Material-block introspection seam: the same image reports a
 	 * shader's editable parameters (std140 offsets + edit hints), which the
 	 * editor turns into widgets and the packer turns into material bytes.

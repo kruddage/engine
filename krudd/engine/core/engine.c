@@ -2,18 +2,14 @@
 #include "engine.h"
 #include "subsystem_manager.h"
 
-#include "game.h"
 #include "log.h"
 #include "memory.h"
 #include "memory_api.h"
-#include "renderer.h"
 #include "script.h"
 #include "stats_api.h"
 #include "version.h"
 
-#include <stddef.h>
 #include <stdint.h>
-#include <string.h>
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -65,100 +61,31 @@ void asset_plugin_entry(struct subsystem_manager *mgr);
 void edit_plugin_entry(struct subsystem_manager *mgr);
 void entity_plugin_entry(struct subsystem_manager *mgr);
 void renderer_webgl_plugin_entry(struct subsystem_manager *mgr);
-void renderer_webgpu_plugin_entry(struct subsystem_manager *mgr);
-int  renderer_webgpu_device_ready(void);
-void renderer_webgpu_release_frame(void);
 void fg_plugin_entry(struct subsystem_manager *mgr);
 void scene_renderer_plugin_entry(struct subsystem_manager *mgr);
-void viewport_plugin_entry(struct subsystem_manager *mgr);
-void gizmo_plugin_entry(struct subsystem_manager *mgr);
-void kruddgui_plugin_entry(struct subsystem_manager *mgr);
-void bridge_plugin_entry(struct subsystem_manager *mgr);
-void audio_scriptnode_plugin_entry(struct subsystem_manager *mgr);
-void chess_plugin_entry(struct subsystem_manager *mgr);
+void imgui_plugin_entry(struct subsystem_manager *mgr);
+void kruddboard_plugin_entry(struct subsystem_manager *mgr);
 
-/*
- * The boot order, as data so the profiler can time each entry point and label
- * its slice. Same sequence the hand-unrolled calls used to run in — services
- * before the plugins that consume them.
- */
-static const struct {
-	const char *name;
-	void      (*entry)(struct subsystem_manager *);
-} plugin_table[] = {
-	{ "asset",          asset_plugin_entry          },
-	{ "audio",          audio_scriptnode_plugin_entry },
-	{ "edit",           edit_plugin_entry           },
-	{ "entity",         entity_plugin_entry         },
-	{ "renderer_webgl", renderer_webgl_plugin_entry },
-	{ "fg",             fg_plugin_entry             },
-	{ "scene_renderer", scene_renderer_plugin_entry },
-	/*
-	 * The viewport bridge resolves the "camera" and "scene" apis (both up by
-	 * now) and registers a kruddgui overlay from its first tick; ordering it
-	 * before kruddgui means that tick runs first, so the overlay is live for
-	 * kruddgui's very first tick rather than one frame late.
-	 */
-	{ "viewport",       viewport_plugin_entry       },
-	/*
-	 * The gizmo resolves "camera", "scene" and "viewport" — the last of
-	 * which is the entry immediately above — and registers its own kruddgui
-	 * overlay from its first tick, so it sits here for the same reason the
-	 * viewport does (#949). Overlays draw in registration order, so the
-	 * handles compose over the viewport's, which draws nothing.
-	 */
-	{ "gizmo",          gizmo_plugin_entry          },
-	{ "kruddgui",       kruddgui_plugin_entry       },
-	/*
-	 * The editor boundary resolves "scene" and "edit", both of which are up
-	 * by now. It has no tick — it does its work inside the exchange the
-	 * editor drives — so where it sits here costs nothing beyond having the
-	 * two services it reads already registered (#945).
-	 */
-	{ "bridge",         bridge_plugin_entry         },
-	/*
-	 * Built-in games register last: they resolve the "scene" api (entity
-	 * plugin) and register on the launcher, which needs the asset catalog the
-	 * asset plugin seeded, so both must already be up. Registration order is
-	 * launcher-button order.
-	 */
-	{ "chess",          chess_plugin_entry          },
-};
+static void register_plugins(struct subsystem_manager *mgr)
+{
+	asset_plugin_entry(mgr);
+	edit_plugin_entry(mgr);
+	entity_plugin_entry(mgr);
+	renderer_webgl_plugin_entry(mgr);
+	fg_plugin_entry(mgr);
+	scene_renderer_plugin_entry(mgr);
+	imgui_plugin_entry(mgr);
+	kruddboard_plugin_entry(mgr);
+}
 #endif
 
 static struct subsystem_manager manager;
 static int32_t frame_count;
 
 #ifdef __EMSCRIPTEN__
-/* Set while the WebGPU path waits on its device before finishing the boot. */
-static int g_webgpu_boot_pending;
-
-/* Latches once the launcher has been armed (see the tick's tail). */
-static int g_ready_signalled;
-
-#endif
-
-#ifdef __EMSCRIPTEN__
 static double s_last_ms;
 static float  s_frame_times[60];
 static int    s_ft_head;
-static double s_boot_ms;	/* emscripten_get_now() at engine_init entry */
-
-/*
- * Record how long the slice since START took as the next startup phase.
- * Overflow past STATS_MAX_PHASES is dropped rather than clobbering earlier
- * phases — the bounded table keeps the profiler allocation-free.
- */
-static void stats_record_phase(const char *name, double start)
-{
-	uint32_t n = g_stats_api.phase_count;
-
-	if (n >= STATS_MAX_PHASES)
-		return;
-	g_stats_api.phases[n].name = name;
-	g_stats_api.phases[n].ms   = (float)(emscripten_get_now() - start);
-	g_stats_api.phase_count    = n + 1;
-}
 
 static void stats_update(void)
 {
@@ -198,127 +125,10 @@ EM_JS(void, krudd_signal_running, (void), {
 	if (typeof window.kruddSetRunning === 'function')
 		window.kruddSetRunning();
 })
-
-/*
- * Tell the shell the first frame is on screen, so it can arm the launcher.
- * The launcher overlay is painted from static HTML while the module is still
- * downloading, but a game can only be loaded once the subsystems are up and the
- * scene has actually rendered — picking one before then builds into a world the
- * renderer has not framed yet. Gating on the first tick, not on init, is what
- * makes "impatient" clicks wait for a live engine rather than bug out.
- */
-EM_JS(void, krudd_signal_ready, (void), {
-	if (typeof window.kruddSetReady === 'function')
-		window.kruddSetReady();
-})
-
-/*
- * Whether the page should boot the WebGPU backend. WebGPU is the default
- * while the port chases WebGL parity — pass ?renderer=webgl to opt out back
- * to the established path, and Firefox opts out unconditionally until its
- * WebGPU implementation is further along. See finish_plugin_boot for what
- * selecting WebGPU actually defers (the render cluster and games wait on the
- * device handshake).
- *
- * The decision itself lives in the shell (window.kruddWantsWebGPU in
- * shell.html.in), not here, so the launcher-hiding check and this backend
- * selection can never disagree about which renderer is about to boot.
- */
-EM_JS(int, krudd_wants_webgpu, (void), {
-	try {
-		return window.kruddWantsWebGPU() ? 1 : 0;
-	} catch (e) {
-		return 1;
-	}
-})
-
-/*
- * #706's chrome push lived here: krudd_build_editor handed the serialized
- * editor_layout.scm tree to window.kruddBuildEditor, which walked it into
- * menus, toolbar, docks and status fields. #953 retired the whole path. The
- * editor is a TypeScript application that owns its own layout, and the only
- * page this engine still boots into is a game host with no chrome to build.
- *
- * Nothing replaced it, on purpose: a push at boot is the wrong shape for an
- * editor that outlives any one scene. What the editor needs from the engine now
- * goes through ui/bridge (#945), which is bidirectional and batched.
- */
-#endif
-
-#ifdef __EMSCRIPTEN__
-/*
- * The scene to open once boot finishes, written into OUT (a C buffer of CAP
- * bytes). The shell owns the choice — window.kruddBootGame reads ?game= and
- * defaults to chess — for the same reason the renderer choice lives there
- * (krudd_wants_webgpu): the overlay and the auto-load can never disagree about
- * what boots. An empty string, or a name no game registered under, leaves the
- * launcher up (that is what ?game=none gets you). Truncation past CAP is fine —
- * an over-long name simply won't match, so the launcher stands.
- */
-EM_JS(void, krudd_boot_game, (char *out, int cap), {
-	var name = (typeof window.kruddBootGame === 'function')
-		? window.kruddBootGame() : 'chess';
-	if (typeof name !== 'string')
-		name = "";
-	stringToUTF8(name, out, cap);
-})
-
-/*
- * Register the remaining plugins and load the runtime image. Runs inline on the
- * GL path and from the tick on the WebGPU path, once the device exists — the
- * plugins are the same either way, so both paths go through here rather than
- * growing two boot orders that could drift apart.
- *
- * renderer_webgl is skipped when WebGPU is driving: both register under the
- * name "renderer", and the backend already registered itself.
- */
-static void finish_plugin_boot(int webgpu)
-{
-	size_t i;
-	double phase;
-	char   boot_game[32];
-
-	/* The frame graph is about to own the backbuffer; the probe must stop
-	 * clearing it. Before the loop, so no tick can land in between. */
-	if (webgpu)
-		renderer_webgpu_release_frame();
-
-	for (i = 0; i < sizeof(plugin_table) / sizeof(plugin_table[0]); i++) {
-		if (webgpu && strcmp(plugin_table[i].name, "renderer_webgl") == 0)
-			continue;
-		phase = emscripten_get_now();
-		plugin_table[i].entry(&manager);
-		stats_record_phase(plugin_table[i].name, phase);
-	}
-
-	/* Load the runtime image: it owns the body of the frame from here. */
-	phase = emscripten_get_now();
-	script_eval(RUNTIME_SCM);
-	stats_record_phase("runtime_scm", phase);
-
-	/*
-	 * Open the boot scene now that every game has registered and the scene api
-	 * is live — the same state a launcher click would find, so this is just
-	 * that click made programmatically. game_boot_default clears the demo scene
-	 * seeded in scene_renderer_init and builds the chosen one in its place, then
-	 * hides the launcher; an unset/unknown ?game= leaves the demo scene and the
-	 * "choose a scene" overlay exactly as before.
-	 */
-	boot_game[0] = '\0';
-	krudd_boot_game(boot_game, (int)sizeof(boot_game));
-	game_boot_default(boot_game);
-
-	g_stats_api.init_ms = (float)(emscripten_get_now() - s_boot_ms);
-}
 #endif
 
 void engine_init(void)
 {
-#ifdef __EMSCRIPTEN__
-	double phase;
-
-	s_boot_ms = emscripten_get_now();
-#endif
 	subsystem_manager_init(&manager, subsystems);
 	frame_count = 0;
 	LOG_INFO("engine: init " ENGINE_VERSION_STRING);
@@ -328,35 +138,11 @@ void engine_init(void)
 	 * transpiler into the image, and the renderer plugins lower their
 	 * shaders through it as they build pipelines at register time.
 	 */
-	phase = emscripten_get_now();
 	script_init();
-	stats_record_phase("script_init", phase);
-
-	/*
-	 * Register the statically-linked plugins now that core services exist,
-	 * timing each entry point so the board can show where boot went — a
-	 * plugin lowers its shaders and bakes its textures at register time, so
-	 * this is where "adding a texture" shows up as startup cost.
-	 */
-	if (krudd_wants_webgpu()) {
-		/*
-		 * WebGPU boots in two phases. Every plugin below the backend
-		 * creates GPU resources in its init — the scene renderer builds
-		 * pipelines and textures there — but the WebGPU device only
-		 * arrives through the adapter/device callback chain, long after
-		 * this function returns. So register the backend alone here and
-		 * let engine_tick finish the boot once the device exists.
-		 *
-		 * The GL path is untouched: it has a device the moment its
-		 * context is created, so it still boots straight through.
-		 */
-		phase = emscripten_get_now();
-		renderer_webgpu_plugin_entry(&manager);
-		stats_record_phase("renderer_webgpu", phase);
-		g_webgpu_boot_pending = 1;
-	} else {
-		finish_plugin_boot(0);
-	}
+	/* Register the statically-linked plugins now that core services exist. */
+	register_plugins(&manager);
+	/* Load the runtime image: it owns the body of the frame from here. */
+	script_eval(RUNTIME_SCM);
 #endif
 }
 
@@ -364,87 +150,12 @@ void engine_tick(void)
 {
 	frame_count++;
 #ifdef __EMSCRIPTEN__
-	/*
-	 * Finish the WebGPU boot the moment the device lands. Until then the only
-	 * registered subsystem is the backend itself, whose tick pumps the
-	 * instance so those callbacks can resolve — so this is the one thing that
-	 * has to run before the runtime image exists.
-	 */
-	if (g_webgpu_boot_pending && renderer_webgpu_device_ready()) {
-		g_webgpu_boot_pending = 0;
-		finish_plugin_boot(1);
-	}
-
-	/*
-	 * Time to first frame, captured once on the opening tick, two ways:
-	 *
-	 * first_frame_ms subtracts s_boot_ms, so it's init plus the browser's
-	 * first animation-frame round-trip — "engine boot" measured from
-	 * engine_init entry, separated from "waiting on the first rAF".
-	 *
-	 * page_to_first_frame_ms is the same instant left raw. emscripten_get_now()
-	 * is performance.now() (ms since navigation start), so the unsubtracted
-	 * value is the full page-load-to-first-frame wall clock — it keeps the
-	 * download + WASM compile + runtime bring-up that runs before main(),
-	 * which first_frame_ms throws away. This is what tracks the seconds spent
-	 * on a black screen; the 38 ms figures never saw that span at all.
-	 */
-	if (frame_count == 1) {
-		double now = emscripten_get_now();
-
-		g_stats_api.first_frame_ms         = (float)(now - s_boot_ms);
-		g_stats_api.page_to_first_frame_ms = (float)now;
-	}
 	stats_update();
-	/* The runtime image loads with the rest of the boot, so there is nothing
-	 * to tick while the WebGPU path is still waiting on its device. */
-	if (!g_webgpu_boot_pending)
-		script_tick();
+	script_tick();
 #endif
 	if (frame_count % 60 == 0)
 		LOG_DEBUG("engine: frame %d", frame_count);
 	subsystem_manager_tick(&manager);
-
-	/*
-	 * Close the frame. Every subsystem that draws has now ticked and
-	 * submitted, which is the only point at which that is true — a frame is
-	 * several command buffers (the frame graph, kruddgui's overlay, an open
-	 * preview panel), so no submit is the end of anything. A backend holding
-	 * a per-frame resource gives it back here; see frame-end in renderer.scm
-	 * for why the WebGPU backend cannot do it any earlier.
-	 *
-	 * Looked up rather than cached because the renderer registers at
-	 * different points on the two paths — WebGPU before the plugin boot, GL
-	 * during it — and a tick can land before either.
-	 */
-	{
-		const struct gpu_api *gpu =
-			(const struct gpu_api *)subsystem_manager_get_api(
-				&manager, "renderer");
-
-		if (gpu && gpu->frame_end)
-			gpu->frame_end();
-	}
-#ifdef __EMSCRIPTEN__
-	/*
-	 * A frame has rendered and the plugin boot has landed: arm the launcher
-	 * (see krudd_signal_ready). Runs after the render so a click that
-	 * follows lands on a live, framed engine.
-	 *
-	 * On the WebGPU path those two are not the same tick — the device
-	 * handshake spans however many frames the browser takes — and arming on
-	 * the first of them dropped the "choose a scene" menu over a page that
-	 * was seconds away from opening a game by itself, a banner between the
-	 * player and the board. Waiting for the boot means the overlay is
-	 * either already dismissed (finish_plugin_boot opened the boot game) or
-	 * the page really is staying on the menu, which is the only state worth
-	 * arming.
-	 */
-	if (!g_ready_signalled && !g_webgpu_boot_pending) {
-		g_ready_signalled = 1;
-		krudd_signal_ready();
-	}
-#endif
 }
 
 void engine_shutdown(void)

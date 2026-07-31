@@ -1,92 +1,16 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
 
-;;! The directories that carry a build.scm, in dependency order — a module may
-;;! only reach for one listed above it. The directory groups say which tier a
-;;! module sits in, so the layout on disk carries the same ordering this list
-;;! does.
-;;!
-;;! resolve-check-tiers reads this list and fails generation on any `(library
-;;! … (link …))` edge that inverts it, so the rule above is enforced rather
-;;! than remembered (#923). Executables are exempt: nothing links one, so
-;;! core's `index` linking every backend is the main-module link, not a tier
-;;! reaching downward.
-;;!
-;;! Most entries are modules: Scheme spec + C, building libraries, executables
-;;! and tests. A few build nothing and are listed only because they declare code
-;;! generation — an `(embed)`, an `(emit-interface-header)`, a
-;;! `(configure-file)`. Those declarations used to have nowhere to live, so they
-;;! sat as literals in the generator and drifted out of sync with the list of
-;;! sources the `regen` edge watches (#779, #787). A directory that declares a
-;;! build fact gets a spec, whether or not it also builds something.
-;;!
-;;!   abi/      the plugin vtables every tier includes, and nothing else. Hand-
-;;!             written headers only — nothing to build and nothing to generate,
-;;!             so for a long time it carried no spec at all and was absent from
-;;!             this list. That is right for a build system and wrong for a
-;;!             dependency graph: it is the highest fan-in node in the tree, and
-;;!             while it was unlisted the check below could not have an opinion
-;;!             about it. It now carries an `interface-library` — a public
-;;!             surface and nothing else, emitting no ninja edge — and is first
-;;!             here, which is what "everything may reach for abi, abi reaches
-;;!             for nothing" looks like as a position (#919). It includes no
-;;!             module's headers: where a vtable needs a type it owns no
-;;!             definition of, it forward-declares the tag rather than reaching
-;;!             down into the module that implements it.
-;;!   base/     no engine concepts at all — logging, allocation, arithmetic.
-;;!             Includes the spatial types (struct transform, struct mat4),
-;;!             which are geometry rather than world data model, so base/ can
-;;!             stay strictly below world/. It links nothing outside itself,
-;;!             which is what the bottom of the order looks like.
-;;!   core/     the engine itself: subsystems, the s7 script host and image,
-;;!             and the boot path. Not the shells — see shell/ below. Listed
-;;!             after base/ because `script` logs: 26 libraries link `log` and
-;;!             32 link `memory`, which is the fan-in of a tier below the
-;;!             engine core, not above it. core/ was first here until the check
-;;!             below had an opinion about it (#923).
-;;!   world/    the scene and its data model: entities, assets, editing.
-;;!   render/   the backends and the passes that drive them, plus the two
-;;!             Scheme sources the renderer generates from: renderer.scm (the
-;;!             backend interface header) and shader/ (the shader DSL and its
-;;!             GLSL/WGSL transpiler). Neither builds a target; both are listed,
-;;!             for the one codegen declaration each.
-;;!   audio/    the mixer and its device backends.
-;;!   ui/       the editor chrome: immediate-mode gui, viewport, kruddboard,
-;;!             gizmo/ — the transform handles, drawn on kruddgui's overlay and
-;;!             driven by the editor across the boundary (#949) — and bridge/,
-;;!             the boundary the TypeScript editor drives the document across
-;;!             (#945). It sits here rather than under shell/ because core links
-;;!             it like any other plugin, and nothing may reach into a shell.
-;;!   game/     host/ is the launcher registry; its siblings are the games
-;;!             that register with it.
-;;!   shell/    the host the engine runs inside: web/, the browser page (PWA
-;;!             manifest, service worker, icons, the emscripten shell
-;;!             template). Last in the order on purpose — a shell may reach for
-;;!             anything, and nothing may reach for a shell. web/ builds no
-;;!             targets — its assets are copied by the generator — but it is
-;;!             listed, for the shell template it configures.
-
-("abi"
- "base/log"
- "base/memory"
- "base/math"
- "core"
- "world/edit"
- "world/entity"
- "world/asset"
+("core"
+ "log"
+ "memory"
+ "math"
  "render"
- "render/shader"
+ "edit"
+ "entity"
  "render/null"
  "render/webgl"
- "render/webgpu"
  "render/frame_graph"
- "render/particles"
  "render/scene_renderer"
- "audio"
- "ui/gizmo"
- "ui/bridge"
- "ui/kruddboard"
- "ui/kruddgui"
- "ui/viewport"
- "game/host"
- "game/chess"
- "shell/web")
+ "asset"
+ "ui/imgui"
+ "ui/kruddboard")

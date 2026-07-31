@@ -10,7 +10,6 @@
 #include <string.h>
 
 #ifdef __EMSCRIPTEN__
-#include <emscripten.h>
 #include <emscripten/html5.h>
 #include <GLES3/gl3.h>
 #include "script.h"
@@ -36,8 +35,6 @@ struct gpu_pipeline {
 	unsigned int program;     /* GLuint; 0 until shaders are compiled */
 	unsigned int gl_topology; /* GLenum translated from gpu_topology */
 	unsigned int vao;         /* GLuint; attribute layout captured here */
-	int          blend;       /* 1 = straight-alpha blend, 0 = opaque */
-	int          depth_test;  /* 1 = depth test on (default), 0 = off */
 	struct gpu_vertex_layout layout;
 };
 
@@ -203,15 +200,6 @@ static void webgl_cmd_buf_submit(gpu_cmd_buf_t cmd)
 	g_cmd_buf.active = 0;
 }
 
-/*
- * Nothing to do: GL's default framebuffer is always there, so this backend
- * holds no per-frame resource to give back. The WebGPU backend, which owns the
- * canvas surface texture for the frame, is what the boundary exists for.
- */
-static void webgl_frame_end(void)
-{
-}
-
 static gpu_pipeline_t
 webgl_pipeline_create(const struct gpu_pipeline_desc *desc)
 {
@@ -220,9 +208,7 @@ webgl_pipeline_create(const struct gpu_pipeline_desc *desc)
 	p = g_mem->alloc(sizeof(*p));
 	if (!p)
 		return NULL;
-	p->layout     = desc->vertex_layout;
-	p->blend      = desc->blend_enable ? 1 : 0;
-	p->depth_test = desc->disable_depth_test ? 0 : 1;
+	p->layout = desc->vertex_layout;
 #ifdef __EMSCRIPTEN__
 	p->program     = build_program(desc);
 	p->gl_topology = translate_topology(desc->topology);
@@ -383,23 +369,6 @@ static void webgl_cmd_set_pipeline(gpu_cmd_buf_t cmd,
 	if (p->program)
 		glUseProgram(p->program);
 	g_topology = p->gl_topology;
-	/*
-	 * Blend and depth test are pipeline state. The defaults (no blend, depth
-	 * on) match what begin_render_pass establishes for the opaque forward
-	 * pass, so a scene pipeline re-asserts the same state; a blended, depth-off
-	 * overlay pipeline (kruddgui) flips both here without the UI touching GL.
-	 */
-	if (p->blend) {
-		glEnable(GL_BLEND);
-		glBlendEquation(GL_FUNC_ADD);
-		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	} else {
-		glDisable(GL_BLEND);
-	}
-	if (p->depth_test)
-		glEnable(GL_DEPTH_TEST);
-	else
-		glDisable(GL_DEPTH_TEST);
 #else
 	(void)p;
 #endif
@@ -559,60 +528,26 @@ webgl_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 		desc->color_count > 0
 			? (struct gpu_texture *)desc->color[0].texture
 			: NULL;
-	struct gpu_texture *dtex = (struct gpu_texture *)desc->depth;
 
-	/*
-	 * This backend binds only GL_COLOR_ATTACHMENT0. WebGPU loops every color
-	 * attachment, so an MRT pass renders differently on the two — warn once
-	 * rather than dropping the extra targets in silence. No pass uses MRT
-	 * today; the first that does needs the attachment loop implemented here.
-	 */
-	if (desc->color_count > 1) {
-		static int reported;
-
-		if (!reported) {
-			reported = 1;
-			g_log->write(LOG_LEVEL_WARN,
-				     "renderer_webgl: only color attachment 0 "
-				     "is honoured; MRT is WebGPU-only");
-		}
-	}
-
-	if (color0 || dtex) {
+	if (color0) {
 		/*
-		 * Offscreen pass: a color and/or depth attachment is a real
-		 * texture (the imported backbuffer's handle is NULL — see
-		 * fg_import_backbuffer), so bind the shared FBO, point its
-		 * attachments at this pass's textures, and size the viewport to
-		 * the target. Either attachment is optional: a depth-only pass
-		 * (the sun-shadow map) supplies no color, so detach color and
-		 * point the draw/read buffers at NONE — a framebuffer with only a
-		 * depth image is still complete, and fragment color output is
-		 * discarded. A color pass detaches any stale depth (or attaches
-		 * its own) and restores COLOR_ATTACHMENT0 as the draw buffer,
-		 * since the FBO is shared and a prior depth-only pass may have
-		 * left it at NONE.
+		 * Offscreen pass: the color attachment is a real texture (the
+		 * imported backbuffer's handle is NULL — see fg_import_backbuffer),
+		 * so bind the shared FBO, point its attachments at this pass's
+		 * textures, and size the viewport to the target. Depth is optional;
+		 * detach any stale depth from a previous offscreen pass when this
+		 * one supplies none.
 		 */
+		struct gpu_texture *dtex = (struct gpu_texture *)desc->depth;
+
 		if (!g_offscreen_fbo)
 			glGenFramebuffers(1, &g_offscreen_fbo);
 		glBindFramebuffer(GL_FRAMEBUFFER, g_offscreen_fbo);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-				       GL_TEXTURE_2D,
-				       color0 ? (GLuint)color0->gl_tex : 0, 0);
+				       GL_TEXTURE_2D, (GLuint)color0->gl_tex, 0);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
 				       GL_TEXTURE_2D,
 				       dtex ? (GLuint)dtex->gl_tex : 0, 0);
-		if (color0) {
-			GLenum buf = GL_COLOR_ATTACHMENT0;
-
-			glDrawBuffers(1, &buf);
-			glReadBuffer(GL_COLOR_ATTACHMENT0);
-		} else {
-			GLenum buf = GL_NONE;
-
-			glDrawBuffers(1, &buf);
-			glReadBuffer(GL_NONE);
-		}
 		if (glCheckFramebufferStatus(GL_FRAMEBUFFER) !=
 		    GL_FRAMEBUFFER_COMPLETE) {
 			g_log->write(LOG_LEVEL_ERROR,
@@ -621,8 +556,8 @@ webgl_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 			glBindFramebuffer(GL_FRAMEBUFFER, 0);
 			return;
 		}
-		vw = (int)(color0 ? color0->width  : dtex->width);
-		vh = (int)(color0 ? color0->height : dtex->height);
+		vw = (int)color0->width;
+		vh = (int)color0->height;
 	} else {
 		/* Backbuffer pass: the canvas's default framebuffer. */
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -652,20 +587,12 @@ webgl_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 		clear_mask |= GL_COLOR_BUFFER_BIT;
 	}
 	/*
-	 * Depth clear, matched to the WebGPU backend so the two agree. A pass
-	 * with no depth texture of its own (dtex == NULL) is a backbuffer pass:
-	 * WebGPU attaches a fallback depth there and always clears it, so clear
-	 * here too. A pass that owns its depth honours depth_load_op — clearing
-	 * only on GPU_LOAD_OP_CLEAR, so a future GPU_LOAD_OP_LOAD pass preserves
-	 * the depth it accumulated instead of getting it wiped (which WebGPU
-	 * would preserve via to_load_op). Every pass today clears, so this only
-	 * changes behaviour once a load-depth pass exists.
+	 * Clear the pass's depth. Honour an explicit clear value when the pass
+	 * supplies one, else reset to the far plane (1.0).
 	 */
-	if (!dtex || desc->depth_load_op == GPU_LOAD_OP_CLEAR) {
-		glClearDepthf(desc->depth_load_op == GPU_LOAD_OP_CLEAR
-			      ? desc->clear_depth : 1.0f);
-		clear_mask |= GL_DEPTH_BUFFER_BIT;
-	}
+	glClearDepthf(desc->depth_load_op == GPU_LOAD_OP_CLEAR
+		      ? desc->clear_depth : 1.0f);
+	clear_mask |= GL_DEPTH_BUFFER_BIT;
 	if (clear_mask)
 		glClear(clear_mask);
 #else
@@ -679,9 +606,9 @@ static void webgl_cmd_end_render_pass(gpu_cmd_buf_t cmd)
 #ifdef __EMSCRIPTEN__
 	/*
 	 * Return to the default framebuffer so whatever renders next (a later
-	 * backbuffer pass, or kruddgui compositing an offscreen result through
-	 * kgui-image) draws to the canvas and never to a stale FBO. A backbuffer
-	 * pass was already bound to 0, so this is a no-op for it.
+	 * backbuffer pass, or the ImGui backend compositing an offscreen result
+	 * with ImGui::Image) draws to the canvas and never to a stale FBO. A
+	 * backbuffer pass was already bound to 0, so this is a no-op for it.
 	 */
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 #endif
@@ -713,42 +640,6 @@ static void webgl_cmd_draw_indexed(gpu_cmd_buf_t cmd,
 #endif
 }
 
-static void webgl_cmd_draw(gpu_cmd_buf_t cmd, uint32_t vertex_count,
-			   uint32_t instance_count, uint32_t first_vertex,
-			   uint32_t first_instance)
-{
-	(void)cmd;
-	(void)first_instance; /* WebGL 2 has no first-instance for array draws */
-#ifdef __EMSCRIPTEN__
-	glDrawArraysInstanced(g_topology, (GLint)first_vertex,
-			      (GLsizei)vertex_count, (GLsizei)instance_count);
-#else
-	(void)vertex_count;
-	(void)instance_count;
-	(void)first_vertex;
-#endif
-}
-
-static void webgl_cmd_set_scissor(gpu_cmd_buf_t cmd, int32_t x, int32_t y,
-				  uint32_t width, uint32_t height)
-{
-	(void)cmd;
-#ifdef __EMSCRIPTEN__
-	/*
-	 * Enable the scissor test and set the box. The pass leaves it disabled
-	 * (begin_render_pass), so a pass that never sets a scissor is unclipped;
-	 * a caller clears its clip by passing the full target rect.
-	 */
-	glEnable(GL_SCISSOR_TEST);
-	glScissor((GLint)x, (GLint)y, (GLsizei)width, (GLsizei)height);
-#else
-	(void)x;
-	(void)y;
-	(void)width;
-	(void)height;
-#endif
-}
-
 static void *webgl_gpu_malloc(size_t size)
 {
 	return g_mem->alloc(size);
@@ -767,16 +658,6 @@ webgl_texture_create(const struct gpu_texture_desc *desc)
 	GLuint tex_id;
 #endif
 
-	/*
-	 * desc->sample_count is ignored: this backend does not advertise
-	 * GPU_CAP_MSAA_RESOLVE, so the scene renderer keeps its single-sample
-	 * path here and never asks for a multisampled target or a resolve. WebGL 2
-	 * MSAA is a different mechanism (multisampled renderbuffers +
-	 * glBlitFramebuffer to resolve, not a per-attachment resolve target), so
-	 * reaching parity means a renderbuffer path here and a blit in
-	 * end_render_pass — tracked as a follow-up. Until then WebGL renders
-	 * single-sample, the documented difference from WebGPU.
-	 */
 	t = g_mem->alloc(sizeof(*t));
 	if (!t)
 		return NULL;
@@ -847,31 +728,6 @@ static void webgl_cmd_bind_texture(gpu_cmd_buf_t cmd, uint32_t unit,
 #endif
 }
 
-/*
- * Bind a texture to a unit by the id texture_handle issued — for a UI layer
- * (kruddgui) that composites an external texture it holds only as an id (a
- * kruddboard bake or a scene-preview target). Mirrors webgl_cmd_bind_texture but
- * takes the id instead of a gpu_texture. Id 0 unbinds.
- *
- * GL needs no resolution step: its ids *are* GL texture names, so the id maps to
- * the object by construction. A destroyed texture's name is invalid to GL, which
- * binds it as an incomplete texture and samples zero — the "resolves to nothing"
- * the vtable asks for, arrived at by GL's own rules rather than a lookup.
- */
-static void webgl_cmd_bind_texture_handle(gpu_cmd_buf_t cmd, uint32_t unit,
-					  uint32_t handle)
-{
-	(void)cmd;
-#ifdef __EMSCRIPTEN__
-	glActiveTexture(GL_TEXTURE0 + unit);
-	glBindTexture(GL_TEXTURE_2D, (GLuint)handle);
-	glActiveTexture(GL_TEXTURE0); /* leave unit 0 active for the next binder */
-#else
-	(void)unit;
-	(void)handle;
-#endif
-}
-
 static void webgl_texture_destroy(gpu_texture_t texture)
 {
 	struct gpu_texture *t = (struct gpu_texture *)texture;
@@ -891,16 +747,12 @@ static void webgl_texture_destroy(gpu_texture_t texture)
 }
 
 /*
- * An opaque id naming a texture, for a UI layer that composites a render-target
- * texture through its own stack (kruddgui hands it to kgui-image). GL's own
- * texture name serves: it is already a stable integer that names the object for
- * as long as it lives, so the backend needs no side table to satisfy the
- * contract. Callers may not rely on that — the id is opaque to them, and the
- * WebGPU backend issues something entirely different.
- *
- * 0 for a null texture or a build without a live GL context.
+ * The GL texture name behind an opaque gpu_texture — the escape hatch a UI layer
+ * uses to composite a render-target texture through its own stack (kruddboard
+ * hands it to ImGui::Image as an ImTextureID). 0 for a null texture or a build
+ * without a live GL context.
  */
-static uint32_t webgl_texture_handle(gpu_texture_t texture)
+static uint32_t webgl_texture_native_handle(gpu_texture_t texture)
 {
 	struct gpu_texture *t = (struct gpu_texture *)texture;
 
@@ -912,7 +764,6 @@ static const struct gpu_api webgl_api = {
 	.caps                   = GPU_CAP_DRAW_DIRECT | GPU_CAP_DRAW_INDEXED,
 	.cmd_buf_begin          = webgl_cmd_buf_begin,
 	.cmd_buf_submit         = webgl_cmd_buf_submit,
-	.frame_end              = webgl_frame_end,
 	.pipeline_create        = webgl_pipeline_create,
 	.pipeline_destroy       = webgl_pipeline_destroy,
 	.cmd_set_pipeline       = webgl_cmd_set_pipeline,
@@ -926,8 +777,6 @@ static const struct gpu_api webgl_api = {
 	.cmd_end_render_pass    = webgl_cmd_end_render_pass,
 	.cmd_barrier            = webgl_cmd_barrier,
 	.cmd_draw_indexed       = webgl_cmd_draw_indexed,
-	.cmd_draw               = webgl_cmd_draw,
-	.cmd_set_scissor        = webgl_cmd_set_scissor,
 	.cmd_dispatch           = NULL, /* no compute shaders in WebGL 2 */
 	.gpu_malloc             = webgl_gpu_malloc,
 	.gpu_free               = webgl_gpu_free,
@@ -936,23 +785,8 @@ static const struct gpu_api webgl_api = {
 	.texture_create         = webgl_texture_create,
 	.texture_destroy        = webgl_texture_destroy,
 	.cmd_bind_texture       = webgl_cmd_bind_texture,
-	.texture_handle         = webgl_texture_handle,
-	.cmd_bind_texture_handle = webgl_cmd_bind_texture_handle,
+	.texture_native_handle  = webgl_texture_native_handle,
 };
-
-#ifdef __EMSCRIPTEN__
-/*
- * Tell the shell which renderer went live, so the header badge can show it.
- * kruddSetRenderer is defined in shell.html; the typeof guard keeps this safe
- * if the shell changes. Each backend announces its own name from init — the
- * one whose plugin_entry the engine calls is the one that reports (a future
- * WebGPU backend announces "webgpu" the same way, from its own init).
- */
-EM_JS(void, krudd_report_renderer, (void), {
-	if (typeof window.kruddSetRenderer === 'function')
-		window.kruddSetRenderer('webgl');
-})
-#endif
 
 static void renderer_webgl_init(void)
 {
@@ -965,7 +799,6 @@ static void renderer_webgl_init(void)
 	attrs.depth        = EM_TRUE; /* backbuffer depth for 3D passes */
 	g_ctx = emscripten_webgl_create_context("#canvas", &attrs);
 	emscripten_webgl_make_context_current(g_ctx);
-	krudd_report_renderer();
 #endif
 	g_log->write(LOG_LEVEL_INFO, "renderer_webgl: init");
 }

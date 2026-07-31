@@ -3,17 +3,14 @@
 #include "renderer_null.h"
 #include "fg.h"
 #include "entity_api.h"
-#include "camera_api.h"
 #include "asset_api.h"
 #include "mesh.h"
 #include "builtin_mesh_scripts.h"
 #include "subsystem_manager.h"
 #include "memory.h"
 #include "script.h"
-#include "world.h"
 
 #include <assert.h>
-#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -227,25 +224,6 @@ static uint32_t count_material_binds(void)
 	return binds;
 }
 
-/* The forward pass binds the directional-light Sun UBO once at slot 2 (24 floats
- * — light_dir + light_radiance + light_view_proj, std140), for the pbr shader;
- * count those binds so the light path is exercised even though this world has no
- * pbr material. */
-static uint32_t count_light_binds(void)
-{
-	const struct gpu_call_record *log;
-	uint32_t count, i, binds = 0;
-
-	log = renderer_null_get_log(&count);
-	for (i = 0; i < count; i++) {
-		if (log[i].type == GPU_CALL_CMD_BIND_UNIFORM_BUFFER &&
-		    log[i].args.cmd_bind_uniform_buffer.slot == 2 &&
-		    log[i].args.cmd_bind_uniform_buffer.size == 24 * sizeof(float))
-			binds++;
-	}
-	return binds;
-}
-
 static uint32_t count_calls(enum gpu_call_type type)
 {
 	const struct gpu_call_record *log;
@@ -282,114 +260,6 @@ static void build_world_shaders(uint32_t box_ref)
 	set_identity_xform(&g_world.world_xform[1], 1.0f, 0.0f, 0.0f);
 }
 
-/* Place a transform-only, named entity at slot i — the way a scene's "Camera"
- * entity looks to the renderer: COMPONENT_NAME, no mesh, a bare position. */
-static void set_named_entity(uint32_t i, const char *name,
-			     float px, float py, float pz)
-{
-	uint32_t off = g_world.name_bytes;
-	uint32_t n   = (uint32_t)strlen(name) + 1;
-
-	g_world.alive[i]    = 1;
-	g_world.mask[i]     = COMPONENT_NAME;
-	g_world.name_off[i] = off;
-	memcpy(g_world.names + off, name, n);
-	g_world.name_bytes  = off + n;
-	set_identity_xform(&g_world.world_xform[i], px, py, pz);
-}
-
-/*
- * The camera eye follows whatever entity a scene names "Camera", resolved by
- * name every frame so it survives a world clear. The second world is the
- * regression the by-name lookup fixes: switching games rebuilds ids from zero,
- * so the slot the old camera held is reused by an ordinary entity and the new
- * camera lands elsewhere — the eye must track the entity actually named
- * "Camera", not the stale slot (which would sink it into a floor-level cell and
- * hide the board).
- */
-static void test_camera_follows_named_entity(struct subsystem_manager *mgr)
-{
-	const struct camera_api *cam = subsystem_manager_get_api(mgr, "camera");
-	float eye[3];
-
-	assert(cam);
-
-	memset(&g_world, 0, sizeof(g_world));
-	g_world.count = 1;
-	set_named_entity(0, "Camera", 3.0f, 4.0f, 5.0f);
-	renderer_null_reset_log();
-	subsystem_manager_tick(mgr);
-	cam->get_eye(eye);
-	assert(eye[0] == 3.0f && eye[1] == 4.0f && eye[2] == 5.0f);
-
-	memset(&g_world, 0, sizeof(g_world));
-	g_world.count = 2;
-	set_named_entity(0, "cell-4", 0.0f, 0.02f, 0.0f); /* reuses the old slot */
-	set_named_entity(1, "Camera", 0.0f, 4.0f, 3.5f);
-	renderer_null_reset_log();
-	subsystem_manager_tick(mgr);
-	cam->get_eye(eye);
-	assert(eye[0] == 0.0f && eye[1] == 4.0f && eye[2] == 3.5f);
-}
-
-static float dist_to_origin(const float p[3])
-{
-	return sqrtf(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]);
-}
-
-/*
- * Interactive camera override (#697): once the editor navigates the view, the
- * camera detaches from the scripted "Camera" entity and holds the user's pose
- * until reset_view() hands it back. dolly/orbit/pan each move the eye, and the
- * per-frame scripted-camera copy must NOT snap it back while the user owns it.
- */
-static void test_camera_user_navigation(struct subsystem_manager *mgr)
-{
-	const struct camera_api *cam = subsystem_manager_get_api(mgr, "camera");
-	float base[3], dolly[3], orbit[3], pan[3];
-
-	assert(cam && cam->dolly && cam->orbit && cam->pan && cam->reset_view);
-
-	/* A camera entity at a known spot; the tick copies it into the eye. The
-	 * target is the origin, so distances below are measured from there. */
-	memset(&g_world, 0, sizeof(g_world));
-	g_world.count = 1;
-	set_named_entity(0, "Camera", 0.0f, 0.0f, 4.0f);
-	renderer_null_reset_log();
-	subsystem_manager_tick(mgr);
-	cam->get_eye(base);
-	assert(base[0] == 0.0f && base[1] == 0.0f && base[2] == 4.0f);
-
-	/* Dolly toward the target pulls the eye in along the view ray. */
-	cam->dolly(0.25f);
-	cam->get_eye(dolly);
-	assert(dist_to_origin(dolly) < dist_to_origin(base) - 1e-4f);
-
-	/* The next tick must NOT snap the eye back to the scripted camera. */
-	renderer_null_reset_log();
-	subsystem_manager_tick(mgr);
-	cam->get_eye(pan);
-	assert(pan[0] == dolly[0] && pan[1] == dolly[1] && pan[2] == dolly[2]);
-
-	/* Orbit (yaw about world up) swings the eye through the xz-plane. */
-	cam->orbit(0.3f, 0.1f);
-	cam->get_eye(orbit);
-	assert(orbit[0] != dolly[0] || orbit[2] != dolly[2]);
-
-	/* Pan slides the eye across the view plane. */
-	cam->pan(0.2f, 0.0f);
-	cam->get_eye(pan);
-	assert(pan[0] != orbit[0] || pan[1] != orbit[1] || pan[2] != orbit[2]);
-
-	/* reset_view() hands the camera back: the next tick re-pins the eye to
-	 * the "Camera" entity, wherever the user had dragged the view to. */
-	cam->reset_view();
-	renderer_null_reset_log();
-	subsystem_manager_tick(mgr);
-	cam->get_eye(base);
-	assert(base[0] == 0.0f && base[1] == 0.0f && base[2] == 4.0f);
-}
-
 int main(void)
 {
 	static const struct subsystem static_table[] = {
@@ -418,7 +288,6 @@ int main(void)
 	assert(count_draws(&idx_count) == 1);
 	assert(idx_count == 36);            /* box: 36 indices */
 	assert(count_material_binds() == 1); /* one per draw */
-	assert(count_light_binds() == 1);    /* Sun bound once for the pass */
 
 	/* Degrade safe: an empty world draws nothing and does not crash. */
 	g_world.count = 0;
@@ -444,9 +313,6 @@ int main(void)
 	subsystem_manager_tick(&mgr);
 	assert(count_calls(GPU_CALL_PIPELINE_CREATE) == 0);
 	assert(count_draws(NULL) == 2);
-
-	test_camera_follows_named_entity(&mgr);
-	test_camera_user_navigation(&mgr);
 
 	subsystem_manager_shutdown(&mgr);
 	mem_shutdown();

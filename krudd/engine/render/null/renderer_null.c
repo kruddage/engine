@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#include "renderer_null.h"
 #include "renderer.h"
+#include "renderer_null.h"
 #include "log_api.h"
 #include "subsystem.h"
 #include "subsystem_manager.h"
@@ -44,16 +44,6 @@ static void null_cmd_buf_submit(gpu_cmd_buf_t cmd)
 	g_log->write(LOG_LEVEL_INFO, "renderer_null: cmd_buf_submit cmd=%p", (void *)cmd);
 	log_append((struct gpu_call_record){
 		.type = GPU_CALL_CMD_BUF_SUBMIT,
-	});
-}
-
-/* Logged like every other call, so a test can assert the engine reaches the
- * frame boundary exactly once per tick. The null backend owns nothing to free. */
-static void null_frame_end(void)
-{
-	g_log->write(LOG_LEVEL_INFO, "renderer_null: frame_end");
-	log_append((struct gpu_call_record){
-		.type = GPU_CALL_FRAME_END,
 	});
 }
 
@@ -103,8 +93,6 @@ static void null_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 		.args = {
 			.cmd_begin_render_pass = {
 				.color_count = desc->color_count,
-				.color0_resolve = desc->color_count > 0 &&
-					desc->color[0].resolve_target != NULL,
 			},
 		},
 	});
@@ -145,27 +133,6 @@ static void null_cmd_draw_indexed(gpu_cmd_buf_t cmd,
 			},
 		},
 	});
-}
-
-static void null_cmd_draw(gpu_cmd_buf_t cmd, uint32_t vertex_count,
-			  uint32_t instance_count, uint32_t first_vertex,
-			  uint32_t first_instance)
-{
-	(void)cmd;
-	(void)first_instance;
-	g_log->write(LOG_LEVEL_INFO,
-		     "renderer_null: cmd_draw vertex_count=%u instance_count=%u first_vertex=%u",
-		     vertex_count, instance_count, first_vertex);
-	/* No record type needed; the scene renderer test asserts on indexed draws. */
-}
-
-static void null_cmd_set_scissor(gpu_cmd_buf_t cmd, int32_t x, int32_t y,
-				 uint32_t width, uint32_t height)
-{
-	(void)cmd;
-	g_log->write(LOG_LEVEL_INFO,
-		     "renderer_null: cmd_set_scissor x=%d y=%d w=%u h=%u",
-		     x, y, width, height);
 }
 
 static void null_cmd_dispatch(gpu_cmd_buf_t cmd,
@@ -289,17 +256,6 @@ static void *null_gpu_host_to_device_ptr(void *host_ptr)
 	return host_ptr;
 }
 
-/*
- * Distinct non-NULL handles from a static pool, so callers can tell one target
- * from another and a real backend's "non-NULL means a live texture" contract
- * holds under test — the frame graph, for one, emits a color attachment's
- * resolve_target as this handle, and a NULL would be indistinguishable from
- * "no resolve". The pool wraps: the graph frees each transient at its last use,
- * so only a handful are ever live at once, and destroy is a no-op regardless.
- */
-static char     g_tex_slots[64];
-static uint32_t g_tex_next;
-
 static gpu_texture_t
 null_texture_create(const struct gpu_texture_desc *desc)
 {
@@ -318,7 +274,7 @@ null_texture_create(const struct gpu_texture_desc *desc)
 			},
 		},
 	});
-	return (gpu_texture_t)&g_tex_slots[g_tex_next++ % sizeof(g_tex_slots)];
+	return NULL;
 }
 
 static void null_cmd_bind_texture(gpu_cmd_buf_t cmd, uint32_t unit,
@@ -342,28 +298,17 @@ static void null_texture_destroy(gpu_texture_t texture)
 	});
 }
 
-/* The null backend owns no device objects, so it issues no ids. */
-static uint32_t null_texture_handle(gpu_texture_t texture)
+/* The null backend owns no GL objects, so there is no native handle to hand out. */
+static uint32_t null_texture_native_handle(gpu_texture_t texture)
 {
 	(void)texture;
 	return 0u;
-}
-
-/* Nothing to bind; an id can only have come from another backend. */
-static void null_cmd_bind_texture_handle(gpu_cmd_buf_t cmd, uint32_t unit,
-					 uint32_t handle)
-{
-	(void)cmd;
-	g_log->write(LOG_LEVEL_INFO,
-		     "renderer_null: cmd_bind_texture_handle unit=%u handle=%u",
-		     unit, handle);
 }
 
 static const struct gpu_api null_api = {
 	.caps                   = GPU_CAP_DRAW_INDEXED | GPU_CAP_COMPUTE,
 	.cmd_buf_begin          = null_cmd_buf_begin,
 	.cmd_buf_submit         = null_cmd_buf_submit,
-	.frame_end              = null_frame_end,
 	.pipeline_create        = null_pipeline_create,
 	.pipeline_destroy       = null_pipeline_destroy,
 	.cmd_set_pipeline       = null_cmd_set_pipeline,
@@ -377,8 +322,6 @@ static const struct gpu_api null_api = {
 	.cmd_end_render_pass    = null_cmd_end_render_pass,
 	.cmd_barrier            = null_cmd_barrier,
 	.cmd_draw_indexed       = null_cmd_draw_indexed,
-	.cmd_draw               = null_cmd_draw,
-	.cmd_set_scissor        = null_cmd_set_scissor,
 	.cmd_dispatch           = null_cmd_dispatch,
 	.gpu_malloc             = null_gpu_malloc,
 	.gpu_free               = null_gpu_free,
@@ -387,8 +330,7 @@ static const struct gpu_api null_api = {
 	.texture_create         = null_texture_create,
 	.texture_destroy        = null_texture_destroy,
 	.cmd_bind_texture       = null_cmd_bind_texture,
-	.texture_handle         = null_texture_handle,
-	.cmd_bind_texture_handle = null_cmd_bind_texture_handle,
+	.texture_native_handle  = null_texture_native_handle,
 };
 
 static void renderer_null_init(void)

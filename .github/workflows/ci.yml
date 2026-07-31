@@ -15,190 +15,89 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
       - name: Lint .scm comments
         run: python3 .github/scripts/lint-scm-comments.py $(git ls-files '*.scm')
 
-      # The pnpm workspace's own suite: the artifact contract, the site staging
-      # rules, and the boundary check that keeps packages from reaching past
-      # each other's "exports" map. No compiler and no emsdk — this is all
-      # Node — so it rides along with the other lint steps rather than waiting
-      # on the WASM build.
-      - uses: actions/setup-node@v4
+  version:
+    # Skip on PR-close events — nothing downstream needs a version then.
+    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      version: ${{ steps.compute.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Folds every merged PR's release:{breaking,feature,fix,chore} label
+      # into an X.Y.Z version — no VERSION file, no git tag. See the script
+      # for the full explanation, including how a not-yet-merged PR build gets
+      # a prerelease version instead of a final one.
+      - name: Compute version
+        id: compute
+        uses: actions/github-script@v7
         with:
-          node-version-file: .nvmrc
-
-      - name: Install workspace
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
-
-      - name: Workspace tests
-        run: pnpm test
-
-      # @kruddage/editor is TypeScript in strict mode and its `build` fails on a
-      # type error — but `build` needs the WASM artifact, which this job has no
-      # emsdk to produce. Typechecking is the half of that gate which needs
-      # nothing, so it runs here where the feedback is fast rather than waiting
-      # on the emsdk container.
-      - name: Workspace typecheck
-        run: pnpm typecheck
-
-      - name: Workspace boundaries
-        run: pnpm check
-
-      # kruddmake's Scheme suite, reached by path rather than through the
-      # workspace — the same choice `sanitizers` and `coverage` make below,
-      # and for the same reason (WORKSPACE.md, Q2): it runs on the pinned s7
-      # CLI that sync.sh fetches with curl, needs no compiler, and needs no
-      # Node either, so routing it through pnpm would add a dependency for no
-      # gain. It used to arrive as a side effect of `pnpm -r run test`; that
-      # stopped working when krudd/ left the workspace and this stopped being
-      # a package's `test` script (#934), so it is named as its own step now.
-      - name: kruddmake Scheme suite
-        run: sh krudd/kruddmake/run-scheme-tests.sh
-
-      # .scm files are indented per CODING_STANDARD.md's Scheme section: spaces,
-      # call arguments aligned under the first argument — Emacs scheme-mode's
-      # stock indenter output, so there's a single mechanical arbiter instead of
-      # a per-line human judgment call.
-      - name: Install emacs for the .scm indent check
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends emacs-nox
-
-      - name: Check .scm indentation
-        run: python3 .github/scripts/indent-scm.py --check $(git ls-files '*.scm')
+          script: |
+            const compute = require("./.github/scripts/compute-version.js");
+            await compute({ github, context, core });
 
   build:
+    needs: version
     # Skip the build on PR-close events — there is nothing to publish, the
     # preview job only needs to remove the stale directory.
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
     runs-on: ubuntu-latest
     container: emscripten/emsdk:6.0.2
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       # The container runs as root, so git refuses to touch the checkout
-      # ("dubious ownership") and introspect.scm would bake "unknown" into the
-      # shell template's cache-busting hook instead of the commit hash — which
-      # the site staging step then reads back out and stages against. Mark it
-      # safe first.
+      # ("dubious ownership") and stage-site.sh would stamp "unknown" instead
+      # of the commit hash. Mark it safe first.
       - name: Trust the workspace
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      # kruddmake.sh picks clang first if it's on PATH, falling back to gcc
-      # then cc, so installing clang here makes CI build with it by default
-      # while keeping gcc as the fallback compiler. curl is required by
-      # krudd/third_party/sync.sh to fetch the latest s7 release artifacts
-      # (header + static libs + CLI), which are not committed to the repo.
+      # krudd.sh picks clang first if it's on PATH, falling back to gcc then
+      # cc, so installing clang here makes CI build with it by default while
+      # keeping gcc as the fallback compiler. curl is needed by
+      # krudd/third_party/sync.sh as a fallback if the committed s7.c/s7.h
+      # ever go missing or fail their checksum.
       - name: Install a host compiler and ninja for krudd
         run: apt-get update && apt-get install -y clang gcc ninja-build curl
 
-      # The released version is the single line in version.txt, maintained by
-      # release-please (see .github/workflows/release-please.yml). A push/main
-      # build stamps that version verbatim. A PR build appends -pr<N>+<sha> so
-      # its preview is uniquely identifiable and can never be mistaken for a
-      # real release — mirroring the prerelease suffix the old label-fold job
-      # produced.
-      # This runs under `sh` (dash) inside the emsdk container, so keep it
-      # POSIX: printf '%.7s' truncates to 7 chars where bash would use the
-      # non-portable ${sha:0:7}.
-      - name: Determine version
-        id: version
-        run: |
-          base=$(cat version.txt)
-          if [ "${{ github.event_name }}" = pull_request ]; then
-            short=$(printf '%.7s' "${{ github.event.pull_request.head.sha }}")
-            echo "version=${base}-pr${{ github.event.pull_request.number }}+${short}" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=${base}" >> "$GITHUB_OUTPUT"
-          fi
-
-      # The build now enters through the pnpm workspace. @kruddage/engine still
-      # runs krudd/kruddmake/kruddmake.sh underneath — kruddmake remains the
-      # build system for C and WASM, generating build.ninja from the directory
-      # specs and driving ninja with emcc/em++ directly, no cmake and no
-      # emcmake. What the package adds is the boundary: it harvests the
-      # outputs into a dist/ with a manifest describing them, and everything
-      # downstream reads that instead of the build tree. KRUDD_VERSION comes
-      # from the version step above — see introspect.scm.
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-
-      - name: Install workspace
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
-
-      - name: Build the engine
+      # krudd generates a build.ninja from the directory specs and drives ninja
+      # with emcc/em++ directly — no cmake, no emcmake. KRUDD_TARGET=wasm selects
+      # the WASM output (the single index.html/.js/.wasm module). KRUDD_VERSION
+      # comes from the version job — see introspect.scm.
+      - name: Build
         env:
-          KRUDD_VERSION: ${{ steps.version.outputs.version }}
-        run: pnpm --filter @kruddage/engine run build
+          KRUDD_TARGET: wasm
+          KRUDD_VERSION: ${{ needs.version.outputs.version }}
+        run: ./krudd.sh build
 
-      # The editor consumes the artifact the step above produced, so it builds
-      # after the engine and before staging. It is a plain Vite build — no C, no
-      # emsdk — and it is in this job only because it needs the WASM output to
-      # copy alongside its own bundle.
-      - name: Build the editor
-        run: pnpm --filter @kruddage/editor run build
-
-      # The browser half of the test story (#944, Q6). It lives here rather than
-      # in the lint job for the reason the whole split exists: it boots the real
-      # WASM module in a real Chromium, so it needs the engine build that only
-      # this job has. scripts/e2e.mjs refuses to run without one rather than
-      # skipping, so a green result here means a module actually booted.
-      - name: Install Playwright's browser
-        run: pnpm --filter @kruddage/editor exec playwright install --with-deps chromium
-
-      - name: Editor browser suite
-        run: pnpm --filter @kruddage/editor run test:e2e
-
-      - name: Upload Playwright report
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: playwright-report
-          path: packages/editor/playwright-report
-          retention-days: 7
-
-      # Replaces stage-site.sh. Same whitelist-only staging — the build tree
-      # carries objects and archives that must never reach the Pages branch —
-      # but the cache-busting hash now comes from the built index.html's
-      # Module.locateFile hook rather than a second, independent `git rev-parse`
-      # that merely had to agree with it. See packages/site/src/stage.mjs.
-      #
-      # It also copies @kruddage/editor's output in as the site root, which is
-      # why the editor build above has to come first. Since #953 that ordering
-      # is enforced rather than assumed: the staging step exits non-zero on an
-      # unbuilt editor, because the root document is the editor's and a site
-      # staged without one 404s on the way in.
       - name: Stage site
-        run: pnpm --filter @kruddage/site run build
+        run: sh .github/scripts/stage-site.sh build public
 
       - name: Upload staged site
         uses: actions/upload-artifact@v7
         with:
           name: site
-          path: packages/site/dist
+          path: public
   deploy:
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    # Serialize every gh-pages writer under one group, so two runs never push
-    # to gh-pages at once — a concurrent push is rejected non-fast-forward.
-    concurrency:
-      group: gh-pages-deploy
-      cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
       - name: Download staged site
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v4
         with:
           name: site
           path: public
@@ -233,11 +132,6 @@ jobs:
       && github.event.pull_request.head.repo.full_name == github.repository
       && (github.event.action == 'closed' || needs.build.result == 'success') }}
     runs-on: ubuntu-latest
-    # This job only publishes a convenience preview deploy; it isn't a
-    # correctness gate (lint/build/sanitizers/coverage already cover that).
-    # A gh-pages push race or preview-action hiccup shouldn't hold up
-    # auto-merge, so let it fail without failing the job.
-    continue-on-error: true
     permissions:
       contents: write
       pull-requests: write
@@ -247,11 +141,11 @@ jobs:
       group: preview-${{ github.event.pull_request.number }}
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
       - name: Download staged site
         if: github.event.action != 'closed'
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v4
         with:
           name: site
           path: public
@@ -262,119 +156,3 @@ jobs:
           source-dir: public
           preview-branch: gh-pages
           umbrella-dir: pr-preview
-
-  # Build and run the native test suite under AddressSanitizer + UBSan +
-  # LeakSanitizer. This is the memory-safety / undefined-behaviour gate: a
-  # detected leak, out-of-bounds access, or UB fails the job. It runs on a
-  # plain ubuntu-latest (no emsdk container) because sanitizers need a native
-  # host build — the CI `build` job only produces the WASM artifact. gcc is
-  # used because its libasan/libubsan runtimes ship with the runner image;
-  # the sanitizer flags ride in through kruddmake's KRUDD_EXTRA_* env hooks so
-  # this is the ordinary native build with instrumentation, not a fork of it.
-  #
-  # It calls run-tests.sh by path rather than through the workspace, and that
-  # is deliberate, not an oversight: this job needs no Node at all, and
-  # routing a C test run through pnpm to satisfy a slogan would put Node in
-  # its path for no gain (WORKSPACE.md, Q2). `coverage` below makes the same
-  # call for the same reason.
-  sanitizers:
-    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install toolchain
-        run: sudo apt-get update && sudo apt-get install -y gcc g++ ninja-build curl
-
-      - name: Build + run native suite under ASan + UBSan + LeakSanitizer
-        env:
-          CC: gcc
-          KRUDD_CC: gcc
-          KRUDD_CXX: g++
-          KRUDD_BUILD_DIR: ${{ github.workspace }}/build-san
-          KRUDD_EXTRA_CFLAGS: >-
-            -fsanitize=address,undefined -fno-omit-frame-pointer
-            -fno-sanitize-recover=undefined -g -O1
-          KRUDD_EXTRA_LDFLAGS: -fsanitize=address,undefined
-          # Fail the run on the first leak / error rather than only printing it.
-          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1:abort_on_error=1
-          UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
-        run: sh krudd/kruddmake/run-tests.sh
-
-  # Measure native line/function/branch coverage with gcov and post it as a
-  # sticky comment on the PR. This is REPORT-ONLY — it never fails the build;
-  # the floor gate is intentionally deferred until the baseline has been
-  # watched (see README). Coverage needs its own -O0 --coverage build, so it
-  # runs separately from the sanitizer job in its own build directory.
-  #
-  # It also calls run-tests.sh by path rather than through the workspace —
-  # same reasoning as `sanitizers` above, see that job's comment.
-  coverage:
-    if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install toolchain
-        run: |
-          sudo apt-get update && sudo apt-get install -y gcc g++ ninja-build curl
-          pipx install gcovr
-
-      - name: Build + run native suite with gcov instrumentation
-        env:
-          CC: gcc
-          KRUDD_CC: gcc
-          KRUDD_CXX: g++
-          KRUDD_BUILD_DIR: ${{ github.workspace }}/build-cov
-          KRUDD_EXTRA_CFLAGS: --coverage -O0 -g -fprofile-abs-path
-          KRUDD_EXTRA_LDFLAGS: --coverage
-        run: sh krudd/kruddmake/run-tests.sh
-
-      # Scope to engine production code: test files and vendored third_party/
-      # are excluded so the number reflects code the suite is meant to cover.
-      - name: Generate coverage report
-        run: |
-          gcovr --root . --filter 'krudd/engine/' \
-            --exclude '.*_test\.c$' --exclude 'krudd/third_party/' \
-            --gcov-object-directory build-cov --gcov-ignore-parse-errors=all \
-            --json-summary coverage-summary.json --txt coverage.txt
-          cat coverage.txt
-          python3 .github/scripts/coverage-report.py \
-            coverage-summary.json coverage-comment.md
-
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v7
-        with:
-          name: coverage
-          path: |
-            coverage.txt
-            coverage-comment.md
-
-      # Only same-repo PRs: a fork PR's GITHUB_TOKEN is read-only, so the
-      # measurement still runs above but the comment post is skipped for forks.
-      # Temporarily disabled (comment posting only; report is still uploaded
-      # as a build artifact above).
-      - name: Post coverage comment
-        if: false
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const fs = require('fs');
-            const body = fs.readFileSync('coverage-comment.md', 'utf8');
-            const marker = '<!-- krudd-coverage-report -->';
-            const { owner, repo } = context.repo;
-            const issue_number = context.payload.pull_request.number;
-            const comments = await github.paginate(
-              github.rest.issues.listComments, { owner, repo, issue_number });
-            const existing = comments.find(
-              c => c.body && c.body.includes(marker));
-            if (existing) {
-              await github.rest.issues.updateComment(
-                { owner, repo, comment_id: existing.id, body });
-            } else {
-              await github.rest.issues.createComment(
-                { owner, repo, issue_number, body });
-            }

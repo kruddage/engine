@@ -2,7 +2,6 @@
 #include "fg.h"
 #include "renderer.h"
 #include "entity_api.h"
-#include "world.h"
 #include "camera.h"
 #include "camera_api.h"
 #include "preview_api.h"
@@ -14,14 +13,11 @@
 #include "texture.h"
 #include "texture_script.h"
 #include "script.h"
-#include "particles.h"
 #include "asset_api.h"
 #include "memory_api.h"
 #include "subsystem.h"
 #include "subsystem_manager.h"
 #include "log_api.h"
-
-#include "s7.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -35,21 +31,6 @@ static const struct memory_api native_mem = {
 	mem_alloc, mem_alloc_zero, mem_free,
 	mem_pool_create, mem_pool_alloc, mem_pool_free, mem_pool_destroy,
 };
-#endif
-
-/*
- * Editor mode (plugin_abi.c, main module): which half of kruddgui's GAME /
- * EDITOR switch is lit. The selection outline is editor feedback, so in game
- * mode it stands down in favour of the in-game path below — the picked-piece
- * outline (entity_api's get_outline), which is what a player wants to see.
- * Native builds host no games and no switch, so they always outline via the
- * editor selection path.
- */
-#ifdef __EMSCRIPTEN__
-int krudd_editor_mode(void);
-#define EDITOR_CHROME() krudd_editor_mode()
-#else
-#define EDITOR_CHROME() 1
 #endif
 
 /*
@@ -86,32 +67,8 @@ static const struct asset_api   *g_asset;
 
 /* Persistent resources, created once against the device (never per-frame). */
 static gpu_pipeline_t g_default_pso;  /* the built-in scene pipeline; fallback */
-/*
- * The multisampled twin of g_default_pso, used by the forward pass when it
- * renders into the multisampled offscreen scene target (the bloom/outline
- * paths on a backend that advertises GPU_CAP_MSAA_RESOLVE). When MSAA is off
- * it aliases g_default_pso, so nothing is compiled or destroyed twice.
- */
-static gpu_pipeline_t g_default_pso_ms;
-/*
- * Sample count for the scene's multisampled colour/depth targets and the
- * geometry pipelines that draw into them: 4 when the device can resolve MSAA,
- * else 1 (every target single-sample, no resolve — the pre-MSAA behaviour).
- * Fixed at init from the renderer caps.
- */
-static uint32_t       g_msaa_samples = 1;
-/*
- * Set for the duration of a forward pass that targets the multisampled
- * offscreen colour, so forward_pass selects the multisampled pipeline variant.
- * Cleared for the direct-to-backbuffer fallback (a single-sample target), which
- * must keep using the single-sample pipelines.
- */
-static int            g_forward_msaa;
-static gpu_buffer_t   g_ubo_ring;      /* Camera ring: one slot per draw */
-static gpu_buffer_t   g_material_ring; /* Material ring: one slot per draw */
-static uint32_t       g_ring_cursor;   /* bump allocator, shared by both rings */
-static int            g_ring_overflowed; /* latches so the log fires once */
-static gpu_buffer_t   g_light_ubo;    /* Sun: { light_dir, light_radiance } std140 */
+static gpu_buffer_t   g_ubo;         /* 2 * mat4: { view_proj, model } */
+static gpu_buffer_t   g_material_ubo; /* the active material's std140 params */
 static int            g_ready;
 
 /*
@@ -127,84 +84,6 @@ static gpu_pipeline_t g_outline_pso; /* full-screen edge-detect + composite     
 static gpu_buffer_t   g_fs_vbo;      /* full-screen triangle clip-space corners  */
 static gpu_buffer_t   g_fs_ebo;
 static gpu_buffer_t   g_outline_ubo; /* std140 { vec2 texel; vec4 color; }       */
-
-/*
- * Bloom post resources (#bloom). The plain forward path renders the scene into
- * an offscreen colour, then extract -> blur H -> blur V -> composite adds a glow
- * around the bright part. The three pipelines share the full-screen quad above;
- * g_blur_ubo carries the separable blur's per-tap step. Null pipelines make the
- * tick fall back to a direct forward-to-backbuffer pass with no bloom, so bloom
- * is a pure add-on that never breaks ordinary rendering.
- */
-static gpu_pipeline_t g_bloom_extract_pso;   /* threshold the bright part       */
-static gpu_pipeline_t g_bloom_blur_pso;      /* separable 9-tap, run H then V    */
-static gpu_pipeline_t g_bloom_composite_pso; /* add blurred bloom onto the scene */
-/*
- * The composite targets the backbuffer when the outline is off, and an
- * offscreen "outline_lit" when it is on. Those are two different attachment
- * states — the backbuffer carries the backend's emulated depth, the offscreen
- * target carries none — and WebGPU validates a pipeline against the pass it
- * runs in, so one pipeline cannot serve both. Same reason the scene geometry
- * pipelines carry a multisampled variant; g_bloom_composite_to_bb selects.
- */
-static gpu_pipeline_t g_bloom_composite_bb_pso;
-static int            g_bloom_composite_to_bb;
-static gpu_buffer_t   g_blur_ubo;            /* std140 { vec2 dir }              */
-#define BLUR_UBO_FLOATS 4                    /* vec2 dir + 2 pad (std140 -> 16B) */
-
-/*
- * Per-frame bloom transients + half-res size the tick publishes for the passes.
- * Three distinct blur targets (not a two-buffer ping-pong) so every hazard is a
- * plain read-after-write — extract->a, blur H a->b, blur V b->c, composite reads
- * c — which is the only ordering the frame graph the outline path uses tracks.
- */
-static struct {
-	fg_resource_t scene_color;
-	fg_resource_t bloom_a;    /* extract out / blur-H in  */
-	fg_resource_t bloom_b;    /* blur-H out / blur-V in   */
-	fg_resource_t bloom_c;    /* blur-V out / composite in */
-	uint32_t      half_w, half_h;
-} g_bloom_frame;
-
-/*
- * Sun shadow-map resources (#sun-shadows). Before the forward pass the tick
- * renders the scene's depth from the light's viewpoint into a square depth
- * target, and the pbr shader compares against it to shade the sun's shadows.
- * g_shadow_pso is the depth-only pipeline (a mask-style position-only shader),
- * g_shadow_res is the per-frame depth transient the forward pass samples, and
- * g_shadow_dummy is a 1x1 depth texture cleared to the far plane (1.0), bound
- * wherever no real shadow map is available (the off-frame mesh preview, or a
- * frame that skips the pass) so the shadow sample reads "unoccluded" rather
- * than garbage. It is a depth texture, not a colour one, because the shaders
- * declare shadow_map as depth2D -> texture_depth_2d and WebGPU rejects a colour
- * texture in a depth slot (WebGL was untyped here and did not care).
- * g_color_dummy is its colour counterpart, for an albedo slot with no texture
- * to bind (the preview does not upload a material's own texture).
- */
-static gpu_pipeline_t g_shadow_pso;
-static gpu_texture_t  g_shadow_dummy;
-static gpu_texture_t  g_color_dummy;
-static fg_resource_t  g_shadow_res;
-
-#define SHADOW_MAP_DIM 2048          /* sun depth-map resolution (matches tx below)*/
-
-/*
- * A minimal depth-only shader for the sun-shadow pass: it speaks the scene
- * vertex contract (a_pos at location 0, Camera at block 0) and writes only
- * position, transformed by the light's view_proj (uploaded into the Camera
- * block's view_proj slot). The colour output is declared but discarded — the
- * pass has no colour attachment — so all that lands is depth from the light.
- */
-static const char *SHADOW_SHADER_SRC =
-	"(shader sun_shadow\n"
-	"  (inputs (a_pos vec3 (location 0)))\n"
-	"  (uniforms\n"
-	"    (Camera (block 0) (layout std140)\n"
-	"      (view_proj mat4)\n"
-	"      (model     mat4)))\n"
-	"  (targets (frag_color vec4 (location 0)))\n"
-	"  (vertex   (set position (* view_proj model (vec4 a_pos 1.0))))\n"
-	"  (fragment (set frag_color (vec4 1.0 1.0 1.0 1.0))))\n";
 
 /* Last viewport pixel size the UI reported (0 = unknown -> no outline pass). */
 static float g_view_w, g_view_h;
@@ -278,109 +157,7 @@ static const char *OUTLINE_SHADER_SRC =
 	"                      (swizzle color rgb) edge)))\n"
 	"      (set frag_color (vec4 col 1.0)))))\n";
 
-/*
- * Bloom is a three-pass LDR post chain over the offscreen scene colour, run in
- * the plain (non-outline) forward path: extract the bright part, blur it
- * separably, then add it back. It operates on the tonemapped scene the material
- * shaders already wrote (each pbr surface tonemaps itself), so this is cheap
- * "display-space" bloom — a glow around bright speculars and emissive, not a
- * physically-correct HDR bloom. All three are full-screen-triangle shaders that
- * reuse the outline path's clip-space quad and UV convention.
- *
- * Extract: keep only what a luma threshold leaves, weighted so the knee is soft
- * rather than a hard cut. The scene is already [0,1], so the threshold is in
- * display space; 0.75 catches hot highlights and any emissive above mid-grey.
- */
-static const char *BLOOM_EXTRACT_SHADER_SRC =
-	"(shader bloom_extract\n"
-	"  (inputs (a_pos vec2 (location 0)))\n"
-	"  (uniforms (scene sampler2D))\n"
-	"  (varyings (v_uv vec2))\n"
-	"  (targets (frag_color vec4 (location 0)))\n"
-	"  (vertex\n"
-	"    (set v_uv (+ (* a_pos 0.5) 0.5))\n"
-	"    (set position (vec4 a_pos 0.0 1.0)))\n"
-	"  (fragment\n"
-	"    (let* ((c (swizzle (sample scene v_uv) rgb))\n"
-	"           (l (dot c (vec3 0.2126 0.7152 0.0722)))\n"
-	"           (k (max (- l 0.75) 0.0))\n"
-	"           (w (/ k (+ l 0.0001))))\n"
-	"      (set frag_color (vec4 (* c w) 1.0)))))\n";
-
-/*
- * Blur: one separable 9-tap Gaussian, run twice (horizontal then vertical) off
- * the same pipeline. `dir` is the per-tap texel step along the axis this pass
- * blurs — the tick sets it to (1/w, 0) then (0, 1/h) of the half-res target.
- * The weights are a normalised sigma~2 Gaussian (they sum to 1), so the pass
- * preserves total brightness.
- */
-static const char *BLOOM_BLUR_SHADER_SRC =
-	"(shader bloom_blur\n"
-	"  (inputs (a_pos vec2 (location 0)))\n"
-	"  (uniforms\n"
-	"    (Blur (block 0) (layout std140)\n"
-	"      (dir vec2))\n"
-	"    (src sampler2D))\n"
-	"  (varyings (v_uv vec2))\n"
-	"  (targets (frag_color vec4 (location 0)))\n"
-	"  (vertex\n"
-	"    (set v_uv (+ (* a_pos 0.5) 0.5))\n"
-	"    (set position (vec4 a_pos 0.0 1.0)))\n"
-	"  (fragment\n"
-	"    (let* ((s0 (* (swizzle (sample src v_uv) rgb) 0.2270270))\n"
-	"           (s1 (* (+ (swizzle (sample src (+ v_uv (* dir 1.0))) rgb)\n"
-	"                     (swizzle (sample src (- v_uv (* dir 1.0))) rgb)) 0.1945946))\n"
-	"           (s2 (* (+ (swizzle (sample src (+ v_uv (* dir 2.0))) rgb)\n"
-	"                     (swizzle (sample src (- v_uv (* dir 2.0))) rgb)) 0.1216216))\n"
-	"           (s3 (* (+ (swizzle (sample src (+ v_uv (* dir 3.0))) rgb)\n"
-	"                     (swizzle (sample src (- v_uv (* dir 3.0))) rgb)) 0.0540540))\n"
-	"           (s4 (* (+ (swizzle (sample src (+ v_uv (* dir 4.0))) rgb)\n"
-	"                     (swizzle (sample src (- v_uv (* dir 4.0))) rgb)) 0.0162162)))\n"
-	"      (set frag_color (vec4 (+ s0 s1 s2 s3 s4) 1.0)))))\n";
-
-/*
- * Composite: add the blurred bloom back onto the full-res scene. Two samplers,
- * bound by the backend's alphabetical unit rule (bloom -> 0, scene -> 1). The
- * add is scaled so the glow reads as a halo, not a wash.
- */
-static const char *BLOOM_COMPOSITE_SHADER_SRC =
-	"(shader bloom_composite\n"
-	"  (inputs (a_pos vec2 (location 0)))\n"
-	"  (uniforms (bloom sampler2D) (scene sampler2D))\n"
-	"  (varyings (v_uv vec2))\n"
-	"  (targets (frag_color vec4 (location 0)))\n"
-	"  (vertex\n"
-	"    (set v_uv (+ (* a_pos 0.5) 0.5))\n"
-	"    (set position (vec4 a_pos 0.0 1.0)))\n"
-	"  (fragment\n"
-	"    (let* ((s (swizzle (sample scene v_uv) rgb))\n"
-	"           (b (swizzle (sample bloom v_uv) rgb)))\n"
-	"      (set frag_color (vec4 (+ s (* b 0.65)) 1.0)))))\n";
-
-/*
- * The shared Camera uniform block, std140-packed: view_proj[16] + model[16] +
- * cam_pos (a vec3 that std140 aligns to a vec4, so 3 floats + 1 pad). A scene
- * shader that only needs the matrices (scene-textured, the selection mask)
- * declares just { view_proj, model } and reads the leading 128 bytes; the pbr
- * shader adds cam_pos and reads all 144, for a view direction that tracks the
- * real camera. The renderer uploads the full block regardless, so both kinds of
- * shader bind the same buffer.
- */
-#define SCENE_UBO_FLOATS 36          /* view_proj[16] + model[16] + cam_pos[4] */
-#define SCENE_UBO_CAMPOS 32          /* float offset of cam_pos within the block */
-
-/*
- * The Sun uniform block (the pbr shader's directional key), std140-packed:
- * light_dir (vec3 -> vec4) + light_radiance (vec3 -> vec4) + light_view_proj
- * (mat4) = 8 + 16 = 24 floats. Bound at slot 2; the block name "Sun" sorts
- * after "Camera"/"Material", which is how the webgl backend (alphabetical
- * block-name order) lands it on binding 2. A shader without a Sun block
- * (scene-textured, the mask) simply ignores the slot. light_view_proj is the
- * light's world->clip matrix the tick rebuilds each frame; the pbr shader uses
- * it to project a fragment into the shadow map's space.
- */
-#define LIGHT_UBO_FLOATS 24          /* light_dir[4] + light_radiance[4] + mat4[16] */
-#define LIGHT_UBO_VP     8           /* float offset of light_view_proj in the block */
+#define SCENE_UBO_FLOATS 32          /* view_proj[16] + model[16] */
 
 /*
  * A material's wire form (v3): a uint32 shader-ref (asset id, first-class — a
@@ -394,33 +171,6 @@ static const char *BLOOM_COMPOSITE_SHADER_SRC =
 #define MATERIAL_FALLBACK_BYTES 16                  /* one white vec4          */
 
 /*
- * Per-frame uniform rings.
- *
- * A draw's uniforms must survive until the frame's command buffer executes, so
- * every draw takes its own slot rather than rewriting one buffer at offset 0.
- * Rewriting was correct only by accident of GL's execution model: GL commands
- * run in submission order, so each draw saw its own write. WebGPU's
- * buffer_update is wgpuQueueWriteBuffer, which lands on the queue timeline and
- * flushes entirely before the frame's command buffer runs — so every draw read
- * whatever the last entity wrote, and the whole scene collapsed onto one
- * transform and one material with no error logged.
- *
- * 256-byte strides: WebGPU's default minUniformBufferOffsetAlignment is 256 and
- * WebGL2's UNIFORM_BUFFER_OFFSET_ALIGNMENT is 256 on every target we ship, so
- * one constant satisfies both. Do not query it per backend.
- *
- * Single-buffered on purpose — no double-buffering, no fences. Queue order is
- * submit(N), writeBuffer(N+1)..., submit(N+1); WebGPU guarantees queue-timeline
- * ordering, so frame N+1's writes cannot clobber reads that frame N's
- * already-submitted command buffer will make.
- */
-#define SCENE_MAX_DRAWS  1024                       /* 512 KB across both rings */
-#define SCENE_UBO_ALIGN  256u
-#define ALIGN_UP_256(n)  (((n) + (SCENE_UBO_ALIGN - 1u)) & ~(SCENE_UBO_ALIGN - 1u))
-#define UBO_STRIDE       ALIGN_UP_256(SCENE_UBO_FLOATS * sizeof(float))
-#define MATERIAL_STRIDE  ALIGN_UP_256(MATERIAL_UBO_MAX)
-
-/*
  * One compiled pipeline per shader a material selects, keyed by the shader's
  * asset id. Small and fixed: a session rarely uses more than a couple of custom
  * scene shaders, and an overflow just falls back to the built-in pipeline. The
@@ -430,12 +180,6 @@ static const char *BLOOM_COMPOSITE_SHADER_SRC =
 struct shader_pso {
 	uint32_t       shader_ref;
 	gpu_pipeline_t pso;   /* 0 = the shader failed to compile; use default */
-	/*
-	 * The multisampled variant, drawn by the forward pass into the
-	 * multisampled offscreen target. Aliases pso when MSAA is off (never
-	 * compiled or destroyed twice).
-	 */
-	gpu_pipeline_t pso_ms;
 	uint32_t       mat_block_size; /* std140 bytes of the shader's Material block */
 };
 
@@ -499,41 +243,14 @@ static uint32_t           g_texture_count;
 static struct camera g_cam;
 
 /*
- * The world entity that owns the camera's eye, or -1 when none is bound. The
- * camera is whatever live entity a scene names "Camera": the boot demo seeds
- * one bound to orbit-camera, and each launcher scene authors its own — a fixed
- * eye for tic-tac-toe, an orbit for the demo. scene_renderer_tick copies its
- * world_xform position into g_cam.eye each frame, after the scene subsystem has
- * ticked scripts (see the "scene" before "scene_renderer" registration order in
- * engine.c). target/up/fov stay fixed; only eye moves.
- *
- * This holds only a cache hint: it is re-validated by name every frame (see
- * resolve_camera_entity). Trusting it blindly would break on a world clear —
- * switching games tombstones the old camera and restarts entity ids from zero,
- * so a stale id would point at some other scene's entity (a board cell down at
- * floor level, say, hiding the board it was meant to frame).
+ * The world entity that owns the camera's eye (proof of life), or -1
+ * when none is bound. A camera "behavior" is just a COMPONENT_SCRIPT entity
+ * like any other — scene_renderer_tick copies its animated world_xform
+ * position into g_cam.eye each frame, after the scene subsystem has ticked
+ * scripts (see the "scene" before "scene_renderer" registration order in
+ * engine.c). target/up/fov stay fixed for this proof of life; only eye moves.
  */
 static int32_t g_camera_entity_id = -1;
-
-/*
- * User-driven camera override (#697). Clear at boot, so the camera tracks the
- * scripted "Camera" entity: scene_renderer_tick copies that entity's position
- * into g_cam.eye every frame. The first interactive orbit/pan/dolly sets this,
- * and the tick then leaves g_cam alone so the user's pose holds instead of
- * being snapped back to the script each frame; camera_reset_view() clears it,
- * handing the camera back to the scene. A build that never navigates never sets
- * it, so the scripted camera behaves exactly as before.
- */
-static int g_cam_user_controlled;
-
-/*
- * The authored framing (target/up) captured at init, so camera_reset_view() can
- * restore it after a pan moved them. Only the eye is driven per-frame by the
- * scripted "Camera" entity; target/up are the scene's fixed framing, so a
- * snapshot at init is the point to return to when handing the camera back.
- */
-static float g_cam_home_target[3];
-static float g_cam_home_up[3];
 
 /*
  * Camera service (#178) — lets editor overlays project world points with the
@@ -547,29 +264,6 @@ static void camera_get_view_proj(struct mat4 *out)
 		return;
 	camera_update(&g_cam);
 	*out = g_cam.view_proj;
-}
-
-/*
- * Adapt the camera's view_proj for the active backend's clip-space convention
- * before it reaches a vertex shader's output position. g_cam.view_proj is
- * GL-convention (NDC z in [-1, 1]); on a [0, 1]-clip backend (WebGPU) that
- * puts the near part of the frustum at clip z < 0, which the backend clips
- * away outright rather than just shading wrong (the same failure #608 fixed
- * for the shadow write). mat4_clip_z01 lifts it into [0, 1].
- *
- * Every draw path that outputs camera-space clip position (forward_pass,
- * mask_pass, draw_particles) calls this at its write site rather than
- * mutating g_cam.view_proj itself, so camera_get_view_proj keeps returning
- * the GL-convention matrix editor overlays and picking unproject against —
- * those run on the CPU and never touch a backend's clip volume.
- */
-static struct mat4 camera_clip_vp(const struct gpu_api *gpu)
-{
-	struct mat4 vp = g_cam.view_proj;
-
-	if (gpu->caps & GPU_CAP_CLIP_Z_ZERO_TO_ONE)
-		mat4_clip_z01(&vp);
-	return vp;
 }
 
 static void camera_get_eye(float out[3])
@@ -591,428 +285,11 @@ static void camera_set_viewport(float width, float height)
 	}
 }
 
-/*
- * Small vector helpers for the interactive camera (#697). Local to this file:
- * the shared math library has no float[3] vec ops, and these are only the
- * handful orbit/pan/dolly need.
- */
-static float cam_dot3(const float a[3], const float b[3])
-{
-	return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-
-static void cam_cross3(float out[3], const float a[3], const float b[3])
-{
-	float x = a[1] * b[2] - a[2] * b[1];
-	float y = a[2] * b[0] - a[0] * b[2];
-	float z = a[0] * b[1] - a[1] * b[0];
-
-	out[0] = x;
-	out[1] = y;
-	out[2] = z;
-}
-
-/* Normalize v in place; returns its original length (0 leaves v untouched). */
-static float cam_norm3(float v[3])
-{
-	float len = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-
-	if (len > 1e-6f) {
-		v[0] /= len;
-		v[1] /= len;
-		v[2] /= len;
-	}
-	return len;
-}
-
-/* Rotate v about the unit axis by ang radians (Rodrigues' rotation). */
-static void cam_rotate_axis(float v[3], const float axis[3], float ang)
-{
-	float c  = cosf(ang);
-	float s  = sinf(ang);
-	float d  = cam_dot3(axis, v) * (1.0f - c);
-	float cr[3];
-
-	cam_cross3(cr, axis, v);
-	v[0] = v[0] * c + cr[0] * s + axis[0] * d;
-	v[1] = v[1] * c + cr[1] * s + axis[1] * d;
-	v[2] = v[2] * c + cr[2] * s + axis[2] * d;
-}
-
-/*
- * Orbit the eye around the fixed target: yaw about world up, pitch about the
- * camera's right axis. Pitch is clamped short of the poles (±~89°) so the view
- * never flips over the top. +dpitch raises the eye.
- */
-static void camera_orbit(float dyaw, float dpitch)
-{
-	static const float PITCH_LIMIT = 1.5533f; /* ~89° */
-	float offset[3];  /* target -> eye */
-	float up[3]    = { g_cam.up[0], g_cam.up[1], g_cam.up[2] };
-	float fwd[3];
-	float right[3];
-
-	offset[0] = g_cam.eye[0] - g_cam.target[0];
-	offset[1] = g_cam.eye[1] - g_cam.target[1];
-	offset[2] = g_cam.eye[2] - g_cam.target[2];
-
-	cam_norm3(up);
-	fwd[0] = -offset[0];
-	fwd[1] = -offset[1];
-	fwd[2] = -offset[2];
-	cam_norm3(fwd);
-	cam_cross3(right, fwd, up);
-	if (cam_norm3(right) < 1e-4f) { /* looking straight up/down: fix a right */
-		right[0] = 1.0f;
-		right[1] = 0.0f;
-		right[2] = 0.0f;
-	}
-
-	/* Clamp the pitch delta against the current elevation, measured from the
-	 * real geometry each call, so repeated drags can never tip past a pole. */
-	{
-		float odir[3] = { offset[0], offset[1], offset[2] };
-		float s, elev;
-
-		cam_norm3(odir);
-		s    = cam_dot3(odir, up);
-		s    = s < -1.0f ? -1.0f : (s > 1.0f ? 1.0f : s);
-		elev = asinf(s);
-		if (elev + dpitch >  PITCH_LIMIT)
-			dpitch =  PITCH_LIMIT - elev;
-		if (elev + dpitch < -PITCH_LIMIT)
-			dpitch = -PITCH_LIMIT - elev;
-	}
-
-	cam_rotate_axis(offset, up, dyaw);        /* yaw about world up */
-	cam_rotate_axis(offset, right, -dpitch);  /* +dpitch raises the eye */
-
-	g_cam.eye[0] = g_cam.target[0] + offset[0];
-	g_cam.eye[1] = g_cam.target[1] + offset[1];
-	g_cam.eye[2] = g_cam.target[2] + offset[2];
-	g_cam_user_controlled = 1;
-	camera_update(&g_cam);
-}
-
-/*
- * Pan: slide eye and target together across the view plane so the framed point
- * tracks the pointer. dx/dy are viewport fractions; the world step scales with
- * the framing distance and the vertical fov, so a full-height drag shifts the
- * scene by roughly the visible height at the target. +dx moves content right,
- * +dy moves content down.
- */
-static void camera_pan(float dx, float dy)
-{
-	float fwd[3];
-	float right[3];
-	float up[3] = { g_cam.up[0], g_cam.up[1], g_cam.up[2] };
-	float dist, k;
-	float mv[3];
-
-	fwd[0] = g_cam.target[0] - g_cam.eye[0];
-	fwd[1] = g_cam.target[1] - g_cam.eye[1];
-	fwd[2] = g_cam.target[2] - g_cam.eye[2];
-	dist = cam_norm3(fwd);
-	cam_cross3(right, fwd, up);
-	if (cam_norm3(right) < 1e-4f) {
-		right[0] = 1.0f;
-		right[1] = 0.0f;
-		right[2] = 0.0f;
-	}
-	cam_cross3(up, right, fwd); /* re-orthogonalize up to right×fwd */
-	cam_norm3(up);
-
-	k = dist * 2.0f * tanf(0.5f * g_cam.fov_y);
-	mv[0] = (-dx * right[0] + dy * up[0]) * k;
-	mv[1] = (-dx * right[1] + dy * up[1]) * k;
-	mv[2] = (-dx * right[2] + dy * up[2]) * k;
-
-	g_cam.eye[0]    += mv[0];
-	g_cam.eye[1]    += mv[1];
-	g_cam.eye[2]    += mv[2];
-	g_cam.target[0] += mv[0];
-	g_cam.target[1] += mv[1];
-	g_cam.target[2] += mv[2];
-	g_cam_user_controlled = 1;
-	camera_update(&g_cam);
-}
-
-/*
- * Dolly the eye along the view direction. amount is a fraction of the current
- * eye→target distance: >0 moves toward the target (zoom in), capped at 90% of
- * the gap so the eye never reaches or crosses it; <0 moves away.
- */
-static void camera_dolly(float amount)
-{
-	float fwd[3];
-	float dist, t;
-
-	fwd[0] = g_cam.target[0] - g_cam.eye[0];
-	fwd[1] = g_cam.target[1] - g_cam.eye[1];
-	fwd[2] = g_cam.target[2] - g_cam.eye[2];
-	dist = cam_norm3(fwd);
-	if (dist <= 1e-4f)
-		return;
-
-	t = amount * dist;
-	if (t > dist * 0.9f)
-		t = dist * 0.9f;
-	g_cam.eye[0] += fwd[0] * t;
-	g_cam.eye[1] += fwd[1] * t;
-	g_cam.eye[2] += fwd[2] * t;
-	g_cam_user_controlled = 1;
-	camera_update(&g_cam);
-}
-
-/* Hand the camera back to the scripted scene camera (drops the user's pose):
- * restore the authored framing a pan may have moved, then let the next tick's
- * entity→eye copy resume. */
-static void camera_reset_view(void)
-{
-	g_cam.target[0] = g_cam_home_target[0];
-	g_cam.target[1] = g_cam_home_target[1];
-	g_cam.target[2] = g_cam_home_target[2];
-	g_cam.up[0]     = g_cam_home_up[0];
-	g_cam.up[1]     = g_cam_home_up[1];
-	g_cam.up[2]     = g_cam_home_up[2];
-	g_cam_user_controlled = 0;
-}
-
-/*
- * Frame a world-space sphere (#949): look at `centre`, from far enough back
- * that a ball of `radius` fills the vertical field of view with a little air
- * around it, along the direction the camera is already looking.
- *
- * Keeping the direction is the whole design. A frame-selection that also chose
- * an angle would throw away the view the reader had spent the last minute
- * setting up, which is exactly the moment they press the key — they want to see
- * *this* thing, from where they already are.
- */
-static void camera_frame(const float centre[3], float radius)
-{
-	float back[3];
-	float dist;
-
-	if (!centre || radius <= 0.0f)
-		return;
-
-	/* The current view direction, reversed: eye - target. */
-	back[0] = g_cam.eye[0] - g_cam.target[0];
-	back[1] = g_cam.eye[1] - g_cam.target[1];
-	back[2] = g_cam.eye[2] - g_cam.target[2];
-	if (cam_norm3(back) <= 1e-4f) {
-		/* Degenerate pose — no direction to keep. Any is better than
-		 * none, and looking down -Z is the scene's default. */
-		back[0] = 0.0f;
-		back[1] = 0.0f;
-		back[2] = 1.0f;
-	}
-
-	/*
-	 * The distance at which a sphere of `radius` subtends the vertical
-	 * field of view, with 1.6 of margin so the selection has air around it
-	 * rather than touching the top and bottom of the dock.
-	 */
-	dist = radius * 1.6f / tanf(0.5f * g_cam.fov_y);
-	if (dist < g_cam.near * 4.0f)
-		dist = g_cam.near * 4.0f;
-
-	g_cam.target[0] = centre[0];
-	g_cam.target[1] = centre[1];
-	g_cam.target[2] = centre[2];
-	g_cam.eye[0]    = centre[0] + back[0] * dist;
-	g_cam.eye[1]    = centre[1] + back[1] * dist;
-	g_cam.eye[2]    = centre[2] + back[2] * dist;
-	/*
-	 * Detached, like orbit/pan/dolly. Framing a selection that the demo's
-	 * scripted orbit snaps away from on the next tick is not framing it.
-	 */
-	g_cam_user_controlled = 1;
-	camera_update(&g_cam);
-}
-
 static const struct camera_api g_camera_api = {
 	camera_get_view_proj,
 	camera_get_eye,
 	camera_set_viewport,
-	camera_orbit,
-	camera_pan,
-	camera_dolly,
-	camera_reset_view,
-	camera_frame,
 };
-
-/*
- * The scene's directional key light in world space, as the Sun block wants it.
- * Defaults to the historical fixed sun so a scene with no light entity looks
- * exactly as it did before lights existed; scene_renderer_tick overrides the
- * direction from the first live COMPONENT_LIGHT entity's world rotation. The
- * direction need not be unit length — the shader normalizes it. radiance is a
- * constant white for now; per-light colour/intensity is the next increment.
- */
-static struct {
-	float       dir[3];
-	float       radiance[3];
-	struct mat4 view_proj;   /* light world->clip, rebuilt each tick */
-} g_light = {
-	{ 0.5f, 0.8f, 0.4f },
-	{ 1.0f, 1.0f, 1.0f },
-	{ { 1.0f, 0.0f, 0.0f, 0.0f,
-	    0.0f, 1.0f, 0.0f, 0.0f,
-	    0.0f, 0.0f, 1.0f, 0.0f,
-	    0.0f, 0.0f, 0.0f, 1.0f } },
-};
-
-/*
- * Rotate v by the unit quaternion q (xyzw); out must not alias v. Mirrors the
- * entity system's quat_rotate — a light entity's direction is its transform
- * rotation applied to the default sun vector, so rotating the entity (by gizmo
- * or script) steers the light.
- */
-static void light_quat_rotate(const float q[4], const float v[3], float out[3])
-{
-	float tx = 2.0f * (q[1] * v[2] - q[2] * v[1]);
-	float ty = 2.0f * (q[2] * v[0] - q[0] * v[2]);
-	float tz = 2.0f * (q[0] * v[1] - q[1] * v[0]);
-
-	out[0] = v[0] + q[3] * tx + (q[1] * tz - q[2] * ty);
-	out[1] = v[1] + q[3] * ty + (q[2] * tx - q[0] * tz);
-	out[2] = v[2] + q[3] * tz + (q[0] * ty - q[1] * tx);
-}
-
-/*
- * A symmetric orthographic projection (half-extent HALF on x and y, depth range
- * [near, far]), right-handed with z mapped to GL NDC [-1, 1] — the same
- * convention as mat4_perspective, so a shadow depth compared against gl_Position
- * from this matrix matches the window depth the pass wrote. Column-major, filled
- * directly (there is no mat4_ortho in the math library). A directional light has
- * no perspective, so its shadow frustum is a box.
- *
- * A [0, 1]-clip backend needs the near half of this range lifted out of clip
- * rejection; shadow_pass adapts the built matrix (mat4_clip_z01) for its write
- * rather than baking a second convention in here.
- */
-static void light_ortho(struct mat4 *out, float half, float near, float far)
-{
-	float rl = 2.0f * half;      /* r - l with l = -half, r = +half */
-	float fn = far - near;
-
-	memset(out->m, 0, sizeof(out->m));
-	out->m[0]  = 2.0f / rl;
-	out->m[5]  = 2.0f / rl;
-	out->m[10] = -2.0f / fn;
-	out->m[14] = -(far + near) / fn;
-	out->m[15] = 1.0f;
-}
-
-/*
- * Rebuild g_light.view_proj — the sun's world->clip matrix the shadow pass
- * renders with and the pbr shader samples against. The light is directional, so
- * it is framed as an ortho box that encloses the scene: fit a bounding sphere to
- * the live drawable entities (their world positions padded by their scale, a
- * cheap stand-in for real mesh extents), place the light back along its
- * direction far enough to see the whole sphere, and look at the centre. With no
- * drawable entity the scene is empty, so any valid matrix does — the shadow map
- * clears to "far" and nothing is occluded.
- */
-static void update_light_view_proj(const struct world *w)
-{
-	float    mn[3] = {  1e30f,  1e30f,  1e30f };
-	float    mx[3] = { -1e30f, -1e30f, -1e30f };
-	float    center[3], eye[3], up[3], dir[3], len, radius, dist;
-	uint32_t i, k, seen = 0;
-
-	if (w) {
-		for (i = 0; i < w->count; i++) {
-			const struct transform *t;
-			float                    ext;
-
-			if (!w->alive[i] || !(w->mask[i] & COMPONENT_RENDER) ||
-			    !(w->mask[i] & COMPONENT_MATERIAL))
-				continue;
-			t   = &w->world_xform[i];
-			ext = fabsf(t->scale[0]);
-			if (fabsf(t->scale[1]) > ext) ext = fabsf(t->scale[1]);
-			if (fabsf(t->scale[2]) > ext) ext = fabsf(t->scale[2]);
-			for (k = 0; k < 3; k++) {
-				float lo = t->position[k] - ext;
-				float hi = t->position[k] + ext;
-
-				if (lo < mn[k]) mn[k] = lo;
-				if (hi > mx[k]) mx[k] = hi;
-			}
-			seen++;
-		}
-	}
-
-	if (!seen) {
-		mn[0] = mn[1] = mn[2] = -1.0f;
-		mx[0] = mx[1] = mx[2] =  1.0f;
-	}
-
-	for (k = 0; k < 3; k++)
-		center[k] = 0.5f * (mn[k] + mx[k]);
-	radius = 0.5f * sqrtf((mx[0] - mn[0]) * (mx[0] - mn[0]) +
-			      (mx[1] - mn[1]) * (mx[1] - mn[1]) +
-			      (mx[2] - mn[2]) * (mx[2] - mn[2]));
-	if (radius < 1.0f)
-		radius = 1.0f;
-
-	/* g_light.dir points from the surface toward the sun, so the light sits
-	 * up-direction from the scene; step back along it to frame the sphere. */
-	dir[0] = g_light.dir[0];
-	dir[1] = g_light.dir[1];
-	dir[2] = g_light.dir[2];
-	len = sqrtf(dir[0]*dir[0] + dir[1]*dir[1] + dir[2]*dir[2]);
-	if (len < 1e-6f) {
-		dir[0] = 0.0f; dir[1] = 1.0f; dir[2] = 0.0f; len = 1.0f;
-	}
-	dir[0] /= len; dir[1] /= len; dir[2] /= len;
-
-	dist = radius * 2.5f;
-	for (k = 0; k < 3; k++)
-		eye[k] = center[k] + dir[k] * dist;
-
-	/* Pick an up hint not parallel to the light direction. */
-	if (fabsf(dir[1]) > 0.99f) {
-		up[0] = 0.0f; up[1] = 0.0f; up[2] = 1.0f;
-	} else {
-		up[0] = 0.0f; up[1] = 1.0f; up[2] = 0.0f;
-	}
-
-	{
-		struct mat4 view, proj;
-
-		mat4_look_at(&view, eye, center, up);
-		light_ortho(&proj, radius * 1.15f, 0.05f, dist + radius * 1.5f);
-		mat4_mul(&g_light.view_proj, &proj, &view);
-	}
-}
-
-/*
- * Pack the current directional light into the Sun UBO and bind it at slot 2.
- * The light is constant across a pass, so a caller does this once before its
- * draw loop; a shader with no Sun block (scene-textured, the mask) ignores the
- * slot. Shared by the forward pass and the mesh-preview render so a pbr
- * thumbnail lights the same way the scene does.
- */
-static void bind_light(const struct gpu_api *gpu, gpu_cmd_buf_t cmd)
-{
-	float lubo[LIGHT_UBO_FLOATS];
-
-	lubo[0] = g_light.dir[0];
-	lubo[1] = g_light.dir[1];
-	lubo[2] = g_light.dir[2];
-	lubo[3] = 0.0f;               /* std140 vec3 tail pad */
-	lubo[4] = g_light.radiance[0];
-	lubo[5] = g_light.radiance[1];
-	lubo[6] = g_light.radiance[2];
-	lubo[7] = 0.0f;
-	memcpy(&lubo[LIGHT_UBO_VP], g_light.view_proj.m, 16 * sizeof(float));
-	gpu->buffer_update(g_light_ubo, 0, lubo, (uint32_t)sizeof(lubo));
-	gpu->cmd_bind_uniform_buffer(cmd, 2, g_light_ubo, 0,
-				     (uint32_t)sizeof(lubo));
-}
 
 /*
  * Meshes are uploaded lazily, not from a fixed built-in list: ensure_meshes()
@@ -1232,34 +509,15 @@ static int material_texture(uint32_t material_ref, uint32_t shader_ref,
  * material shader must speak that same IO contract (a_pos/a_normal/a_uv0 in,
  * Camera at block 0, Material at block 1); only its shading changes.
  */
-/*
- * COLOR_COUNT and WANT_DEPTH describe the attachments of the pass this pipeline
- * runs in. GL never coupled the two -- it discards a fragment colour written
- * with no colour attachment bound, and ignores a depth state with no depth
- * buffer -- but WebGPU validates a pipeline's attachment state against the pass
- * it is used in, in both directions. So the sun shadow pass (depth, no colour)
- * and the selection mask pass (colour, no depth) each have to say what they
- * actually target.
- */
-static gpu_pipeline_t create_pso(const struct gpu_api *gpu, const char *src,
-				 uint32_t color_count, int want_depth,
-				 uint32_t sample_count)
+static gpu_pipeline_t create_pso(const struct gpu_api *gpu, const char *src)
 {
 	struct gpu_pipeline_desc pd;
 
 	memset(&pd, 0, sizeof(pd));
 	pd.color_formats[0]   = GPU_FORMAT_RGBA8_UNORM;
-	pd.color_format_count = color_count;
-	pd.depth_format       = want_depth ? GPU_FORMAT_DEPTH32_FLOAT
-					   : GPU_FORMAT_UNKNOWN;
+	pd.color_format_count = 1;
+	pd.depth_format       = GPU_FORMAT_DEPTH32_FLOAT;
 	pd.topology           = GPU_TOPOLOGY_TRIANGLE_LIST;
-	/*
-	 * A pipeline's sample count must match the pass it runs in. The scene
-	 * geometry pipelines have a multisampled variant (sample_count > 1) for
-	 * the offscreen MSAA target; the shadow (single-sample depth map) and
-	 * mask (single-sample) pipelines pass 1.
-	 */
-	pd.sample_count       = sample_count ? sample_count : 1;
 
 	/* mesh_vertex: position(vec3) @0, normal(vec3) @12, uv0(vec2) @24. */
 	pd.vertex_layout.attr_count = 3;
@@ -1299,14 +557,7 @@ static void build_pipeline(const struct gpu_api *gpu)
 			     "scene_renderer: scene shader asset unavailable");
 		return;
 	}
-	g_default_pso = create_pso(gpu, src, 1, 1, 1);
-	/*
-	 * The multisampled twin for the offscreen forward pass. With MSAA off it
-	 * is the same pipeline, so there is nothing extra to compile or free.
-	 */
-	g_default_pso_ms = g_msaa_samples > 1
-				 ? create_pso(gpu, src, 1, 1, g_msaa_samples)
-				 : g_default_pso;
+	g_default_pso = create_pso(gpu, src);
 	/*
 	 * Cache the built-in pipeline under the scene-textured shader's id so a
 	 * material that names it (the default) reuses this pipeline instead of
@@ -1316,7 +567,6 @@ static void build_pipeline(const struct gpu_api *gpu)
 	    g_shader_pso_count < SCENE_MAX_SHADER_PSOS) {
 		g_shader_psos[g_shader_pso_count].shader_ref = scene_id;
 		g_shader_psos[g_shader_pso_count].pso        = g_default_pso;
-		g_shader_psos[g_shader_pso_count].pso_ms     = g_default_pso_ms;
 		g_shader_psos[g_shader_pso_count].mat_block_size =
 			shader_material_block_size(src);
 		g_shader_pso_count++;
@@ -1329,25 +579,15 @@ static void build_pipeline(const struct gpu_api *gpu)
  * composite, which reads the offscreen scene and the mask and writes the
  * backbuffer.
  */
-/*
- * WANT_DEPTH follows the same rule as create_pso: a pipeline has to describe
- * the pass it runs in, and WebGPU validates that in both directions. It is not
- * about the shader wanting depth — none of these read or write it — but about
- * whether the pass carries a depth attachment at all. A full-screen pass that
- * targets the BACKBUFFER does, because the backend emulates GL's
- * default-framebuffer depth there; one that targets an offscreen colour target
- * does not.
- */
 static gpu_pipeline_t create_fullscreen_pso(const struct gpu_api *gpu,
-					    const char *src, int want_depth)
+					    const char *src)
 {
 	struct gpu_pipeline_desc pd;
 
 	memset(&pd, 0, sizeof(pd));
 	pd.color_formats[0]   = GPU_FORMAT_RGBA8_UNORM;
 	pd.color_format_count = 1;
-	pd.depth_format       = want_depth ? GPU_FORMAT_DEPTH32_FLOAT
-					   : GPU_FORMAT_UNKNOWN;
+	pd.depth_format       = GPU_FORMAT_UNKNOWN;
 	pd.topology           = GPU_TOPOLOGY_TRIANGLE_LIST;
 
 	pd.vertex_layout.attr_count = 1;
@@ -1379,10 +619,8 @@ static void build_outline_resources(const struct gpu_api *gpu)
 	static const uint16_t FS_IDX[3] = { 0, 1, 2 };
 	struct gpu_buffer_desc bd;
 
-	/* The mask renders into the single-sample sel_mask target, so 1 sample. */
-	g_mask_pso    = create_pso(gpu, MASK_SHADER_SRC, 1, 0, 1);
-	/* The outline pass draws into the backbuffer, which carries emulated depth. */
-	g_outline_pso = create_fullscreen_pso(gpu, OUTLINE_SHADER_SRC, 1);
+	g_mask_pso    = create_pso(gpu, MASK_SHADER_SRC);
+	g_outline_pso = create_fullscreen_pso(gpu, OUTLINE_SHADER_SRC);
 	if (!g_mask_pso || !g_outline_pso)
 		g_log->write(LOG_LEVEL_WARN,
 			     "scene_renderer: outline pipeline unavailable; "
@@ -1406,97 +644,6 @@ static void build_outline_resources(const struct gpu_api *gpu)
 }
 
 /*
- * Compile the three bloom pipelines and the blur's uniform buffer, off-frame.
- * All three are full-screen and reuse the quad build_outline_resources made, so
- * this must run after it. Any failed compile leaves a null handle and the tick
- * takes its no-bloom fallback, so bloom never breaks ordinary rendering.
- */
-static void build_bloom_resources(const struct gpu_api *gpu)
-{
-	struct gpu_buffer_desc bd;
-
-	g_bloom_extract_pso   = create_fullscreen_pso(gpu, BLOOM_EXTRACT_SHADER_SRC, 0);
-	g_bloom_blur_pso      = create_fullscreen_pso(gpu, BLOOM_BLUR_SHADER_SRC, 0);
-	g_bloom_composite_pso = create_fullscreen_pso(gpu, BLOOM_COMPOSITE_SHADER_SRC, 0);
-	g_bloom_composite_bb_pso =
-		create_fullscreen_pso(gpu, BLOOM_COMPOSITE_SHADER_SRC, 1);
-	if (!g_bloom_extract_pso || !g_bloom_blur_pso || !g_bloom_composite_pso ||
-	    !g_bloom_composite_bb_pso)
-		g_log->write(LOG_LEVEL_WARN,
-			     "scene_renderer: bloom pipeline unavailable; "
-			     "bloom disabled");
-
-	memset(&bd, 0, sizeof(bd));
-	bd.usage = GPU_BUFFER_USAGE_UNIFORM;
-	bd.size  = BLUR_UBO_FLOATS * sizeof(float);
-	g_blur_ubo = gpu->buffer_create(&bd);
-}
-
-/*
- * Compile the sun-shadow depth pipeline and bake the 1x1 "fully lit" dummy
- * shadow map, off-frame. A failed compile leaves g_shadow_pso null, so the tick
- * skips the shadow pass and the forward pass binds the dummy — the pbr shader
- * then shades with the sun but casts no shadows, exactly as before this feature.
- * The dummy is opaque white so its red channel reads 1.0 (the far plane), which
- * the shader's depth compare always treats as unoccluded.
- */
-static void build_shadow_resources(const struct gpu_api *gpu)
-{
-	static const unsigned char WHITE_TEXEL[4] = { 255, 255, 255, 255 };
-	struct gpu_texture_desc     td;
-	struct gpu_render_pass_desc rp;
-	gpu_cmd_buf_t               cmd;
-
-	/* The shadow map is a single-sample depth target, so 1 sample. */
-	g_shadow_pso = create_pso(gpu, SHADOW_SHADER_SRC, 0, 1, 1);
-	if (!g_shadow_pso)
-		g_log->write(LOG_LEVEL_WARN,
-			     "scene_renderer: shadow pipeline unavailable; "
-			     "sun casts no shadows");
-
-	/* Colour dummy: a 1x1 white texel for an albedo slot with nothing to
-	 * bind (the preview does not upload the material's own texture). */
-	memset(&td, 0, sizeof(td));
-	td.format       = GPU_FORMAT_RGBA8_UNORM;
-	td.width        = 1;
-	td.height       = 1;
-	td.mip_levels   = 1;
-	td.sample_count = 1;
-	td.initial_data = WHITE_TEXEL;
-	g_color_dummy   = gpu->texture_create(&td);
-
-	/*
-	 * Shadow dummy: a 1x1 depth texture, because the shaders declare
-	 * shadow_map as depth2D -> texture_depth_2d and WebGPU rejects a colour
-	 * texture in that slot. A depth texture cannot be filled by a pixel
-	 * upload (WebGPU has no queue-write to the depth aspect), so it is cleared
-	 * to the far plane (1.0) — which the depth compare reads as unoccluded —
-	 * with a one-shot depth-only pass instead of initial_data.
-	 */
-	memset(&td, 0, sizeof(td));
-	td.format       = GPU_FORMAT_DEPTH32_FLOAT;
-	td.width        = 1;
-	td.height       = 1;
-	td.mip_levels   = 1;
-	td.sample_count = 1;
-	g_shadow_dummy  = gpu->texture_create(&td);
-	if (!g_shadow_dummy)
-		return;
-
-	memset(&rp, 0, sizeof(rp));
-	rp.color_count    = 0;
-	rp.depth          = g_shadow_dummy;
-	rp.depth_load_op  = GPU_LOAD_OP_CLEAR;
-	rp.depth_store_op = GPU_STORE_OP_STORE;
-	rp.clear_depth    = 1.0f;
-
-	cmd = gpu->cmd_buf_begin();
-	gpu->cmd_begin_render_pass(cmd, &rp);
-	gpu->cmd_end_render_pass(cmd);
-	gpu->cmd_buf_submit(cmd);
-}
-
-/*
  * Compile and cache the pipeline for a material-selected shader. A failed
  * compile is cached as a null pipeline so the shader is tried only once and
  * quietly falls back to the built-in scene pipeline rather than being retried
@@ -1508,7 +655,6 @@ static void add_shader_pso(const struct gpu_api *gpu, uint32_t shader_ref)
 {
 	const char    *src;
 	gpu_pipeline_t pso;
-	gpu_pipeline_t pso_ms;
 
 	if (g_shader_pso_count >= SCENE_MAX_SHADER_PSOS) {
 		g_log->write(LOG_LEVEL_WARN,
@@ -1517,23 +663,14 @@ static void add_shader_pso(const struct gpu_api *gpu, uint32_t shader_ref)
 		return;
 	}
 	src = (const char *)g_asset->get_data(shader_ref, NULL);
-	pso = src ? create_pso(gpu, src, 1, 1, 1) : 0;
+	pso = src ? create_pso(gpu, src) : 0;
 	if (!pso)
 		g_log->write(LOG_LEVEL_WARN,
 			     "scene_renderer: shader %u failed to compile; "
 			     "using the default", shader_ref);
-	/*
-	 * The multisampled variant, for when this material is drawn in the
-	 * offscreen forward pass. With MSAA off (or a failed compile) it aliases
-	 * pso, so there is nothing extra to build or free.
-	 */
-	pso_ms = (pso && g_msaa_samples > 1)
-			 ? create_pso(gpu, src, 1, 1, g_msaa_samples)
-			 : pso;
 
 	g_shader_psos[g_shader_pso_count].shader_ref = shader_ref;
 	g_shader_psos[g_shader_pso_count].pso        = pso;
-	g_shader_psos[g_shader_pso_count].pso_ms     = pso_ms;
 	g_shader_psos[g_shader_pso_count].mat_block_size =
 		shader_material_block_size(src);
 	g_shader_pso_count++;
@@ -1550,23 +687,6 @@ static gpu_pipeline_t pso_for_shader(uint32_t shader_ref)
 			return e->pso;
 	}
 	return g_default_pso;
-}
-
-/*
- * The multisampled twin of pso_for_shader, for the forward pass when it targets
- * the multisampled offscreen scene colour. Falls back to the multisampled
- * default, which itself aliases the single-sample default when MSAA is off.
- */
-static gpu_pipeline_t pso_for_shader_ms(uint32_t shader_ref)
-{
-	struct shader_pso *e;
-
-	if (shader_ref) {
-		e = find_shader_pso(shader_ref);
-		if (e && e->pso_ms)
-			return e->pso_ms;
-	}
-	return g_default_pso_ms;
 }
 
 /*
@@ -2036,37 +1156,8 @@ static int preview_ensure_mesh(const struct gpu_api *gpu, uint32_t mesh_ref)
 }
 
 /*
- * Take the next uniform-ring slot for a draw. One cursor feeds both rings, so a
- * draw's camera slot and material slot share an index.
- *
- * The cursor is reset exactly once per frame, ahead of every pass, and NOT
- * between passes: shadow and forward are separate command buffers inside one
- * frame, they share the queue timeline, and so they must share the ring.
- *
- * On overflow this returns 0 (failure) rather than wrapping to slot 0. Wrapping
- * would reproduce exactly the silent wrong-picture failure the ring exists to
- * kill; a visibly missing object plus one error line is strictly better than a
- * plausible wrong one.
- */
-static int ring_take_slot(uint32_t *out_slot)
-{
-	if (g_ring_cursor >= SCENE_MAX_DRAWS) {
-		if (!g_ring_overflowed) {
-			g_ring_overflowed = 1;
-			g_log->write(LOG_LEVEL_ERROR,
-				     "scene_renderer: uniform ring overflow "
-				     "(> SCENE_MAX_DRAWS draws in a frame); "
-				     "skipping the remaining draws");
-		}
-		return 0;
-	}
-	*out_slot = g_ring_cursor++;
-	return 1;
-}
-
-/*
  * Render mesh_ref shaded with material_ref into the preview target and return
- * the color texture's opaque id (see preview_api.h). Drives the device
+ * the color texture's native handle (see preview_api.h). Drives the device
  * directly for a single off-frame pass, reusing the scene pipeline, the shared
  * Camera/Material UBOs and the mesh upload path so the thumbnail matches how the
  * mesh draws in-scene. Returns 0 on any failure.
@@ -2149,26 +1240,8 @@ static uint32_t scene_preview_render_mesh(uint32_t mesh_ref,
 	mt.scale[0] = mt.scale[1] = mt.scale[2] = 1.0f;
 	mat4_from_transform(&model, &mt);
 
-	/*
-	 * Adapt the clip-space depth range the same way every live draw path
-	 * does (forward_pass, mask_pass, draw_particles, the shadow write): a
-	 * backend with NDC z in [0, 1] needs mat4_clip_z01, or the near half of
-	 * the frustum lands at z < 0 and gets clipped away. camera_clip_vp reads
-	 * the global camera, so the preview — which frames its own local camera —
-	 * does the same adaptation here by hand.
-	 */
-	{
-		struct mat4 preview_vp = cam.view_proj;
-
-		if (gpu->caps & GPU_CAP_CLIP_Z_ZERO_TO_ONE)
-			mat4_clip_z01(&preview_vp);
-		memcpy(&ubo[0], preview_vp.m, 16 * sizeof(float));
-	}
+	memcpy(&ubo[0],  cam.view_proj.m, 16 * sizeof(float));
 	memcpy(&ubo[16], model.m,         16 * sizeof(float));
-	ubo[SCENE_UBO_CAMPOS + 0] = cam.eye[0];
-	ubo[SCENE_UBO_CAMPOS + 1] = cam.eye[1];
-	ubo[SCENE_UBO_CAMPOS + 2] = cam.eye[2];
-	ubo[SCENE_UBO_CAMPOS + 3] = 0.0f; /* std140 vec3 tail pad */
 
 	/* Material params: the shader's Material block, or a white tint fallback. */
 	pbytes = material_params(material_ref, &plen);
@@ -2205,45 +1278,10 @@ static uint32_t scene_preview_render_mesh(uint32_t mesh_ref,
 	gpu->cmd_begin_render_pass(cmd, &rp);
 
 	gpu->cmd_set_pipeline(cmd, pso);
-	{
-		uint32_t slot, uoff, moff;
-
-		if (!ring_take_slot(&slot)) {
-			gpu->cmd_end_render_pass(cmd);
-			gpu->cmd_buf_submit(cmd);
-			return 0;
-		}
-		uoff = slot * (uint32_t)UBO_STRIDE;
-		moff = slot * (uint32_t)MATERIAL_STRIDE;
-		gpu->buffer_update(g_ubo_ring, uoff, ubo, (uint32_t)sizeof(ubo));
-		gpu->cmd_bind_uniform_buffer(cmd, 0, g_ubo_ring, uoff,
-					     (uint32_t)sizeof(ubo));
-		gpu->buffer_update(g_material_ring, moff, params, plen);
-		gpu->cmd_bind_uniform_buffer(cmd, 1, g_material_ring, moff, plen);
-	}
-	bind_light(gpu, cmd); /* Sun at slot 2, so a pbr thumbnail lights right */
-	/*
-	 * The preview runs no shadow pass, so the depth dummy stands in for the
-	 * shadow map — but it has to land in the right slot with the right type. A
-	 * textured shader puts albedo at unit 0 and the shadow map at unit 1; an
-	 * untextured one puts the shadow map at unit 0. Mirror the forward pass's
-	 * material_texture split so WebGPU sees a depth texture in the depth slot
-	 * and a colour texture in the albedo slot (WebGL is untyped, unchanged).
-	 */
-	{
-		uint32_t       t_ref, tw, th, tpl = 0;
-		const uint8_t *tp = NULL;
-
-		if (material_texture(material_ref, shader_ref, &t_ref, &tw, &th,
-				     &tp, &tpl)) {
-			if (g_color_dummy)
-				gpu->cmd_bind_texture(cmd, 0, g_color_dummy);
-			if (g_shadow_dummy)
-				gpu->cmd_bind_texture(cmd, 1, g_shadow_dummy);
-		} else if (g_shadow_dummy) {
-			gpu->cmd_bind_texture(cmd, 0, g_shadow_dummy);
-		}
-	}
+	gpu->buffer_update(g_ubo, 0, ubo, (uint32_t)sizeof(ubo));
+	gpu->cmd_bind_uniform_buffer(cmd, 0, g_ubo, 0, (uint32_t)sizeof(ubo));
+	gpu->buffer_update(g_material_ubo, 0, params, plen);
+	gpu->cmd_bind_uniform_buffer(cmd, 1, g_material_ubo, 0, plen);
 	gpu->cmd_bind_vertex_buffer(cmd, 0, g_prev_vbo, 0);
 	gpu->cmd_bind_index_buffer(cmd, g_prev_ebo, 0, GPU_INDEX_FORMAT_UINT16);
 
@@ -2255,7 +1293,7 @@ static uint32_t scene_preview_render_mesh(uint32_t mesh_ref,
 	gpu->cmd_end_render_pass(cmd);
 	gpu->cmd_buf_submit(cmd);
 
-	return gpu->texture_handle(g_prev_color);
+	return gpu->texture_native_handle(g_prev_color);
 }
 
 /* Free the preview's targets and mesh buffers — called from shutdown. */
@@ -2288,15 +1326,13 @@ static void seed_demo_scene(void)
 		const char *path;
 		float       pos[3];
 		float       scale[3];
-		const char *script;   /* behavior script to bind, or NULL      */
-		const char *material; /* material asset to wear                 */
-		const char *name;     /* shown in the entity list              */
+		const char *script; /* behavior script to bind, or NULL */
+		const char *name;   /* shown in the entity list */
 	} DEMO[] = {
-		{ "builtin://mesh/plane",   { 0.0f, -0.5f,  0.0f }, { 6.0f, 1.0f, 6.0f }, NULL,                       "builtin://material/checker",     "Floor"   },
-		{ "builtin://mesh/box",     { -1.5f, 0.0f,  0.0f }, { 1.0f, 1.0f, 1.0f }, "builtin://script/spinner", "builtin://material/pbr-plastic", "Box"     },
-		{ "builtin://mesh/sphere",  {  0.0f, 0.0f, -1.0f }, { 1.0f, 1.0f, 1.0f }, "builtin://script/bounce",  "builtin://material/pbr-metal",   "Sphere"  },
-		{ "builtin://mesh/pyramid", {  1.5f, 0.0f,  0.5f }, { 1.0f, 1.0f, 1.0f }, "builtin://script/wobble",  "builtin://material/checker",     "Pyramid" },
-		{ "builtin://mesh/sdf-rook",{  0.0f, 0.0f,  1.4f }, { 1.0f, 1.0f, 1.0f }, "builtin://script/spinner", "builtin://material/pbr-metal",   "Rook"    },
+		{ "builtin://mesh/plane",   { 0.0f, -0.5f,  0.0f }, { 6.0f, 1.0f, 6.0f }, NULL,                        "Floor"   },
+		{ "builtin://mesh/box",     { -1.5f, 0.0f,  0.0f }, { 1.0f, 1.0f, 1.0f }, "builtin://script/spinner", "Box"     },
+		{ "builtin://mesh/sphere",  {  0.0f, 0.0f, -1.0f }, { 1.0f, 1.0f, 1.0f }, "builtin://script/bounce",  "Sphere"  },
+		{ "builtin://mesh/pyramid", {  1.5f, 0.0f,  0.5f }, { 1.0f, 1.0f, 1.0f }, "builtin://script/wobble",  "Pyramid" },
 	};
 	/* The floor bakes the checker at a denser scale than the built-in
 	 * default so it reads as a checkerboard rather than one giant tile. */
@@ -2316,17 +1352,13 @@ static void seed_demo_scene(void)
 	}
 
 	/*
-	 * Every seeded entity wears a real, inspectable material, so the world
-	 * scene never rests in the "no material" state (forward_pass skips any
-	 * entity with no COMPONENT_MATERIAL — how an entity keeps its mesh for
-	 * picking/collision but stops drawing). The mix shows off both scene
-	 * shaders side by side: the sphere, box, and rook wear the physically based
-	 * metal/plastic materials, while the floor and pyramid wear the textured
-	 * checker so the procedural-texture path stays exercised too. The rook is
-	 * the marching-cubes/SDF mesh — its gradient normals catch the pbr key
-	 * light — so the demo now covers all three mesh shape engines (lathe,
-	 * parametric grid, implicit surface). A material that fails to resolve
-	 * falls back to the checker rather than going undrawn.
+	 * Every seeded entity wears the built-in checker material, so the world
+	 * scene never rests in the "no material" state — each renderable points
+	 * at a real, inspectable material rather than going undrawn
+	 * (forward_pass skips any entity with no COMPONENT_MATERIAL, which is
+	 * how an entity keeps its mesh for picking/collision but stops
+	 * drawing) — and the whole scene proves the procedural-texture path
+	 * renders, not just the floor.
 	 */
 	checker = asset_id_by_path("builtin://material/checker");
 
@@ -2334,12 +1366,9 @@ static void seed_demo_scene(void)
 		struct transform t;
 		int32_t          id;
 		uint32_t         ref = asset_id_by_path(DEMO[i].path);
-		uint32_t         mat = asset_id_by_path(DEMO[i].material);
 
 		if (!ref)
 			continue;
-		if (!mat)
-			mat = checker;
 		memset(&t, 0, sizeof(t));
 		t.position[0] = DEMO[i].pos[0];
 		t.position[1] = DEMO[i].pos[1];
@@ -2349,8 +1378,8 @@ static void seed_demo_scene(void)
 		t.scale[1] = DEMO[i].scale[1];
 		t.scale[2] = DEMO[i].scale[2];
 		id = g_scene->create_entity(WORLD_NO_PARENT, &t, 0u, ref);
-		if (id >= 0 && mat && g_scene->set_material_ref)
-			g_scene->set_material_ref(id, mat);
+		if (id >= 0 && checker && g_scene->set_material_ref)
+			g_scene->set_material_ref(id, checker);
 		if (id >= 0 && g_scene->set_name)
 			g_scene->set_name(id, DEMO[i].name);
 
@@ -2398,65 +1427,6 @@ static void seed_demo_scene(void)
 			g_camera_entity_id = cam_id;
 		}
 	}
-
-	/*
-	 * A light entity (proof of the light component): no mesh or material, just
-	 * COMPONENT_LIGHT. The tick reads its world rotation to steer the pbr
-	 * shader's key light; at identity rotation that reproduces the default sun,
-	 * so the scene looks the same as before but the light is now a real,
-	 * selectable entity you can rotate (bind a spinner to it to sweep the sun).
-	 */
-	{
-		struct transform lt;
-		int32_t          light_id;
-
-		memset(&lt, 0, sizeof(lt));
-		lt.rotation[3] = 1.0f;
-		lt.scale[0] = lt.scale[1] = lt.scale[2] = 1.0f;
-		light_id = g_scene->create_entity(WORLD_NO_PARENT, &lt,
-						  COMPONENT_LIGHT, 0u);
-		if (light_id >= 0 && g_scene->set_name)
-			g_scene->set_name(light_id, "Sun");
-	}
-}
-
-/*
- * (particle-burst! x y z r g b count): spawn COUNT cosmetic particles at world
- * (x,y,z) tinted (r,g,b). The render layer owns this primitive — not the entity
- * layer's scene-* set — because particles are an effect on top of the scene, not
- * scene-graph state; a game's rules (tic-tac-toe fires it on each placement) call
- * it through the shared image with no C glue of their own. COUNT is clamped to
- * the pool inside particles_burst; a negative or absurd count is coerced to a
- * bounded unsigned there.
- */
-static s7_pointer sp_particle_burst(s7_scheme *sc, s7_pointer args)
-{
-	float    pos[3], rgb[3];
-	double   n;
-	uint32_t count;
-
-	pos[0] = (float)s7_number_to_real(sc, s7_list_ref(sc, args, 0));
-	pos[1] = (float)s7_number_to_real(sc, s7_list_ref(sc, args, 1));
-	pos[2] = (float)s7_number_to_real(sc, s7_list_ref(sc, args, 2));
-	rgb[0] = (float)s7_number_to_real(sc, s7_list_ref(sc, args, 3));
-	rgb[1] = (float)s7_number_to_real(sc, s7_list_ref(sc, args, 4));
-	rgb[2] = (float)s7_number_to_real(sc, s7_list_ref(sc, args, 5));
-	n      = s7_number_to_real(sc, s7_list_ref(sc, args, 6));
-	count  = (n > 0.0) ? (uint32_t)n : 0u;
-
-	particles_burst(pos, rgb, count);
-	return s7_nil(sc);
-}
-
-/* Register particle-burst! into the shared image, so scene rules can fire it. */
-static void register_particle_script(void)
-{
-	s7_scheme *sc = script_s7();
-
-	if (sc)
-		s7_define_function(sc, "particle-burst!", sp_particle_burst,
-				   7, 0, false,
-				   "(particle-burst! x y z r g b count)");
 }
 
 static void scene_renderer_init(void)
@@ -2471,21 +1441,7 @@ static void scene_renderer_init(void)
 		return;
 	}
 
-	/*
-	 * 4x MSAA on a backend that can resolve a multisampled colour target to a
-	 * single-sample texture in-pass (WebGPU); otherwise single-sample, the
-	 * pre-MSAA path. Fixed here so every pipeline and offscreen target built
-	 * below agrees on the sample count. See build_pipeline / the tick's
-	 * offscreen paths.
-	 */
-	g_msaa_samples = (gpu->caps & GPU_CAP_MSAA_RESOLVE) ? 4u : 1u;
-
 	build_pipeline(gpu);
-	/* Cosmetic particle system: its pipeline and buffers are created here,
-	 * off-frame like every other persistent resource, and the burst primitive
-	 * is wired into the script image. */
-	particles_init(gpu);
-	register_particle_script();
 	/* Mesh buffers are created lazily by ensure_meshes() on the first tick,
 	 * once the seeded/loaded world exists — not from a fixed list here. */
 
@@ -2494,29 +1450,19 @@ static void scene_renderer_init(void)
 
 		memset(&bd, 0, sizeof(bd));
 		bd.usage = GPU_BUFFER_USAGE_UNIFORM;
-		/* One 256-aligned slot per draw, so a draw's uniforms survive
-		 * until the frame's command buffer executes. See the ring
-		 * comment above SCENE_MAX_DRAWS. */
-		bd.size  = SCENE_MAX_DRAWS * (uint32_t)UBO_STRIDE;
-		g_ubo_ring = gpu->buffer_create(&bd);
+		bd.size  = SCENE_UBO_FLOATS * sizeof(float);
+		g_ubo = gpu->buffer_create(&bd);
 
 		/*
-		 * Each slot is sized to the largest Material block the renderer
-		 * will upload; a draw fills only its material's actual param
-		 * bytes and binds exactly that range within its slot.
+		 * Sized to the largest Material block the renderer will upload;
+		 * each draw fills only its material's actual param bytes and
+		 * binds exactly that range.
 		 */
-		bd.size = SCENE_MAX_DRAWS * (uint32_t)MATERIAL_STRIDE;
-		g_material_ring = gpu->buffer_create(&bd);
-
-		/* The Sun block: the scene's one directional light, uploaded per
-		 * frame and bound at slot 2 for the pbr shader. */
-		bd.size = LIGHT_UBO_FLOATS * sizeof(float);
-		g_light_ubo = gpu->buffer_create(&bd);
+		bd.size = MATERIAL_UBO_MAX;
+		g_material_ubo = gpu->buffer_create(&bd);
 	}
 
 	build_outline_resources(gpu);
-	build_bloom_resources(gpu);
-	build_shadow_resources(gpu);
 
 	/* A fixed camera framing the unit primitives at the origin. */
 	g_cam.eye[0]    = 2.5f; g_cam.eye[1]    = 2.0f; g_cam.eye[2]    = 4.0f;
@@ -2527,151 +1473,11 @@ static void scene_renderer_init(void)
 	g_cam.near      = 0.1f;
 	g_cam.far       = 100.0f;
 
-	/* Snapshot the authored framing so camera_reset_view() (#697) can return
-	 * to it after an interactive pan moved target/up. */
-	g_cam_home_target[0] = g_cam.target[0];
-	g_cam_home_target[1] = g_cam.target[1];
-	g_cam_home_target[2] = g_cam.target[2];
-	g_cam_home_up[0]     = g_cam.up[0];
-	g_cam_home_up[1]     = g_cam.up[1];
-	g_cam_home_up[2]     = g_cam.up[2];
-
 	seed_demo_scene();
 
 	g_ready = 1;
 	g_log->write(LOG_LEVEL_INFO,
 		     "scene_renderer: ready (meshes uploaded lazily per tick)");
-}
-
-/*
- * The sun-shadow pass: render the scene's depth from the light's viewpoint into
- * the shadow map. It walks the same drawable entities the forward pass does, but
- * binds one depth-only pipeline and uploads the light's view_proj (into the
- * Camera block's view_proj slot) instead of the camera's — so the depth left in
- * the target is each fragment's distance from the sun, which the forward pass
- * later compares against. No material, texture, or light state is bound; only
- * geometry matters here. Skipped cleanly when the depth pipeline failed to
- * compile (the forward pass then falls back to the fully-lit dummy map).
- */
-static void shadow_pass(struct fg_pass_ctx *ctx, void *userdata)
-{
-	const struct gpu_api *gpu = fg_ctx_gpu(ctx);
-	gpu_cmd_buf_t         cmd = fg_ctx_cmd(ctx);
-	const struct world   *w;
-	uint32_t              i;
-	float                 ubo[SCENE_UBO_FLOATS];
-	struct mat4           shadow_vp;
-
-	(void)userdata;
-	if (!gpu || !g_scene || !g_shadow_pso)
-		return;
-	w = g_scene->get_world();
-	if (!w)
-		return;
-
-	/*
-	 * The light matrix is the whole pass's view_proj; only model changes.
-	 *
-	 * g_light.view_proj is GL-convention (NDC z in [-1, 1]). On a [0, 1]-clip
-	 * backend (WebGPU) that would put the near half of the shadow frustum at
-	 * clip z < 0 — clipped away — and write raw NDC z into the map. Adapting
-	 * it here maps light depth into [0, 1] and stores 0.5*z + 0.5, which is
-	 * exactly the window-depth value the forward pass already reconstructs for
-	 * the compare (uvw.z = proj.z*0.5 + 0.5). So only this write copy is
-	 * adapted: the forward pass keeps the GL matrix (bind_light) and the pbr
-	 * shader needs no change. On GL the cap is clear and this is a no-op.
-	 */
-	shadow_vp = g_light.view_proj;
-	if (gpu->caps & GPU_CAP_CLIP_Z_ZERO_TO_ONE)
-		mat4_clip_z01(&shadow_vp);
-	memcpy(&ubo[0], shadow_vp.m, 16 * sizeof(float));
-	ubo[SCENE_UBO_CAMPOS + 0] = 0.0f;
-	ubo[SCENE_UBO_CAMPOS + 1] = 0.0f;
-	ubo[SCENE_UBO_CAMPOS + 2] = 0.0f;
-	ubo[SCENE_UBO_CAMPOS + 3] = 0.0f;
-
-	gpu->cmd_set_pipeline(cmd, g_shadow_pso);
-
-	for (i = 0; i < w->count; i++) {
-		struct gpu_draw_indexed_args draw;
-		struct mesh_gpu             *m;
-		struct mat4                  model;
-		const uint8_t               *mp;
-		uint32_t                     mplen;
-		uint32_t                     slot, uoff;
-
-		if (!w->alive[i] || !(w->mask[i] & COMPONENT_RENDER) ||
-		    !(w->mask[i] & COMPONENT_MATERIAL))
-			continue;
-		/* A hidden entity casts no shadow either — a shadow with
-		 * nothing above it is the tell that "hidden" only reached
-		 * half the renderer. */
-		if (w->flags[i] & WORLD_ENTITY_HIDDEN)
-			continue;
-		mp = entity_mesh_params(w, i, &mplen);
-		m  = find_mesh(w->render_ref[i], mp, mplen);
-		if (!m)
-			continue;
-
-		mat4_from_transform(&model, &w->world_xform[i]);
-		memcpy(&ubo[16], model.m, 16 * sizeof(float));
-		if (!ring_take_slot(&slot))
-			break; /* overflow: skip the remaining draws */
-		uoff = slot * (uint32_t)UBO_STRIDE;
-		gpu->buffer_update(g_ubo_ring, uoff, ubo, (uint32_t)sizeof(ubo));
-		gpu->cmd_bind_uniform_buffer(cmd, 0, g_ubo_ring, uoff,
-					     (uint32_t)sizeof(ubo));
-		gpu->cmd_bind_vertex_buffer(cmd, 0, m->vbo, 0);
-		gpu->cmd_bind_index_buffer(cmd, m->ebo, 0,
-					   GPU_INDEX_FORMAT_UINT16);
-
-		memset(&draw, 0, sizeof(draw));
-		draw.index_count    = m->index_count;
-		draw.instance_count = 1;
-		gpu->cmd_draw_indexed(cmd, &draw);
-	}
-}
-
-/*
- * Draw the cosmetic particles over the scene the pass just rendered. Particles
- * are pre-oriented on the CPU into camera-facing quads, so the pass hands the
- * system the world-space camera right/up (derived from the eye→target view and
- * the camera up) plus the view·projection; particles_render is a no-op when the
- * pool is empty, so an ordinary frame pays nothing here.
- */
-static void draw_particles(const struct gpu_api *gpu, gpu_cmd_buf_t cmd)
-{
-	float fwd[3], right[3], up[3], len;
-
-	fwd[0] = g_cam.target[0] - g_cam.eye[0];
-	fwd[1] = g_cam.target[1] - g_cam.eye[1];
-	fwd[2] = g_cam.target[2] - g_cam.eye[2];
-
-	/* right = normalize(fwd × up_world) */
-	right[0] = fwd[1] * g_cam.up[2] - fwd[2] * g_cam.up[1];
-	right[1] = fwd[2] * g_cam.up[0] - fwd[0] * g_cam.up[2];
-	right[2] = fwd[0] * g_cam.up[1] - fwd[1] * g_cam.up[0];
-	len = sqrtf(right[0] * right[0] + right[1] * right[1] +
-		    right[2] * right[2]);
-	if (len < 1e-6f)
-		return; /* degenerate camera (looking along up); skip this frame */
-	right[0] /= len; right[1] /= len; right[2] /= len;
-
-	/* up = normalize(right × fwd) — orthonormal screen-up regardless of the
-	 * camera's roll or the world-up's tilt. */
-	up[0] = right[1] * fwd[2] - right[2] * fwd[1];
-	up[1] = right[2] * fwd[0] - right[0] * fwd[2];
-	up[2] = right[0] * fwd[1] - right[1] * fwd[0];
-	len = sqrtf(up[0] * up[0] + up[1] * up[1] + up[2] * up[2]);
-	if (len < 1e-6f)
-		return;
-	up[0] /= len; up[1] /= len; up[2] /= len;
-
-	{
-		struct mat4 vp = camera_clip_vp(gpu);
-
-		particles_render(gpu, cmd, vp.m, right, up);
-	}
 }
 
 /*
@@ -2689,8 +1495,6 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 	float                 ubo[SCENE_UBO_FLOATS];
 	gpu_pipeline_t        cur_pso = 0;
 	int                   have_pso = 0;
-	gpu_texture_t         shadow_tex;
-	struct mat4           cam_vp;
 
 	(void)userdata;
 	if (!gpu || !g_scene)
@@ -2699,26 +1503,7 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 	if (!w)
 		return;
 
-	cam_vp = camera_clip_vp(gpu);
-	memcpy(&ubo[0], cam_vp.m, 16 * sizeof(float));
-	/* cam_pos is constant across the frame; only model changes per draw. */
-	ubo[SCENE_UBO_CAMPOS + 0] = g_cam.eye[0];
-	ubo[SCENE_UBO_CAMPOS + 1] = g_cam.eye[1];
-	ubo[SCENE_UBO_CAMPOS + 2] = g_cam.eye[2];
-	ubo[SCENE_UBO_CAMPOS + 3] = 0.0f; /* std140 vec3 tail pad */
-
-	/* The directional light is constant across the pass — bind it once. */
-	bind_light(gpu, cmd);
-
-	/*
-	 * The sun shadow map, for the pbr shader's shadow_map sampler (unit 0).
-	 * Prefer the depth target the shadow pass just wrote; if this frame ran no
-	 * shadow pass (or its pipeline is missing), fall back to the 1x1 lit dummy
-	 * so an untextured pbr draw samples "unoccluded" rather than stale texels.
-	 */
-	shadow_tex = g_shadow_res ? fg_ctx_resource(ctx, g_shadow_res) : NULL;
-	if (!shadow_tex)
-		shadow_tex = g_shadow_dummy;
+	memcpy(&ubo[0], g_cam.view_proj.m, 16 * sizeof(float));
 
 	for (i = 0; i < w->count; i++) {
 		static const float            WHITE[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
@@ -2730,15 +1515,9 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 		uint32_t                      plen;
 		uint32_t                      mat_ref;
 		uint32_t                      shader_ref;
-		uint32_t                      slot, uoff, moff;
 		gpu_pipeline_t                pso;
 
 		if (!w->alive[i] || !(w->mask[i] & COMPONENT_RENDER))
-			continue;
-		/* Hidden is the editor's (#950), and it is runtime-only: the
-		 * flag is never saved, so a scene cannot ship with something
-		 * invisible that nobody can find. */
-		if (w->flags[i] & WORLD_ENTITY_HIDDEN)
 			continue;
 		if (!(w->mask[i] & COMPONENT_MATERIAL))
 			continue; /* mesh stays pickable/collidable; just not drawn */
@@ -2762,24 +1541,18 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 		 * have_pso flag forces the first bind even when the backend's
 		 * pipeline handle is 0 (a valid value for the recording backend).
 		 */
-		pso = g_forward_msaa ? pso_for_shader_ms(shader_ref)
-				     : pso_for_shader(shader_ref);
+		pso = pso_for_shader(shader_ref);
 		if (!have_pso || pso != cur_pso) {
 			gpu->cmd_set_pipeline(cmd, pso);
 			cur_pso  = pso;
 			have_pso = 1;
 		}
 
-		if (!ring_take_slot(&slot))
-			break; /* overflow: skip the remaining draws */
-		uoff = slot * (uint32_t)UBO_STRIDE;
-		moff = slot * (uint32_t)MATERIAL_STRIDE;
-
 		mat4_from_transform(&model, &w->world_xform[i]);
 		memcpy(&ubo[16], model.m, 16 * sizeof(float));
-		gpu->buffer_update(g_ubo_ring, uoff, ubo, (uint32_t)sizeof(ubo));
+		gpu->buffer_update(g_ubo, 0, ubo, (uint32_t)sizeof(ubo));
 
-		gpu->cmd_bind_uniform_buffer(cmd, 0, g_ubo_ring, uoff,
+		gpu->cmd_bind_uniform_buffer(cmd, 0, g_ubo, 0,
 					     (uint32_t)sizeof(ubo));
 
 		/*
@@ -2817,19 +1590,14 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 		} else {
 			memcpy(params, pbytes, plen);
 		}
-		gpu->buffer_update(g_material_ring, moff, params, plen);
-		gpu->cmd_bind_uniform_buffer(cmd, 1, g_material_ring, moff, plen);
+		gpu->buffer_update(g_material_ubo, 0, params, plen);
+		gpu->cmd_bind_uniform_buffer(cmd, 1, g_material_ubo, 0, plen);
 
 		/*
-		 * Bind the sun shadow map and this material's texture. The two
-		 * built-in scene shaders name their samplers so the backend's
-		 * alphabetical rule assigns matching units:
-		 *   scene-textured -> albedo (unit 0), shadow_map (unit 1)
-		 *   pbr            -> shadow_map (unit 0, its only sampler)
-		 * So a textured material binds its albedo to unit 0 and the shadow
-		 * map to unit 1; an untextured (pbr) material binds the shadow map
-		 * to unit 0. The albedo combo is already resident (ensure_textures
-		 * ran off-frame).
+		 * Bind this material's baked procedural texture, if it names one,
+		 * to the albedo unit the scene-textured shader samples. The combo
+		 * is already resident (ensure_textures ran off-frame); a miss just
+		 * skips the bind and the sampler reads whatever unit 0 holds.
 		 */
 		{
 			uint32_t       tex_ref, tw, th, tplen = 0;
@@ -2849,10 +1617,6 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 				t = find_texture(tex_ref, tw, th, tparams, tplen);
 				if (t)
 					gpu->cmd_bind_texture(cmd, 0, t->tex);
-				if (shadow_tex)
-					gpu->cmd_bind_texture(cmd, 1, shadow_tex);
-			} else if (shadow_tex) {
-				gpu->cmd_bind_texture(cmd, 0, shadow_tex);
 			}
 		}
 
@@ -2865,149 +1629,72 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 		draw.instance_count = 1;
 		gpu->cmd_draw_indexed(cmd, &draw);
 	}
-
-	/* Cosmetic particles composite over the opaque scene, in this same pass
-	 * (so the outline path picks them up through scene_color too). */
-	draw_particles(gpu, cmd);
 }
 
 /*
- * Whether entity `id` belongs in the silhouette mask this frame.
- *
- * In editor chrome the outline follows the editor selection; in-game (chrome
- * off) it follows the game's own outline target — the piece the chess rules
- * picked up, set through entity_api.set_outline — so the ring shows in play,
- * not just in the editor. Either source must still name a live, drawable mesh
- * to be worth the pass.
- *
- * The editor half asks is_selected rather than comparing against get_selected,
- * because #950 made the selection a set and every member gets a ring: a reader
- * who ctrl-clicked four rows and saw one of them outlined would reasonably
- * conclude the other three had not taken. get_selected is the fallback for a
- * host whose entity_api predates the set.
+ * The selected entity's id when it is a live, drawable mesh worth outlining, or
+ * 0-return when there is no such selection. Selection is read through the scene
+ * api's get_selected (absent in headless test harnesses, which then never take
+ * the outline path).
  */
-static int outline_wants(const struct world *w, uint32_t id)
+static int outline_selected_entity(const struct world *w, uint32_t *out_id)
 {
-	if (!g_scene || id >= w->count)
-		return 0;
-	if (!w->alive[id] || !(w->mask[id] & COMPONENT_RENDER))
-		return 0;
-	if (w->flags[id] & WORLD_ENTITY_HIDDEN)
-		return 0;
+	int32_t sel;
 
-	if (EDITOR_CHROME()) {
-		if (g_scene->is_selected)
-			return g_scene->is_selected((int32_t)id) ? 1 : 0;
-		return g_scene->get_selected &&
-		       g_scene->get_selected() == (int32_t)id;
-	}
-	return g_scene->get_outline && g_scene->get_outline() == (int32_t)id;
+	if (!g_scene || !g_scene->get_selected)
+		return 0;
+	sel = g_scene->get_selected();
+	if (sel < 0 || (uint32_t)sel >= w->count)
+		return 0;
+	if (!w->alive[sel] || !(w->mask[sel] & COMPONENT_RENDER))
+		return 0;
+	*out_id = (uint32_t)sel;
+	return 1;
 }
 
 /*
- * Whether anything at all is worth outlining, which is what decides whether
- * the frame graph grows the two extra passes.
- *
- * In-game it is still one id and still O(1) — a shipped game must not start
- * paying a per-entity sweep for a feature the editor uses. In editor chrome it
- * is a scan, bounded by the same high-water mark the bridge's fingerprint
- * already walks once a frame.
- */
-static int outline_any(const struct world *w)
-{
-	uint32_t i;
-	int32_t  target;
-
-	if (!g_scene)
-		return 0;
-	if (!EDITOR_CHROME()) {
-		target = g_scene->get_outline ? g_scene->get_outline() : -1;
-		return target >= 0 && outline_wants(w, (uint32_t)target);
-	}
-	for (i = 0; i < w->count; i++) {
-		if (outline_wants(w, i))
-			return 1;
-	}
-	return 0;
-}
-
-/*
- * Mask pass: draw every outlined entity, flat white, into the silhouette
+ * Mask pass: draw the selected entity alone, flat white, into the silhouette
  * target (cleared to black by the pass). No material, no texture, no depth —
- * the union of their triangles is all the composite needs. Reuses the shared
- * Camera UBO with each entity's transform.
- *
- * The composite that follows edge-detects the mask as a whole, so a
- * multi-selection whose members touch reads as one outline around the group
- * rather than a seam between them. That falls out of drawing into one target
- * and is the behaviour a reader expects from a box select.
+ * the union of its triangles is all the composite needs. Reuses the shared
+ * Camera UBO with the selected entity's transform.
  */
 static void mask_pass(struct fg_pass_ctx *ctx, void *userdata)
 {
 	const struct gpu_api        *gpu = fg_ctx_gpu(ctx);
 	gpu_cmd_buf_t                 cmd = fg_ctx_cmd(ctx);
 	const struct world          *w;
-	uint32_t                     i;
-	struct mat4                  cam_vp;
+	uint32_t                     sel, plen = 0;
+	const uint8_t               *pbytes;
+	struct mesh_gpu             *m;
+	struct mat4                  model;
 	float                        ubo[SCENE_UBO_FLOATS];
-	int                          bound = 0;
+	struct gpu_draw_indexed_args draw;
 
 	(void)userdata;
 	if (!gpu || !g_scene || !g_mask_pso)
 		return;
 	w = g_scene->get_world();
-	if (!w)
+	if (!w || !outline_selected_entity(w, &sel))
+		return;
+	pbytes = entity_mesh_params(w, sel, &plen);
+	m = find_mesh(w->render_ref[sel], pbytes, plen);
+	if (!m)
 		return;
 
-	cam_vp = camera_clip_vp(gpu);
-	memcpy(&ubo[0], cam_vp.m, 16 * sizeof(float));
-	/* The mask shader reads only the matrices, but the block is uploaded
-	 * whole — fill cam_pos so no uninitialised stack reaches the buffer. */
-	ubo[SCENE_UBO_CAMPOS + 0] = g_cam.eye[0];
-	ubo[SCENE_UBO_CAMPOS + 1] = g_cam.eye[1];
-	ubo[SCENE_UBO_CAMPOS + 2] = g_cam.eye[2];
-	ubo[SCENE_UBO_CAMPOS + 3] = 0.0f;
+	memcpy(&ubo[0], g_cam.view_proj.m, 16 * sizeof(float));
+	mat4_from_transform(&model, &w->world_xform[sel]);
+	memcpy(&ubo[16], model.m, 16 * sizeof(float));
 
-	for (i = 0; i < w->count; i++) {
-		const uint8_t               *pbytes;
-		struct mesh_gpu             *m;
-		struct mat4                  model;
-		struct gpu_draw_indexed_args draw;
-		uint32_t                     plen = 0, slot, uoff;
+	gpu->cmd_set_pipeline(cmd, g_mask_pso);
+	gpu->buffer_update(g_ubo, 0, ubo, (uint32_t)sizeof(ubo));
+	gpu->cmd_bind_uniform_buffer(cmd, 0, g_ubo, 0, (uint32_t)sizeof(ubo));
+	gpu->cmd_bind_vertex_buffer(cmd, 0, m->vbo, 0);
+	gpu->cmd_bind_index_buffer(cmd, m->ebo, 0, GPU_INDEX_FORMAT_UINT16);
 
-		if (!outline_wants(w, i))
-			continue;
-		pbytes = entity_mesh_params(w, i, &plen);
-		m = find_mesh(w->render_ref[i], pbytes, plen);
-		if (!m)
-			continue;
-
-		mat4_from_transform(&model, &w->world_xform[i]);
-		memcpy(&ubo[16], model.m, 16 * sizeof(float));
-
-		if (!ring_take_slot(&slot))
-			return; /* overflow: the rest of the mask is skipped */
-		uoff = slot * (uint32_t)UBO_STRIDE;
-
-		/* Once for the pass rather than once per entity: the pipeline
-		 * is the same for all of them, and a redundant set_pipeline is
-		 * a state change some backends do not filter. */
-		if (!bound) {
-			gpu->cmd_set_pipeline(cmd, g_mask_pso);
-			bound = 1;
-		}
-		gpu->buffer_update(g_ubo_ring, uoff, ubo, (uint32_t)sizeof(ubo));
-		gpu->cmd_bind_uniform_buffer(cmd, 0, g_ubo_ring, uoff,
-					     (uint32_t)sizeof(ubo));
-		gpu->cmd_bind_vertex_buffer(cmd, 0, m->vbo, 0);
-		gpu->cmd_bind_index_buffer(cmd, m->ebo, 0,
-					   GPU_INDEX_FORMAT_UINT16);
-
-		memset(&draw, 0, sizeof(draw));
-		draw.index_count    = m->index_count;
-		draw.instance_count = 1;
-		gpu->cmd_draw_indexed(cmd, &draw);
-	}
+	memset(&draw, 0, sizeof(draw));
+	draw.index_count    = m->index_count;
+	draw.instance_count = 1;
+	gpu->cmd_draw_indexed(cmd, &draw);
 }
 
 /*
@@ -3033,19 +1720,8 @@ static void composite_pass(struct fg_pass_ctx *ctx, void *userdata)
 	memset(ubo, 0, sizeof(ubo));
 	ubo[0] = g_view_w > 0.0f ? OUTLINE_THICKNESS / g_view_w : 0.0f; /* texel.x */
 	ubo[1] = g_view_h > 0.0f ? OUTLINE_THICKNESS / g_view_h : 0.0f; /* texel.y */
-	/*
-	 * Editor selection outlines red; an in-game outline (a picked chess
-	 * piece, chrome off) uses a warm gold that reads on both the ivory and
-	 * the ebony pieces where a hard red would fight the dark set.
-	 */
-	if (EDITOR_CHROME()) {
-		ubo[4] = 1.0f;              /* red   */
-	} else {
-		ubo[4] = 1.0f;             /* gold: */
-		ubo[5] = 0.78f;            /* r 1.0 */
-		ubo[6] = 0.30f;            /* g .78 b .30 */
-	}
-	ubo[7] = 1.0f; /* color.a — opaque */
+	ubo[4] = 1.0f; /* color.r */
+	ubo[7] = 1.0f; /* color.a — red, opaque */
 
 	gpu->cmd_set_pipeline(cmd, g_outline_pso);
 	gpu->buffer_update(g_outline_ubo, 0, ubo, (uint32_t)sizeof(ubo));
@@ -3062,126 +1738,6 @@ static void composite_pass(struct fg_pass_ctx *ctx, void *userdata)
 	gpu->cmd_draw_indexed(cmd, &draw);
 }
 
-/* One full-screen-triangle draw of PSO reading TEX at unit 0. Shared by the
- * bloom extract pass and (with a bound UBO) the blur; the composite binds two
- * textures itself. */
-static void fullscreen_draw(const struct gpu_api *gpu, gpu_cmd_buf_t cmd)
-{
-	struct gpu_draw_indexed_args draw;
-
-	gpu->cmd_bind_vertex_buffer(cmd, 0, g_fs_vbo, 0);
-	gpu->cmd_bind_index_buffer(cmd, g_fs_ebo, 0, GPU_INDEX_FORMAT_UINT16);
-	memset(&draw, 0, sizeof(draw));
-	draw.index_count    = 3;
-	draw.instance_count = 1;
-	gpu->cmd_draw_indexed(cmd, &draw);
-}
-
-/* Bloom, pass 1: threshold the offscreen scene into the half-res bright target. */
-static void bloom_extract_pass(struct fg_pass_ctx *ctx, void *userdata)
-{
-	const struct gpu_api *gpu = fg_ctx_gpu(ctx);
-	gpu_cmd_buf_t         cmd = fg_ctx_cmd(ctx);
-
-	(void)userdata;
-	if (!gpu || !g_bloom_extract_pso)
-		return;
-	gpu->cmd_set_pipeline(cmd, g_bloom_extract_pso);
-	gpu->cmd_bind_texture(cmd, 0, fg_ctx_resource(ctx, g_bloom_frame.scene_color));
-	fullscreen_draw(gpu, cmd);
-}
-
-/* One separable blur pass over INPUT with per-tap step (dx, dy). */
-static void bloom_blur(struct fg_pass_ctx *ctx, fg_resource_t input,
-		       float dx, float dy)
-{
-	const struct gpu_api *gpu = fg_ctx_gpu(ctx);
-	gpu_cmd_buf_t         cmd = fg_ctx_cmd(ctx);
-	float                 ubo[BLUR_UBO_FLOATS];
-
-	if (!gpu || !g_bloom_blur_pso)
-		return;
-	memset(ubo, 0, sizeof(ubo));
-	ubo[0] = dx;
-	ubo[1] = dy;
-	gpu->cmd_set_pipeline(cmd, g_bloom_blur_pso);
-	gpu->buffer_update(g_blur_ubo, 0, ubo, (uint32_t)sizeof(ubo));
-	gpu->cmd_bind_uniform_buffer(cmd, 0, g_blur_ubo, 0, (uint32_t)sizeof(ubo));
-	gpu->cmd_bind_texture(cmd, 0, fg_ctx_resource(ctx, input));
-	fullscreen_draw(gpu, cmd);
-}
-
-/* Bloom, pass 2: horizontal blur of the bright target (bloom_a -> bloom_b). */
-static void bloom_blur_h_pass(struct fg_pass_ctx *ctx, void *userdata)
-{
-	(void)userdata;
-	bloom_blur(ctx, g_bloom_frame.bloom_a,
-		   g_bloom_frame.half_w ? 1.0f / (float)g_bloom_frame.half_w : 0.0f,
-		   0.0f);
-}
-
-/* Bloom, pass 3: vertical blur back the other way (bloom_b -> bloom_a). */
-static void bloom_blur_v_pass(struct fg_pass_ctx *ctx, void *userdata)
-{
-	(void)userdata;
-	bloom_blur(ctx, g_bloom_frame.bloom_b, 0.0f,
-		   g_bloom_frame.half_h ? 1.0f / (float)g_bloom_frame.half_h : 0.0f);
-}
-
-/* Bloom, pass 4: add the blurred bloom onto the full-res scene, into the bb. */
-static void bloom_composite_pass(struct fg_pass_ctx *ctx, void *userdata)
-{
-	const struct gpu_api *gpu = fg_ctx_gpu(ctx);
-	gpu_cmd_buf_t         cmd = fg_ctx_cmd(ctx);
-	gpu_pipeline_t        pso = g_bloom_composite_to_bb
-					    ? g_bloom_composite_bb_pso
-					    : g_bloom_composite_pso;
-
-	(void)userdata;
-	if (!gpu || !pso)
-		return;
-	gpu->cmd_set_pipeline(cmd, pso);
-	/* Alphabetical unit rule: bloom -> 0, scene -> 1. */
-	gpu->cmd_bind_texture(cmd, 0, fg_ctx_resource(ctx, g_bloom_frame.bloom_c));
-	gpu->cmd_bind_texture(cmd, 1, fg_ctx_resource(ctx, g_bloom_frame.scene_color));
-	fullscreen_draw(gpu, cmd);
-}
-
-/* A live entity's name, or NULL — a self-contained twin of world_entity_name
- * so the renderer need not link the entity module for one lookup. */
-static const char *camera_entity_name(const struct world *w, uint32_t e)
-{
-	if (e >= w->count || !(w->mask[e] & COMPONENT_NAME) ||
-	    w->name_off[e] == WORLD_NO_NAME)
-		return NULL;
-	return w->names + w->name_off[e];
-}
-
-/* Is e a live entity named "Camera"? */
-static int is_camera_entity(const struct world *w, int32_t e)
-{
-	const char *nm;
-
-	if (e < 0 || (uint32_t)e >= w->count || !w->alive[e])
-		return 0;
-	nm = camera_entity_name(w, (uint32_t)e);
-	return nm && strcmp(nm, "Camera") == 0;
-}
-
-/* The live "Camera" entity: the cached hint when still valid, else a scan for
- * whatever the current scene named "Camera", else -1. */
-static int32_t resolve_camera_entity(const struct world *w)
-{
-	uint32_t i;
-
-	if (is_camera_entity(w, g_camera_entity_id))
-		return g_camera_entity_id;
-	for (i = 0; i < w->count; i++)
-		if (is_camera_entity(w, (int32_t)i))
-			return (int32_t)i;
-	return -1;
-}
-
 static void scene_renderer_tick(void)
 {
 	static const float  CLEAR[4]      = { 0.10f, 0.11f, 0.13f, 1.0f };
@@ -3189,9 +1745,8 @@ static void scene_renderer_tick(void)
 	struct fg          *fg;
 	fg_resource_t       bb;
 	fg_pass_t           pass;
-	fg_resource_t       shadow;
-	fg_pass_t           spass;
 	const struct world *w;
+	uint32_t            sel = 0;
 	int                 outline;
 
 	if (!g_ready || !g_fg_api || !g_scene)
@@ -3205,11 +1760,9 @@ static void scene_renderer_tick(void)
 
 	w = g_scene->get_world();
 
-	if (w) {
-		g_camera_entity_id = resolve_camera_entity(w);
-		/* Skip the scripted-camera copy while the user is driving the view
-		 * (#697): an interactive orbit/pan/dolly owns g_cam until reset. */
-		if (g_camera_entity_id >= 0 && !g_cam_user_controlled) {
+	if (g_camera_entity_id >= 0) {
+		if (w && (uint32_t)g_camera_entity_id < w->count &&
+		    w->alive[g_camera_entity_id]) {
 			const struct transform *x =
 				&w->world_xform[g_camera_entity_id];
 
@@ -3219,43 +1772,7 @@ static void scene_renderer_tick(void)
 		}
 	}
 
-	/*
-	 * Steer the directional light from the scene's first live light entity:
-	 * its world rotation turns the default sun vector, so rotating the entity
-	 * (gizmo or script) moves the light. With no light entity the default sun
-	 * stays, so a scene without one looks exactly as it did before. Radiance
-	 * is left at its constant white — per-light colour/intensity is the next
-	 * increment, when a per-entity light-data column earns its keep.
-	 */
-	{
-		static const float BASE_DIR[3] = { 0.5f, 0.8f, 0.4f };
-		uint32_t j;
-
-		g_light.dir[0] = BASE_DIR[0];
-		g_light.dir[1] = BASE_DIR[1];
-		g_light.dir[2] = BASE_DIR[2];
-		if (w) {
-			for (j = 0; j < w->count; j++) {
-				if (!w->alive[j] ||
-				    !(w->mask[j] & COMPONENT_LIGHT))
-					continue;
-				light_quat_rotate(w->world_xform[j].rotation,
-						  BASE_DIR, g_light.dir);
-				break;
-			}
-		}
-	}
-
 	camera_update(&g_cam);
-	update_light_view_proj(w);
-
-	/*
-	 * Advance the cosmetic particles once per frame, before the pass that
-	 * draws them. A fixed timestep (not the frame's real delta) — the pool is
-	 * purely visual, so a steady rate reads fine and keeps a dropped frame
-	 * from teleporting a burst; matching the ~60 Hz loop is close enough.
-	 */
-	particles_update(1.0f / 60.0f);
 
 	/*
 	 * The outline path adds two passes around the forward pass, so it only
@@ -3267,208 +1784,27 @@ static void scene_renderer_tick(void)
 	 */
 	outline = w && g_mask_pso && g_outline_pso &&
 		  g_view_w > 0.0f && g_view_h > 0.0f &&
-		  outline_any(w);
+		  outline_selected_entity(w, &sel);
 
 	fg = g_fg_api->create();
 	if (!fg)
 		return;
 	bb = g_fg_api->import_backbuffer(fg);
 
-	/*
-	 * Rewind the uniform rings for the frame. This runs once, ahead of every
-	 * pass, and deliberately NOT between passes: shadow and forward are
-	 * separate command buffers within one frame and must share the ring.
-	 * The backend's frame_end would also read correct, but scene_renderer
-	 * does not own that hook, so the reset lives where the frame's passes
-	 * are declared.
-	 */
-	g_ring_cursor = 0;
-
-	/*
-	 * The sun-shadow pass runs first when its depth pipeline compiled: it
-	 * renders the scene's depth from the light into a square depth target the
-	 * forward pass then samples. Declaring it here (and reading it from the
-	 * forward pass) makes the frame graph order shadow-before-forward and keep
-	 * the depth map alive across the boundary. With no pipeline the pass is
-	 * skipped and the forward pass falls back to the fully-lit dummy map.
-	 */
-	shadow = 0;
-	spass  = 0;
-	if (g_shadow_pso && w) {
-		fg_tex_desc sdesc;
-
-		memset(&sdesc, 0, sizeof(sdesc));
-		sdesc.format       = GPU_FORMAT_DEPTH32_FLOAT;
-		sdesc.width        = SHADOW_MAP_DIM;
-		sdesc.height       = SHADOW_MAP_DIM;
-		sdesc.mip_levels   = 1;
-		sdesc.sample_count = 1;
-		shadow = g_fg_api->declare_transient(fg, "sun_shadow", sdesc);
-		spass  = g_fg_api->pass_declare(fg, "sun_shadow", NULL, 0,
-						&shadow, 1);
-	}
-	g_shadow_res = shadow;
-
-	/*
-	 * Bloom runs when its pipelines compiled and the UI has reported a
-	 * viewport to size the offscreen targets to — the forward pass renders
-	 * into an offscreen colour, then extract/blur/blur/composite adds a glow
-	 * on the way to the backbuffer. Without either (a headless or pre-report
-	 * frame, or a failed compile) the renderer falls back to the direct
-	 * forward-to-backbuffer pass it has always been, at zero added cost.
-	 */
 	if (!outline) {
-		int bloom = g_bloom_extract_pso && g_bloom_blur_pso &&
-			    g_bloom_composite_pso && g_view_w > 0.0f &&
-			    g_view_h > 0.0f;
-
-		if (!bloom) {
-			fg_resource_t freads[1];
-			uint32_t      frn = 0;
-
-			if (spass) { freads[0] = shadow; frn = 1; }
-			pass = g_fg_api->pass_declare(fg, "forward",
-						      frn ? freads : NULL, frn,
-						      &bb, 1);
-			if (pass && (!shadow || spass)) {
-				if (spass) {
-					g_fg_api->pass_set_depth_clear(spass, 1.0f);
-					g_fg_api->pass_set_execute(spass,
-								   shadow_pass, NULL);
-				}
-				g_fg_api->pass_set_color_clear(pass, 0, CLEAR);
-				g_fg_api->pass_set_depth_clear(pass, 1.0f);
-				/* Direct to the single-sample backbuffer: no MSAA. */
-				g_forward_msaa = 0;
-				g_fg_api->pass_set_execute(pass, forward_pass, NULL);
-				g_fg_api->compile(fg);
-				g_fg_api->execute(fg);
-			}
-		} else {
-			uint32_t      vw = (uint32_t)g_view_w, vh = (uint32_t)g_view_h;
-			uint32_t      hw = vw > 1 ? vw / 2 : 1;
-			uint32_t      hh = vh > 1 ? vh / 2 : 1;
-			uint32_t      samples = g_msaa_samples;
-			fg_tex_desc   cdesc, ddesc, hdesc, scdesc, sddesc;
-			fg_resource_t scene_color, scene_depth, scene_resolve, post;
-			fg_resource_t ba, bb2, bc;
-			fg_resource_t fwrites[2], freads[1], xr[1], hr[1], vr[1],
-				      cr[2];
-			uint32_t      frn = 0;
-			fg_pass_t     fpass, xpass, hpass, vpass, cpass;
-
-			memset(&cdesc, 0, sizeof(cdesc));
-			cdesc.format       = GPU_FORMAT_RGBA8_UNORM;
-			cdesc.width        = vw;
-			cdesc.height       = vh;
-			cdesc.mip_levels   = 1;
-			cdesc.sample_count = 1;
-			ddesc              = cdesc;
-			ddesc.format       = GPU_FORMAT_DEPTH32_FLOAT;
-			hdesc              = cdesc;
-			hdesc.width        = hw;
-			hdesc.height       = hh;
-			/*
-			 * The scene colour + depth the forward pass renders into are
-			 * multisampled; the half-res bloom targets and the resolve
-			 * target stay single-sample (cdesc). The post passes sample
-			 * the resolved colour, not the multisampled one — a multisample
-			 * texture is not directly sampleable — so `post` is the resolve
-			 * when MSAA is on and the scene colour itself when it is off.
-			 */
-			scdesc              = cdesc;
-			scdesc.sample_count = samples;
-			sddesc              = ddesc;
-			sddesc.sample_count = samples;
-
-			scene_color = g_fg_api->declare_transient(fg, "scene_color",
-								  scdesc);
-			scene_depth = g_fg_api->declare_transient(fg, "scene_depth",
-								  sddesc);
-			ba  = g_fg_api->declare_transient(fg, "bloom_a", hdesc);
-			bb2 = g_fg_api->declare_transient(fg, "bloom_b", hdesc);
-			bc  = g_fg_api->declare_transient(fg, "bloom_c", hdesc);
-			scene_resolve = 0;
-			post          = scene_color;
-			if (samples > 1) {
-				scene_resolve = g_fg_api->declare_transient(
-					fg, "scene_resolve", cdesc);
-				post = scene_resolve;
-			}
-
-			g_bloom_frame.scene_color = post;
-			g_bloom_frame.bloom_a     = ba;
-			g_bloom_frame.bloom_b     = bb2;
-			g_bloom_frame.bloom_c     = bc;
-			g_bloom_frame.half_w      = hw;
-			g_bloom_frame.half_h      = hh;
-
-			fwrites[0] = scene_color;
-			fwrites[1] = scene_depth;
-			if (spass) { freads[0] = shadow; frn = 1; }
-			fpass = g_fg_api->pass_declare(fg, "forward",
-						       frn ? freads : NULL, frn,
-						       fwrites, 2);
-			if (fpass && samples > 1)
-				g_fg_api->pass_set_resolve(fpass, 0, scene_resolve);
-			xr[0] = post;
-			xpass = g_fg_api->pass_declare(fg, "bloom_extract", xr, 1,
-						       &ba, 1);
-			hr[0] = ba;
-			hpass = g_fg_api->pass_declare(fg, "bloom_blur_h", hr, 1,
-						       &bb2, 1);
-			vr[0] = bb2;
-			vpass = g_fg_api->pass_declare(fg, "bloom_blur_v", vr, 1,
-						       &bc, 1);
-			cr[0] = post;
-			cr[1] = bc;
-			cpass = g_fg_api->pass_declare(fg, "bloom_composite", cr, 2,
-						       &bb, 1);
-			g_bloom_composite_to_bb = 1;
-
-			if (fpass && xpass && hpass && vpass && cpass &&
-			    (!shadow || spass)) {
-				if (spass) {
-					g_fg_api->pass_set_depth_clear(spass, 1.0f);
-					g_fg_api->pass_set_execute(spass,
-								   shadow_pass, NULL);
-				}
-				g_fg_api->pass_set_color_clear(fpass, 0, CLEAR);
-				g_fg_api->pass_set_depth_clear(fpass, 1.0f);
-				g_forward_msaa = samples > 1;
-				g_fg_api->pass_set_execute(fpass, forward_pass, NULL);
-				g_fg_api->pass_set_execute(xpass, bloom_extract_pass,
-							   NULL);
-				g_fg_api->pass_set_execute(hpass, bloom_blur_h_pass,
-							   NULL);
-				g_fg_api->pass_set_execute(vpass, bloom_blur_v_pass,
-							   NULL);
-				g_fg_api->pass_set_execute(cpass,
-							   bloom_composite_pass, NULL);
-				g_fg_api->compile(fg);
-				g_fg_api->execute(fg);
-			}
+		pass = g_fg_api->pass_declare(fg, "forward", NULL, 0, &bb, 1);
+		if (pass) {
+			g_fg_api->pass_set_color_clear(pass, 0, CLEAR);
+			g_fg_api->pass_set_depth_clear(pass, 1.0f);
+			g_fg_api->pass_set_execute(pass, forward_pass, NULL);
+			g_fg_api->compile(fg);
+			g_fg_api->execute(fg);
 		}
 	} else {
-		/*
-		 * A mesh is outlined this frame. When the bloom pipelines are up
-		 * the two post chains compose (#630/#622): the forward scene is
-		 * bloomed into a full-res intermediate `lit`, then the outline
-		 * edge is drawn over `lit` on the way to the backbuffer, so the
-		 * piece both glows and wears its selection ring. Both stages
-		 * reuse their existing shaders unchanged — bloom_composite just
-		 * targets `lit` instead of the backbuffer, and the outline
-		 * composite reads `lit` as its scene. Without bloom it is the
-		 * plain forward -> mask -> outline path.
-		 */
-		int           bloom = g_bloom_extract_pso && g_bloom_blur_pso &&
-				      g_bloom_composite_pso;
 		uint32_t      vw = (uint32_t)g_view_w, vh = (uint32_t)g_view_h;
-		uint32_t      samples = g_msaa_samples;
-		fg_tex_desc   cdesc, ddesc, scdesc, sddesc;
-		fg_resource_t scene_color, scene_depth, scene_resolve, post, mask;
-		fg_resource_t fwrites[2], creads[2], freads[1];
-		uint32_t      frn = 0;
+		fg_tex_desc   cdesc, ddesc;
+		fg_resource_t scene_color, scene_depth, mask;
+		fg_resource_t fwrites[2], creads[2];
 		fg_pass_t     fpass, mpass, cpass;
 
 		memset(&cdesc, 0, sizeof(cdesc));
@@ -3479,135 +1815,34 @@ static void scene_renderer_tick(void)
 		cdesc.sample_count = 1;
 		ddesc              = cdesc;
 		ddesc.format       = GPU_FORMAT_DEPTH32_FLOAT;
-		/*
-		 * Scene colour + depth are multisampled; the mask, the bloom
-		 * half-res targets and outline_lit stay single-sample (cdesc). The
-		 * post passes (bloom, outline composite) sample the resolved colour
-		 * `post`, which is the resolve target when MSAA is on and the scene
-		 * colour itself when it is off.
-		 */
-		scdesc              = cdesc;
-		scdesc.sample_count = samples;
-		sddesc              = ddesc;
-		sddesc.sample_count = samples;
 
-		scene_color = g_fg_api->declare_transient(fg, "scene_color", scdesc);
-		scene_depth = g_fg_api->declare_transient(fg, "scene_depth", sddesc);
+		scene_color = g_fg_api->declare_transient(fg, "scene_color", cdesc);
+		scene_depth = g_fg_api->declare_transient(fg, "scene_depth", ddesc);
 		mask        = g_fg_api->declare_transient(fg, "sel_mask", cdesc);
-		scene_resolve = 0;
-		post          = scene_color;
-		if (samples > 1) {
-			scene_resolve = g_fg_api->declare_transient(
-				fg, "scene_resolve", cdesc);
-			post = scene_resolve;
-		}
 
-		g_outline_frame.mask = mask;
+		g_outline_frame.scene_color = scene_color;
+		g_outline_frame.mask        = mask;
 
 		fwrites[0] = scene_color;
 		fwrites[1] = scene_depth;
-		if (spass) { freads[0] = shadow; frn = 1; }
-		fpass = g_fg_api->pass_declare(fg, "forward", frn ? freads : NULL,
-					       frn, fwrites, 2);
-		if (fpass && samples > 1)
-			g_fg_api->pass_set_resolve(fpass, 0, scene_resolve);
+		fpass = g_fg_api->pass_declare(fg, "forward", NULL, 0, fwrites, 2);
 		mpass = g_fg_api->pass_declare(fg, "sel_mask", NULL, 0, &mask, 1);
+		creads[0] = scene_color;
+		creads[1] = mask;
+		cpass = g_fg_api->pass_declare(fg, "outline", creads, 2, &bb, 1);
 
-		if (bloom) {
-			uint32_t      hw = vw > 1 ? vw / 2 : 1;
-			uint32_t      hh = vh > 1 ? vh / 2 : 1;
-			fg_tex_desc   hdesc = cdesc;
-			fg_resource_t ba, bb2, bc, lit;
-			fg_resource_t xr[1], hr[1], vr[1], lr[2], cr[2];
-			fg_pass_t     xpass, hpass, vpass, lpass;
-
-			hdesc.width  = hw;
-			hdesc.height = hh;
-			ba  = g_fg_api->declare_transient(fg, "bloom_a", hdesc);
-			bb2 = g_fg_api->declare_transient(fg, "bloom_b", hdesc);
-			bc  = g_fg_api->declare_transient(fg, "bloom_c", hdesc);
-			lit = g_fg_api->declare_transient(fg, "outline_lit", cdesc);
-
-			g_bloom_frame.scene_color = post;
-			g_bloom_frame.bloom_a     = ba;
-			g_bloom_frame.bloom_b     = bb2;
-			g_bloom_frame.bloom_c     = bc;
-			g_bloom_frame.half_w      = hw;
-			g_bloom_frame.half_h      = hh;
-			g_outline_frame.scene_color = lit;
-
-			xr[0] = post;
-			xpass = g_fg_api->pass_declare(fg, "bloom_extract", xr, 1,
-						       &ba, 1);
-			hr[0] = ba;
-			hpass = g_fg_api->pass_declare(fg, "bloom_blur_h", hr, 1,
-						       &bb2, 1);
-			vr[0] = bb2;
-			vpass = g_fg_api->pass_declare(fg, "bloom_blur_v", vr, 1,
-						       &bc, 1);
-			lr[0] = post;
-			lr[1] = bc;
-			lpass = g_fg_api->pass_declare(fg, "bloom_composite", lr, 2,
-						       &lit, 1);
-			g_bloom_composite_to_bb = 0;
-			cr[0] = lit;
-			cr[1] = mask;
-			cpass = g_fg_api->pass_declare(fg, "outline", cr, 2, &bb, 1);
-
-			if (fpass && mpass && xpass && hpass && vpass && lpass &&
-			    cpass && (!shadow || spass)) {
-				if (spass) {
-					g_fg_api->pass_set_depth_clear(spass, 1.0f);
-					g_fg_api->pass_set_execute(spass,
-								   shadow_pass, NULL);
-				}
-				g_fg_api->pass_set_color_clear(fpass, 0, CLEAR);
-				g_fg_api->pass_set_depth_clear(fpass, 1.0f);
-				g_forward_msaa = samples > 1;
-				g_fg_api->pass_set_execute(fpass, forward_pass, NULL);
-				g_fg_api->pass_set_color_clear(mpass, 0, MASK_CLEAR);
-				g_fg_api->pass_set_execute(mpass, mask_pass, NULL);
-				g_fg_api->pass_set_execute(xpass, bloom_extract_pass,
-							   NULL);
-				g_fg_api->pass_set_execute(hpass, bloom_blur_h_pass,
-							   NULL);
-				g_fg_api->pass_set_execute(vpass, bloom_blur_v_pass,
-							   NULL);
-				g_fg_api->pass_set_execute(lpass,
-							   bloom_composite_pass, NULL);
-				g_fg_api->pass_set_execute(cpass, composite_pass,
-							   NULL);
-				g_fg_api->compile(fg);
-				g_fg_api->execute(fg);
-			}
-		} else {
-			g_outline_frame.scene_color = post;
-			creads[0] = post;
-			creads[1] = mask;
-			cpass = g_fg_api->pass_declare(fg, "outline", creads, 2,
-						       &bb, 1);
-
-			if (fpass && mpass && cpass && (!shadow || spass)) {
-				if (spass) {
-					g_fg_api->pass_set_depth_clear(spass, 1.0f);
-					g_fg_api->pass_set_execute(spass,
-								   shadow_pass, NULL);
-				}
-				g_fg_api->pass_set_color_clear(fpass, 0, CLEAR);
-				g_fg_api->pass_set_depth_clear(fpass, 1.0f);
-				g_forward_msaa = samples > 1;
-				g_fg_api->pass_set_execute(fpass, forward_pass, NULL);
-				g_fg_api->pass_set_color_clear(mpass, 0, MASK_CLEAR);
-				g_fg_api->pass_set_execute(mpass, mask_pass, NULL);
-				g_fg_api->pass_set_execute(cpass, composite_pass,
-							   NULL);
-				g_fg_api->compile(fg);
-				g_fg_api->execute(fg);
-			}
+		if (fpass && mpass && cpass) {
+			g_fg_api->pass_set_color_clear(fpass, 0, CLEAR);
+			g_fg_api->pass_set_depth_clear(fpass, 1.0f);
+			g_fg_api->pass_set_execute(fpass, forward_pass, NULL);
+			g_fg_api->pass_set_color_clear(mpass, 0, MASK_CLEAR);
+			g_fg_api->pass_set_execute(mpass, mask_pass, NULL);
+			g_fg_api->pass_set_execute(cpass, composite_pass, NULL);
+			g_fg_api->compile(fg);
+			g_fg_api->execute(fg);
 		}
 	}
 	g_fg_api->destroy(fg);
-	g_shadow_res = 0;
 }
 
 static void scene_renderer_shutdown(void)
@@ -3624,75 +1859,38 @@ static void scene_renderer_shutdown(void)
 		}
 		for (i = 0; i < g_texture_count; i++)
 			gpu->texture_destroy(g_textures[i].tex);
-		if (g_ubo_ring)
-			gpu->buffer_destroy(g_ubo_ring);
-		if (g_material_ring)
-			gpu->buffer_destroy(g_material_ring);
-		if (g_light_ubo)
-			gpu->buffer_destroy(g_light_ubo);
+		if (g_ubo)
+			gpu->buffer_destroy(g_ubo);
+		if (g_material_ubo)
+			gpu->buffer_destroy(g_material_ubo);
 		if (g_mask_pso)
 			gpu->pipeline_destroy(g_mask_pso);
 		if (g_outline_pso)
 			gpu->pipeline_destroy(g_outline_pso);
-		if (g_shadow_pso)
-			gpu->pipeline_destroy(g_shadow_pso);
-		if (g_shadow_dummy)
-			gpu->texture_destroy(g_shadow_dummy);
-		if (g_color_dummy)
-			gpu->texture_destroy(g_color_dummy);
 		if (g_fs_vbo)
 			gpu->buffer_destroy(g_fs_vbo);
 		if (g_fs_ebo)
 			gpu->buffer_destroy(g_fs_ebo);
 		if (g_outline_ubo)
 			gpu->buffer_destroy(g_outline_ubo);
-		if (g_bloom_extract_pso)
-			gpu->pipeline_destroy(g_bloom_extract_pso);
-		if (g_bloom_blur_pso)
-			gpu->pipeline_destroy(g_bloom_blur_pso);
-		if (g_bloom_composite_pso)
-			gpu->pipeline_destroy(g_bloom_composite_pso);
-		if (g_bloom_composite_bb_pso)
-			gpu->pipeline_destroy(g_bloom_composite_bb_pso);
-		if (g_blur_ubo)
-			gpu->buffer_destroy(g_blur_ubo);
 		/*
 		 * The default pipeline is also cached (under the scene shader's
 		 * id), so destroy the distinct cache entries first, then it once.
-		 * Each slot's multisampled twin is destroyed only when it is a
-		 * distinct pipeline (it aliases pso, or the cached default's twin,
-		 * when MSAA is off or the compile failed), so nothing is freed twice.
 		 */
 		for (i = 0; i < g_shader_pso_count; i++) {
-			if (g_shader_psos[i].pso_ms &&
-			    g_shader_psos[i].pso_ms != g_shader_psos[i].pso &&
-			    g_shader_psos[i].pso_ms != g_default_pso_ms)
-				gpu->pipeline_destroy(g_shader_psos[i].pso_ms);
 			if (g_shader_psos[i].pso &&
 			    g_shader_psos[i].pso != g_default_pso)
 				gpu->pipeline_destroy(g_shader_psos[i].pso);
 		}
-		if (g_default_pso_ms && g_default_pso_ms != g_default_pso)
-			gpu->pipeline_destroy(g_default_pso_ms);
 		if (g_default_pso)
 			gpu->pipeline_destroy(g_default_pso);
 	}
 	g_default_pso      = 0;
-	g_default_pso_ms   = 0;
 	g_mask_pso         = 0;
 	g_outline_pso      = 0;
-	g_shadow_pso       = 0;
-	g_shadow_dummy     = 0;
-	g_color_dummy      = 0;
-	g_shadow_res       = 0;
 	g_fs_vbo           = 0;
 	g_fs_ebo           = 0;
 	g_outline_ubo      = 0;
-	g_bloom_extract_pso   = 0;
-	g_bloom_blur_pso      = 0;
-	g_bloom_composite_pso = 0;
-	g_bloom_composite_bb_pso = 0;
-	g_blur_ubo            = 0;
 	g_shader_pso_count = 0;
 	g_mesh_count       = 0;
 	g_texture_count    = 0;

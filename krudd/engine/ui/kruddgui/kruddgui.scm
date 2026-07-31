@@ -2998,6 +2998,762 @@
              (- w (* 2 kruddgui-perf-pad)) kruddgui-perf-graph-h)
             (kgui-panel-end)))))))
 
+;;! ------------------------------------------------------------------
+;;! Editor chrome — core/editor_layout.scm, drawn the ImGui way
+;;! ------------------------------------------------------------------
+;;!
+;;! The chrome spec (core/editor_layout.scm) says what the editor's shell
+;;! contains: a menu bar, a toolbar, four docks and a row of status fields. It
+;;! does not say what any of that looks like, which is the point — this section
+;;! is one answer, and it is the immediate-mode desktop answer.
+;;!
+;;! krudd's debug UI began as Dear ImGui and was strangled onto kruddgui one
+;;! panel at a time (#490–#492). What went with it was the *library*; what went
+;;! with it by accident was the shape — a menu bar across the top, a dockspace
+;;! splitting the frame into edge nodes around a hole the 3D view shows through,
+;;! tab bars where two panels share a node, a status line along the bottom. That
+;;! shape is what a designer at a desk expects from an editor, and it is worth
+;;! having back independently of the library that used to draw it.
+;;!
+;;! So this is the ImGui idiom, not the ImGui dependency. Nothing is vendored:
+;;! every widget below is built per frame out of the same kgui quad batch
+;;! everything else in this file draws through, with no retained widget tree, no
+;;! layout pass and no state that outlives the tick except which menu is open
+;;! and which docks are hidden — which is what immediate mode means. The theme
+;;! is the classic dark one, the metrics are desktop density, and the dockspace
+;;! leaves its central node empty exactly the way a Dear ImGui host does.
+;;!
+;;! The difference from the touch-first chrome is not decoration. Every dock is
+;;! on screen at once here, placed by its declared area, rather than one at a
+;;! time through an arbiter; menus drop straight down under their label rather
+;;! than opening a sheet; rows are 20px rather than 44. Those follow from the
+;;! input device, and the spec is indifferent to all of them — which is the
+;;! claim being tested by drawing it a second way.
+;;!
+;;! Everything below reads the spec through the editor-layout-* accessors and
+;;! nothing else. There is no menu, dock title, action id or status label
+;;! written down in this file.
+
+;;! Desktop metrics, in CSS px. These are ImGui's own defaults rounded to whole
+;;! pixels: a 22px menu bar, 20px rows, 4px frame padding, 8px window padding.
+(define kruddgui-ig-menubar-h  22)
+(define kruddgui-ig-toolbar-h  24)
+(define kruddgui-ig-status-h   20)
+(define kruddgui-ig-title-h    20)
+(define kruddgui-ig-tab-h      20)
+(define kruddgui-ig-row-h      20)
+(define kruddgui-ig-pad         8)
+(define kruddgui-ig-frame-pad   4)
+(define kruddgui-ig-split        1)
+
+;;! Dockspace proportions. The side columns and the bottom row take their
+;;! fractions of the frame; whatever is left in the middle is the central node,
+;;! which stays empty so the 3D view shows through it.
+(define kruddgui-ig-side-frac   0.24)
+(define kruddgui-ig-bottom-frac 0.28)
+(define kruddgui-ig-side-min   180)
+(define kruddgui-ig-bottom-min 120)
+
+;;! The classic dark theme, as close as a flat quad batch gets: a dark window
+;;! body, a lighter header for title and tab bars, the blue accent for the
+;;! active tab and the open menu, and dim text for anything secondary.
+(define kruddgui-ig-window-bg  '(0.06 0.06 0.06 0.94))
+(define kruddgui-ig-child-bg   '(0.10 0.10 0.11 1.0))
+(define kruddgui-ig-header-bg  '(0.16 0.16 0.17 1.0))
+(define kruddgui-ig-popup-bg   '(0.08 0.08 0.08 0.98))
+(define kruddgui-ig-accent     '(0.16 0.29 0.48 1.0))
+(define kruddgui-ig-accent-hi  '(0.26 0.42 0.65 1.0))
+(define kruddgui-ig-border     '(0.25 0.25 0.27 1.0))
+(define kruddgui-ig-text       '(0.90 0.90 0.90 1.0))
+(define kruddgui-ig-text-dim   '(0.50 0.50 0.52 1.0))
+
+;;! How a standard-key shortcut symbol prints, in the shortcut column an ImGui
+;;! menu row reserves on its right. ASCII on purpose: the atlas is baked
+;;! 0x20..0x7E (kgui_font.h), so a shift glyph would be a hole.
+(define kruddgui-ig-keys
+  '((new . "Ctrl+N") (open . "Ctrl+O") (save . "Ctrl+S")
+    (save-as . "Ctrl+Shift+S") (quit . "Ctrl+Q") (undo . "Ctrl+Z")
+    (redo . "Ctrl+Shift+Z") (cut . "Ctrl+X") (copy . "Ctrl+C")
+    (paste . "Ctrl+V")))
+
+;;! The mark a View toggle carries when its dock is showing — ImGui draws a
+;;! check here; the atlas has no check mark, so an ASCII one stands in.
+(define kruddgui-ig-shown-mark "x")
+
+;;! Which menu's popup is open (its index in the menus section) or #f.
+(define kruddgui-ig-menu #f)
+;;! Dock ids the View menu has hidden. A hidden dock keeps its toggle — that is
+;;! how it comes back — but its node leaves the dockspace and the remaining
+;;! nodes reflow into the space.
+(define kruddgui-ig-hidden '())
+;;! Which member of each tab group is forward, as an (group-leader-id . dock-id)
+;;! alist. A group not listed shows the member the spec raises.
+(define kruddgui-ig-front '())
+;;! Live text the host writes by id: badges by badge id, status fields by field
+;;! id. The spec's own text is the seed, shown until something overwrites it.
+(define kruddgui-ig-live '())
+;;! The trailing note in the status bar. An action id the chrome has not wired
+;;! lands here rather than doing nothing silently, which is the "coming soon"
+;;! hint the spec's doc describes.
+(define kruddgui-ig-hint "")
+
+;;! (kruddgui-ig-spec) -> the layout tree, or #f when core's chrome image is not
+;;! in this interpreter. Guarded the same way kgui-safe-insets is: a native test
+;;! image that loads only this file still draws everything else.
+(define (kruddgui-ig-spec)
+  (and (defined? 'editor-layout) (editor-layout)))
+
+;;! (kruddgui-ig-ascii s) -> S with the typography the spec is written in folded
+;;! down to what the atlas can draw. kgui_font bakes 0x20..0x7E and kgui_batch
+;;! skips any code point outside it, so an em dash in "renderer — booting…"
+;;! would come out as a hole rather than as a dash. Folding beats either
+;;! alternative: rewriting the spec in ASCII would make a data file serve one
+;;! renderer's font, and leaving it alone would draw the spec wrong.
+;;!
+;;! The three substitutions are the ones this spec actually uses — em dash,
+;;! ellipsis, multiplication sign. Anything else non-ASCII is dropped whole, by
+;;! its UTF-8 lead byte's continuation count, so a stray code point costs its
+;;! own glyph and never desynchronizes the scan into mojibake. s7 strings are
+;;! byte strings, which is why this walks bytes rather than characters.
+(define (kruddgui-ig-ascii s)
+  (let ((n (string-length s)))
+    (let loop ((i 0) (out ""))
+      (if (>= i n)
+          out
+          (let ((b (char->integer (string-ref s i))))
+            (cond ((< b #x80)
+                   (loop (+ i 1) (string-append out (substring s i (+ i 1)))))
+                  ((and (= b #xE2) (< (+ i 2) n)
+                        (= (char->integer (string-ref s (+ i 1))) #x80)
+                        (= (char->integer (string-ref s (+ i 2))) #x94))
+                   (loop (+ i 3) (string-append out "-")))
+                  ((and (= b #xE2) (< (+ i 2) n)
+                        (= (char->integer (string-ref s (+ i 1))) #x80)
+                        (= (char->integer (string-ref s (+ i 2))) #xA6))
+                   (loop (+ i 3) (string-append out "...")))
+                  ((and (= b #xC3) (< (+ i 1) n)
+                        (= (char->integer (string-ref s (+ i 1))) #x97))
+                   (loop (+ i 2) (string-append out "x")))
+                  ((>= b #xF0) (loop (+ i 4) out))
+                  ((>= b #xE0) (loop (+ i 3) out))
+                  ((>= b #xC0) (loop (+ i 2) out))
+                  (else (loop (+ i 1) out))))))))
+
+;;! (kruddgui-ig-label s) -> a spec string ready to draw: its mnemonic markers
+;;! stripped and its typography folded. Every string this chrome takes from the
+;;! spec goes through here, so neither concern is remembered per call site.
+(define (kruddgui-ig-label s)
+  (kruddgui-ig-ascii (editor-layout-mnemonic s)))
+
+;;! (kruddgui-ig-text-left x y w h str c) draw STR inset by the frame padding
+;;! and vertically centred — an ImGui row's text origin.
+(define (kruddgui-ig-text-left x y w h str c)
+  (let* ((m  (kgui-text-metrics str))
+         (ty (+ y (/ (- h (cadr m)) 2))))
+    (kgui-text (+ x kruddgui-ig-frame-pad) ty str
+               (car c) (cadr c) (caddr c) (cadddr c))))
+
+;;! (kruddgui-ig-text-right x y w h str c) the same against the trailing edge —
+;;! the shortcut column in a menu, and the hint in the status bar.
+(define (kruddgui-ig-text-right x y w h str c)
+  (let* ((m  (kgui-text-metrics str))
+         (ty (+ y (/ (- h (cadr m)) 2))))
+    (kgui-text (- (+ x w) kruddgui-ig-frame-pad (car m)) ty str
+               (car c) (cadr c) (caddr c) (cadddr c))))
+
+;;! (kruddgui-ig-border! x y w h) a one-pixel outline, the way an ImGui window
+;;! with WindowBorderSize 1 draws its frame.
+(define (kruddgui-ig-border! x y w h)
+  (kruddgui-rect* (list x y w 1) kruddgui-ig-border)
+  (kruddgui-rect* (list x (+ y h -1) w 1) kruddgui-ig-border)
+  (kruddgui-rect* (list x y 1 h) kruddgui-ig-border)
+  (kruddgui-rect* (list (+ x w -1) y 1 h) kruddgui-ig-border))
+
+;;! (kruddgui-ig-set! id text) write the live text for badge or status field ID.
+;;! The host calls this; so does a test.
+(define (kruddgui-ig-set! id text)
+  (set! kruddgui-ig-live
+        (cons (cons id text)
+              (let loop ((l kruddgui-ig-live) (out '()))
+                (cond ((null? l) (reverse out))
+                      ((string=? (caar l) id) (loop (cdr l) out))
+                      (else (loop (cdr l) (cons (car l) out))))))))
+
+;;! (kruddgui-ig-text-of id seed) -> the live text for ID, falling back to the
+;;! spec's SEED while nothing has overwritten it.
+(define (kruddgui-ig-text-of id seed)
+  (let ((e (assoc id kruddgui-ig-live)))
+    (if (pair? e) (cdr e) seed)))
+
+;;! (kruddgui-ig-hidden? id) -> #t when the View menu has hidden that dock.
+(define (kruddgui-ig-hidden? id)
+  (let loop ((h kruddgui-ig-hidden))
+    (cond ((null? h) #f)
+          ((string=? (car h) id) #t)
+          (else (loop (cdr h))))))
+
+;;! (kruddgui-ig-visible layout) -> the docks the dockspace may place, in
+;;! declaration order.
+(define (kruddgui-ig-visible layout)
+  (let loop ((ds (editor-layout-docks layout)) (out '()))
+    (cond ((null? ds) (reverse out))
+          ((kruddgui-ig-hidden? (editor-layout-dock-id (car ds)))
+           (loop (cdr ds) out))
+          (else (loop (cdr ds) (cons (car ds) out))))))
+
+;;! (kruddgui-ig-group-has? group id) -> #t when GROUP holds the dock ID.
+(define (kruddgui-ig-group-has? group id)
+  (let loop ((g group))
+    (cond ((null? g) #f)
+          ((string=? (editor-layout-dock-id (car g)) id) #t)
+          (else (loop (cdr g))))))
+
+;;! (kruddgui-ig-join groups id dock) add DOCK to whichever of GROUPS holds ID,
+;;! or start a group for it when none does. GROUPS and each group are held
+;;! reversed while building, so consing appends. A (tabbed-with …) naming a dock
+;;! that is hidden or absent degrades to a node of its own rather than
+;;! vanishing: a spec edit should not be able to make a panel unreachable.
+(define (kruddgui-ig-join groups id dock)
+  (let loop ((gs groups) (out '()) (hit #f))
+    (cond ((null? gs)
+           (if hit (reverse out) (cons (list dock) (reverse out))))
+          ((kruddgui-ig-group-has? (car gs) id)
+           (loop (cdr gs) (cons (cons dock (car gs)) out) #t))
+          (else (loop (cdr gs) (cons (car gs) out) hit)))))
+
+;;! (kruddgui-ig-nodes layout area) -> the dock nodes for AREA: the visible
+;;! docks declared there, collapsed into tab groups. One node per group, in
+;;! declaration order — this is what the dockspace places.
+(define (kruddgui-ig-nodes layout area)
+  (let loop ((ds (kruddgui-ig-visible layout)) (out '()))
+    (if (null? ds)
+        (map reverse (reverse out))
+        (let* ((d (car ds))
+               (t (editor-layout-dock-tabbed-with d)))
+          (cond ((not (eq? (editor-layout-dock-area d) area))
+                 (loop (cdr ds) out))
+                (t    (loop (cdr ds) (kruddgui-ig-join out t d)))
+                (else (loop (cdr ds) (cons (list d) out))))))))
+
+;;! (kruddgui-ig-node-id node) -> the node's identity: its leader's dock id.
+;;! The forward-tab alist keys off this, so a group keeps its selection as
+;;! members come and go.
+(define (kruddgui-ig-node-id node)
+  (editor-layout-dock-id (car node)))
+
+;;! (kruddgui-ig-node-front node) -> the member drawn in the node's body: the
+;;! one a tab click selected, else the one the spec raises, else the leader.
+(define (kruddgui-ig-node-front node)
+  (let ((sel (assoc (kruddgui-ig-node-id node) kruddgui-ig-front)))
+    (or (and (pair? sel)
+             (let loop ((g node))
+               (cond ((null? g) #f)
+                     ((string=? (editor-layout-dock-id (car g)) (cdr sel))
+                      (car g))
+                     (else (loop (cdr g))))))
+        (let loop ((g node))
+          (cond ((null? g) (car node))
+                ((editor-layout-dock-raise? (car g)) (car g))
+                (else (loop (cdr g))))))))
+
+;;! (kruddgui-ig-select! node dock) bring DOCK forward in NODE's tab bar.
+(define (kruddgui-ig-select! node dock)
+  (let ((key (kruddgui-ig-node-id node))
+        (id  (editor-layout-dock-id dock)))
+    (set! kruddgui-ig-front
+          (cons (cons key id)
+                (let loop ((l kruddgui-ig-front) (out '()))
+                  (cond ((null? l) (reverse out))
+                        ((string=? (caar l) key) (loop (cdr l) out))
+                        (else (loop (cdr l) (cons (car l) out)))))))))
+
+;;! (kruddgui-ig-toggle-id id) -> the dock id inside a "toggle:…" action id, or
+;;! #f for any other action. The spec builds these ids in
+;;! editor-layout-dock-toggle, so this is the matching half of that contract.
+(define (kruddgui-ig-toggle-id id)
+  (and (> (string-length id) 7)
+       (string=? (substring id 0 7) "toggle:")
+       (substring id 7 (string-length id))))
+
+;;! (kruddgui-ig-toggle-dock! id) show or hide the dock ID. Hiding one leaves
+;;! the dockspace to reflow around the gap, which is what an ImGui host does
+;;! when a node's last window closes.
+(define (kruddgui-ig-toggle-dock! id)
+  (if (kruddgui-ig-hidden? id)
+      (set! kruddgui-ig-hidden
+            (let loop ((h kruddgui-ig-hidden) (out '()))
+              (cond ((null? h) (reverse out))
+                    ((string=? (car h) id) (loop (cdr h) out))
+                    (else (loop (cdr h) (cons (car h) out))))))
+      (set! kruddgui-ig-hidden (cons id kruddgui-ig-hidden))))
+
+;;! (kruddgui-ig-reset!) View > Reset Layout: every dock back in the dockspace
+;;! and every tab group back on the member the spec raises.
+(define (kruddgui-ig-reset!)
+  (set! kruddgui-ig-hidden '())
+  (set! kruddgui-ig-front '()))
+
+;;! (kruddgui-ig-act! id) run the action ID names. The dock toggles and Reset
+;;! Layout are the chrome's own; undo and redo forward to the shared edit
+;;! accessors when the host has registered them. Anything else is not wired yet
+;;! and says so in the status bar — the spec is explicit that which ids a host
+;;! has wired is the host's business, not the spec's, so an unknown id is a hint
+;;! and never an error.
+(define (kruddgui-ig-act! id)
+  (let ((dock (kruddgui-ig-toggle-id id)))
+    (set! kruddgui-ig-hint "")
+    (cond (dock (kruddgui-ig-toggle-dock! dock))
+          ((string=? id "reset-layout") (kruddgui-ig-reset!))
+          ((and (string=? id "undo") (defined? 'krudd-undo)) (krudd-undo))
+          ((and (string=? id "redo") (defined? 'krudd-redo)) (krudd-redo))
+          (else
+           (set! kruddgui-ig-hint (string-append id " - coming soon"))))))
+
+;;! (kruddgui-ig-key shortcut) -> the printed form of a standard-key symbol, or
+;;! "" when the spec names none.
+(define (kruddgui-ig-key shortcut)
+  (let ((e (assq shortcut kruddgui-ig-keys)))
+    (if (pair? e) (cdr e) "")))
+
+;;! ==================================================================
+;;! The menu bar and its popups
+;;! ==================================================================
+
+;;! (kruddgui-ig-menu-w menu docks) -> the popup's width: the widest row it
+;;! holds, label and shortcut column together, with a floor so a short menu
+;;! still reads as a menu. Measured rather than counted, because the atlas is
+;;! proportional.
+(define (kruddgui-ig-menu-w menu docks)
+  (let loop ((is (editor-layout-menu-items menu docks)) (w 140))
+    (cond ((null? is) w)
+          ((eq? (editor-layout-kind (car is)) 'separator) (loop (cdr is) w))
+          (else
+           (let* ((lbl (kruddgui-ig-label
+                        (editor-layout-action-label (car is))))
+                  (key (kruddgui-ig-key
+                        (editor-layout-action-shortcut (car is))))
+                  (rw  (+ (car (kgui-text-metrics lbl))
+                          (car (kgui-text-metrics key))
+                          (* 4 kruddgui-ig-frame-pad))))
+             (loop (cdr is) (max w rw)))))))
+
+;;! (kruddgui-ig-menu-h menu docks) -> the popup's height: a row per action, a
+;;! thin gap per separator, and the window padding above and below.
+(define (kruddgui-ig-menu-h menu docks)
+  (let loop ((is (editor-layout-menu-items menu docks))
+             (h (* 2 kruddgui-ig-frame-pad)))
+    (cond ((null? is) h)
+          ((eq? (editor-layout-kind (car is)) 'separator)
+           (loop (cdr is) (+ h kruddgui-ig-frame-pad)))
+          (else (loop (cdr is) (+ h kruddgui-ig-row-h))))))
+
+;;! (kruddgui-ig-menubar-draw D layout) the menu bar: the spec's menus as labels
+;;! across a band reserved off the top, each sized to its own text the way an
+;;! ImGui menu bar sizes its items. The open one is lit; clicking it closes the
+;;! popup, clicking another moves the popup to it.
+;;!
+;;! It returns the x of each menu's label as an alist so the popup can drop
+;;! straight down under its own label — an ImGui menu opens where its item is,
+;;! not at a fixed column.
+(define (kruddgui-ig-menubar-draw D layout)
+  (let* ((menus (editor-layout-menus layout))
+         (h     kruddgui-ig-menubar-h)
+         (band  (kruddgui-dock-reserve! D 'top h))
+         (bx    (car band)) (by (cadr band)) (bw (caddr band)))
+    (kgui-panel-begin "kgui-ig-menubar" bx by bw h)
+    (kruddgui-rect* (list bx by bw h) kruddgui-ig-header-bg)
+    (let loop ((ms menus) (i 0) (cx bx) (xs '()))
+      (if (null? ms)
+          (begin (kgui-panel-end) (reverse xs))
+          (let* ((lbl (kruddgui-ig-label (editor-layout-menu-label (car ms))))
+                 (mw  (+ (car (kgui-text-metrics lbl))
+                         (* 2 kruddgui-ig-pad)))
+                 (act (eqv? kruddgui-ig-menu i)))
+            (when act
+              (kruddgui-rect* (list cx by mw h) kruddgui-ig-accent))
+            (kruddgui-label cx by mw h lbl kruddgui-ig-text)
+            (when (kgui-button cx by mw h)
+              (set! kruddgui-ig-menu (if act #f i)))
+            (loop (cdr ms) (+ i 1) (+ cx mw) (cons (cons i cx) xs)))))))
+
+;;! (kruddgui-ig-popup-draw layout xs content) the open menu's popup, dropped
+;;! under its own label from the XS alist the menu bar returned, clamped so a
+;;! popup opened from the last menu still fits.
+;;!
+;;! CONTENT is the frame as it stood *before* the dockspace carved it up — the
+;;! whole area under the toolbar. Taking the dock context's leftover rect
+;;! instead would trap the popup inside the central node, which is the one part
+;;! of the frame a menu is least likely to want to stay inside.
+;;!
+;;! The three buttons are declared innermost-first because kgui-button consumes
+;;! the tap it claims: the rows get first refusal, then the popup's own body
+;;! swallows a click on its padding, and only what neither claimed reaches the
+;;! full-rect dismiss. Declaring the dismiss first would make every row
+;;! unreachable — the catcher would eat every click in the frame.
+(define (kruddgui-ig-popup-draw layout xs content)
+  (when kruddgui-ig-menu
+    (let* ((menus (editor-layout-menus layout))
+           (docks (editor-layout-docks layout))
+           (menu  (and (< kruddgui-ig-menu (length menus))
+                       (list-ref menus kruddgui-ig-menu)))
+           (items (and menu (editor-layout-menu-items menu docks)))
+           (fx    (car content)) (fy (cadr content))
+           (fw    (caddr content)) (fh (cadddr content))
+           (at    (assv kruddgui-ig-menu xs)))
+      (if (not (pair? items))
+          (set! kruddgui-ig-menu #f)
+          (let* ((pw (min (kruddgui-ig-menu-w menu docks) fw))
+                 (ph (min (kruddgui-ig-menu-h menu docks) fh))
+                 (px (min (if (pair? at) (cdr at) fx) (- (+ fx fw) pw))))
+            (kgui-panel-begin "kgui-ig-popup" fx fy fw fh)
+            (kruddgui-rect* (list px fy pw ph) kruddgui-ig-popup-bg)
+            (kruddgui-ig-border! px fy pw ph)
+            (kgui-clip px fy pw ph)
+            (kruddgui-ig-rows-draw items px fy pw)
+            (kgui-clip-none)
+            (kgui-button px fy pw ph)
+            (when (kgui-button fx fy fw fh)
+              (set! kruddgui-ig-menu #f))
+            (kgui-panel-end))))))
+
+;;! (kruddgui-ig-rows-draw items x y w) the popup's rows. An action draws its
+;;! label and, when the spec names one, its shortcut in the right-hand column; a
+;;! click runs it and closes the popup. A separator draws a rule. A dock toggle
+;;! shows a check when its dock is in the dockspace, which is the whole reason
+;;! the View menu is a list of docks.
+(define (kruddgui-ig-rows-draw items x y w)
+  (let loop ((is items) (ry (+ y kruddgui-ig-frame-pad)))
+    (when (pair? is)
+      (let ((item (car is)))
+        (cond ((eq? (editor-layout-kind item) 'separator)
+               (kruddgui-rect* (list (+ x kruddgui-ig-frame-pad)
+                                     (+ ry (/ kruddgui-ig-frame-pad 2))
+                                     (- w (* 2 kruddgui-ig-frame-pad)) 1)
+                               kruddgui-ig-border)
+               (loop (cdr is) (+ ry kruddgui-ig-frame-pad)))
+              (else
+               (kruddgui-ig-row-draw item x ry w)
+               (loop (cdr is) (+ ry kruddgui-ig-row-h))))))))
+
+;;! (kruddgui-ig-row-draw item x y w) one menu row. Its trailing column is the
+;;! shortcut for an ordinary action and the check for a dock toggle — a toggle
+;;! has no shortcut, so the two never compete for the column.
+(define (kruddgui-ig-row-draw item x y w)
+  (let* ((id    (editor-layout-action-id item))
+         (dock  (kruddgui-ig-toggle-id id))
+         (trail (if dock
+                    (if (kruddgui-ig-hidden? dock) "" kruddgui-ig-shown-mark)
+                    (kruddgui-ig-key (editor-layout-action-shortcut item))))
+         (h     kruddgui-ig-row-h))
+    (kruddgui-ig-text-left x y w h
+                           (kruddgui-ig-label
+                            (editor-layout-action-label item))
+                           kruddgui-ig-text)
+    (when (> (string-length trail) 0)
+      (kruddgui-ig-text-right x y w h trail kruddgui-ig-text-dim))
+    (when (kgui-button x y w h)
+      (kruddgui-ig-act! id)
+      (set! kruddgui-ig-menu #f))))
+
+;;! ==================================================================
+;;! The toolbar and status bands
+;;! ==================================================================
+
+;;! (kruddgui-ig-after-spacer items) -> the items declared after the first
+;;! (spacer), or () when the bar declares none.
+(define (kruddgui-ig-after-spacer items)
+  (let loop ((is items))
+    (cond ((null? is) '())
+          ((eq? (editor-layout-kind (car is)) 'spacer) (cdr is))
+          (else (loop (cdr is))))))
+
+;;! (kruddgui-ig-cell-text item) -> the string a badge or item shows: the
+;;! badge's live text by id (seeded from the spec), or the item's label.
+(define (kruddgui-ig-cell-text item)
+  (kruddgui-ig-ascii
+   (if (eq? (editor-layout-kind item) 'badge)
+       (kruddgui-ig-text-of (editor-layout-badge-id item)
+                            (editor-layout-badge-text item))
+       (editor-layout-mnemonic (editor-layout-item-label item)))))
+
+;;! (kruddgui-ig-cell-width item) -> one badge's or item's drawn width: its
+;;! text, padded on both sides.
+(define (kruddgui-ig-cell-width item)
+  (+ (car (kgui-text-metrics (kruddgui-ig-cell-text item)))
+     (* 2 kruddgui-ig-pad)))
+
+;;! (kruddgui-ig-bar-width items) -> the packed width of ITEMS, so the trailing
+;;! run can be placed by measuring it rather than by guessing.
+(define (kruddgui-ig-bar-width items)
+  (let loop ((is items) (w 0))
+    (cond ((null? is) w)
+          ((eq? (editor-layout-kind (car is)) 'spacer) w)
+          ((eq? (editor-layout-kind (car is)) 'separator)
+           (loop (cdr is) (+ w kruddgui-ig-pad)))
+          (else (loop (cdr is) (+ w (kruddgui-ig-cell-width (car is))))))))
+
+;;! (kruddgui-ig-bar-run items x y w h leading?) draw one run of the toolbar.
+;;! LEADING? packs from the left and stops at the first (spacer); the trailing
+;;! run is placed by its own measured width, which is what makes (spacer)
+;;! elastic without the spec naming a width.
+(define (kruddgui-ig-bar-run items x y w h leading?)
+  (let ((x0 (if leading? x (- (+ x w) (kruddgui-ig-bar-width items)))))
+    (let loop ((is items) (cx x0))
+      (when (pair? is)
+        (let ((item (car is)))
+          (cond ((eq? (editor-layout-kind item) 'spacer)
+                 (when (not leading?)
+                   (loop (cdr is) cx)))
+                ((eq? (editor-layout-kind item) 'separator)
+                 (kruddgui-rect* (list cx (+ y 4) 1 (- h 8))
+                                 kruddgui-ig-border)
+                 (loop (cdr is) (+ cx kruddgui-ig-pad)))
+                (else
+                 (let ((cw (kruddgui-ig-cell-width item)))
+                   (kruddgui-ig-text-left cx y cw h
+                                          (kruddgui-ig-cell-text item)
+                                          kruddgui-ig-text-dim)
+                   (when (and (eq? (editor-layout-kind item) 'item)
+                              (kgui-button cx y cw h))
+                     (kruddgui-ig-act! (editor-layout-item-id item)))
+                   (loop (cdr is) (+ cx cw))))))))))
+
+;;! (kruddgui-ig-toolbar-draw D layout) the toolbar band under the menu bar.
+(define (kruddgui-ig-toolbar-draw D layout)
+  (let* ((bar  (editor-layout-toolbar layout))
+         (h    kruddgui-ig-toolbar-h)
+         (band (kruddgui-dock-reserve! D 'top h))
+         (bx   (car band)) (by (cadr band)) (bw (caddr band)))
+    (when (pair? bar)
+      (kgui-panel-begin "kgui-ig-toolbar" bx by bw h)
+      (kruddgui-rect* (list bx by bw h) kruddgui-ig-child-bg)
+      (kruddgui-ig-bar-run bar bx by bw h #t)
+      (kruddgui-ig-bar-run (kruddgui-ig-after-spacer bar) bx by bw h #f)
+      (kgui-panel-end))))
+
+;;! (kruddgui-ig-status-draw D layout) the status bar: the spec's fields left to
+;;! right in their live text, with the unwired-action hint against the trailing
+;;! edge.
+(define (kruddgui-ig-status-draw D layout)
+  (let* ((fs   (editor-layout-statusbar layout))
+         (h    kruddgui-ig-status-h)
+         (band (kruddgui-dock-reserve! D 'bottom h))
+         (bx   (car band)) (by (cadr band)) (bw (caddr band)))
+    (when (pair? fs)
+      (kgui-panel-begin "kgui-ig-status" bx by bw h)
+      (kruddgui-rect* (list bx by bw h) kruddgui-ig-header-bg)
+      (let loop ((l fs) (cx bx))
+        (when (pair? l)
+          (let* ((f  (car l))
+                 (s  (kruddgui-ig-ascii
+                      (kruddgui-ig-text-of (editor-layout-field-id f)
+                                           (editor-layout-field-text f))))
+                 (cw (+ (car (kgui-text-metrics s)) (* 2 kruddgui-ig-pad))))
+            (kruddgui-ig-text-left cx by cw h s kruddgui-ig-text-dim)
+            (loop (cdr l) (+ cx cw)))))
+      (when (> (string-length kruddgui-ig-hint) 0)
+        (kruddgui-ig-text-right bx by bw h
+                                (kruddgui-ig-ascii kruddgui-ig-hint)
+                                kruddgui-ig-accent-hi))
+      (kgui-panel-end))))
+
+;;! ==================================================================
+;;! The dockspace
+;;! ==================================================================
+
+;;! (kruddgui-ig-dockspace-draw D layout) split what is left of the frame the
+;;! way a Dear ImGui host splits a dockspace: the left-area nodes into a column
+;;! down the left, the right-area nodes into a column down the right, the
+;;! bottom-area nodes into a row across what remains, and the central node left
+;;! empty so the 3D view shows through it.
+;;!
+;;! An area with no visible node reserves nothing, so hiding every dock on one
+;;! side gives that space to the centre rather than leaving a gutter — which is
+;;! what makes the View toggles feel like an ImGui host's window list.
+(define (kruddgui-ig-dockspace-draw D layout)
+  (let* ((left   (kruddgui-ig-nodes layout 'left))
+         (right  (kruddgui-ig-nodes layout 'right))
+         (bottom (kruddgui-ig-nodes layout 'bottom))
+         (top    (kruddgui-ig-nodes layout 'top))
+         (fw     (kruddgui-dock-w D))
+         (fh     (kruddgui-dock-h D))
+         (side   (max kruddgui-ig-side-min (* fw kruddgui-ig-side-frac)))
+         (deep   (max kruddgui-ig-bottom-min (* fh kruddgui-ig-bottom-frac))))
+    (when (pair? top)
+      (kruddgui-ig-column-draw
+       (kruddgui-dock-reserve! D 'top (min deep (/ fh 2))) top #f))
+    (when (pair? bottom)
+      (kruddgui-ig-column-draw
+       (kruddgui-dock-reserve! D 'bottom (min deep (/ fh 2))) bottom #f))
+    (when (pair? left)
+      (kruddgui-ig-column-draw
+       (kruddgui-dock-reserve! D 'left (min side (/ fw 3))) left #t))
+    (when (pair? right)
+      (kruddgui-ig-column-draw
+       (kruddgui-dock-reserve! D 'right (min side (/ fw 3))) right #t))))
+
+;;! (kruddgui-ig-column-draw band nodes vertical?) share BAND between NODES.
+;;! A side column stacks them vertically, a top or bottom row spreads them
+;;! horizontally; the caller says which, so one procedure serves all four edges
+;;! and a short wide column cannot be mistaken for a row.
+(define (kruddgui-ig-column-draw band nodes vertical?)
+  (let* ((bx (car band)) (by (cadr band))
+         (bw (caddr band)) (bh (cadddr band))
+         (n  (length nodes)))
+    (let loop ((l nodes) (i 0))
+      (when (pair? l)
+        (let ((x (if vertical? bx (+ bx (* i (/ bw n)))))
+              (y (if vertical? (+ by (* i (/ bh n))) by))
+              (w (if vertical? bw (/ bw n)))
+              (h (if vertical? (/ bh n) bh)))
+          (kruddgui-ig-node-draw (car l) x y
+                                 (- w kruddgui-ig-split)
+                                 (- h kruddgui-ig-split)))
+        (loop (cdr l) (+ i 1))))))
+
+;;! (kruddgui-ig-node-draw node x y w h) one dock node: a tab bar when the node
+;;! holds more than one dock, a plain title bar when it holds one, then the
+;;! forward dock's panel heading and blurb in the body. Its own input region, so
+;;! a click in a panel never reaches the viewport behind the dockspace.
+(define (kruddgui-ig-node-draw node x y w h)
+  (when (and (> w 0) (> h 0))
+    (let ((front (kruddgui-ig-node-front node)))
+      (kgui-panel-begin (string-append "kgui-ig-node:"
+                                       (kruddgui-ig-node-id node))
+                        x y w h)
+      (kruddgui-rect* (list x y w h) kruddgui-ig-window-bg)
+      (if (> (length node) 1)
+          (kruddgui-ig-tabbar-draw node front x y w)
+          (kruddgui-ig-titlebar-draw front x y w))
+      (kgui-clip x (+ y kruddgui-ig-title-h) w (- h kruddgui-ig-title-h))
+      (kruddgui-ig-body-draw front x (+ y kruddgui-ig-title-h) w
+                             (- h kruddgui-ig-title-h))
+      (kgui-clip-none)
+      (kruddgui-ig-border! x y w h)
+      (kgui-panel-end))))
+
+;;! (kruddgui-ig-titlebar-draw dock x y w) a single-window node's title bar.
+;;! It is the same height as a tab bar on purpose — the body below starts at one
+;;! offset whichever of the two the node drew.
+(define (kruddgui-ig-titlebar-draw dock x y w)
+  (kruddgui-rect* (list x y w kruddgui-ig-title-h) kruddgui-ig-header-bg)
+  (kruddgui-ig-text-left x y w kruddgui-ig-title-h
+                         (kruddgui-ig-label (editor-layout-dock-title dock))
+                         kruddgui-ig-text))
+
+;;! (kruddgui-ig-tabbar-draw node front x y w) a shared node's tab bar: one tab
+;;! per member, sized to its own label the way ImGui sizes tabs, the forward one
+;;! lit in the accent. Clicking a tab brings that member forward without
+;;! disturbing any other node, which is what (tabbed-with …) asks for.
+(define (kruddgui-ig-tabbar-draw node front x y w)
+  (kruddgui-rect* (list x y w kruddgui-ig-tab-h) kruddgui-ig-child-bg)
+  (let loop ((l node) (cx x))
+    (when (pair? l)
+      (let* ((d   (car l))
+             (lbl (kruddgui-ig-label (editor-layout-dock-title d)))
+             (tw  (+ (car (kgui-text-metrics lbl)) (* 2 kruddgui-ig-pad)))
+             (act (eq? d front)))
+        (when act
+          (kruddgui-rect* (list cx y tw kruddgui-ig-tab-h)
+                          kruddgui-ig-accent))
+        (kruddgui-label cx y tw kruddgui-ig-tab-h lbl
+                        (if act kruddgui-ig-text kruddgui-ig-text-dim))
+        (when (kgui-button cx y tw kruddgui-ig-tab-h)
+          (kruddgui-ig-select! node d))
+        (loop (cdr l) (+ cx tw))))))
+
+;;! (kruddgui-ig-body-draw dock x y w h) the node's body: the spec's panel
+;;! heading, then its one-line description wrapped to the node. The heading and
+;;! blurb are the spec's placeholder copy — this chrome draws what the spec says
+;;! the panel is, and #944's initiative is what fills the panels in.
+(define (kruddgui-ig-body-draw dock x y w h)
+  (kruddgui-ig-text-left x (+ y kruddgui-ig-frame-pad) w kruddgui-ig-row-h
+                         (kruddgui-ig-label (editor-layout-dock-panel dock))
+                         kruddgui-ig-accent-hi)
+  (when (> h (* 2 kruddgui-ig-row-h))
+    (kruddgui-ig-wrap-draw
+     x (+ y kruddgui-ig-frame-pad kruddgui-ig-row-h) w
+     (kruddgui-ig-label (editor-layout-dock-blurb dock)))))
+
+;;! (kruddgui-ig-wrap-draw x y w text) TEXT wrapped to the node's width.
+;;! Wrapping is measured rather than counted in characters, because the atlas is
+;;! proportional — a run that fits in one node's width does not in another's,
+;;! and a dockspace gives every node a different one.
+(define (kruddgui-ig-wrap-draw x y w text)
+  (let ((limit (- w (* 2 kruddgui-ig-frame-pad)))
+        (lh    (+ (cadr (kgui-text-metrics "M")) 4)))
+    (let loop ((words (kruddgui-ig-split text)) (line "") (ly y))
+      (cond ((null? words)
+             (when (> (string-length line) 0)
+               (kruddgui-ig-text-left x ly w lh line kruddgui-ig-text-dim)))
+            (else
+             (let ((try (if (= (string-length line) 0)
+                            (car words)
+                            (string-append line " " (car words)))))
+               (if (or (= (string-length line) 0)
+                       (<= (car (kgui-text-metrics try)) limit))
+                   (loop (cdr words) try ly)
+                   (begin
+                     (kruddgui-ig-text-left x ly w lh line
+                                            kruddgui-ig-text-dim)
+                     (loop (cdr words) (car words) (+ ly lh))))))))))
+
+;;! (kruddgui-ig-split text) -> TEXT's space-separated words.
+(define (kruddgui-ig-split text)
+  (let ((n (string-length text)))
+    (let loop ((i 0) (start 0) (out '()))
+      (cond ((>= i n)
+             (reverse (if (> i start) (cons (substring text start i) out) out)))
+            ((char=? (string-ref text i) #\space)
+             (loop (+ i 1) (+ i 1)
+                   (if (> i start) (cons (substring text start i) out) out)))
+            (else (loop (+ i 1) start out))))))
+
+;;! (kruddgui-ig-draw D) the chrome, into the dock shell: the menu bar and
+;;! toolbar off the top, the status bar off the bottom, the dockspace in what is
+;;! left, and the open menu's popup over all of it. A no-op when core's chrome
+;;! image is absent.
+;;!
+;;! The popup is drawn last on purpose. It is the only piece that overlaps
+;;! another — everything else has a band reserved for it — so drawing order is
+;;! what puts it on top, and declaring its region last is what makes a click on
+;;! it win over the dock node underneath.
+(define (kruddgui-ig-draw D)
+  (let ((layout (kruddgui-ig-spec)))
+    (when (pair? layout)
+      (let ((xs (kruddgui-ig-menubar-draw D layout)))
+        (kruddgui-ig-toolbar-draw D layout)
+        (kruddgui-ig-status-draw D layout)
+        (let ((content (kruddgui-dock-rect D)))
+          (kruddgui-ig-dockspace-draw D layout)
+          (kruddgui-ig-popup-draw layout xs content))))))
+
+;;! (kruddgui-ig-tick) the host's per-tick entry point for the chrome, and the
+;;! reason it is separate from (kruddgui-draw): the panel set kruddgui-draw lays
+;;! out is still parked on the krudd-* accessors that went with kruddboard in
+;;! #661, while the chrome reads nothing but the spec and the kgui-* primitives.
+;;! Gating it on that parked set would mean the spec draws nowhere, so
+;;! kruddgui.cpp calls this one directly whenever editor mode is lit — the same
+;;! shape kruddgui-perf-hud-draw already uses, one level up from its own
+;;! layout-begin.
+;;!
+;;! Unlike the touch-first chrome this one starts from the raw viewport rather
+;;! than the safe frame: a desktop chrome fills its window edge to edge, and the
+;;! safe-area insets exist for a phone's notch. The band the GAME / EDITOR
+;;! switch occupies is still reserved off the bottom, because the switch draws
+;;! itself after this and is the way out of either mode.
+(define (kruddgui-ig-tick)
+  (let* ((vp (kgui-viewport-size))
+         (vw (car vp))
+         (vh (cadr vp)))
+    (when (and (> vw 0) (> vh 0))
+      (let ((D (kruddgui-dock vw vh (kruddgui-layout-mode vw vh)
+                              0 0 vw vh)))
+        (kruddgui-dock-reserve! D 'bottom
+                                (+ kruddgui-modeswitch-h kruddgui-margin
+                                   kruddgui-gap))
+        (kruddgui-ig-draw D)))))
+
 ;;! (kruddgui-draw) the whole layer — the host's per-tick entry point, laid out
 ;;! through the dock shell. Off a safe frame it reserves the top toolbar band
 ;;! (undo, redo), then the bottom mode-bar band (only with a selection),

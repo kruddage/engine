@@ -85,4 +85,15 @@
               (private (root "core/include") (raw "${generated}")
                        (raw "../third_party"))
               (link "script" "m"))
-  (test "kgui_mode" "kgui_mode_test")))
+  (test "kgui_mode" "kgui_mode_test")
+
+  ;;! The editor chrome — core/editor_layout.scm's spec, drawn by this module's
+  ;;! ImGui-idiom chrome section. Like the panel tests above it stubs the kgui-*
+  ;;! primitives and loads the real image; unlike them it needs no fixture for
+  ;;! what it draws, because the spec rides in the linked script library already.
+  (executable "kgui_imchrome_test"
+              (sources "kgui_imchrome_test.c")
+              (private (root "core/include") (raw "${generated}")
+                       (raw "../third_party"))
+              (link "script"))
+  (test "kgui_imchrome" "kgui_imchrome_test")))

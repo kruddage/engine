@@ -3,6 +3,18 @@
 ;;! kruddgui.cpp drives.
 ((embed "kruddgui.scm" "kruddgui_scm.h" "KRUDDGUI_SCM")
 
+ ;;! The krudd-* accessors the panel image reads the engine through. Built for
+ ;;! both targets, unlike the kruddgui library that consumes it: it touches no
+ ;;! emscripten and no GL — only s7, script.h's parameter introspection and the
+ ;;! abi/ vtables — so it compiles natively and carries its own native test
+ ;;! (kgui_accessors_test), which is where its Scheme return shapes are pinned.
+ (library "kgui_accessors"
+   (sources "kgui_accessors.c")
+   (private "." (raw "${generated}") (raw "../third_party")
+            (root "abi") (root "core/include")
+            (root "world/entity/include") (root "base/math/include"))
+   (link "script" "md_parse" "subsystem_manager"))
+
  (wasm-only
   (library "kruddgui"
     (wasm-flags "--std=c++17" "-fno-exceptions" "-fno-rtti")
@@ -10,7 +22,7 @@
              "kgui_text_edit.c" "kgui_font.c")
     (private "." (raw "${generated}") (raw "../third_party"))
     (link "script" "log" "memory" "subsystem"
-          "subsystem_manager")))
+          "subsystem_manager" "kgui_accessors")))
 
  ;;! None of the four native libraries below has a public surface: the kgui_*
  ;;! headers are included by kruddgui.cpp and by this module's own tests, all of
@@ -85,4 +97,17 @@
               (private (root "core/include") (raw "${generated}")
                        (raw "../third_party"))
               (link "script" "m"))
-  (test "kgui_mode" "kgui_mode_test")))
+  (test "kgui_mode" "kgui_mode_test")
+
+  ;;! Unlike the five above, this one does not drive the panel image against
+  ;;! stubs — it drives the real accessors against fake subsystem apis, so it
+  ;;! is the other half of the same seam: those tests pin what the panels read,
+  ;;! this pins what the engine hands them.
+  (executable "kgui_accessors_test"
+              (sources "kgui_accessors_test.c")
+              (private "." (root "core/include") (root "abi")
+                       (root "world/entity/include")
+                       (root "base/math/include")
+                       (raw "${generated}") (raw "../third_party"))
+              (link "kgui_accessors" "script" "subsystem_manager" "md_parse"))
+  (test "kgui_accessors" "kgui_accessors_test")))

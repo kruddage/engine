@@ -42,6 +42,7 @@ extern "C" {
 extern "C" {
 #include "s7.h"			/* self-guards for C++ linkage */
 #include "script.h"
+#include "kgui_accessors.h"	/* the krudd-* engine accessors */
 #include "kruddgui_scm.h"	/* KRUDDGUI_SCM — the panel image */
 
 double get_device_pixel_ratio(void);	/* plugin_abi.c (main module) */
@@ -1430,6 +1431,15 @@ static void register_primitives(s7_scheme *sc)
 	s7_define_function(sc, "kgui-set-editor-mode", sp_kgui_set_editor_mode,
 			   1, 0, false,
 			   "(kgui-set-editor-mode on) enter editor mode if ON");
+
+	/*
+	 * The krudd-* half: what the panels read the engine THROUGH, as against
+	 * the kgui-* half above, which is what they draw WITH. It resolves its
+	 * services off the same manager this plugin was handed, so it must come
+	 * after plugin_entry has set g_mgr — which it does, since the image is
+	 * loaded lazily on the first tick.
+	 */
+	kgui_accessors_register(sc, g_mgr);
 }
 
 /*
@@ -1638,12 +1648,23 @@ static void kruddgui_tick(void)
 	 * It owns its own input region (kgui-panel-begin), so the tap that
 	 * flips it never falls through to the board underneath.
 	 *
-	 * The editor's own panel set (kruddgui-draw) is still parked: the
-	 * krudd-* accessors it reads went with kruddboard in #661 and have not
-	 * been rebuilt, so editor mode is the page's DOM chrome for now and
-	 * this is the switch that will drive both once they are back.
+	 * It is also what gates the editor's own panel set below, now that the
+	 * krudd-* accessors it reads are back (kgui_accessors.c) and
+	 * kruddgui-draw is no longer parked.
 	 */
 	call_scm_panel("kruddgui-modeswitch-draw");
+
+	/*
+	 * The editor's panel set — the toolbar, the mode-bar, the console tray
+	 * and whichever console the arbiter holds. Editor chrome, so unlike the
+	 * switch above and the HUD below it draws only in editor mode: a game's
+	 * play view is meant to be clean, which is the whole point of the two
+	 * modes. The image reserves its own bands off the safe frame and owns
+	 * every input region it declares, so what it does not claim still falls
+	 * through to the viewport underneath.
+	 */
+	if (krudd_editor_mode())
+		call_scm_panel("kruddgui-draw");
 
 	/*
 	 * The perf HUD is not editor chrome: it draws every tick regardless of

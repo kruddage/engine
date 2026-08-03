@@ -52,6 +52,16 @@ struct entity_api {
 	 */
 	int32_t             (*dispatch_scm)(const char *fn, int32_t arg);
 	/*
+	 * Hand the frame to the image's (tick) — a no-argument procedure — with
+	 * the live world and asset catalog bound for the span of the call, so
+	 * the scene-* primitives observe the live world from inside it. The
+	 * per-frame twin of dispatch_scm. The engine calls this rather than
+	 * core's own script_tick when the scene subsystem is up: core sits
+	 * above world/ in the tier order and so cannot bind a world itself.
+	 * A no-op when the image defines no (tick).
+	 */
+	void                (*tick_scm)(void);
+	/*
 	 * Empty the world — tombstone every entity and clear the selection. The
 	 * launcher calls this before building a different scene, so switching
 	 * games starts from a clean world rather than layering one over another.

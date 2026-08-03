@@ -135,7 +135,14 @@ int script_texture_params(const char *src, struct shader_param *out,
 int script_sound_params(const char *src, struct shader_param *out,
 			uint32_t max, uint32_t *total_size);
 
-/* Call the Scheme (tick) procedure if the image defines one. */
+/*
+ * Call the Scheme (tick) procedure if the image defines one, with nothing
+ * bound — which is the whole of what this tier can offer: binding the live
+ * world for the call needs world/entity, and core sits above it in the tier
+ * order. An engine that has the scene subsystem up calls entity_api's tick_scm
+ * instead, which binds the world around this same (tick); this remains the
+ * unbound path for a build with no world at all.
+ */
 void script_tick(void);
 
 /* Tear the interpreter down. */

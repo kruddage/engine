@@ -100,6 +100,19 @@ static int32_t scene_dispatch_scm(const char *fn, int32_t arg)
 	return scene_script_call(&g_world, g_asset, fn, arg);
 }
 
+/*
+ * Hand the frame to the image's (tick) with the live world bound (see
+ * scene_script_tick). The per-frame twin of scene_dispatch_scm: core's own
+ * script_tick calls (tick) with nothing bound — all it can do from above
+ * world/ in the tier order — so the engine routes the call back down through
+ * this vtable entry to get the world with it. Not recorded on the undo
+ * history, for the same reason a dispatch is not: gameplay is not an edit.
+ */
+static void scene_tick_scm(void)
+{
+	scene_script_tick(&g_world, g_asset);
+}
+
 /* Reset the world to empty (the launcher's "unload current scene"). */
 static void scene_clear_world(void)
 {
@@ -292,6 +305,7 @@ static const struct entity_api g_entity_api = {
 	.load_scene     = scene_load,
 	.build_scene_scm = scene_build_scm,
 	.dispatch_scm   = scene_dispatch_scm,
+	.tick_scm       = scene_tick_scm,
 	.clear_world    = scene_clear_world,
 	.create_entity  = scene_create_entity,
 	.destroy_entity = scene_destroy_entity,

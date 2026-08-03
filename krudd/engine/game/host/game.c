@@ -143,8 +143,9 @@ int game_boot_default(const char *name)
 #ifdef __EMSCRIPTEN__
 	/*
 	 * Land on the scene, not the overlay: the same hide the click path runs,
-	 * so a boot default and a launcher pick leave the page in one state. The
-	 * menu button (shell.html.in) still reopens the launcher to pick another.
+	 * so a boot default and a launcher pick leave the page in one state.
+	 * Nothing reopens the launcher once it is down — ?game=none is how you
+	 * get it back to pick another.
 	 */
 	game_launcher_hide();
 	/* A launcher pick is a deliberate choice; booting straight into a scene

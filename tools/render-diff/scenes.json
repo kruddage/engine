@@ -6,13 +6,17 @@
 	"//timing": "capture_frames = rendered frames past first render to settle for",
 	"//timing2": "under the deterministic clock (#603); settle_ms = wall-clock",
 	"//timing3": "ceiling on reaching that frame, not a fixed wait.",
+	"//game": "Every query names a project: a bare URL opens the picker and",
+	"//game2": "loads nothing, so a scene that wants a board on screen has to",
+	"//game3": "ask for one. chess is the project this build embeds, so it",
+	"//game4": "opens at boot with no fetch in the way of the capture.",
 	"canvas": "#canvas",
 
 	"scenes": [
 		{
 			"id": "triangle",
-			"query": "?renderer=webgpu",
-			"webgl_query": "?renderer=webgl",
+			"query": "?renderer=webgpu&game=chess",
+			"webgl_query": "?renderer=webgl&game=chess",
 			"mode": "self",
 			"tolerance": 0.002,
 			"capture_frames": 60,
@@ -21,8 +25,8 @@
 		},
 		{
 			"id": "parity",
-			"query": "?renderer=webgpu",
-			"webgl_query": "?renderer=webgl",
+			"query": "?renderer=webgpu&game=chess",
+			"webgl_query": "?renderer=webgl&game=chess",
 			"mode": "diff",
 			"tolerance": 0.002,
 			"capture_frames": 180,

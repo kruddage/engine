@@ -82,10 +82,10 @@ static int g_slot_count;
  * A project that arrives at runtime is not a project this build carries: it is
  * whatever the player last opened, and there is one of those. So the door owns
  * exactly one entry and renames it in place for each new project, rather than
- * leaving a trail of buttons for sources that are no longer on screen and, past
- * PROJECT_MAX, refusing the ninth one outright. The staged project and anything
- * else registered at boot keep their own entries — they are what the build
- * ships, and nothing loaded later displaces them.
+ * leaving a trail of entries for sources that are no longer on screen and, past
+ * PROJECT_MAX, refusing the ninth one outright. The project this build embedded
+ * keeps its own entry — it is what a ?game= for that name resolves against, and
+ * nothing opened later displaces it.
  */
 static int g_door_index = -1;
 
@@ -148,9 +148,10 @@ static void project_load_trampoline(void)
  *
  * The registry holds this very buffer as the entry's display name (it keeps the
  * pointer it was registered with), so writing the new name into it IS the
- * rename as far as game_find is concerned; game_rename is what makes the
- * launcher button on the page agree, and it is the reason the registry grew
- * that call at all.
+ * rename as far as game_find is concerned. game_rename is called anyway, and
+ * deliberately: the aliasing is this module's business, and a slot that changes
+ * what it stands for should say so through the registry's own door rather than
+ * by reaching into a buffer the registry is holding.
  */
 static int rename_door_slot(struct project_slot *slot, const char *name,
 			    size_t n)
@@ -356,7 +357,9 @@ int32_t project_host_load(const char *src)
  * The page's end of project_host_load: SRC is a NUL-terminated project source
  * in the module's memory, and the answer is the launcher index it opened on, or
  * -1 for a source that did not register a project. Exported to
- * Module._krudd_load_project, the way game.c exports krudd_load_game.
+ * Module._krudd_load_project — the module's one entry point for opening
+ * something, since a project the build shipped arrives as a ?game= in the URL
+ * rather than as a call.
  *
  * A refusal is a return value and not an exception on purpose. A project is
  * user input — the whole point of the button that reaches this is that anyone

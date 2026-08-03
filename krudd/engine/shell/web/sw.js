@@ -23,9 +23,17 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
 	if (event.request.method !== "GET") return;
 
+	// A navigation's query names the project (?game=ducks) and the renderer
+	// (?renderer=webgl), and every one of them fetches the same index.html —
+	// the page reads the query at runtime. So navigations match ignoring the
+	// query: one visit primes the shell for all of them, and opening a
+	// different project offline finds the cached page instead of missing on a
+	// query string this browser happens not to have seen yet.
+	const match = event.request.mode === "navigate" ? { ignoreSearch: true } : {};
+
 	event.respondWith(
 		caches.open(CACHE_NAME).then((cache) =>
-			cache.match(event.request).then((cached) => {
+			cache.match(event.request, match).then((cached) => {
 				const network = fetch(event.request)
 					.then((response) => {
 						if (response.ok) cache.put(event.request, response.clone());

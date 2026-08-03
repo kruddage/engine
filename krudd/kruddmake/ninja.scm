@@ -262,16 +262,18 @@
      ;;! The exported surface is mirrored by @kruddage/engine's
      ;;! ENGINE_EXPORTED_FUNCTIONS, which its build script checks back against
      ;;! the linked module — so this list and that one are checked to agree
-     ;;! rather than trusted to. _malloc/_free are here because the Load Project
-     ;;! path passes a variable-length string INTO the module (every other
-     ;;! JS bridge in the tree passes out), and a buffer for it has to come from
-     ;;! somewhere the module owns; project_host.c's EM_JS bridge is the only
-     ;;! caller, and it frees what it allocates in the same call.
+     ;;! rather than trusted to. Opening a project is the whole of it: a project
+     ;;! the build shipped is opened by navigating to ?game=<name>, which the
+     ;;! module reads at boot rather than being called about. _malloc/_free are
+     ;;! here because that path passes a variable-length string INTO the module
+     ;;! (every other JS bridge in the tree passes out), and a buffer for it has
+     ;;! to come from somewhere the module owns; project_host.c's EM_JS bridge is
+     ;;! the only caller, and it frees what it allocates in the same call.
      (string-append "mainflags = -sENVIRONMENT=web -sALLOW_MEMORY_GROWTH=1 "
                     "-sGROWABLE_ARRAYBUFFERS=0 -sMALLOC=mimalloc "
                     "-sFETCH=1 -sMAX_WEBGL_VERSION=2 --use-port=emdawnwebgpu "
-                    "-sEXPORTED_FUNCTIONS=_main,_krudd_load_game,"
-                    "_krudd_load_project,_malloc,_free")
+                    "-sEXPORTED_FUNCTIONS=_main,_krudd_load_project,"
+                    "_malloc,_free")
      ""
      "rule cc"
      "  command = $cc $cflags $extracflags $includes -MMD -MF $out.d -c $in -o $out"

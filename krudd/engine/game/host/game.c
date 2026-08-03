@@ -1,10 +1,18 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
- * game — the launcher's scene registry. Holds the registered {name, load} pairs,
- * loads one by index, and (in the browser) bridges to the shell overlay: each
- * registration injects a button, and the exported krudd_load_game is what those
- * buttons call. The registry itself is plain C and host-testable; only the
- * DOM bridge is emscripten-only.
+ * game — the registry of loadable scenes. Holds the registered {name, load}
+ * pairs, resolves a name to a slot, loads one by index, and reports which one is
+ * active. Plain C and host-testable; the one browser-only line is the hide that
+ * takes the page's picker down once a boot has landed on a scene.
+ *
+ * The picker itself is not drawn from here. The page lists the projects the
+ * build shipped (assets/projects.json, read by shell.html.in) and a pick there
+ * navigates to ?game=<name> rather than calling in, so this registry is what
+ * that name resolves against — not what the menu is made of. Registering
+ * therefore injects nothing into the DOM, and a project the image does not
+ * carry needs no entry here to be reachable: the page fetches its source and
+ * brings it in through project_host_load, the same door a .scm off the disk
+ * comes in by.
  */
 #include <host/game.h>
 
@@ -32,47 +40,12 @@ static int g_count;
 static int g_active = -1;
 
 #ifdef __EMSCRIPTEN__
-/*
- * Append a launcher button for a freshly registered game. The button calls back
- * into the exported krudd_load_game with this game's index; UTF8ToString marshals
- * the C name into a JS string. A missing host element (an older shell) is a safe
- * no-op.
- */
-EM_JS(void, game_launcher_add, (const char *name, int idx), {
-	var host = document.getElementById('launcher-games');
-	if (!host)
-		return;
-	var b = document.createElement('button');
-	b.className = 'launcher-btn';
-	/* Addressable by slot so game_rename can find it again. */
-	b.id = 'launcher-game-' + idx;
-	b.textContent = UTF8ToString(name);
-	b.onclick = function () { Module._krudd_load_game(idx); };
-	host.appendChild(b);
-})
-
-/* Relabel the button injected for slot IDX (see game_rename). A missing element
- * — an older shell, or a slot registered before the page had the host — is a
- * safe no-op, the same as adding one. */
-EM_JS(void, game_launcher_rename, (const char *name, int idx), {
-	var b = document.getElementById('launcher-game-' + idx);
-	if (b)
-		b.textContent = UTF8ToString(name);
-})
-
-/* Hide the launcher overlay once a game has been chosen. */
+/* Take the picker down once a boot has landed on a scene. A missing element (an
+ * older shell) is a safe no-op. */
 EM_JS(void, game_launcher_hide, (void), {
 	var el = document.getElementById('launcher');
 	if (el)
 		el.classList.add('hidden');
-})
-
-/* Show the "load project" splash (see game_boot_default) that stands between
- * a boot default and the board until the player taps it. NAME labels its one
- * button, the project being opened. */
-EM_JS(void, game_show_load_prompt, (const char *name), {
-	if (typeof window.kruddShowLoadPrompt === 'function')
-		window.kruddShowLoadPrompt(UTF8ToString(name));
 })
 #endif
 
@@ -85,9 +58,6 @@ int game_register(const char *name, void (*load)(void))
 	index = g_count;
 	g_games[index].name = name;
 	g_games[index].load = load;
-#ifdef __EMSCRIPTEN__
-	game_launcher_add(name, index);
-#endif
 	g_count++;
 	return index;
 }
@@ -97,9 +67,6 @@ int game_rename(int index, const char *name)
 	if (index < 0 || index >= g_count || !name)
 		return -1;
 	g_games[index].name = name;
-#ifdef __EMSCRIPTEN__
-	game_launcher_rename(name, index);
-#endif
 	return 0;
 }
 
@@ -156,42 +123,21 @@ int game_active_index(void)
 	return g_active;
 }
 
-int game_boot_index(int index)
+int game_boot_default(const char *name)
 {
-	if (index < 0 || index >= g_count || !g_games[index].load)
+	int index = game_find(name);
+
+	if (index < 0 || !g_games[index].load)
 		return -1;
 	game_load(index);
 #ifdef __EMSCRIPTEN__
 	/*
-	 * Land on the scene, not the overlay: the same hide the click path runs,
-	 * so a boot default and a launcher pick leave the page in one state.
-	 * Nothing reopens the launcher once it is down — ?game=none is how you
-	 * get it back to pick another.
+	 * Land on the scene, not the picker: the page opened ON this project, so
+	 * the overlay it was showing while the module downloaded is something it
+	 * was passing through. Nothing reopens it from here — the "load project"
+	 * control in the corner is how a player gets it back.
 	 */
 	game_launcher_hide();
-	/* A launcher pick is a deliberate choice; booting straight into a scene
-	 * isn't, so it gets a "load project" splash naming that scene, in place
-	 * of the launcher click that never happened — and a place for the first
-	 * user gesture to land so the audio context can unlock (see the
-	 * load-prompt handler in shell.html.in). */
-	game_show_load_prompt(g_games[index].name);
 #endif
 	return index;
 }
-
-int game_boot_default(const char *name)
-{
-	return game_boot_index(game_find(name));
-}
-
-#ifdef __EMSCRIPTEN__
-/*
- * The launcher's entry point from JS: load the chosen game, then dismiss the
- * overlay. Exported to Module._krudd_load_game (see the shell's button wiring).
- */
-EMSCRIPTEN_KEEPALIVE void krudd_load_game(int index)
-{
-	game_load(index);
-	game_launcher_hide();
-}
-#endif

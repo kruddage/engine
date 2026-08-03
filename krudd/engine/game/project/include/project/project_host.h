@@ -138,15 +138,17 @@ int32_t project_host_eval(const char *src);
  * on-load runs, and from the next frame its hooks are the ones that run.
  *
  * It is the door for a project that arrives while the engine is already up — a
- * file the player picked, or one fetched from the site's assets/ — as opposed
- * to the project the build shipped staged, which core evaluates at boot through
- * project_host_eval and opens by slot. The distinction is not cosmetic, and it
- * is the reason this is a second entry point rather than a flag:
+ * file the player picked, or one the page fetched out of the site's assets/
+ * because ?game= named a project this image does not carry — as opposed to the
+ * project the build shipped staged, which core evaluates at boot through
+ * project_host_eval so that a ?game= for its name resolves without a fetch. The
+ * distinction is not cosmetic, and it is the reason this is a second entry
+ * point rather than a flag:
  *
  *   THE DOOR OWNS ONE LAUNCHER ENTRY. What comes through it is whatever the
  *   player last opened, and there is one of those, so a second project renames
  *   that entry rather than taking another beside it. Loading five files leaves
- *   one button, not five dead ones, and never exhausts the registry. What the
+ *   one entry, not five stale ones, and never exhausts the registry. What the
  *   build ships — the staged project, and anything a plugin registered — keeps
  *   its own entry: those are facts about this engine, and a file someone opened
  *   for a minute does not displace them. A source whose project name is already

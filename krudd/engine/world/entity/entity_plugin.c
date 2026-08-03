@@ -23,6 +23,7 @@
 static struct world                  g_world;
 static const struct asset_codec_api *g_codec;
 static const struct asset_api       *g_asset;  /* NULL = script source unavailable */
+static const struct asset_mut_api   *g_asset_mut; /* NULL = no script-define! */
 static const struct memory_api      *g_mem;
 static const struct stats_api       *g_stats;
 static const struct edit_api        *g_edit;   /* NULL = undo unavailable */
@@ -339,6 +340,12 @@ static void scene_init(void)
 	g_paused = 0;
 	/* Register the entity-* primitives so bound scripts can drive entities. */
 	entity_script_init();
+	/*
+	 * Bind the catalog before registering, so script-define! can author
+	 * into it from the moment the primitive exists — a project registers
+	 * its scripts as its source is evaluated, not during a build.
+	 */
+	scene_script_bind_catalog(g_asset, g_asset_mut);
 	/* Register the scene-* primitives so a (scene ...) form can build a world. */
 	scene_script_init();
 }
@@ -382,6 +389,7 @@ void entity_plugin_entry(struct subsystem_manager *mgr)
 	/* Resolve service vtables before register(), which calls init at once. */
 	g_codec = subsystem_manager_get_api(mgr, "asset_codec");
 	g_asset = subsystem_manager_get_api(mgr, "asset");
+	g_asset_mut = subsystem_manager_get_api(mgr, "asset_mut");
 	g_mem   = subsystem_manager_get_api(mgr, "memory");
 	g_stats = subsystem_manager_get_api(mgr, "stats");
 	g_edit  = subsystem_manager_get_api(mgr, "edit");

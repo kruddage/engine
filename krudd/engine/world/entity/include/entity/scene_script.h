@@ -22,18 +22,35 @@
 
 /*
  * Register the scene-* host primitives (scene-spawn, scene-xform!, scene-mesh!,
- * scene-material!, scene-script!, scene-name!). Idempotent; safe to call before
- * any world is bound, since the primitives only touch a world during a build.
+ * scene-material!, scene-script!, scene-name!, and the load pair scene-clear! /
+ * scene-build!) plus script-define!. Idempotent; safe to call before any world
+ * is bound, since the primitives only touch a world during a build —
+ * script-define! touches none at all.
  */
 void scene_script_init(void);
+
+/*
+ * Bind the catalog script-define! registers into, for the session. Unlike the
+ * world and catalog a build borrows for one call, this pair outlives any build:
+ * a project declares its assets while its own source is being evaluated, which
+ * is not inside one. Either pointer may be NULL (script-define! is then inert).
+ */
+void scene_script_bind_catalog(const struct asset_api *asset,
+			       const struct asset_mut_api *mut);
 
 /*
  * Evaluate SRC — a (scene ...) form — against the shared s7 image, spawning its
  * entities into W and resolving each (mesh/material/script "path") clause against
  * ASSET's catalog. Returns the number of entities created, or -1 when the
- * interpreter is unavailable or SRC is not a (scene ...) form. A per-entity fault
- * is caught in the image and skipped, never taking the whole build down. W and
- * ASSET are borrowed for the call only; no pointer is retained after it returns.
+ * interpreter is unavailable; source that is not a (scene ...) form is logged
+ * in the image and counted as zero, so a bad asset costs a frame nothing. A
+ * per-entity fault is caught there and skipped too, never taking the whole
+ * build down. W and ASSET are borrowed for the call only; no pointer is
+ * retained after it returns.
+ *
+ * Re-entrant: the scene-build! primitive runs a build from inside a call this
+ * module already bound, and the inner build restores that outer binding rather
+ * than clearing it.
  */
 int32_t scene_script_build(struct world *w, const struct asset_api *asset,
 			   const char *src);

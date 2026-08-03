@@ -124,6 +124,17 @@
 (define (script-params src)
   (script-params-form (with-input-from-string src (lambda () (read)))))
 
+;;! (script-hooks src) -> the lifecycle hooks a (script ...) source declares, in
+;;! source order, as a list of strings: ("on-begin" "on-tick"). The companion of
+;;! script-params for the other half of a script's catalog declaration — the
+;;! params clause is data, the rest of the clauses are the hooks — so a script
+;;! registered at runtime (script-define!) can describe itself out of its own
+;;! source rather than out of a table keyed by path.
+(define (script-hooks src)
+  (let ((form (with-input-from-string src (lambda () (read)))))
+    (map (lambda (c) (symbol->string (car c)))
+         (entity-script-hook-clauses (cddr form)))))
+
 ;;! The authored parameter values in scope only for the span of a scripted
 ;;! entity's hook calls — or a mesh script's generate call: an ((name . value)
 ;;! ...) alist (value a number or a list of numbers) the host resolves and binds

@@ -389,6 +389,144 @@ static void test_entity_fault_is_isolated(void)
 	assert(w.render_ref[2] == 11);
 }
 
+/*
+ * (scene-clear!) is entity_api.clear_world reached from Scheme: the world
+ * empties, and both the editor selection and the game outline go back to -1.
+ */
+static void test_scene_clear(void)
+{
+	world_reset(&w);
+	assert(scene_script_build(&w, &fake_asset, SCENE_SRC) == 3);
+	w.selected = 1;
+	w.outline  = 2;
+
+	script_eval("(define (wipe ignore) (scene-clear!) 7)");
+	assert(scene_script_call(&w, &fake_asset, "wipe", 0) == 7);
+
+	assert(w.count == 0);
+	assert(w.selected == -1);
+	assert(w.outline == -1);
+}
+
+/* (scene-build! src) builds into the bound world and returns its count. */
+static void test_scene_build_counts(void)
+{
+	world_reset(&w);
+	script_eval("(define (load-it ignore)"
+		    "  (scene-build! \"(scene s (entity (name \\\"a\\\"))"
+		    "                          (entity (name \\\"b\\\")))\"))");
+	assert(scene_script_call(&w, &fake_asset, "load-it", 0) == 2);
+	assert(w.count == 2);
+	assert(strcmp(world_entity_name(&w, 0), "a") == 0);
+	assert(strcmp(world_entity_name(&w, 1), "b") == 0);
+}
+
+/*
+ * -1 on every way of not building: a form that is not a (scene ...), text that
+ * does not read at all, an argument that is not a string, and a call made with
+ * no world bound (script_eval runs outside any scene_script_call, which is also
+ * the check that the outermost call really did unbind on its way out).
+ */
+static void test_scene_build_rejects(void)
+{
+	world_reset(&w);
+	script_eval("(define *r* 0)");
+	script_eval("(define (try src) (scene-build! src))");
+
+	/* An integer where the source should be: nothing to read, so -1. */
+	assert(scene_script_call(&w, &fake_asset, "try", 0) == -1);
+	assert(w.count == 0);
+
+	script_eval("(define (try-mesh ignore) (scene-build! \"(mesh box)\"))");
+	assert(scene_script_call(&w, &fake_asset, "try-mesh", 0) == -1);
+
+	script_eval("(define (try-junk ignore) (scene-build! \"(scene\"))");
+	assert(scene_script_call(&w, &fake_asset, "try-junk", 0) == -1);
+
+	/* No world bound out here: the primitive has nothing to build into. */
+	script_eval("(set! *r* (scene-build! \"(scene s (entity))\"))");
+	script_eval("(define (peek ignore) *r*)");
+	assert(scene_script_call(&w, &fake_asset, "peek", 0) == -1);
+	assert(w.count == 0);
+}
+
+/*
+ * The re-entrancy check, and the reason the binding is saved and restored
+ * rather than set and cleared. load-level runs inside a dispatch (world bound),
+ * calls scene-build! (which binds the same world a second level down), and then
+ * keeps working with the world it started with. Under set/clear the inner
+ * build's exit nulls g_w, the trailing scene-spawn returns -1, and this goes
+ * red — which is why the assert is on work done after the nested build.
+ */
+static void test_nested_build_keeps_outer_binding(void)
+{
+	int32_t r;
+
+	world_reset(&w);
+	script_eval("(define (load-level ignore)"
+		    "  (scene-clear!)"
+		    "  (let ((n (scene-build!"
+		    "             \"(scene lv (entity (name \\\"a\\\"))"
+		    "                       (entity (name \\\"b\\\")))\")))"
+		    "    (+ (* 100 n) (scene-spawn -1))))");
+
+	r = scene_script_call(&w, &fake_asset, "load-level", 0);
+
+	/* 2 built, then a third spawned by the still-bound outer call. */
+	assert(r == 202);
+	assert(w.count == 3);
+	assert(w.alive[2]);
+
+	/* The primitives still reach the world after the nested build. */
+	script_eval("(define (tag ignore) (scene-name! 2 \"after\") 0)");
+	assert(scene_script_call(&w, &fake_asset, "tag", 0) == 0);
+	assert(strcmp(world_entity_name(&w, 2), "after") == 0);
+}
+
+/*
+ * A per-entity fault inside a nested build is still caught and skipped, exactly
+ * as it is for a host-driven build — and the dispatch around it survives to
+ * report, so the fault is not fatal at either level.
+ */
+static void test_nested_build_isolates_entity_fault(void)
+{
+	world_reset(&w);
+	script_eval("(define (load-faulty ignore)"
+		    "  (let ((n (scene-build! \"(scene s"
+		    "        (entity (mesh \\\"builtin://mesh/box\\\"))"
+		    "        (entity (name))"
+		    "        (entity (mesh \\\"builtin://mesh/torus\\\")))\")))"
+		    "    (+ (* 10 n) (scene-spawn -1))))");
+
+	/* 2 of 3 built (the middle one faulted after spawning), and the outer
+	 * call still had its world when it spawned id 3. */
+	assert(scene_script_call(&w, &fake_asset, "load-faulty", 0) == 23);
+	assert(w.render_ref[0] == 12);
+	assert(w.render_ref[2] == 11);
+	assert(w.count == 4);
+}
+
+/*
+ * The launcher's load path with no C in it: clear, then build. These are
+ * chess_load's first two steps, driven entirely from the image.
+ */
+static void test_clear_then_build_reloads(void)
+{
+	world_reset(&w);
+	assert(scene_script_build(&w, &fake_asset, SCENE_SRC) == 3);
+	assert(w.count == 3);
+
+	script_eval("(define (reload ignore)"
+		    "  (scene-clear!)"
+		    "  (scene-build! \"(scene next"
+		    "     (entity (mesh \\\"builtin://mesh/box\\\")))\"))");
+	assert(scene_script_call(&w, &fake_asset, "reload", 0) == 1);
+
+	/* The old scene is gone, not appended to. */
+	assert(w.count == 1);
+	assert(w.render_ref[0] == 12);
+}
+
 int main(void)
 {
 	log_init();
@@ -407,6 +545,12 @@ int main(void)
 	test_unknown_path_is_inert();
 	test_not_a_scene_form();
 	test_entity_fault_is_isolated();
+	test_scene_clear();
+	test_scene_build_counts();
+	test_scene_build_rejects();
+	test_nested_build_keeps_outer_binding();
+	test_nested_build_isolates_entity_fault();
+	test_clear_then_build_reloads();
 
 	printf("scene_script_test: ok\n");
 	return 0;

@@ -25,15 +25,17 @@
 ;;! The board is 64 plane tiles (builtin://mesh/plane, board-light/board-dark)
 ;;! riding just above a walnut slab (a scaled box), the whole set resting on a
 ;;! wide matte ground plane. The "Camera" entity parks the eye high and to one
-;;! side for a fixed 3/4 view, then the chess-camera script (game/chess/
-;;! rules.scm's chess-camera-tick!) eases it toward the side to move, a picked-
-;;! up piece, or a just-landed square every frame; scene_renderer reads its
-;;! world position as the camera eye each frame (the view target stays the
-;;! origin, the board centre).
+;;! side for a fixed 3/4 view, then the chess-camera script eases it toward the
+;;! side to move, a picked-up piece, or a just-landed square every frame;
+;;! scene_renderer reads its world position as the camera eye each frame (the
+;;! view target stays the origin, the board centre). That script is this game's
+;;! own: rules.scm registers it at project://script/chess-camera through
+;;! script-define! and implements it in chess-camera-tick!, so the engine seeds
+;;! nothing on chess's behalf.
 
 (scene chess
        (entity (name "Camera") (at 5.5 8.5 10.5)
-               (script "builtin://script/chess-camera"))
+               (script "project://script/chess-camera"))
 
        ;;! A wide matte ground the set rests on, then the walnut board slab (top at
        ;;! y = 0); the 64 tiles ride at y = 0.02 with a hair of grout showing the slab.

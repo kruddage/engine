@@ -6,6 +6,10 @@
  * catalog — then checks each spawned entity carries the transform, name, and
  * mesh/material/script bindings the form declared, and that the resolver turned
  * catalog paths into the right stable ids.
+ *
+ * It also covers the two runtime seams onto that world: an event dispatch
+ * (scene_script_call) and the frame hook (scene_script_tick), including that
+ * both leave the world unbound behind them.
  */
 #include <entity/world.h>
 #include <entity/scene.h>
@@ -242,6 +246,120 @@ static void test_destroy_named(void)
 	assert(!w.alive[3]);       /* the second mark is gone */
 }
 
+/*
+ * The per-frame seam: scene_script_tick calls the image's (tick) with the world
+ * bound, so a frame hook living in Scheme sees the live world — reads a name,
+ * reads the selection, and writes the outline, none of which it could do while
+ * (tick) was invoked unbound from core.
+ */
+static void test_tick_sees_the_world(void)
+{
+	world_reset(&w);
+	assert(scene_script_build(&w, &fake_asset,
+				  "(scene s (entity (name \"alpha\"))"
+				  "         (entity (name \"beta\")))") == 2);
+	world_set_selected(&w, 1);
+
+	script_eval("(define *ticks* 0)"
+		    "(define *seen-name* \"\")"
+		    "(define (tick)"
+		    "  (set! *ticks* (+ *ticks* 1))"
+		    "  (set! *seen-name* (scene-entity-name (scene-selected)))"
+		    "  (scene-outline! (scene-selected)))");
+
+	scene_script_tick(&w, &fake_asset);
+
+	/* The outline write landed on the live world. */
+	assert(world_get_outline(&w) == 1);
+
+	/* And the read side saw the selected entity's real name. */
+	script_eval("(define (seen ignore)"
+		    "  (if (string=? *seen-name* \"beta\") *ticks* -1))");
+	assert(scene_script_call(&w, &fake_asset, "seen", 0) == 1);
+
+	scene_script_tick(&w, &fake_asset);
+	assert(scene_script_call(&w, &fake_asset, "seen", 0) == 2);
+}
+
+/*
+ * (scene-selected) reports exactly what world_get_selected does — the value
+ * entity_api's get_selected hands the rest of the engine — and -1 when nothing
+ * is selected.
+ */
+static void test_selected_tracks_the_world(void)
+{
+	world_reset(&w);
+	assert(scene_script_build(&w, &fake_asset,
+				  "(scene s (entity (name \"alpha\"))"
+				  "         (entity (name \"beta\")))") == 2);
+	script_eval("(define (sel ignore) (scene-selected))");
+
+	world_set_selected(&w, 1);
+	assert(world_get_selected(&w) == 1);
+	assert(scene_script_call(&w, &fake_asset, "sel", 0) == 1);
+
+	world_set_selected(&w, 0);
+	assert(scene_script_call(&w, &fake_asset, "sel", 0) ==
+	       world_get_selected(&w));
+
+	world_set_selected(&w, -1);
+	assert(world_get_selected(&w) == -1);
+	assert(scene_script_call(&w, &fake_asset, "sel", 0) == -1);
+}
+
+/*
+ * The world is unbound the moment the tick returns: a scene-* primitive
+ * evaluated at top level afterwards reads an empty world and mutates nothing.
+ * script_eval runs outside any bound call, so these three lines are exactly the
+ * "no primitive can observe a stale world outside a tick" case; a later bound
+ * call only reports what they captured.
+ */
+static void test_world_unbound_after_tick(void)
+{
+	uint32_t before;
+
+	world_reset(&w);
+	assert(scene_script_build(&w, &fake_asset,
+		"(scene s (entity (name \"alpha\")))") == 1);
+	world_set_selected(&w, 0);
+	script_eval("(define (tick) (scene-outline! 0))");
+	scene_script_tick(&w, &fake_asset);
+	assert(world_get_outline(&w) == 0);
+
+	before = w.count;
+	script_eval("(define *out-sel* (scene-selected))"
+		    "(define *out-name* (scene-entity-name 0))"
+		    "(define *out-pos* (scene-entity-pos 0))"
+		    "(define *out-spawn* (scene-spawn))");
+
+	/* Nothing spawned into the world the tick left behind. */
+	assert(w.count == before);
+	assert(world_get_outline(&w) == 0);
+
+	script_eval("(define (probe-unbound k)"
+		    "  (cond ((= k 0) *out-sel*)"
+		    "        ((= k 1) (string-length *out-name*))"
+		    "        ((= k 2) (if *out-pos* 1 0))"
+		    "        (else *out-spawn*)))");
+	assert(scene_script_call(&w, &fake_asset, "probe-unbound", 0) == -1);
+	assert(scene_script_call(&w, &fake_asset, "probe-unbound", 1) == 0);
+	assert(scene_script_call(&w, &fake_asset, "probe-unbound", 2) == 0);
+	assert(scene_script_call(&w, &fake_asset, "probe-unbound", 3) == -1);
+}
+
+/* An image with no (tick) is a no-op, and so is a tick with no world. */
+static void test_tick_without_hook_is_inert(void)
+{
+	world_reset(&w);
+	assert(scene_script_build(&w, &fake_asset,
+		"(scene s (entity (name \"alpha\")))") == 1);
+	script_eval("(define tick 0)");        /* not a procedure */
+	scene_script_tick(&w, &fake_asset);
+	assert(w.count == 1);
+	scene_script_tick(NULL, &fake_asset);  /* no world — must not crash */
+	assert(w.count == 1);
+}
+
 /* A non-scene form is rejected cleanly: nothing spawns, no crash. */
 static void test_not_a_scene_form(void)
 {
@@ -281,6 +399,10 @@ int main(void)
 	test_rotate_builds_quaternion();
 	test_children_nest_under_parent();
 	test_dispatch_and_entity_name();
+	test_tick_sees_the_world();
+	test_selected_tracks_the_world();
+	test_world_unbound_after_tick();
+	test_tick_without_hook_is_inert();
 	test_destroy_named();
 	test_unknown_path_is_inert();
 	test_not_a_scene_form();

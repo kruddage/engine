@@ -50,4 +50,19 @@ int32_t scene_script_build(struct world *w, const struct asset_api *asset,
 int32_t scene_script_call(struct world *w, const struct asset_api *asset,
 			  const char *fn, int32_t arg);
 
+/*
+ * Call the image's (tick) — a no-argument procedure — with W and ASSET bound
+ * for the call, so the scene-* primitives observe the live world from inside
+ * it. The per-frame twin of scene_script_call: same set-before / clear-after
+ * binding, no argument and no result, because a frame hook has neither.
+ *
+ * This exists because core's script_tick cannot bind a world: core sits above
+ * world/ in the tier order (kruddmake/manifest.scm), so the engine reaches this
+ * back down through entity_api's tick_scm rather than core linking this module.
+ * A no-op when the image defines no (tick), when the interpreter is down, or
+ * when W is NULL — costing one name lookup, exactly what script_tick already
+ * paid. W/ASSET are borrowed for the call only.
+ */
+void scene_script_tick(struct world *w, const struct asset_api *asset);
+
 #endif /* SCENE_SCRIPT_H */

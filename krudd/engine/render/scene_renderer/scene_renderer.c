@@ -40,7 +40,8 @@ static const struct memory_api native_mem = {
 /*
  * Whose selection the outline pass follows. The web build hosts games and no
  * editor, so it follows the game's own outline target (entity_api's
- * get_outline) — the picked chess piece, which is what a player wants to see.
+ * get_outline) — the piece the player picked up, which is what a player wants
+ * to see.
  * The native harness hosts no game, so nothing ever sets that target there and
  * it follows the scene selection (get_selected) instead.
  */
@@ -2831,8 +2832,9 @@ static int outline_selected_entity(const struct world *w, uint32_t *out_id)
 		return 0;
 	/*
 	 * On the web the outline follows the game's own outline target — the
-	 * piece the chess rules picked up, set through entity_api.set_outline —
-	 * so the ring shows in play; natively it follows the scene selection.
+	 * piece the loaded game's rules picked up, set through
+	 * entity_api.set_outline — so the ring shows in play; natively it
+	 * follows the scene selection.
 	 * Either source must still name a live, drawable mesh to be worth the
 	 * pass.
 	 */
@@ -2936,9 +2938,9 @@ static void composite_pass(struct fg_pass_ctx *ctx, void *userdata)
 	ubo[0] = g_view_w > 0.0f ? OUTLINE_THICKNESS / g_view_w : 0.0f; /* texel.x */
 	ubo[1] = g_view_h > 0.0f ? OUTLINE_THICKNESS / g_view_h : 0.0f; /* texel.y */
 	/*
-	 * A scene selection outlines red; an in-game outline (a picked chess
-	 * piece) uses a warm gold that reads on both the ivory and the ebony
-	 * pieces where a hard red would fight the dark set.
+	 * A scene selection outlines red; an in-game outline (a piece the player
+	 * picked up) uses a warm gold that reads on both a pale and a dark set,
+	 * where a hard red would fight the dark one.
 	 */
 	if (OUTLINE_FOLLOWS_SELECTION()) {
 		ubo[4] = 1.0f;              /* red   */

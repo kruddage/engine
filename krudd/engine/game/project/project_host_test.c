@@ -414,6 +414,43 @@ static void test_partial_project_loads(void)
 	assert(w.count == 2);
 }
 
+/*
+ * A scene bigger than the printer's default list elision, built whole.
+ *
+ * The scene clause is data the host writes back out as text for scene-build!,
+ * and s7's printer replaces everything past (*s7* 'print-length) items — 12 by
+ * default — with "...". A real project's scene is a hundred entities before it
+ * is anything, so without project-scene-source raising that for the span of the
+ * write, a project would load its first dozen entities and report success: a
+ * board with two rows of squares and nothing on the log. Forty is comfortably
+ * past the default and small enough to stay a cheap check.
+ */
+static void test_large_scene_is_not_elided(void)
+{
+	static char src[4096];
+	int32_t     big;
+	size_t      n;
+	int         i;
+
+	n = (size_t)snprintf(src, sizeof(src), "(project \"Wide\" (scene wide");
+	for (i = 0; i < 40; i++)
+		n += (size_t)snprintf(src + n, sizeof(src) - n,
+				      " (entity (name \"pad-%d\") (at %d 0 0))",
+				      i, i);
+	snprintf(src + n, sizeof(src) - n, "))");
+
+	big = project_host_eval(src);
+	assert(big >= 0);
+	game_load(big);
+	assert(w.count == 40);
+	assert(id_of("pad-0") >= 0);
+	assert(id_of("pad-39") >= 0);
+
+	/* And the project it displaced still loads its own scene whole. */
+	game_load(g_project);
+	assert(w.count == 2);
+}
+
 int main(void)
 {
 	log_init();
@@ -429,6 +466,7 @@ int main(void)
 	test_name_collision_refused();
 	test_malformed_is_refused();
 	test_partial_project_loads();
+	test_large_scene_is_not_elided();
 
 	printf("project_host_test: ok\n");
 	return 0;

@@ -704,7 +704,7 @@ static s7_pointer sp_scene_entity_name(s7_scheme *sc, s7_pointer args)
 /*
  * (scene-entity-pos id) -> the entity's authored local position as a three-item
  * list (x y z), or #f when id is not a live entity. The read twin of the position
- * scene-xform! writes: game rules that relocate a picked entity (a chess piece
+ * scene-xform! writes: game rules that relocate a picked entity (a board piece
  * moving to a captured square) need the target's current spot, which only the
  * host knows. Top-level entities have no parent, so local is world here — the
  * pieces a game moves are all roots.

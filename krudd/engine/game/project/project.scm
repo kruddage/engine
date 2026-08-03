@@ -165,6 +165,26 @@
            (lambda () (apply hook args))
            (lambda a (project-warn (string-append what " hook fault")) #f))))
 
+;;! (project-scene-source form) -> the (scene ...) clause FORM written back out
+;;! as the text scene-build! takes.
+;;!
+;;! The print-length dance is not decoration. s7's printer elides a list past
+;;! (*s7* 'print-length) items with a literal "...", and that setting defaults to
+;;! 12 — so a real scene, which is a hundred entities before it is anything, gets
+;;! written out as its first dozen and an ellipsis. scene-build! then builds a
+;;! tenth of the world and reports success, because as far as it can tell that
+;;! was the whole form. Raised for the span of the one call and put back through
+;;! dynamic-wind (a fault mid-print must not leave the setting raised), since it
+;;! is a global printer setting the rest of the image shares.
+(define (project-scene-source form)
+  (let ((prev (*s7* 'print-length))
+        (src  ""))
+    (dynamic-wind
+        (lambda () (set! (*s7* 'print-length) 1000000))
+        (lambda () (set! src (object->string form)))
+        (lambda () (set! (*s7* 'print-length) prev)))
+    src))
+
 ;;! (project-open p) — the launcher's load callback for project P, run with the
 ;;! live world bound. The three steps a game plugin's load did, in the same
 ;;! order: empty whatever scene was showing, build this project's own, and start
@@ -175,7 +195,7 @@
   (scene-clear!)
   (let ((form (project-scene p)))
     (when (pair? form)
-      (when (< (scene-build! (object->string form)) 0)
+      (when (< (scene-build! (project-scene-source form)) 0)
         (project-warn (string-append (project-name p)
                                      ": (scene ...) clause did not build")))))
   (project-set-last-sel! p (scene-selected))

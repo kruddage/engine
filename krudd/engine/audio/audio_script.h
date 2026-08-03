@@ -14,7 +14,8 @@
  * (rather than linking a backend directly) is what keeps this file the same
  * on a build with a device backend and on one without: no backend registered
  * means the lookup keeps returning NULL and every call stays a silent no-op,
- * exactly as chess.c's g_audio being NULL is a no-op today.
+ * exactly as an unresolved audio api was a no-op for the game plugins that
+ * reached the backend through the vtable directly.
  */
 
 struct subsystem_manager;

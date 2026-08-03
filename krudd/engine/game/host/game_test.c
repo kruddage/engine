@@ -76,6 +76,20 @@ int main(void)
 	assert(game_boot_default(NULL) == -1);
 	assert(game_active_index() == 0);
 
+	/* game_boot_index is the same door by slot rather than by name — what a
+	 * boot default that was never a name (the staged project, which reports
+	 * the slot it registered into) opens through. An out-of-range slot, and
+	 * the -1 a refused registration hands back, load nothing. */
+	assert(game_boot_index(1) == 1);
+	assert(g_loaded == 20);
+	assert(game_active_index() == 1);
+	assert(game_boot_index(-1) == -1);
+	assert(game_boot_index(2) == -1);
+	assert(g_loaded == 20);
+	assert(game_active_index() == 1);
+	assert(game_boot_index(0) == 0);
+	assert(g_loaded == 10);
+
 	/* A load callback sees its own slot as the active game while it runs. */
 	{
 		int id = game_register("D", load_d);

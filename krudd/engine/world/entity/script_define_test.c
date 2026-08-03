@@ -104,10 +104,10 @@ static uint32_t entity_named(const char *name)
 }
 
 /*
- * A camera script of chess's exact shape — a project's own script, defined from
- * its own source. The dispatch target is defined here the way rules.scm defines
- * chess-camera-tick!: the script asset is a one-line wrapper, the behaviour is
- * an ordinary procedure in the image.
+ * A camera script of the shape a real game's is — a project's own script,
+ * defined from its own source. The dispatch target is defined here the way a
+ * project's rules define theirs: the script asset is a one-line wrapper, the
+ * behaviour is an ordinary procedure in the image.
  */
 static const char *PROJECT_SRC =
 	"(define (probe-cam-tick! self t)"
@@ -119,7 +119,7 @@ static const char *PROJECT_SRC =
 	"(define probe-cam-id"
 	"  (script-define! \"project://script/probe-cam\" probe-cam-src))";
 
-/* The (scene ...) form that binds it, exactly as chess's scene.scm does. */
+/* The (scene ...) form that binds it, exactly as a project's scene clause. */
 static const char *SCENE_SRC =
 	"(scene probe"
 	"  (entity (name \"Camera\") (at 5.5 8.5 10.5)"

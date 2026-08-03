@@ -149,7 +149,7 @@ static const char *PROJECT_SRC =
 	"(define probe-material-id"
 	"  (material-define! \"project://material/probe\" probe-material-src))";
 
-/* The (scene ...) form that binds it, exactly as chess's scene.scm does. */
+/* The (scene ...) form that binds it, exactly as a project's scene clause. */
 static const char *SCENE_SRC =
 	"(scene probe"
 	"  (entity (name \"Lit\") (at 1 2 3)"

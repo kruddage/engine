@@ -158,8 +158,8 @@ struct entity_api {
 	/*
 	 * Game-driven outline target: the entity the renderer outlines in-game,
 	 * independent of the editor selection above. A game's rules set it (the
-	 * chess piece the player picked up) so the selection outline shows
-	 * outside editor chrome; -1 = none, set ignores stale/out-of-range ids.
+	 * piece the player picked up) so the selection outline shows outside
+	 * editor chrome; -1 = none, set ignores stale/out-of-range ids.
 	 */
 	int32_t (*get_outline)(void);
 	void    (*set_outline)(int32_t id);

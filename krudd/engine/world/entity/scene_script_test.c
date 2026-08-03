@@ -507,8 +507,8 @@ static void test_nested_build_isolates_entity_fault(void)
 }
 
 /*
- * The launcher's load path with no C in it: clear, then build. These are
- * chess_load's first two steps, driven entirely from the image.
+ * The launcher's load path with no C in it: clear, then build. These are the
+ * first two steps of a project's load, driven entirely from the image.
  */
 static void test_clear_then_build_reloads(void)
 {

@@ -212,15 +212,16 @@ canvas {
  * ── Load prompt ──
  *
  * A one-tap splash that sits over the board the moment a game boots straight
- * in (the default path — see game_boot_default in game.c, which shows this
+ * in (the default path — see game_boot_index in game.c, which shows this
  * right where it used to just dismiss the launcher and leave bare canvas).
  *
  * It reads as a project loader — "load project" over a button named for the
- * scene that booted — rather than "Play Chess" over a Play button. The page is
- * an engine you open a project in; chess is one project it ships with, and the
- * first screen should say the former and offer the latter, not present the
- * sample as the whole product. The button carries the game's own launcher
- * label, so a different boot default renames it with no edit here.
+ * scene that booted — rather than "Play <that game>" over a Play button. The
+ * page is an engine you open a project in; the game a build ships staged is
+ * one project among however many it carries, and the first screen should say
+ * the former and offer the latter, not present the sample as the whole
+ * product. The button carries the game's own launcher label, so a different
+ * boot default renames it with no edit here.
  *
  * That button is also where the first user gesture lands, so the click handler
  * below resumes the WebAudio context there rather than counting on whatever
@@ -467,7 +468,7 @@ canvas {
 <div class="load-prompt hidden" id="load-prompt">
 	<div class="load-prompt-panel">
 		<div class="load-prompt-title">load project</div>
-		<button class="load-prompt-btn" id="load-prompt-btn">Chess</button>
+		<button class="load-prompt-btn" id="load-prompt-btn">project</button>
 	</div>
 </div>
 
@@ -630,19 +631,25 @@ canvas {
 	};
 
 	/*
-	 * Which scene the page opens on boot. The engine reads this once the
-	 * subsystems are up (krudd_boot_game in engine.c) and loads the matching
-	 * game, so the page lands on a real scene — chess by default — instead of
-	 * the "choose a scene" overlay. ?game=<name> picks another registered game
-	 * (matched case-insensitively against its launcher label), and ?game=none
-	 * (or any unknown name) keeps the launcher up.
+	 * Which scene the page opens on boot, read once the subsystems are up
+	 * (krudd_boot_game in engine.c). ?game=<name> picks a registered game by
+	 * its launcher label (matched case-insensitively), and ?game=none — or any
+	 * unknown name — keeps the "choose a scene" launcher up.
+	 *
+	 * No ?game= at all answers the empty string, which is this page saying it
+	 * has no opinion rather than naming a favourite. The engine then opens the
+	 * project the build shipped staged, by the launcher slot that project took
+	 * when it registered. That is deliberate: the page does not know which
+	 * games a build carries any more than the engine does, and a default
+	 * spelled as a literal game name here would be the same pin #976 pulled
+	 * out of engine.c, just moved into HTML.
 	 */
 	window.kruddBootGame = function () {
 		try {
 			var g = new URLSearchParams(location.search).get('game');
-			return g === null ? 'chess' : g;
+			return g === null ? '' : g;
 		} catch (e) {
-			return 'chess';
+			return '';
 		}
 	};
 

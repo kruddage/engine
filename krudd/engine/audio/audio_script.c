@@ -14,8 +14,9 @@
 /*
  * Defaults mirror kgui-play-sound's hardcoded call (ui/kruddgui/kruddgui.cpp)
  * -- the only generic (path-independent policy) playback call site before
- * this primitive existed. chess.c's chess_play_sound passes its own
- * per-outcome gain instead; that mapping is chess policy and stays put.
+ * this primitive existed. A game that wants a cue louder or softer than that
+ * passes its own gain; which outcome earns which sound is the game's policy
+ * and stays in the game.
  */
 #define AUDIO_SCRIPT_DEFAULT_VOL  0.8
 #define AUDIO_SCRIPT_DEFAULT_PAN  0.0

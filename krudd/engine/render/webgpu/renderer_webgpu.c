@@ -156,8 +156,8 @@ struct gpu_buffer {
  * cached bind groups as it has draws through a pipeline; an undersized cache
  * evicts (and releases) one every draw past its size, every frame, for any
  * scene with more draws-per-pipeline than it holds. Eight covered the tiny boot
- * and tic-tac-toe scenes but not a real one: chess stages ~100 pieces + board
- * tiles on the single pbr pipeline. Sized to comfortably cover a full scene so
+ * scenes but not a real one: a full board game stages ~100 pieces and tiles on
+ * the single pbr pipeline. Sized to comfortably cover a full scene so
  * the common case never evicts (and never releases a bind group a recorded draw
  * still references). The proper long-term answer is one bind group with a
  * dynamic offset per draw; this is the interim. See #624.

@@ -25,7 +25,7 @@ jobs:
       # each other's "exports" map. No compiler and no emsdk — this is all
       # Node — so it rides along with the other lint steps rather than waiting
       # on the WASM build.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
 
@@ -116,7 +116,7 @@ jobs:
       # outputs into a dist/ with a manifest describing them, and everything
       # downstream reads that instead of the build tree. KRUDD_VERSION comes
       # from the version step above — see introspect.scm.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
 

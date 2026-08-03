@@ -14,6 +14,17 @@ static int g_loaded = -1;
 static void load_a(void) { g_loaded = 10; }
 static void load_b(void) { g_loaded = 20; }
 
+/*
+ * The active index a load callback observes while it runs, -1 until one has.
+ * game_load sets the active index before running the callback (game.h says so),
+ * which is what lets one callback serve several entries and tell them apart —
+ * game/project registers a single trampoline that way. Asserting it here keeps
+ * that a contract of this module rather than a coincidence of its ordering.
+ */
+static int g_seen_active = -1;
+
+static void load_d(void) { g_seen_active = game_active_index(); }
+
 int main(void)
 {
 	int ia, ib;
@@ -64,6 +75,16 @@ int main(void)
 	assert(game_active_index() == 0);
 	assert(game_boot_default(NULL) == -1);
 	assert(game_active_index() == 0);
+
+	/* A load callback sees its own slot as the active game while it runs. */
+	{
+		int id = game_register("D", load_d);
+
+		assert(id == 2);
+		game_load(id);
+		assert(g_seen_active == id);
+		assert(game_active_index() == id);
+	}
 
 	printf("game_test: ok\n");
 	return 0;

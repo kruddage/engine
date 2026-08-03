@@ -55,6 +55,12 @@ int  game_boot_default(const char *name);
  * game whose tick reaches into its own rules must gate on
  * game_active_index() == <its own registered index> first — otherwise it
  * fires against whatever scene happens to be loaded, not just its own.
+ *
+ * game_load sets this BEFORE running the load callback, so a callback may read
+ * it to learn which slot it was loaded through. That is what lets one callback
+ * serve several entries — a host that registers a slot per thing it is handed
+ * (game/project) registers one trampoline and works out which entry fired from
+ * here, rather than minting a callback per slot.
  */
 int  game_active_index(void);
 

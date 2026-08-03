@@ -74,6 +74,7 @@ void scene_renderer_plugin_entry(struct subsystem_manager *mgr);
 void viewport_plugin_entry(struct subsystem_manager *mgr);
 void kruddgui_plugin_entry(struct subsystem_manager *mgr);
 void audio_scriptnode_plugin_entry(struct subsystem_manager *mgr);
+void project_host_plugin_entry(struct subsystem_manager *mgr);
 void chess_plugin_entry(struct subsystem_manager *mgr);
 
 /*
@@ -105,7 +106,15 @@ static const struct {
 	 * plugin) and register on the launcher, which needs the asset catalog the
 	 * asset plugin seeded, so both must already be up. Registration order is
 	 * launcher-button order.
+	 *
+	 * The project host belongs on this side of the boot for the same
+	 * reasons — it puts a launcher entry on the menu for every project it
+	 * is handed — while being a host rather than a game: it knows no game's
+	 * name and registers nothing of its own. Nothing hands it a project
+	 * yet, so in this build it brings up the (project ...) vocabulary and
+	 * ticks past.
 	 */
+	{ "project",        project_host_plugin_entry   },
 	{ "chess",          chess_plugin_entry          },
 };
 #endif

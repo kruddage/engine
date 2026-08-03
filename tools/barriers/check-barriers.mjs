@@ -40,7 +40,7 @@
 // rule itself: rule 3's @kruddage/engine exemption is now load-bearing where it
 // used to be belt-and-braces.
 //
-// Run: pnpm check
+// Run: sh tools/workspace/workspace.sh check (or node tools/barriers/check-barriers.mjs)
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -72,13 +72,19 @@ const ENGINE_PRIVATE = [
 ];
 
 /**
- * Workspace package directories, relative to the repo root. Mirrors
- * pnpm-workspace.yaml, entry for entry: a package the boundary check does not
- * know about is a package with no boundary, so the two lists have to be read as
- * one thing. Both `packages/*` and `tools/*` are expanded off the filesystem
- * here for the same reason they are globs there — a new package under either
- * directory is inside the check the moment it exists, rather than when someone
- * remembers a second list.
+ * Workspace package directories, relative to the repo root.
+ *
+ * This used to mirror pnpm-workspace.yaml entry for entry, and the note here
+ * said the two lists had to be read as one thing: a package the boundary check
+ * does not know about is a package with no boundary. #1010 removed the package
+ * manager and with it that file, which leaves this function as the only
+ * statement of workspace membership — the mirror outlived the thing it
+ * mirrored, and there is nothing left for it to drift from. `packages/*` and
+ * `tools/*` are still expanded off the filesystem rather than listed, for the
+ * reason they were globs there: a new package under either directory is inside
+ * the check the moment it exists, rather than when someone remembers a list.
+ * tools/workspace/workspace.sh asks the filesystem the same question the same
+ * way, which is duplication of a two-line rule and not of a list.
  *
  * `tools/*` is read with manifestDirs rather than a plain readdir, because not
  * every directory under tools/ declares itself a package — tools/dawn-smoke is

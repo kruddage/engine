@@ -3,21 +3,13 @@
 	"version": "0.0.0",
 	"//version": "0.0.0 is inert and deliberate, not a stale placeholder. version.txt at the repo root is the single source of the released version; introspect.scm stamps it into the WASM build and the shell template, and the site's cache-busting hash derives from what that produces, so routing the number through package.json would put Node in the path of a fact the C build needs. See README.md's 'Versioning and releases' and WORKSPACE.md (Q3).",
 	"private": true,
-	"description": "pnpm workspace root for the KRUDD engine. The engine itself still builds through kruddmake, which is not in this workspace; this layer sequences the JS packages and enforces the boundaries between them.",
+	"description": "Workspace root for the KRUDD engine. The engine itself still builds through kruddmake, which is not in this workspace; this layer holds the JS packages and the boundaries between them.",
 	"license": "GPL-2.0-or-later",
-	"packageManager": "pnpm@10.33.0",
+	"//scripts": "There is no scripts block and no packageManager field, because there is no package manager left to run them (#1010). The workspace's entry point is `sh tools/workspace/workspace.sh <task>`, which is the same shape as `sh krudd/kruddmake/kruddmake.sh <task>` — two doors, named in the same words (WORKSPACE.md, Q2). Each package still declares its own scripts; workspace.sh reads those back, which is also what lets `check`, `test:native` and `smoke` address a single package without a filter flag.",
+	"//test": "The workspace's own suite is `sh tools/workspace/workspace.sh test`: every package's own `test` script (engine, site, barriers, render-diff — dawn-smoke has none, it holds no JS). Pure Node, no compiler, no emsdk — and it does not run the native C suite. That is `workspace.sh test:native`, or `sh krudd/kruddmake/run-tests.sh` directly. See WORKSPACE.md (Q2).",
+	"//this-file": "Kept, though no tool resolves it any more: it is where the version note above lives (WORKSPACE.md, Q3) and it states the Node floor for the whole JS layer. tools/barriers reads the per-package manifests, not this one.",
 	"engines": {
 		"node": ">=20.11"
 	},
-	"type": "module",
-	"scripts": {
-		"build": "pnpm -r run build",
-		"test": "pnpm -r run test",
-		"//test": "The workspace's own suite: every package's own `test` script (barriers, engine, site, render-diff — dawn-smoke has none, it holds no JS). Pure Node, no compiler, no emsdk — and it does not run the native C suite. That is test:native below, or sh krudd/kruddmake/run-tests.sh directly. See WORKSPACE.md (Q2).",
-		"test:native": "pnpm --filter @kruddage/engine run test:native",
-		"//test:native": "The native C suite (every *_test.c under krudd/engine/), through the workspace's own door. Needs a C compiler and nothing else — see README.md's Prerequisites. This is the same suite sh krudd/kruddmake/run-tests.sh runs; use that path directly on a box with no Node, which is why CI's sanitizer and coverage jobs call it that way rather than through this script. See WORKSPACE.md (Q2).",
-		"check": "pnpm --filter @kruddage/barriers run check",
-		"clean": "pnpm -r run clean",
-		"site": "pnpm --filter @kruddage/site run build"
-	}
+	"type": "module"
 }

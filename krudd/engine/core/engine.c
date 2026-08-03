@@ -8,6 +8,7 @@
 #include <abi/memory_api.h>
 #include "renderer.h"
 #include <core/script.h>
+#include <abi/entity_api.h>
 #include <abi/stats_api.h>
 #include "version.h"
 
@@ -322,6 +323,32 @@ void engine_init(void)
 #endif
 }
 
+#ifdef __EMSCRIPTEN__
+/*
+ * Hand the frame to the image's (tick). Routed through the "scene" api when the
+ * entity plugin is up, so the live world and asset catalog are bound for the
+ * span of the call and the scene-* primitives read the real world from inside
+ * (tick) — core cannot bind one itself, sitting above world/ in the tier order,
+ * so it reaches the binder through the abi vtable exactly as a game plugin
+ * reaches dispatch_scm. With no scene subsystem there is no world to bind and
+ * core's own unbound script_tick is already the whole of what the frame means.
+ *
+ * Looked up rather than cached for the same reason the renderer below is: a
+ * tick can land before the plugin boot has registered anything.
+ */
+static void tick_image(void)
+{
+	const struct entity_api *scene =
+		(const struct entity_api *)subsystem_manager_get_api(&manager,
+								     "scene");
+
+	if (scene && scene->tick_scm)
+		scene->tick_scm();
+	else
+		script_tick();
+}
+#endif
+
 void engine_tick(void)
 {
 	frame_count++;
@@ -361,7 +388,7 @@ void engine_tick(void)
 	/* The runtime image loads with the rest of the boot, so there is nothing
 	 * to tick while the WebGPU path is still waiting on its device. */
 	if (!g_webgpu_boot_pending)
-		script_tick();
+		tick_image();
 #endif
 	if (frame_count % 60 == 0)
 		LOG_DEBUG("engine: frame %d", frame_count);

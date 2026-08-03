@@ -5,8 +5,10 @@
  * Registers the scene-* primitives the (scene ...) form calls, and drives one
  * build by handing a scene's source text to the image's scene-build. The
  * primitives spawn and bind entities in the world bound for the span of one
- * scene_script_build (set before the s7_call, cleared after), mirroring the
- * g_w discipline entity_script.c uses for its per-tick primitives.
+ * image call (set before the s7_call, cleared after), mirroring the g_w
+ * discipline entity_script.c uses for its per-tick primitives. Three calls
+ * bind that way and no other code path does: a build (scene_script_build), an
+ * event dispatch (scene_script_call), and the frame hook (scene_script_tick).
  */
 #include <entity/scene_script.h>
 
@@ -231,6 +233,20 @@ static s7_pointer sp_scene_outline(s7_scheme *sc, s7_pointer args)
 }
 
 /*
+ * (scene-selected) -> the selected entity id, or -1 when nothing is selected
+ * (or no world is bound). The read side of the shared selection model — the
+ * same world_get_selected the editor reads through entity_api's get_selected —
+ * so image-side rules can act on the entity the picker and the editor already
+ * agree on, rather than only on an id handed in as a dispatch argument. There
+ * is no setter twin here: selection is the host's to arbitrate.
+ */
+static s7_pointer sp_scene_selected(s7_scheme *sc, s7_pointer args)
+{
+	(void)args;
+	return s7_make_integer(sc, g_w ? world_get_selected(g_w) : -1);
+}
+
+/*
  * (scene-destroy-named! "name") -> count of matches destroyed. Tombstones every
  * live entity whose name equals NAME; a destroy cascades to descendants, so
  * removing a composite (a named X parent) takes its unnamed bars with it. This
@@ -285,6 +301,8 @@ void scene_script_init(void)
 			   false, "(scene-entity-pos id) -> (x y z) or #f");
 	s7_define_function(sc, "scene-outline!", sp_scene_outline, 1, 0, false,
 			   "(scene-outline! id) mark id as the game outline (-1 clears)");
+	s7_define_function(sc, "scene-selected", sp_scene_selected, 0, 0, false,
+			   "(scene-selected) -> selected entity id, or -1");
 	s7_define_function(sc, "scene-destroy-named!", sp_scene_destroy_named, 1,
 			   0, false,
 			   "(scene-destroy-named! name) destroy entities by name");
@@ -350,4 +368,20 @@ int32_t scene_script_call(struct world *w, const struct asset_api *asset,
 	res = scene_call_bound(w, asset, f,
 			       s7_list(sc, 1, s7_make_integer(sc, arg)));
 	return s7_is_integer(res) ? (int32_t)s7_integer(res) : 0;
+}
+
+void scene_script_tick(struct world *w, const struct asset_api *asset)
+{
+	s7_scheme *sc;
+	s7_pointer fn;
+
+	if (!w)
+		return;
+	sc = script_s7();
+	if (!sc)
+		return;
+	fn = s7_name_to_value(sc, "tick");
+	if (!s7_is_procedure(fn))
+		return;
+	scene_call_bound(w, asset, fn, s7_nil(sc));
 }

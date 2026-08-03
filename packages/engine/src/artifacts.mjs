@@ -87,9 +87,9 @@ export const ENGINE_ARTIFACTS = [
 
 /* Runtime files the page fetches by path rather than linking in: every project
  * source this build ships (assets/*.scm) and the index naming them
- * (assets/projects.json), which is how the shell's Load Project control offers
- * a project without the page carrying a filename. Copied wholesale when the
- * build produced any; absent from a build that shipped nothing, which is not an
+ * (assets/projects.json), which is how the shell's picker offers a project
+ * without the page carrying a filename. Copied wholesale when the build
+ * produced any; absent from a build that shipped nothing, which is not an
  * error. */
 export const ENGINE_ASSET_DIR = "assets";
 
@@ -98,10 +98,10 @@ export const ENGINE_ASSET_DIR = "assets";
  * (staged-project ...) declarations in the C tree (krudd/kruddmake/ninja.scm)
  * and read by the shell, which cannot list a directory over HTTP and must not
  * carry a project's filename. Every project the build ships is listed, not only
- * the one the image boots into — being embedded is what makes a project the
- * boot default and says nothing about whether the page can reach it. Named
- * here because it is a fact about the published layout, and the staging step
- * checks the shipped directory against it. */
+ * the one the image embedded — being embedded only spares a project the fetch,
+ * and says nothing about whether the page offers it. Named here because it is a
+ * fact about the published layout, and the staging step checks the shipped
+ * directory against it. */
 export const ENGINE_PROJECT_INDEX = "projects.json";
 
 /* The C entry points the WASM module exports to JS. Mirrors -sEXPORTED_FUNCTIONS
@@ -109,15 +109,20 @@ export const ENGINE_PROJECT_INDEX = "projects.json";
  * surface it codes to instead of reading the generated loader. Verified against
  * the real build output by scripts/build.mjs.
  *
- * _malloc and _free are here for one reason and it is worth naming: the Load
- * Project path passes a variable-length string INTO the module, and every other
- * JS bridge in the tree passes one out. A buffer for it has to come from the
- * module's own allocator, so the allocator is part of the published surface.
- * The engine's own bridge (project_host.c) is the only intended caller, and it
- * frees what it allocates within the one call. */
+ * Opening a project is the whole of it. There is no "load this scene" entry
+ * point beside it: the page opens a project the build shipped by navigating to
+ * ?game=<name>, which the module reads at boot rather than being called about,
+ * so the only thing the page calls in for is a source it holds and the module
+ * does not.
+ *
+ * _malloc and _free are here for one reason and it is worth naming: that path
+ * passes a variable-length string INTO the module, and every other JS bridge in
+ * the tree passes one out. A buffer for it has to come from the module's own
+ * allocator, so the allocator is part of the published surface. The engine's own
+ * bridge (project_host.c) is the only intended caller, and it frees what it
+ * allocates within the one call. */
 export const ENGINE_EXPORTED_FUNCTIONS = [
 	"_main",
-	"_krudd_load_game",
 	"_krudd_load_project",
 	"_malloc",
 	"_free",

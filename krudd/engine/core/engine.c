@@ -229,15 +229,13 @@ EM_JS(int, krudd_wants_webgpu, (void), {
  * (krudd_wants_webgpu): the overlay and the auto-load can never disagree about
  * what boots.
  *
- * The DEFAULT is deliberately not expressed here as a name. It used to be one
- * game's, spelled out — the sort of pin #976 exists to pull: a generic engine
- * cannot know which game a build ships. By the time the answer is needed it
- * does not have to guess either, because finish_plugin_boot has just evaluated
- * the staged project and holds the launcher slot it took — so "no opinion"
- * means "open whatever this build staged", answered by discovery rather than
- * by a name. A name that no game registered under still leaves the launcher
- * up, which is what ?game=none gets you. Truncation past CAP is fine — an
- * over-long name simply won't match, so the launcher stands.
+ * There is no DEFAULT, and that is the point: a page opened with no ?game= is a
+ * project picker, not a game that happens to have a menu in front of it, so the
+ * empty string means "open nothing" rather than "open whatever this build
+ * staged". Picking one there navigates to ?game=<name>, which arrives back here
+ * as a name — so opening a project is always the same act whether the URL
+ * carried it or a click put it there, and the address bar always says what is
+ * running. Truncation past CAP is fine: an over-long name simply won't match.
  */
 EM_JS(void, krudd_boot_game, (char *out, int cap), {
 	var name = (typeof window.kruddBootGame === 'function')
@@ -245,6 +243,23 @@ EM_JS(void, krudd_boot_game, (char *out, int cap), {
 	if (typeof name !== 'string')
 		name = "";
 	stringToUTF8(name, out, cap);
+})
+
+/*
+ * ?game=NAME named no scene this image registered — hand it to the page.
+ *
+ * For a project the build shipped but did not embed that is the ordinary case,
+ * not an error: its source is a file in assets/, so opening it means fetching
+ * one, and a fetch belongs to the page. The engine cannot block on it, and
+ * teaching this side to wait would put an async load into a boot that is
+ * otherwise a straight line. The page answers by fetching that source and
+ * bringing it in through window.kruddRunProject (project_host.c) — the same
+ * door a .scm off the disk comes in by — or, for a name nothing ships, by
+ * leaving the picker up, which is what ?game=none gets you.
+ */
+EM_JS(void, krudd_boot_unresolved, (const char *name), {
+	if (typeof window.kruddBootProject === 'function')
+		window.kruddBootProject(UTF8ToString(name));
 })
 
 /*
@@ -261,7 +276,6 @@ static void finish_plugin_boot(int webgpu)
 	size_t  i;
 	double  phase;
 	char    boot_game[32];
-	int32_t staged;
 
 	/* The frame graph is about to own the backbuffer; the probe must stop
 	 * clearing it. Before the loop, so no tick can land in between. */
@@ -284,36 +298,36 @@ static void finish_plugin_boot(int webgpu)
 	/*
 	 * Bring up the project this build ships staged. Evaluating it is the
 	 * whole of what a built-in game's plugin entry used to be: its rules and
-	 * its assets land in the shared image and the catalog, and it takes a
-	 * launcher slot. It runs after the plugin loop because it needs the asset
-	 * catalog and the scene api those brought up, and after the runtime image
-	 * so a project may lean on anything in the prelude.
+	 * its assets land in the shared image and the catalog, and it registers
+	 * under its own name. It runs after the plugin loop because it needs the
+	 * asset catalog and the scene api those brought up, and after the runtime
+	 * image so a project may lean on anything in the prelude.
+	 *
+	 * Registering is not opening: nothing is on screen until a ?game= asks
+	 * for one. What being embedded buys the staged project is that its ?game=
+	 * resolves right here, with no round trip — every other project the build
+	 * ships is a file the page fetches.
 	 */
 	phase = emscripten_get_now();
-	staged = project_host_eval(STAGED_PROJECT_SCM);
+	project_host_eval(STAGED_PROJECT_SCM);
 	stats_record_phase("staged_project", phase);
 
 	/*
-	 * Open the boot scene now that everything loadable has registered and the
-	 * scene api is live — the same state a launcher click would find, so this
-	 * is just that click made programmatically. Either way the boot clears the
-	 * demo scene seeded in scene_renderer_init and builds the chosen one in
-	 * its place, then hides the launcher.
+	 * Open the scene the URL asked for, now that everything embedded has
+	 * registered and the scene api is live. The boot clears the demo scene
+	 * seeded in scene_renderer_init, builds the named one in its place, and
+	 * takes the picker down over it.
 	 *
-	 * ?game=<name> wins when the page asked for one; an unknown name (?game=
-	 * none) leaves the demo scene and the "choose a scene" overlay exactly as
-	 * before. With no ?game= at all the default is the staged project, by the
-	 * slot it just took rather than by a name this file would have to know —
-	 * and a build whose staged project refused to register (staged < 0) lands
-	 * on the launcher, which is the honest thing to show when there is
-	 * nothing to open.
+	 * No ?game= opens nothing: the page is a picker until something is picked,
+	 * and picking is a navigation back into this same line with a name in it.
+	 * A name nothing registered under is not a dead end either — it goes back
+	 * to the page, which knows about the projects that shipped as files (see
+	 * krudd_boot_unresolved).
 	 */
 	boot_game[0] = '\0';
 	krudd_boot_game(boot_game, (int)sizeof(boot_game));
-	if (boot_game[0] != '\0')
-		game_boot_default(boot_game);
-	else
-		game_boot_index(staged);
+	if (boot_game[0] != '\0' && game_boot_default(boot_game) < 0)
+		krudd_boot_unresolved(boot_game);
 
 	g_stats_api.init_ms = (float)(emscripten_get_now() - s_boot_ms);
 }
@@ -460,17 +474,17 @@ void engine_tick(void)
 	}
 #ifdef __EMSCRIPTEN__
 	/*
-	 * A frame has rendered and the plugin boot has landed: arm the launcher
+	 * A frame has rendered and the plugin boot has landed: arm the picker
 	 * (see krudd_signal_ready). Runs after the render so a click that
 	 * follows lands on a live, framed engine.
 	 *
 	 * On the WebGPU path those two are not the same tick — the device
 	 * handshake spans however many frames the browser takes — and arming on
-	 * the first of them dropped the "choose a scene" menu over a page that
-	 * was seconds away from opening a game by itself, a banner between the
-	 * player and the board. Waiting for the boot means the overlay is
-	 * either already dismissed (finish_plugin_boot opened the boot game) or
-	 * the page really is staying on the menu, which is the only state worth
+	 * the first of them put the project list in front of a page that was
+	 * seconds away from opening the project its URL named, a banner between
+	 * the player and the board. Waiting for the boot means the overlay is
+	 * either already down (finish_plugin_boot opened the named scene) or the
+	 * page really is sitting on the picker, which is the only state worth
 	 * arming.
 	 */
 	if (!g_ready_signalled && !g_webgpu_boot_pending) {

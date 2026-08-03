@@ -1,8 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
- * game — the launcher registry, host-side. Registration counts up, game_load
- * runs the right callback, an out-of-range index is inert, game_find resolves a
- * name (case-insensitively) to its slot, and game_boot_default loads by name.
+ * game — the scene registry, host-side. Registration counts up, game_load runs
+ * the right callback, an out-of-range index is inert, game_find resolves a name
+ * (case-insensitively) to its slot, and game_boot_default loads by name — the
+ * one door a boot goes through, since a boot is a ?game= in a URL.
  */
 #include <host/game.h>
 
@@ -75,19 +76,15 @@ int main(void)
 	assert(game_active_index() == 0);
 	assert(game_boot_default(NULL) == -1);
 	assert(game_active_index() == 0);
+	assert(game_boot_default("") == -1);
+	assert(game_active_index() == 0);
 
-	/* game_boot_index is the same door by slot rather than by name — what a
-	 * boot default that was never a name (the staged project, which reports
-	 * the slot it registered into) opens through. An out-of-range slot, and
-	 * the -1 a refused registration hands back, load nothing. */
-	assert(game_boot_index(1) == 1);
+	/* Booting by name is the same load: the second name opens the second
+	 * game, and the active index follows it. */
+	assert(game_boot_default("B") == 1);
 	assert(g_loaded == 20);
 	assert(game_active_index() == 1);
-	assert(game_boot_index(-1) == -1);
-	assert(game_boot_index(2) == -1);
-	assert(g_loaded == 20);
-	assert(game_active_index() == 1);
-	assert(game_boot_index(0) == 0);
+	assert(game_boot_default("A") == 0);
 	assert(g_loaded == 10);
 
 	/* A load callback sees its own slot as the active game while it runs. */

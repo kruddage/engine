@@ -3,21 +3,23 @@
 #define GAME_H
 
 /*
- * game — the registry of loadable scenes the launcher offers. A game (or the
- * procedural demo) registers a display name and a load callback at plugin-entry
- * time instead of building itself at boot; the launcher lists what is registered
- * and, on a click, loads exactly one. This is what lets several games live in one
- * build without all of them spawning into a single world at startup.
+ * game — the registry of loadable scenes. A game registers a display name and a
+ * load callback when its source is evaluated instead of building itself at boot;
+ * exactly one is loaded, by name or by slot. This is what lets several scenes
+ * live in one build without all of them spawning into a single world at startup.
  *
- * In the browser, registering also injects a button into the shell's launcher
- * overlay, and the exported krudd_load_game(index) (see game.c) is what those
- * buttons call — so the HTML menu is driven by whatever registered, no per-game
- * wiring in the page.
+ * The registry is not the page's menu. The projects a build ships are listed by
+ * the build (assets/projects.json) and offered by the shell, which opens one by
+ * navigating to ?game=<name> — so what this holds is what such a name resolves
+ * against (game_find, game_boot_default), and a name that resolves to nothing
+ * here is one the page fetches out of assets/ and brings in through
+ * project_host_load instead.
  */
 
 /*
- * Register a loadable scene. NAME is the button label (must outlive the process —
- * a string literal); LOAD builds it into the world when chosen. Returns the slot
+ * Register a loadable scene. NAME is what ?game= matches (must outlive the
+ * process — a string literal); LOAD builds it into the world when chosen.
+ * Returns the slot
  * INDEX game_load will use to pick it, which a game with a per-frame tick should
  * hold onto and compare against game_active_index() (see below) so its tick can
  * tell whether it is the loaded game. Returns -1, and registers nothing, past a
@@ -27,17 +29,16 @@ int  game_register(const char *name, void (*load)(void));
 
 /*
  * Re-point the entry at INDEX at a new NAME, keeping its slot and its load
- * callback (and, in the browser, relabelling the button that was injected for
- * it). Returns 0, or -1 for an out-of-range index or a NULL name, having
+ * callback. Returns 0, or -1 for an out-of-range index or a NULL name, having
  * changed nothing. NAME must outlive the process, exactly as at registration.
  *
  * This is for a host that registers a slot per thing it is HANDED rather than
  * per thing it is: game/project keeps one entry for whatever project was
- * loaded off disk last, so that opening a second project replaces the first on
- * the launcher instead of stacking beside it. The registry has no unregister
- * and is not getting one — a slot index is a key the rest of the engine holds
- * (game_active_index, the shell's buttons), so slots are stable for the life
- * of the process and only what stands in them may change.
+ * loaded off disk last, so that opening a second project replaces the first
+ * rather than stacking beside it. The registry has no unregister and is not
+ * getting one — a slot index is a key the rest of the engine holds
+ * (game_active_index, and game/project's own table), so slots are stable for
+ * the life of the process and only what stands in them may change.
  */
 int  game_rename(int index, const char *name);
 
@@ -47,7 +48,7 @@ int  game_count(void);
 /*
  * Index of the registered game whose display name equals NAME, compared
  * case-insensitively (ASCII), or -1 if none matches or NAME is NULL. Lets a
- * caller pick a game by name — e.g. a boot-time default read from a URL query —
+ * caller pick a game by name — e.g. the boot scene read from a URL query —
  * without depending on registration order.
  */
 int  game_find(const char *name);
@@ -56,32 +57,23 @@ int  game_find(const char *name);
 void game_load(int index);
 
 /*
- * Open the game at INDEX as the boot default, exactly as a launcher click
- * would: load it and (in the browser) dismiss the launcher overlay and show the
- * "load project" splash. An out-of-range index (including the -1 a failed
- * registration hands back) is a no-op that leaves the launcher up. Returns the
- * loaded index, or -1.
+ * Open the game named NAME as the page's boot scene: load it and (in the
+ * browser) take the picker down over it. Returns the loaded index, or -1 for
+ * NULL, "", or a name nothing registered under — which loads nothing and leaves
+ * the picker standing, because a name this image does not carry may still be a
+ * project the build shipped as a file (the page fetches those; see
+ * krudd_boot_unresolved in core/engine.c).
  *
- * This is the by-slot half of the pair below, and it exists because a boot
- * default is not always a name: the engine's own default is whichever project
- * the build staged, which registered itself moments earlier and reported the
- * slot it took. Resolving that back through a name would mean core knowing one.
- */
-int  game_boot_index(int index);
-
-/*
- * Open the game named NAME as the boot default — game_boot_index against
- * game_find. NULL, "", or an unregistered name is a no-op that leaves the
- * launcher up, so ?game=none is how a page opts back into the "choose a scene"
- * menu. Returns the loaded index, or -1.
+ * By name and only by name: a boot happens because a URL asked for one, and the
+ * only names there are come from the build's own project list.
  */
 int  game_boot_default(const char *name);
 
 /*
  * Index of the game the last successful game_load landed on, or -1 before any
- * load (e.g. at boot, sitting on the launcher menu). Every registered game's
- * subsystem ticks every frame regardless of what the launcher loaded, so a
- * game whose tick reaches into its own rules must gate on
+ * load (e.g. at boot, sitting on the picker with nothing opened). Every
+ * registered game's subsystem ticks every frame regardless of which one was
+ * loaded, so a game whose tick reaches into its own rules must gate on
  * game_active_index() == <its own registered index> first — otherwise it
  * fires against whatever scene happens to be loaded, not just its own.
  *

@@ -71,7 +71,9 @@
 ;;!             a native test that drives its rules. Last in the order because
 ;;!             a project may reach for anything and nothing may reach for a
 ;;!             project; nothing here declares a library, so no tier edge can
-;;!             point at one in any case.
+;;!             point at one in any case — and resolve-check-projects is what
+;;!             keeps that true rather than merely observed. The rest of what a
+;;!             project may and may not do is projects/README.md.
 
 
 

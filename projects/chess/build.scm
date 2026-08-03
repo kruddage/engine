@@ -3,25 +3,14 @@
 ;;! directory declares exactly two things: the source this build ships as its
 ;;! staged project, and the test that drives it.
 ;;!
-;;! (staged-project ...) is the declaration for "this is the project the image
-;;! ships" and it says nothing about chess, on purpose: it embeds the source
-;;! under the fixed STAGED_PROJECT_SCM that core/engine.c evaluates at boot
-;;! without knowing which project it got, which is what keeps "the site boots
-;;! straight to a playable board with no network round trip" (a non-goal of #976
-;;! to remove) from putting a game's name back into generic C. Exactly one
-;;! directory may claim it: a second declaration writes the same generated
-;;! header, which is a build error (resolve-check-codegen), so the staged slot
-;;! cannot silently be taken twice. Chess is the sibling in projects/ that holds
-;;! it — it is the one with a finished game behind it, and the boot path needs a
-;;! project that plays.
-;;!
-;;! The same declaration also ships this file the way a (project-source ...)
-;;! does — copied into assets/ next to index.html and named in projects.json,
-;;! which is what #984's Load Project control offers. So the staged project is
-;;! opened through exactly the path a user's own .scm takes, and the served copy
-;;! cannot drift from the embedded one because there is only one file. Being
-;;! staged is not what makes a project reachable from the page; shipping it is,
-;;! and the siblings here do that without claiming this slot.
+;;! What a project may and may not declare is projects/README.md; what the two
+;;! shipping declarations mean is resolve.scm's note on rz-codegen-kinds. The
+;;! only thing left to say here is why CHESS is the one holding the staged slot,
+;;! since exactly one project may and the contract does not care which: it is
+;;! the sibling with a finished game behind it, and the boot path needs a
+;;! project that plays. Nothing about the declaration knows that — it embeds
+;;! under a fixed symbol core/engine.c evaluates without learning which project
+;;! it got (#976), which is what keeps a game's name out of generic C.
 ((staged-project "chess.scm")
 
  (native-only

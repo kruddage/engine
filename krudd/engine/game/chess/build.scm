@@ -1,18 +1,23 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
 ;;! The whole game is chess.scm — there is no C here any more, so this
-;;! directory declares exactly two things: the source embedded into the image,
-;;! and the test that drives it.
+;;! directory declares exactly two things: the source this build ships as its
+;;! staged project, and the test that drives it.
 ;;!
-;;! The embed is named for what the source IS to the build (the project this
-;;! image ships staged) rather than for chess, because core/engine.c evaluates
-;;! STAGED_PROJECT_SCM at boot without knowing which project it got — that is
-;;! what keeps "the site boots straight to a playable board with no network
-;;! round trip" (a non-goal of #976 to remove) from putting a game's name back
-;;! into generic C. Exactly one directory may claim the name: a second embed
-;;! writing the same generated header is a build error (resolve-check-codegen),
-;;! so the staged slot cannot silently be taken twice. #984 layers loading a
-;;! project off disk on top of this, with the staged one as the fallback.
-((embed "chess.scm" "staged_project_scm.h" "STAGED_PROJECT_SCM")
+;;! (staged-project ...) is the declaration for "this is the project the image
+;;! ships" and it says nothing about chess, on purpose: it embeds the source
+;;! under the fixed STAGED_PROJECT_SCM that core/engine.c evaluates at boot
+;;! without knowing which project it got, which is what keeps "the site boots
+;;! straight to a playable board with no network round trip" (a non-goal of #976
+;;! to remove) from putting a game's name back into generic C. Exactly one
+;;! directory may claim it: a second declaration writes the same generated
+;;! header, which is a build error (resolve-check-codegen), so the staged slot
+;;! cannot silently be taken twice.
+;;!
+;;! The same declaration also copies this file into assets/ next to index.html,
+;;! which is what #984's Load Project control offers — so the staged project is
+;;! opened through exactly the path a user's own .scm takes, and the served copy
+;;! cannot drift from the embedded one because there is only one file.
+((staged-project "chess.scm")
 
  (native-only
   ;;! The test drives chess.scm the way the engine does: project_host.c is

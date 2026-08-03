@@ -17,6 +17,14 @@
  *   - a malformed or partial form is refused with a log line and registers
  *     nothing, since a project is user input rather than a compiled-in plugin.
  *
+ * The last group is project_host_load — the door a project opened while the
+ * engine is already running comes in by, which is one call rather than two so
+ * that "open this file" has one meaning: it evaluates, then opens. What it adds
+ * over project_host_eval is the replacement rule, and that is what those checks
+ * are about: one launcher entry for whatever was opened last, renamed rather
+ * than accumulated, with the previous project's world and hooks gone and the
+ * entries the build itself registered untouched.
+ *
  * No GPU and no asset catalog: the scene's mesh paths resolve to "unbound",
  * which still spawns every entity it declares, so the whole path is checkable
  * headless.
@@ -144,6 +152,33 @@ static const char *PROJECT_SRC =
 	"  (on-load demo-reset)\n"
 	"  (on-tick demo-frame)\n"
 	"  (on-selected demo-picked))\n";
+
+/*
+ * Two projects standing in for files someone opened, each with a scene of one
+ * named pad and a frame counter of its own — enough to tell whose world is
+ * standing and whose hooks are running, which is the whole of what replacement
+ * has to get right.
+ */
+static const char *DISK_A_SRC =
+	"(project \"Disk One\"\n"
+	"  (rules\n"
+	"   (define *a-ticks* 0)\n"
+	"   (define (a-frame) (set! *a-ticks* (+ *a-ticks* 1)))\n"
+	"   (define (a-ticks ignored) *a-ticks*))\n"
+	"  (scene disk-a (entity (name \"a-pad\")))\n"
+	"  (on-tick a-frame))\n";
+
+static const char *DISK_B_SRC =
+	"(project \"Disk Two\"\n"
+	"  (rules\n"
+	"   (define *b-ticks* 0)\n"
+	"   (define (b-frame) (set! *b-ticks* (+ *b-ticks* 1)))\n"
+	"   (define (b-ticks ignored) *b-ticks*))\n"
+	"  (scene disk-b (entity (name \"b-pad\")))\n"
+	"  (on-tick b-frame))\n";
+
+/* The launcher entry the two above share — the door's one slot. */
+static int32_t g_door;
 
 /* Read one of the project's counters back out of the image. */
 static int32_t poll(const char *fn)
@@ -451,6 +486,98 @@ static void test_large_scene_is_not_elided(void)
 	assert(w.count == 2);
 }
 
+/*
+ * project_host_load is evaluate-and-open in one call: the source registers, and
+ * the project it registered is the loaded one before the call returns — the
+ * world it displaced gone, its own scene standing, its hooks live.
+ */
+static void test_load_opens_it(void)
+{
+	int32_t demo_ticks = poll("demo-ticks");
+	int     games      = game_count();
+
+	g_door = project_host_load(DISK_A_SRC);
+	assert(g_door >= 0 && g_door != g_project);
+	assert(game_count() == games + 1);
+	assert(game_active_index() == g_door);
+
+	/* Its scene, and only its scene. */
+	assert(w.count == 1);
+	assert(id_of("a-pad") >= 0);
+	assert(id_of("pad-a") < 0);
+
+	/* Its hooks run; the project it displaced has stopped. */
+	subsystem_manager_tick(&mgr);
+	assert(poll("a-ticks") == 1);
+	assert(poll("demo-ticks") == demo_ticks);
+}
+
+/*
+ * A second file replaces the first rather than layering over it: the same
+ * launcher entry, renamed, and no trace of the project that was there. This is
+ * the check the door exists for — five files opened must leave one button, not
+ * five, and the first one's hooks must not still be firing behind the fifth.
+ */
+static void test_load_replaces_the_previous(void)
+{
+	int32_t a_ticks = poll("a-ticks");
+	int     games   = game_count();
+
+	assert(project_host_load(DISK_B_SRC) == g_door);
+	assert(game_count() == games);
+	assert(game_find("Disk One") == -1);
+	assert(game_find("Disk Two") == g_door);
+
+	assert(w.count == 1);
+	assert(id_of("b-pad") >= 0);
+	assert(id_of("a-pad") < 0);
+
+	subsystem_manager_tick(&mgr);
+	assert(poll("b-ticks") == 1);
+	assert(poll("a-ticks") == a_ticks);
+}
+
+/*
+ * A file whose project is already on the launcher is a reload of that entry,
+ * not a copy of it under the door's — which is the path opening the staged
+ * project's own source out of assets/ takes. The door's entry is left standing:
+ * it holds the last project opened THROUGH it, and this was not one.
+ */
+static void test_load_reuses_a_registered_name(void)
+{
+	int games = game_count();
+
+	assert(project_host_load(PROJECT_SRC) == g_project);
+	assert(game_count() == games);
+	assert(game_find("Disk Two") == g_door);
+	assert(game_active_index() == g_project);
+	assert(w.count == 2);
+	assert(poll("demo-loads") == 1);
+}
+
+/*
+ * A file that is not a project leaves the engine exactly as it was: nothing
+ * opened, nothing registered, and the project already loaded still running its
+ * own frames. A bad .scm is the expected case for a button that opens whatever
+ * it is pointed at.
+ */
+static void test_load_of_a_bad_source_changes_nothing(void)
+{
+	int32_t ticks = poll("demo-ticks");
+	int     games = game_count();
+
+	assert(project_host_load("(project \"Unclosed\"") == -1);
+	assert(project_host_load("(define not-a-project 1)") == -1);
+	assert(project_host_load("(project 42 (on-tick demo-frame))") == -1);
+	assert(game_count() == games);
+	assert(game_find("Disk Two") == g_door);
+
+	assert(game_active_index() == g_project);
+	assert(w.count == 2);
+	subsystem_manager_tick(&mgr);
+	assert(poll("demo-ticks") == ticks + 1);
+}
+
 int main(void)
 {
 	log_init();
@@ -467,6 +594,10 @@ int main(void)
 	test_malformed_is_refused();
 	test_partial_project_loads();
 	test_large_scene_is_not_elided();
+	test_load_opens_it();
+	test_load_replaces_the_previous();
+	test_load_reuses_a_registered_name();
+	test_load_of_a_bad_source_changes_nothing();
 
 	printf("project_host_test: ok\n");
 	return 0;

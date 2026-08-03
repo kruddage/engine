@@ -93,7 +93,7 @@
 ;;! one re-runs them. Neither carries a literal list, so the two cannot drift
 ;;! apart the way the hand-maintained pair did (#779, #787).
 ;;!
-;;! The five kinds map one-to-one onto the introspect.scm entry points and stay
+;;! The kinds map one-to-one onto the introspect.scm entry points and stay
 ;;! distinct clauses rather than one clause with a mode argument, because they
 ;;! take genuinely different arguments — an `(embed)` names a C symbol, an
 ;;! `(embed-scheme-module)` writes two files, the rest write one:
@@ -103,17 +103,39 @@
 ;;!   (embed-scheme-module IN HEADER SHIM)   ABI header + s7 image shim
 ;;!   (emit-math-module IN OUT)              (define-c-fn) bodies lowered to C
 ;;!   (emit-interface-header IN OUT)         the backend interface header
+;;!   (staged-project IN)                    the project this image ships
 ;;!
 ;;! IN resolves against the declaring module like a source path; every output is
 ;;! named relative to `generated/`. The number paired with each kind below is how
 ;;! many arguments follow IN, which is what makes a typo'd declaration an arity
 ;;! error rather than a silently different one.
+;;!
+;;! `staged-project` is the one that takes none, and that is the point of it. It
+;;! names a `.scm` twice over — embedded into the image under the fixed symbol
+;;! below (what core/engine.c evaluates at boot, so the page opens on a playable
+;;! scene with no network round trip) and copied into `assets/` beside
+;;! index.html (what the shell's Load Project control offers, so the staged
+;;! project is reachable by the same door a file off the user's disk comes in
+;;! by). Two destinations, one declaration, one file: the served copy cannot
+;;! drift from the embedded one because there is only ever one source. The
+;;! header name being fixed rather than per-declaration is what makes "exactly
+;;! one directory may claim the staged slot" a build error — a second
+;;! declaration writes the same generated/ file, which resolve-check-codegen
+;;! already refuses.
 (define rz-codegen-kinds
   '((configure-file . 1)
     (embed . 2)
     (embed-scheme-module . 2)
     (emit-math-module . 1)
-    (emit-interface-header . 1)))
+    (emit-interface-header . 1)
+    (staged-project . 0)))
+
+;;! The generated header and C symbol a (staged-project ...) embeds under. Named
+;;! for what the source IS to the build — the project this image ships staged —
+;;! rather than for whichever game claimed the slot, since the C that evaluates
+;;! it must not learn which project it got (#976).
+(define rz-staged-project-header "staged_project_scm.h")
+(define rz-staged-project-symbol "STAGED_PROJECT_SCM")
 
 (define (rz-codegen-arity kind)
   (let ((c (assq kind rz-codegen-kinds))) (and c (cdr c))))
@@ -135,11 +157,13 @@
 (define (rz-codegen-args decl) (cdddr decl))
 
 ;;! The generated/ files a declaration writes. For `embed` the second argument
-;;! is a C symbol rather than a file, so it is not an output.
+;;! is a C symbol rather than a file, so it is not an output; `staged-project`
+;;! carries no arguments at all and writes the one fixed header above.
 (define (rz-codegen-outputs decl)
-  (if (eq? (rz-codegen-kind decl) 'embed)
-      (list (car (rz-codegen-args decl)))
-      (rz-codegen-args decl)))
+  (case (rz-codegen-kind decl)
+    ((embed) (list (car (rz-codegen-args decl))))
+    ((staged-project) (list rz-staged-project-header))
+    (else (rz-codegen-args decl))))
 
 (define (rz-spec-codegen dir spec)
   (let loop ((forms spec) (out '()))
@@ -157,6 +181,14 @@
   (apply append
          (map (lambda (pair) (rz-spec-codegen (car pair) (cdr pair)))
               manifest)))
+
+;;! The (staged-project ...) declarations, in manifest order. Read off the same
+;;! list every other consumer reads, so the sources copied into `assets/` are by
+;;! construction the sources embedded into the image — the whole reason the two
+;;! are one declaration.
+(define (resolve-staged-projects manifest)
+  (rz-filter (lambda (decl) (eq? (rz-codegen-kind decl) 'staged-project))
+             (resolve-codegen manifest)))
 
 (define (rz-lookup table name) (assoc name table))
 

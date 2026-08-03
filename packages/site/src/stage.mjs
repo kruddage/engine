@@ -18,10 +18,17 @@
 // browser and nowhere else. staging now takes the hash *from the built HTML*
 // and cross-checks it, so a mismatch is a build error rather than a broken site.
 
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	cpSync,
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
-import { bustedName } from "@kruddage/engine";
+import { ENGINE_PROJECT_INDEX, bustedName } from "@kruddage/engine";
 
 /**
  * Replace every occurrence of `from` with `to`, requiring at least one.
@@ -106,7 +113,45 @@ export function stageSite({ artifacts, outDir, stem, assetDir = null }) {
 	if (assetDir) {
 		cpSync(assetDir, join(outDir, "assets"), { recursive: true });
 		staged.push("assets/");
+		checkProjectIndex(join(outDir, "assets"));
 	}
 
 	return staged;
+}
+
+/**
+ * Check the staged asset directory against the project index inside it.
+ *
+ * The index is what the page asks for first and every project it lists is a URL
+ * the page will then request, so an index naming a file that was not staged is
+ * a 404 the user meets by clicking the one control this directory exists for —
+ * and, like the wasm rename before it, a failure that would otherwise surface
+ * only in a browser on the deployed site. Cheap to check here, where the whole
+ * staged tree is on disk: this is the one thing about assets/ that staging can
+ * be wrong about on its own.
+ *
+ * A directory with no index is fine — a build that staged no project has
+ * nothing to serve and nothing to promise.
+ */
+function checkProjectIndex(dir) {
+	const path = join(dir, ENGINE_PROJECT_INDEX);
+	if (!existsSync(path)) return;
+
+	let names;
+	try {
+		names = JSON.parse(readFileSync(path, "utf8"));
+	} catch (e) {
+		throw new Error(`${ENGINE_PROJECT_INDEX} is not valid JSON: ${e.message}`);
+	}
+	if (!Array.isArray(names)) {
+		throw new Error(`${ENGINE_PROJECT_INDEX} must be an array of filenames`);
+	}
+
+	const missing = names.filter((name) => !existsSync(join(dir, name)));
+	if (missing.length > 0) {
+		throw new Error(
+			`${ENGINE_PROJECT_INDEX} names ${missing.join(", ")}, ` +
+				`which the build did not stage into assets/`
+		);
+	}
 }

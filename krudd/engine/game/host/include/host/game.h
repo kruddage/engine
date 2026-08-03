@@ -25,6 +25,22 @@
  */
 int  game_register(const char *name, void (*load)(void));
 
+/*
+ * Re-point the entry at INDEX at a new NAME, keeping its slot and its load
+ * callback (and, in the browser, relabelling the button that was injected for
+ * it). Returns 0, or -1 for an out-of-range index or a NULL name, having
+ * changed nothing. NAME must outlive the process, exactly as at registration.
+ *
+ * This is for a host that registers a slot per thing it is HANDED rather than
+ * per thing it is: game/project keeps one entry for whatever project was
+ * loaded off disk last, so that opening a second project replaces the first on
+ * the launcher instead of stacking beside it. The registry has no unregister
+ * and is not getting one — a slot index is a key the rest of the engine holds
+ * (game_active_index, the shell's buttons), so slots are stable for the life
+ * of the process and only what stands in them may change.
+ */
+int  game_rename(int index, const char *name);
+
 /* Number of registered games. */
 int  game_count(void);
 

@@ -3,11 +3,12 @@
  * project_host — host side of the project layer (see project/project_host.h for
  * the design, and project.scm for the form).
  *
- * Three seams, and nothing else: the (game-register! ...) primitive, which puts
+ * Four seams, and nothing else: the (game-register! ...) primitive, which puts
  * a Scheme procedure on the launcher through one shared C trampoline; the
  * per-frame tick, which gates on the loaded project and hands the frame to the
- * image with the live world bound; and project_host_eval, the door a project
- * source comes in by.
+ * image with the live world bound; project_host_eval, the door a project source
+ * comes in by; and project_host_load, the same door with "and open it" on the
+ * end, which is what the shell's Load Project control reaches through.
  */
 #include <project/project_host.h>
 
@@ -20,6 +21,10 @@
 #include "s7.h"
 
 #include "project_scm.h"
+
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 
 #include <stddef.h>
 #include <stdint.h>
@@ -69,15 +74,38 @@ static struct project_slot g_slots[PROJECT_MAX];
 
 static int g_slot_count;
 
-/* True when launcher index IDX is one this module registered. */
-static int slot_is_ours(int idx)
+/*
+ * The launcher entry that belongs to the load-a-project-from-outside door
+ * (project_host_load), and whether a registration happening right now came in
+ * through it. -1 until the first such load.
+ *
+ * A project that arrives at runtime is not a project this build carries: it is
+ * whatever the player last opened, and there is one of those. So the door owns
+ * exactly one entry and renames it in place for each new project, rather than
+ * leaving a trail of buttons for sources that are no longer on screen and, past
+ * PROJECT_MAX, refusing the ninth one outright. The staged project and anything
+ * else registered at boot keep their own entries — they are what the build
+ * ships, and nothing loaded later displaces them.
+ */
+static int g_door_index = -1;
+
+static int g_through_door;
+
+/* The slot record for launcher index IDX, or NULL if IDX is not ours. */
+static struct project_slot *slot_for(int idx)
 {
 	int i;
 
 	for (i = 0; i < g_slot_count; i++)
 		if (g_slots[i].index == idx)
-			return 1;
-	return 0;
+			return &g_slots[i];
+	return NULL;
+}
+
+/* True when launcher index IDX is one this module registered. */
+static int slot_is_ours(int idx)
+{
+	return slot_for(idx) != NULL;
 }
 
 /* The image global holding the load thunk registered for launcher slot IDX. */
@@ -116,6 +144,23 @@ static void project_load_trampoline(void)
 }
 
 /*
+ * Take over the door's own launcher entry for NAME, returning its index.
+ *
+ * The registry holds this very buffer as the entry's display name (it keeps the
+ * pointer it was registered with), so writing the new name into it IS the
+ * rename as far as game_find is concerned; game_rename is what makes the
+ * launcher button on the page agree, and it is the reason the registry grew
+ * that call at all.
+ */
+static int rename_door_slot(struct project_slot *slot, const char *name,
+			    size_t n)
+{
+	memcpy(slot->name, name, n + 1);
+	game_rename(slot->index, slot->name);
+	return slot->index;
+}
+
+/*
  * Claim a launcher slot for NAME, returning its index or -1.
  *
  * A name already on the launcher is a reload when it is one of ours: the same
@@ -126,12 +171,19 @@ static void project_load_trampoline(void)
  * A name belonging to something else on the launcher is refused: the entry that
  * is there has its own load callback, which this module cannot replace, so
  * accepting the registration would leave a project that never loads.
+ *
+ * A registration arriving through project_host_load — a project the player just
+ * opened — takes the door's one entry instead of a fresh one, renaming it (see
+ * g_door_index). The name check above still comes first, so opening a project
+ * that is already on the launcher, the staged one included, reuses the entry it
+ * already has rather than minting a duplicate of it under the door's.
  */
 static int claim_slot(const char *name)
 {
-	size_t n = strlen(name);
-	int    found = game_find(name);
-	int    idx, i;
+	size_t              n = strlen(name);
+	int                 found = game_find(name);
+	struct project_slot *door;
+	int                 idx, i;
 
 	if (found >= 0) {
 		if (slot_is_ours(found))
@@ -144,6 +196,9 @@ static int claim_slot(const char *name)
 			 (unsigned)n);
 		return -1;
 	}
+	door = g_through_door ? slot_for(g_door_index) : NULL;
+	if (door)
+		return rename_door_slot(door, name, n);
 	if (g_slot_count >= PROJECT_MAX) {
 		LOG_WARN("project: no room for \"%s\" (%d projects registered)",
 			 name, g_slot_count);
@@ -159,6 +214,8 @@ static int claim_slot(const char *name)
 	}
 	g_slots[i].index = idx;
 	g_slot_count++;
+	if (g_through_door)
+		g_door_index = idx;
 	return idx;
 }
 
@@ -271,9 +328,82 @@ int32_t project_host_eval(const char *src)
 	return s7_is_integer(res) ? (int32_t)s7_integer(res) : -1;
 }
 
+int32_t project_host_load(const char *src)
+{
+	int32_t idx;
+
+	/*
+	 * The flag spans the eval rather than being an argument to it because
+	 * the registration it governs happens several frames of interpreter
+	 * down — the (project ...) macro reaching game-register! — and
+	 * threading a "this one is the player's" argument through the image
+	 * would put a policy of the C half into the Scheme half, where a
+	 * project could see it. A source declaring several project forms
+	 * therefore collapses onto the one entry, keeping the last: the door
+	 * owns one, and that is the rule whichever way the source is shaped.
+	 */
+	g_through_door = 1;
+	idx = project_host_eval(src);
+	g_through_door = 0;
+	if (idx < 0)
+		return -1;
+	game_load((int)idx);
+	return idx;
+}
+
+#ifdef __EMSCRIPTEN__
+/*
+ * The page's end of project_host_load: SRC is a NUL-terminated project source
+ * in the module's memory, and the answer is the launcher index it opened on, or
+ * -1 for a source that did not register a project. Exported to
+ * Module._krudd_load_project, the way game.c exports krudd_load_game.
+ *
+ * A refusal is a return value and not an exception on purpose. A project is
+ * user input — the whole point of the button that reaches this is that anyone
+ * may point it at any .scm — so "that file was not a project" is an ordinary
+ * answer the page reports, with the engine still running the project it already
+ * had. The reason is on the engine log, which project.scm has already written.
+ */
+EMSCRIPTEN_KEEPALIVE int32_t krudd_load_project(const char *src)
+{
+	return project_host_load(src);
+}
+
+/*
+ * Install window.kruddRunProject(text) -> launcher index, the one call the
+ * shell makes to open a project it has read off disk or fetched from assets/.
+ *
+ * The marshalling lives here, inside the module's own JS scope, rather than in
+ * the page. Every other JS bridge in this tree passes a string OUT
+ * (UTF8ToString on a C pointer); this one passes a variable-length string IN,
+ * which needs a buffer in the module's heap — and the heap views and the
+ * allocator are in scope here while being no part of what emscripten publishes
+ * on Module. So the page gets a function that takes a JS string, and the
+ * pointer discipline stays on this side of the boundary: allocated and freed
+ * in the one call, with the heap view read after the allocation because
+ * growing the heap replaces it.
+ */
+EM_JS(void, project_install_bridge, (void), {
+	window.kruddRunProject = function (text) {
+		var bytes = new TextEncoder().encode(String(text));
+		var ptr = _malloc(bytes.length + 1);
+		if (!ptr)
+			return -1;
+		HEAPU8.set(bytes, ptr);
+		HEAPU8[ptr + bytes.length] = 0;
+		var idx = _krudd_load_project(ptr);
+		_free(ptr);
+		return idx;
+	};
+})
+#endif
+
 void project_host_plugin_entry(struct subsystem_manager *mgr)
 {
 	/* The "scene" api is the entity plugin, registered before this one. */
 	g_scene = subsystem_manager_get_api(mgr, "scene");
 	subsystem_manager_register(mgr, &project_desc);
+#ifdef __EMSCRIPTEN__
+	project_install_bridge();
+#endif
 }

@@ -130,4 +130,44 @@ void project_host_plugin_entry(struct subsystem_manager *mgr);
  */
 int32_t project_host_eval(const char *src);
 
+/*
+ * Evaluate SRC and open the project it registered, returning that project's
+ * launcher index or -1. This is project_host_eval followed by the launcher
+ * click, which is the whole of what "load this file" means: the previous
+ * project's world is cleared and this one's scene is built in its place, its
+ * on-load runs, and from the next frame its hooks are the ones that run.
+ *
+ * It is the door for a project that arrives while the engine is already up — a
+ * file the player picked, or one fetched from the site's assets/ — as opposed
+ * to the project the build shipped staged, which core evaluates at boot through
+ * project_host_eval and opens by slot. The distinction is not cosmetic, and it
+ * is the reason this is a second entry point rather than a flag:
+ *
+ *   THE DOOR OWNS ONE LAUNCHER ENTRY. What comes through it is whatever the
+ *   player last opened, and there is one of those, so a second project renames
+ *   that entry rather than taking another beside it. Loading five files leaves
+ *   one button, not five dead ones, and never exhausts the registry. What the
+ *   build ships — the staged project, and anything a plugin registered — keeps
+ *   its own entry: those are facts about this engine, and a file someone opened
+ *   for a minute does not displace them. A source whose project name is already
+ *   on the launcher (opening the staged project's own .scm out of assets/, say)
+ *   reuses the entry it already has, so that path is a reload rather than a
+ *   duplicate.
+ *
+ *   REPLACEMENT IS THE POINT, LAYERING IS THE BUG. The world goes because
+ *   project-open clears it before building; the old project's hooks go because
+ *   only the loaded project's record is dispatched (project-host-tick), and its
+ *   record is dropped when its slot is re-registered. What cannot go is what
+ *   the previous project defined at top level in the shared image: a project is
+ *   evaluated into the rootlet, and Scheme has no unloading. Two projects that
+ *   prefix their definitions (the convention everywhere in this tree) do not
+ *   collide; two that both define `reset` do, and the second one wins.
+ *
+ * A source that does not read, carries no project form, or is refused for any
+ * of the reasons project_host_eval lists opens nothing and answers -1, leaving
+ * the project that was already loaded running. A bad file is the expected case
+ * for a button that opens arbitrary .scm, not an edge case.
+ */
+int32_t project_host_load(const char *src);
+
 #endif /* PROJECT_HOST_H */

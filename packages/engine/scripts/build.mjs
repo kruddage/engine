@@ -212,11 +212,9 @@ if (!html.includes("index.js")) {
 	);
 }
 
-/* The real export surface, read back out of the module. Recorded rather than
- * asserted against ENGINE_EXPORTED_FUNCTIONS: emscripten is free to rename a
- * C entry point on the way out (a `main` taking argv comes through as
- * __main_argc_argv), so the artifact is the authority on what the surface is
- * and the declared list is what the engine intends to offer. Consumers can
+/* The real export surface, read back out of the module. The artifact is the
+ * authority on what the surface is and ENGINE_EXPORTED_FUNCTIONS is what the
+ * engine intends to offer, so both go into the manifest and consumers can
  * compare the two; see README.md. */
 /* Buffer is a Uint8Array and the reader honours byteOffset, so this is read
  * in place rather than copied — the module is tens of megabytes. */
@@ -224,6 +222,30 @@ const wasmExports = readWasmExports(readFileSync(join(DIST, "index.wasm")))
 	.filter((e) => e.kind === "function")
 	.map((e) => e.name)
 	.sort();
+
+/* An intent that is not in the artifact is a lie, though, and until something
+ * read the two against each other the only way to find out was a page calling
+ * something that was not there. ninja.scm's -sEXPORTED_FUNCTIONS and the
+ * contract in src/artifacts.mjs are two hand-written lists that have to agree;
+ * this is what makes disagreeing a build failure.
+ *
+ * Declared names carry emscripten's leading underscore and the module's export
+ * section does not, hence the strip. _main is the one exemption: emscripten
+ * renames a main that takes argv to __main_argc_argv on the way out, so its
+ * declared name genuinely is an intent rather than a prediction. Every other
+ * entry is a plain C function exported under its own symbol. */
+const notExported = ENGINE_EXPORTED_FUNCTIONS.filter(
+	(name) => name !== "_main" && !wasmExports.includes(name.replace(/^_/, ""))
+);
+
+if (notExported.length > 0) {
+	fail(
+		`the module does not export: ${notExported.join(", ")}\n` +
+			`ENGINE_EXPORTED_FUNCTIONS (packages/engine/src/artifacts.mjs) and\n` +
+			`-sEXPORTED_FUNCTIONS (krudd/kruddmake/ninja.scm, $mainflags) have\n` +
+			`drifted apart, or a declared entry point was deleted from the C.`
+	);
+}
 
 /* -------------------------------------------------------------- manifest */
 

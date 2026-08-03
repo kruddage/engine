@@ -56,11 +56,12 @@ EM_JS(void, game_launcher_hide, (void), {
 		el.classList.add('hidden');
 })
 
-/* Show the "Play <name>" splash (see game_boot_default) that stands between
- * a boot default and the board until the player taps it. */
-EM_JS(void, game_show_play_prompt, (const char *name), {
-	if (typeof window.kruddShowPlayPrompt === 'function')
-		window.kruddShowPlayPrompt(UTF8ToString(name));
+/* Show the "load project" splash (see game_boot_default) that stands between
+ * a boot default and the board until the player taps it. NAME labels its one
+ * button, the project being opened. */
+EM_JS(void, game_show_load_prompt, (const char *name), {
+	if (typeof window.kruddShowLoadPrompt === 'function')
+		window.kruddShowLoadPrompt(UTF8ToString(name));
 })
 #endif
 
@@ -147,11 +148,11 @@ int game_boot_default(const char *name)
 	 */
 	game_launcher_hide();
 	/* A launcher pick is a deliberate choice; booting straight into a scene
-	 * isn't, so it gets a "Play <name>" splash in place of the launcher
-	 * click that never happened — and a place for the first user gesture to
-	 * land so the audio context can unlock (see the play-prompt handler in
-	 * shell.html.in). */
-	game_show_play_prompt(g_games[index].name);
+	 * isn't, so it gets a "load project" splash naming that scene, in place
+	 * of the launcher click that never happened — and a place for the first
+	 * user gesture to land so the audio context can unlock (see the
+	 * load-prompt handler in shell.html.in). */
+	game_show_load_prompt(g_games[index].name);
 #endif
 	return index;
 }

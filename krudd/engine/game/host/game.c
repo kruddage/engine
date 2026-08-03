@@ -44,9 +44,20 @@ EM_JS(void, game_launcher_add, (const char *name, int idx), {
 		return;
 	var b = document.createElement('button');
 	b.className = 'launcher-btn';
+	/* Addressable by slot so game_rename can find it again. */
+	b.id = 'launcher-game-' + idx;
 	b.textContent = UTF8ToString(name);
 	b.onclick = function () { Module._krudd_load_game(idx); };
 	host.appendChild(b);
+})
+
+/* Relabel the button injected for slot IDX (see game_rename). A missing element
+ * — an older shell, or a slot registered before the page had the host — is a
+ * safe no-op, the same as adding one. */
+EM_JS(void, game_launcher_rename, (const char *name, int idx), {
+	var b = document.getElementById('launcher-game-' + idx);
+	if (b)
+		b.textContent = UTF8ToString(name);
 })
 
 /* Hide the launcher overlay once a game has been chosen. */
@@ -79,6 +90,17 @@ int game_register(const char *name, void (*load)(void))
 #endif
 	g_count++;
 	return index;
+}
+
+int game_rename(int index, const char *name)
+{
+	if (index < 0 || index >= g_count || !name)
+		return -1;
+	g_games[index].name = name;
+#ifdef __EMSCRIPTEN__
+	game_launcher_rename(name, index);
+#endif
+	return 0;
 }
 
 int game_count(void)

@@ -238,10 +238,19 @@
      ;;! the include path via each build.scm's (private (raw "../third_party")).
      "s7nativelib = $srcroot/../third_party/libs7-linux-x86_64.a"
      "s7wasmlib = $srcroot/../third_party/libs7-wasm32.a"
+     ;;! The exported surface is mirrored by @kruddage/engine's
+     ;;! ENGINE_EXPORTED_FUNCTIONS, which its build script checks back against
+     ;;! the linked module — so this list and that one are checked to agree
+     ;;! rather than trusted to. _malloc/_free are here because the Load Project
+     ;;! path passes a variable-length string INTO the module (every other
+     ;;! JS bridge in the tree passes out), and a buffer for it has to come from
+     ;;! somewhere the module owns; project_host.c's EM_JS bridge is the only
+     ;;! caller, and it frees what it allocates in the same call.
      (string-append "mainflags = -sENVIRONMENT=web -sALLOW_MEMORY_GROWTH=1 "
                     "-sGROWABLE_ARRAYBUFFERS=0 -sMALLOC=mimalloc "
                     "-sFETCH=1 -sMAX_WEBGL_VERSION=2 --use-port=emdawnwebgpu "
-                    "-sEXPORTED_FUNCTIONS=_main,_krudd_load_game")
+                    "-sEXPORTED_FUNCTIONS=_main,_krudd_load_game,"
+                    "_krudd_load_project,_malloc,_free")
      ""
      "rule cc"
      "  command = $cc $cflags $extracflags $includes -MMD -MF $out.d -c $in -o $out"
@@ -403,6 +412,56 @@
    (list "manifest.webmanifest" "sw.js" "icon-192.png" "icon-512.png"))
   (ninja-emit ""))
 
+;;! The runtime asset directory served next to index.html, and the index the
+;;! shell reads out of it. @kruddage/engine copies this directory wholesale into
+;;! its dist/ and packages/site stages it to the site (ENGINE_ASSET_DIR), so
+;;! anything landing here is reachable from the page as `assets/<name>`.
+(define ninja-assets-dir "assets")
+
+(define ninja-project-index "projects.json")
+
+;;! Copy every (staged-project ...) source into assets/ under its own name.
+;;! This is the other half of the declaration whose embed ninja-run-codegen
+;;! handles: the same file, reachable at runtime by fetch instead of compiled
+;;! into the module, so the shell's Load Project control can open the project
+;;! this build ships by the same door a file off the user's disk comes in by.
+(define (ninja-emit-project-assets manifest)
+  (for-each
+   (lambda (decl)
+     (let* ((src (rz-codegen-source decl))
+            (out (string-append ninja-assets-dir "/" (krudd-basename src))))
+       (ninja-emit (string-append "build " out ": copy $srcroot/" src))
+       (ninja-wasm! out)))
+   (resolve-staged-projects manifest))
+  (ninja-emit ""))
+
+;;! Write assets/projects.json: the staged project filenames, as a JSON array.
+;;!
+;;! The shell cannot list a directory over HTTP, and it must not be told a
+;;! filename either — a page carrying a project's filename is a generic shell
+;;! that knows a game (#976). So the build, which is the only layer that knows
+;;! what it staged, writes down what it staged and the page reads it. Written
+;;! here at generation time rather than as a ninja edge for the same reason the
+;;! generated/ headers are: its content is a fact about the manifest, fixed the
+;;! moment the manifest is read, and the regen edge already re-runs the
+;;! generator when a build.scm changes.
+(define (ninja-generate-project-index manifest builddir)
+  (let ((dir   (string-append builddir "/" ninja-assets-dir))
+        (names (map (lambda (decl)
+                      (krudd-basename (rz-codegen-source decl)))
+                    (resolve-staged-projects manifest))))
+    (system (string-append "mkdir -p \"" dir "\""))
+    (call-with-output-file (string-append dir "/" ninja-project-index)
+      (lambda (port)
+        (write-string
+         (string-append "["
+                        (ninja-join ","
+                                    (map (lambda (n)
+                                           (string-append "\"" n "\""))
+                                         names))
+                        "]\n")
+         port)))))
+
 (define (ninja-codegen-input srcroot decl)
   (string-append srcroot "/" (rz-codegen-source decl)))
 
@@ -417,6 +476,12 @@
     (case (rz-codegen-kind decl)
       ((configure-file) (krudd-configure-file in (out (car args))))
       ((embed) (krudd-embed-file in (out (car args)) (cadr args)))
+      ;;! The same embed under a fixed header and symbol. The copy into assets/
+      ;;! the one declaration also buys is a ninja edge, emitted below by
+      ;;! ninja-emit-project-assets.
+      ((staged-project)
+       (krudd-embed-file in (out rz-staged-project-header)
+                         rz-staged-project-symbol))
       ((embed-scheme-module)
        (krudd-embed-scheme-module in (out (car args)) (out (cadr args))))
       ((emit-math-module) (krudd-emit-math-module in (out (car args))))
@@ -486,8 +551,12 @@
        manifest)
       (ninja-emit "# --- WASM (Emscripten) main module ---")
       (ninja-emit "")
-      (if builddir (ninja-generate-codegen manifest srcroot builddir))
+      (if builddir
+          (begin
+            (ninja-generate-codegen manifest srcroot builddir)
+            (ninja-generate-project-index manifest builddir)))
       (ninja-emit-static-assets srcroot)
+      (ninja-emit-project-assets manifest)
       (ninja-emit-main-module table libmap)
       (ninja-emit (string-append "build native: phony "
                                  (ninja-join " " (reverse ninja-native))))

@@ -276,6 +276,139 @@ canvas {
 	color: #fff;
 }
 
+/*
+ * ── Load Project ──
+ *
+ * The engine's one piece of permanent chrome. Everything else on this page is a
+ * splash you pass through — the launcher goes down on the first pick and never
+ * comes back, the load prompt goes down on its one tap — because they exist to
+ * get you to a scene. This has to outlast them: opening a project is not a boot
+ * step, it is the thing the page is for, and it must be reachable from the
+ * scene a project is already running so that a second file replaces the first
+ * (project_host_load in game/project). Hence a control parked in the corner
+ * rather than a fourth overlay in the boot sequence.
+ *
+ * It sits in the top-left because the engine's own UI (kruddgui) anchors to the
+ * bottom of the viewport, and it is dim until hovered so that a corner of a
+ * running game is not spending its contrast on a button.
+ */
+.project-open {
+	position: fixed;
+	top: 10px;
+	left: 10px;
+	/* Above the launcher and the load prompt (5000), below the panel it
+	 * opens (5500) and the error box (9999): the one control that is
+	 * reachable from every state the page has, including the boot splash
+	 * that already says "load project". */
+	z-index: 5200;
+	background: rgba(20, 20, 20, 0.72);
+	border: 1px solid #2a2a2a;
+	border-left: 3px solid #2d6a2d;
+	color: #777;
+	font-family: inherit;
+	font-size: 11px;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	padding: 5px 10px;
+	cursor: pointer;
+	opacity: 0.55;
+	transition: opacity 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.project-open:hover {
+	opacity: 1;
+	border-color: #555;
+	border-left-color: #4a9a4a;
+	color: #ddd;
+}
+
+.project-panel {
+	position: fixed;
+	inset: 0;
+	background: rgba(13, 13, 13, 0.96);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	z-index: 5500;
+	padding: 20px;
+}
+
+.project-panel.hidden { display: none; }
+
+.project-panel-box {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	width: 100%;
+	max-width: 360px;
+}
+
+.project-panel-title {
+	font-size: 22px;
+	font-weight: bold;
+	letter-spacing: 0.2em;
+	text-transform: uppercase;
+	color: #fff;
+}
+
+.project-panel-sub {
+	font-size: 12px;
+	color: #666;
+	letter-spacing: 0.1em;
+	margin-bottom: 8px;
+}
+
+.project-panel-label {
+	font-size: 11px;
+	color: #555;
+	letter-spacing: 0.15em;
+	text-transform: uppercase;
+	margin-top: 6px;
+}
+
+.project-staged {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.project-btn {
+	background: #141414;
+	border: 1px solid #333;
+	border-left: 3px solid #2d6a2d;
+	color: #ddd;
+	font-family: inherit;
+	font-size: 14px;
+	letter-spacing: 0.08em;
+	padding: 12px 16px;
+	cursor: pointer;
+	text-align: left;
+	transition: border-color 0.12s, background 0.12s;
+}
+
+.project-btn:hover {
+	background: #1c1c1c;
+	border-color: #555;
+	border-left-color: #4a9a4a;
+	color: #fff;
+}
+
+.project-panel-close {
+	background: none;
+	border: 1px solid #2a2a2a;
+	color: #666;
+	font-family: inherit;
+	font-size: 11px;
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	padding: 6px 12px;
+	margin-top: 10px;
+	cursor: pointer;
+	align-self: flex-start;
+}
+
+.project-panel-close:hover { border-color: #555; color: #aaa; }
+
 /* ── Error overlay ── */
 
 .error-backdrop {
@@ -472,6 +605,24 @@ canvas {
 	</div>
 </div>
 
+<button class="project-open" id="project-open">load project</button>
+
+<div class="project-panel hidden" id="project-panel">
+	<div class="project-panel-box">
+		<div class="project-panel-title">load project</div>
+		<div class="project-panel-sub">a project is one .scm file</div>
+		<div class="project-panel-label" id="project-staged-label" hidden>shipped with this build</div>
+		<div class="project-staged" id="project-staged"></div>
+		<div class="project-panel-label">from this device</div>
+		<button class="project-btn" id="project-file-btn">choose a .scm file&hellip;</button>
+		<!-- An <input type=file> and a FileReader, not the File System Access
+		     API: this reads one file once, which is the whole of what that API
+		     would buy, and it works in every browser the engine runs in. -->
+		<input type="file" id="project-file" accept=".scm,text/plain" hidden>
+		<button class="project-panel-close" id="project-panel-close">close</button>
+	</div>
+</div>
+
 <div class="error-backdrop" id="error-backdrop">
 	<div class="error-box">
 		<div class="error-header">
@@ -595,18 +746,157 @@ canvas {
 		el.classList.remove('hidden');
 	};
 
-	document.getElementById('load-prompt-btn').addEventListener('click', function () {
-		document.getElementById('load-prompt').classList.add('hidden');
-		/*
-		 * Browsers only let an AudioContext leave 'suspended' from inside a
-		 * user-gesture handler, so this is the one guaranteed gesture every
-		 * player makes before hearing anything — resume it directly rather
-		 * than hope a later click (a board move, say) does the job.
-		 */
+	/*
+	 * Browsers only let an AudioContext leave 'suspended' from inside a
+	 * user-gesture handler, so every button on this page that a player might
+	 * press first resumes it directly rather than hoping a later click (a
+	 * board move, say) does the job.
+	 */
+	function resumeAudio() {
 		var ctx = window.Module && Module.__kruddAudioCtx;
 		if (ctx && ctx.state !== 'running' && ctx.resume)
 			ctx.resume();
+	}
+
+	document.getElementById('load-prompt-btn').addEventListener('click', function () {
+		document.getElementById('load-prompt').classList.add('hidden');
+		resumeAudio();
 	});
+
+	/*
+	 * ── Load Project ──
+	 *
+	 * Getting a .scm into a running engine. The source text goes to
+	 * window.kruddRunProject, which the module installs at boot
+	 * (project_install_bridge in game/project/project_host.c) and which
+	 * answers the launcher index the project opened on, or -1.
+	 *
+	 * Everything about pointers and the module heap is on that side of the
+	 * call on purpose: this page hands over a JS string and reads back a
+	 * number. What is left here is the two ways a project reaches the page —
+	 * a file the player picks, and one this build shipped — and what to show
+	 * when it does not load.
+	 */
+	function projectPanel(show) {
+		document.getElementById('project-panel')
+			.classList.toggle('hidden', !show);
+	}
+
+	/*
+	 * Run SRC as a project, reporting through the error overlay rather than
+	 * failing quietly. A .scm that does not load is the expected case for a
+	 * button that opens whatever it is pointed at, so it gets the same
+	 * treatment as a renderer that would not start: named, with the reason
+	 * where it can be read, and the engine still running whatever it had.
+	 */
+	function kruddOpenProject(label, src) {
+		var run = window.kruddRunProject;
+
+		/* One line each: the overlay reads the first line of a detail as
+		 * the message and everything after it as a stack trace (see
+		 * errorToMarkdown), and none of these has one. */
+		if (typeof run !== 'function') {
+			window.kruddShowError('The engine is still starting',
+				'It cannot open ' + label + ' until the first frame is up.');
+			return;
+		}
+		if (run(src) < 0) {
+			window.kruddShowError('Could not load ' + label,
+				label + ' is not a project the engine could run \u2014 a project is '
+				+ 'one .scm holding a (project "Name" ...) form, and the reason this '
+				+ 'one was refused is on the engine log (the browser console).');
+			return;
+		}
+		/* It loaded: every splash standing between the page and a scene
+		 * is now stale, including the launcher this may have been opened
+		 * over. Same hide the C side does on a launcher pick. */
+		projectPanel(false);
+		document.getElementById('launcher').classList.add('hidden');
+		document.getElementById('load-prompt').classList.add('hidden');
+	}
+
+	document.getElementById('project-open').addEventListener('click', function () {
+		resumeAudio();
+		projectPanel(true);
+	});
+
+	document.getElementById('project-panel-close').addEventListener('click', function () {
+		projectPanel(false);
+	});
+
+	document.getElementById('project-file-btn').addEventListener('click', function () {
+		document.getElementById('project-file').click();
+	});
+
+	document.getElementById('project-file').addEventListener('change', function () {
+		var input = this;
+		var file  = input.files && input.files[0];
+		var reader;
+
+		if (!file)
+			return;
+		/* Cleared so that picking the SAME file again still fires a
+		 * change event — re-opening a file you have just edited is the
+		 * common case for this button, not a rare one. */
+		input.value = '';
+		reader = new FileReader();
+		reader.onload = function () {
+			kruddOpenProject(file.name, String(reader.result));
+		};
+		reader.onerror = function () {
+			window.kruddShowError('Could not read ' + file.name,
+				'The browser would not read the file: '
+				+ String(reader.error || 'no reason given'));
+		};
+		reader.readAsText(file);
+	});
+
+	/*
+	 * The projects this build ships, offered as the zero-friction path: no
+	 * file to find, and the same door a file off the disk comes in by, so the
+	 * staged project is not a special case in the engine.
+	 *
+	 * The names come from assets/projects.json, written by the build from its
+	 * own (staged-project ...) declarations — this page cannot list a
+	 * directory over HTTP, and it must not carry a filename either. A page
+	 * that names a game is a generic shell that knows one, which is the pin
+	 * #976 pulled out of the C. A build that staged nothing (or a page opened
+	 * without the assets/ directory beside it) simply shows no list.
+	 */
+	function kruddStagedProjects() {
+		fetch('assets/projects.json').then(function (r) {
+			return r.ok ? r.json() : [];
+		}).then(function (names) {
+			var host  = document.getElementById('project-staged');
+			var label = document.getElementById('project-staged-label');
+
+			if (!Array.isArray(names) || names.length === 0)
+				return;
+			label.hidden = false;
+			names.forEach(function (name) {
+				var b = document.createElement('button');
+				b.className = 'project-btn';
+				b.textContent = name;
+				b.onclick = function () {
+					var url = 'assets/' + encodeURIComponent(name);
+
+					fetch(url).then(function (r) {
+						if (!r.ok)
+							throw new Error('HTTP ' + r.status);
+						return r.text();
+					}).then(function (src) {
+						kruddOpenProject(name, src);
+					}).catch(function (e) {
+						window.kruddShowError('Could not fetch ' + name,
+							url + ' did not load: ' + String(e));
+					});
+				};
+				host.appendChild(b);
+			});
+		}).catch(function () {});
+	}
+
+	kruddStagedProjects();
 
 	/*
 	 * Firefox's WebGPU implementation isn't solid enough yet to default to it,

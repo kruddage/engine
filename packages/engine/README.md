@@ -77,10 +77,11 @@ export surface.
 
 `declaredExports` in the manifest mirrors `-sEXPORTED_FUNCTIONS` from
 `ninja.scm`; `wasmExports` is what `src/wasm-exports.mjs` actually found in the
-module. They are recorded side by side rather than asserted equal, because
-emscripten is free to rename an entry point on the way out — a `main` taking
-`argv` comes through as `__main_argc_argv`. Once CI has shown what the real
-names are, the two can be tied together into a gate.
+module. Both are recorded, and the build now fails when a declared entry point
+is absent from the module — the gate this file used to say was waiting on CI
+showing what the real names are. `_main` is exempt from it and stays an intent
+rather than a prediction, because emscripten renames a `main` taking `argv` to
+`__main_argc_argv` on the way out.
 
 ## The next barriers
 

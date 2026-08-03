@@ -127,15 +127,67 @@ test("the PWA files keep their literal names", () => {
 });
 
 test("copies the runtime asset directory when there is one", () => {
+	/* The real shape of it: the project sources a build ships staged, plus the
+	 * index naming them that the shell's Load Project control reads. Both are
+	 * fetched by literal path — the index by name, each project by the name the
+	 * index gave it — so both have to arrive under assets/ unrenamed. */
 	const { dir, artifacts } = fakeBuild();
 	const assets = join(dir, "assets");
 	mkdirSync(assets);
-	writeFileSync(join(assets, "chess.mesh"), "mesh");
+	writeFileSync(join(assets, "projects.json"), '["demo.scm"]\n');
+	writeFileSync(join(assets, "demo.scm"), '(project "Demo")\n');
+
+	const out = mkdtempSync(join(tmpdir(), "krudd-out-"));
+	const staged = stageSite({
+		artifacts,
+		outDir: out,
+		stem: STEM,
+		assetDir: assets,
+	});
+
+	assert.ok(staged.includes("assets/"));
+	assert.equal(
+		readFileSync(join(out, "assets", "projects.json"), "utf8"),
+		'["demo.scm"]\n'
+	);
+	assert.equal(
+		readFileSync(join(out, "assets", "demo.scm"), "utf8"),
+		'(project "Demo")\n'
+	);
+});
+
+test("fails when the project index names a file that was not staged", () => {
+	/* The index is fetched first and everything it lists is fetched next, so an
+	 * index out of step with the directory is a 404 the user meets by clicking
+	 * Load Project — the class of failure that used to reach the browser and
+	 * nowhere else. */
+	const { dir, artifacts } = fakeBuild();
+	const assets = join(dir, "assets");
+	mkdirSync(assets);
+	writeFileSync(join(assets, "projects.json"), '["demo.scm","gone.scm"]\n');
+	writeFileSync(join(assets, "demo.scm"), '(project "Demo")\n');
+
+	const out = mkdtempSync(join(tmpdir(), "krudd-out-"));
+	assert.throws(
+		() => stageSite({ artifacts, outDir: out, stem: STEM, assetDir: assets }),
+		/gone\.scm/
+	);
+});
+
+test("an asset directory with no project index stages unchecked", () => {
+	/* A build that staged no project promises nothing about assets/. */
+	const { dir, artifacts } = fakeBuild();
+	const assets = join(dir, "assets");
+	mkdirSync(assets);
+	writeFileSync(join(assets, "note.txt"), "no projects here");
 
 	const out = mkdtempSync(join(tmpdir(), "krudd-out-"));
 	stageSite({ artifacts, outDir: out, stem: STEM, assetDir: assets });
 
-	assert.equal(readFileSync(join(out, "assets", "chess.mesh"), "utf8"), "mesh");
+	assert.equal(
+		readFileSync(join(out, "assets", "note.txt"), "utf8"),
+		"no projects here"
+	);
 });
 
 test("fails loudly when the entry document lost its loader reference", () => {

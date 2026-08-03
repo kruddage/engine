@@ -100,6 +100,28 @@ int main(void)
 		assert(game_active_index() == id);
 	}
 
+	/*
+	 * game_rename swaps what stands in a slot without disturbing the slot:
+	 * the index, the count and the load callback are all unchanged, the new
+	 * name resolves and the old one stops resolving. That is what lets a
+	 * host which registers a slot per thing it is handed (game/project, for
+	 * a project loaded off disk) replace rather than accumulate.
+	 */
+	assert(game_rename(0, "A2") == 0);
+	assert(game_count() == 3);
+	assert(game_find("a2") == 0);
+	assert(game_find("A") == -1);
+	g_loaded = -1;
+	game_load(0);
+	assert(g_loaded == 10);
+
+	/* Out of range and a NULL name change nothing. */
+	assert(game_rename(3, "X") == -1);
+	assert(game_rename(-1, "X") == -1);
+	assert(game_rename(0, NULL) == -1);
+	assert(game_count() == 3);
+	assert(game_find("A2") == 0);
+
 	printf("game_test: ok\n");
 	return 0;
 }

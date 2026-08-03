@@ -85,16 +85,40 @@ export const ENGINE_ARTIFACTS = [
 	},
 ];
 
-/* Runtime assets the asset plugin fetches by path. Copied wholesale when the
- * build produced any; absent from a build with no runtime assets, which is not
- * an error. */
+/* Runtime files the page fetches by path rather than linking in: the project
+ * sources this build ships staged (assets/*.scm) and the index naming them
+ * (assets/projects.json), which is how the shell's Load Project control offers
+ * a project without the page carrying a filename. Copied wholesale when the
+ * build produced any; absent from a build that staged nothing, which is not an
+ * error. */
 export const ENGINE_ASSET_DIR = "assets";
+
+/* The index inside ENGINE_ASSET_DIR: a JSON array of the project filenames
+ * beside it. Written by the build from the (staged-project ...) declarations in
+ * the C tree (krudd/kruddmake/ninja.scm) and read by the shell, which cannot
+ * list a directory over HTTP and must not carry a project's filename. Named
+ * here because it is a fact about the published layout, and the staging step
+ * checks the staged directory against it. */
+export const ENGINE_PROJECT_INDEX = "projects.json";
 
 /* The C entry points the WASM module exports to JS. Mirrors -sEXPORTED_FUNCTIONS
  * in ninja.scm's $mainflags; kept here so a consumer can assert against the
  * surface it codes to instead of reading the generated loader. Verified against
- * the real build output by scripts/build.mjs. */
-export const ENGINE_EXPORTED_FUNCTIONS = ["_main", "_krudd_load_game"];
+ * the real build output by scripts/build.mjs.
+ *
+ * _malloc and _free are here for one reason and it is worth naming: the Load
+ * Project path passes a variable-length string INTO the module, and every other
+ * JS bridge in the tree passes one out. A buffer for it has to come from the
+ * module's own allocator, so the allocator is part of the published surface.
+ * The engine's own bridge (project_host.c) is the only intended caller, and it
+ * frees what it allocates within the one call. */
+export const ENGINE_EXPORTED_FUNCTIONS = [
+	"_main",
+	"_krudd_load_game",
+	"_krudd_load_project",
+	"_malloc",
+	"_free",
+];
 
 /* Name of the self-describing index written beside the artifacts. */
 export const ENGINE_MANIFEST_FILE = "engine-manifest.json";

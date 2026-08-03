@@ -168,6 +168,28 @@
             "base/math/math.scm" 'emit-math-module '("math_gen.c"))
 (decl-check "emit-interface-header declares the header it emits"
             "render/renderer.scm" 'emit-interface-header '("renderer.h"))
+(decl-check "staged-project declares the one fixed header it embeds under"
+            "game/chess/chess.scm" 'staged-project '("staged_project_scm.h"))
+
+;;! The staged slot is single-occupancy, and that is enforced by the header name
+;;! being fixed rather than by a rule of its own: a second declaration writes the
+;;! same generated/ file, which resolve-check-codegen already refuses.
+(check "two staged projects error, the same way two embeds of one header do"
+       (expect-error
+        (lambda ()
+          (resolve-check-codegen
+           (list (cons "a" '((staged-project "a.scm")))
+                 (cons "b" '((staged-project "b.scm"))))))))
+
+(check "a staged-project takes no arguments beyond its source"
+       (expect-error
+        (lambda ()
+          (resolve-check-codegen
+           (list (cons "d" '((staged-project "a.scm" "A_SCM"))))))))
+
+(check "resolve-staged-projects finds exactly what the manifest staged"
+       (equal? (map rz-codegen-source (resolve-staged-projects manifest))
+               '("game/chess/chess.scm")))
 
 (check "an embed's C symbol rides along as an argument, not an output"
        (equal? (rz-codegen-args (decl-for "core/runtime.scm"))
@@ -374,6 +396,13 @@
        (contains? ninja-text "build index.html | index.js index.wasm: main_module"))
 (check "wasm target present"
        (contains? ninja-text "build wasm: phony "))
+;;! The other half of a (staged-project ...): the same source copied into
+;;! assets/, and named on the wasm target so a site build actually stages it.
+(check "the staged project is copied into assets/ under its own name"
+       (and (contains? ninja-text
+                       (string-append "build assets/chess.scm: copy "
+                                      "$srcroot/game/chess/chess.scm"))
+            (contains? ninja-text " assets/chess.scm")))
 (check "compile rules track headers via gcc depfiles"
        (and (contains? ninja-text "deps = gcc")
             (contains? ninja-text "depfile = $out.d")))
@@ -394,6 +423,16 @@
                                                 " "))
                       (loop (cdr l)))
                      (else #f))))))
+
+;;! The index the page reads to learn what this build staged — the shell cannot
+;;! list a directory over HTTP and must not be told a filename, so the build
+;;! writes down what it copied. Generated beside the copies during the
+;;! synthesize above, so it is already on disk here.
+(if (and ninja-out (> (string-length ninja-out) 0))
+    (check "assets/projects.json names the staged project"
+           (string=? (krudd-slurp (string-append (dirname ninja-out)
+                                                 "/assets/projects.json"))
+                     "[\"chess.scm\"]\n")))
 
 (if (and ninja-out (> (string-length ninja-out) 0))
     (begin

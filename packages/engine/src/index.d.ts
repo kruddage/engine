@@ -44,6 +44,7 @@ export declare const ENGINE_ARTIFACTS: readonly (EngineArtifact & {
 })[];
 export declare const ENGINE_ASSET_DIR: string;
 export declare const ENGINE_EXPORTED_FUNCTIONS: readonly string[];
+export declare const ENGINE_PROJECT_INDEX: string;
 
 /** Absolute path to this package's staged artifacts. */
 export declare const distDir: string;

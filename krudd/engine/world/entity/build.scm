@@ -48,4 +48,18 @@
                        (root "base/memory/include")
                        (raw "../third_party"))
               (link "script" "memory"))
-  (test "scene_script" "scene_script_test")))
+  (test "scene_script" "scene_script_test")
+  ;;! script-define! against the REAL asset catalog rather than a stand-in: the
+  ;;! catalog is what carries the static table of built-in declarations, so only
+  ;;! the real one can prove a runtime-defined script needs no entry in it. Hence
+  ;;! the asset_plugin link and (root "world/asset") for its private asset.h.
+  (executable "script_define_test"
+              (sources "script_define_test.c" "scene_script.c"
+                       "entity_script.c" "entity.c")
+              (private "." "include" (root "abi/include") (root "base/math/include")
+                       (root "core/include")
+                       (root "base/memory/include")
+                       (root "world/asset")
+                       (raw "../third_party"))
+              (link "asset_plugin" "script" "memory" "log"))
+  (test "script_define" "script_define_test")))

@@ -84,4 +84,5 @@
  "game/host"
  "game/project"
  "game/chess"
+ "game/carwash"
  "shell/web")

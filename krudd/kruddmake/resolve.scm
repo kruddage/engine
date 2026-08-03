@@ -104,6 +104,7 @@
 ;;!   (emit-math-module IN OUT)              (define-c-fn) bodies lowered to C
 ;;!   (emit-interface-header IN OUT)         the backend interface header
 ;;!   (staged-project IN)                    the project this image ships
+;;!   (served-project IN)                    a project served beside it
 ;;!
 ;;! IN resolves against the declaring module like a source path; every output is
 ;;! named relative to `generated/`. The number paired with each kind below is how
@@ -122,13 +123,27 @@
 ;;! one directory may claim the staged slot" a build error — a second
 ;;! declaration writes the same generated/ file, which resolve-check-codegen
 ;;! already refuses.
+;;!
+;;! `served-project` is the staged declaration with the embed taken away: the
+;;! source is copied into `assets/` and named in the index, and that is all. It
+;;! is what a second, third, tenth project uses, since only one may hold the
+;;! staged slot and only one CAN — the slot is "the project this image boots
+;;! into", of which there is exactly one. A served project is offered by the
+;;! shell's Load Project control alongside the staged one, opened by the same
+;;! door, and costs the image nothing: nothing is compiled in, so a build may
+;;! ship as many as it likes without growing the wasm by a byte. It writes no
+;;! generated/ file at all, which is why it is the one kind with no outputs —
+;;! and why the collision it CAN have (two projects landing on one assets/ name)
+;;! is checked for by name below rather than falling out of the duplicate-output
+;;! rule the way two staged projects do.
 (define rz-codegen-kinds
   '((configure-file . 1)
     (embed . 2)
     (embed-scheme-module . 2)
     (emit-math-module . 1)
     (emit-interface-header . 1)
-    (staged-project . 0)))
+    (staged-project . 0)
+    (served-project . 0)))
 
 ;;! The generated header and C symbol a (staged-project ...) embeds under. Named
 ;;! for what the source IS to the build — the project this image ships staged —
@@ -158,11 +173,14 @@
 
 ;;! The generated/ files a declaration writes. For `embed` the second argument
 ;;! is a C symbol rather than a file, so it is not an output; `staged-project`
-;;! carries no arguments at all and writes the one fixed header above.
+;;! carries no arguments at all and writes the one fixed header above, and
+;;! `served-project` writes nothing — it is a copy into assets/ and an entry in
+;;! the index, neither of which is generated C.
 (define (rz-codegen-outputs decl)
   (case (rz-codegen-kind decl)
     ((embed) (list (car (rz-codegen-args decl))))
     ((staged-project) (list rz-staged-project-header))
+    ((served-project) '())
     (else (rz-codegen-args decl))))
 
 (define (rz-spec-codegen dir spec)
@@ -183,12 +201,39 @@
               manifest)))
 
 ;;! The (staged-project ...) declarations, in manifest order. Read off the same
-;;! list every other consumer reads, so the sources copied into `assets/` are by
-;;! construction the sources embedded into the image — the whole reason the two
+;;! list every other consumer reads, so the source copied into `assets/` is by
+;;! construction the source embedded into the image — the whole reason the two
 ;;! are one declaration.
 (define (resolve-staged-projects manifest)
   (rz-filter (lambda (decl) (eq? (rz-codegen-kind decl) 'staged-project))
              (resolve-codegen manifest)))
+
+;;! Every project this build puts in `assets/`, staged and served alike, in
+;;! manifest order. This is the list the copy edges and the project index are
+;;! both rendered from, so a project reaches the page by being declared and by
+;;! nothing else — and the two cannot disagree about what shipped, since one
+;;! list answers both.
+;;!
+;;! Staged first is not cosmetic: the index is what the shell offers, in order,
+;;! and the project the image already booted into belongs at the head of that
+;;! list rather than wherever the manifest's tier order happened to put its
+;;! directory.
+(define (resolve-shipped-projects manifest)
+  (append (resolve-staged-projects manifest)
+          (rz-filter (lambda (decl)
+                       (eq? (rz-codegen-kind decl) 'served-project))
+                     (resolve-codegen manifest))))
+
+;;! The name a shipped project lands under in `assets/` — its source's basename,
+;;! since that is what the copy edge writes and what the index tells the shell to
+;;! fetch.
+(define (rz-shipped-project-name decl)
+  (let* ((src (rz-codegen-source decl))
+         (n   (string-length src)))
+    (let loop ((i (- n 1)))
+      (cond ((< i 0) src)
+            ((char=? (string-ref src i) #\/) (substring src (+ i 1)))
+            (else (loop (- i 1)))))))
 
 (define (rz-lookup table name) (assoc name table))
 
@@ -296,13 +341,30 @@
                    (if c (append (rz-paths dir (cdr c)) out) out))))
           (else (loop (cdr forms) out)))))
 
-;;! Two ways a declaration can be wrong that the build would otherwise absorb in
-;;! silence, so both are hard errors:
+;;! (rz-check-shipped-project-names manifest) — no two shipped projects may land
+;;! on the same name in `assets/`. The copy edges are keyed by basename, so two
+;;! projects called `game.scm` in different directories would be one ninja output
+;;! built two ways and one entry in the index naming whichever won — a game
+;;! silently serving another game's source. Staged projects cannot collide with
+;;! each other (there is only ever one), which is why this check arrives with
+;;! `served-project` rather than having been here all along.
+(define (rz-check-shipped-project-names manifest)
+  (let loop ((l (map rz-shipped-project-name
+                     (resolve-shipped-projects manifest)))
+             (seen '()))
+    (cond ((null? l) #t)
+          ((member (car l) seen)
+           (error 'rz-shipped-project-duplicate-name (car l)))
+          (else (loop (cdr l) (cons (car l) seen))))))
+
+;;! Three ways a declaration can be wrong that the build would otherwise absorb
+;;! in silence, so all three are hard errors:
 ;;!   - two declarations writing the same generated/ file: whichever runs last
 ;;!     wins and the other's consumer compiles against a header it did not ask
 ;;!     for;
 ;;!   - a `(sources (raw "${generated}/x"))` no declaration produces: a renamed
-;;!     or deleted declaration whose consumer still expects the old output.
+;;!     or deleted declaration whose consumer still expects the old output;
+;;!   - two shipped projects claiming one name in `assets/` (see above).
 (define (resolve-check-codegen manifest)
   (let ((outs (apply append (map rz-codegen-outputs (resolve-codegen manifest)))))
     (let loop ((l outs) (seen '()))
@@ -310,6 +372,7 @@
             ((member (car l) seen)
              (error 'rz-codegen-duplicate-output (car l)))
             (else (loop (cdr l) (cons (car l) seen)))))
+    (rz-check-shipped-project-names manifest)
     (for-each
      (lambda (pair)
        (rz-check-forms (car pair) (cdr pair))

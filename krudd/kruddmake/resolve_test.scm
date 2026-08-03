@@ -138,6 +138,12 @@
                 "world/asset/material_script.scm"
                 "game/project/project.scm"
                 "game/chess/chess.scm"
+                ;;! Twice over in `codegen`, once for each of the two
+                ;;! declarations game/carwash makes about the one file — the
+                ;;! served-project that ships it and the native-only embed its
+                ;;! test reads it back through. set=? is about membership, so it
+                ;;! is named once here.
+                "game/carwash/carwash.scm"
                 "ui/kruddgui/kruddgui.scm"
                 "ui/kruddboard/md_parse.scm"
                 "base/math/math.scm"
@@ -190,6 +196,38 @@
 (check "resolve-staged-projects finds exactly what the manifest staged"
        (equal? (map rz-codegen-source (resolve-staged-projects manifest))
                '("game/chess/chess.scm")))
+
+(decl-check "served-project writes no generated file at all"
+            "game/carwash/carwash.scm" 'served-project '())
+
+(check "a served-project takes no arguments beyond its source either"
+       (expect-error
+        (lambda ()
+          (resolve-check-codegen
+           (list (cons "d" '((served-project "a.scm" "A_SCM"))))))))
+
+;;! Served projects are the many to the staged one's one, so a build may declare
+;;! as many as it likes — nothing is generated, so there is no fixed output for a
+;;! second one to collide with.
+(check "two served projects are fine, unlike two staged ones"
+       (not (expect-error
+             (lambda ()
+               (resolve-check-codegen
+                (list (cons "a" '((served-project "a.scm")))
+                      (cons "b" '((served-project "b.scm")))))))))
+
+;;! What they may NOT do is land on one name in assets/, which is a collision the
+;;! duplicate-output rule cannot see because neither declaration has an output.
+(check "two shipped projects claiming one assets/ name error"
+       (expect-error
+        (lambda ()
+          (resolve-check-codegen
+           (list (cons "a" '((staged-project "game.scm")))
+                 (cons "b" '((served-project "game.scm"))))))))
+
+(check "resolve-shipped-projects lists the staged project first"
+       (equal? (map rz-codegen-source (resolve-shipped-projects manifest))
+               '("game/chess/chess.scm" "game/carwash/carwash.scm")))
 
 (check "an embed's C symbol rides along as an argument, not an output"
        (equal? (rz-codegen-args (decl-for "core/runtime.scm"))
@@ -403,6 +441,14 @@
                        (string-append "build assets/chess.scm: copy "
                                       "$srcroot/game/chess/chess.scm"))
             (contains? ninja-text " assets/chess.scm")))
+;;! The whole of a (served-project ...): the same copy edge, with no embed behind
+;;! it. A served project that never reached assets/ would be a name in the index
+;;! and a 404 on the click.
+(check "a served project is copied into assets/ the same way"
+       (and (contains? ninja-text
+                       (string-append "build assets/carwash.scm: copy "
+                                      "$srcroot/game/carwash/carwash.scm"))
+            (contains? ninja-text " assets/carwash.scm")))
 (check "compile rules track headers via gcc depfiles"
        (and (contains? ninja-text "deps = gcc")
             (contains? ninja-text "depfile = $out.d")))
@@ -424,15 +470,17 @@
                       (loop (cdr l)))
                      (else #f))))))
 
-;;! The index the page reads to learn what this build staged — the shell cannot
+;;! The index the page reads to learn what this build shipped — the shell cannot
 ;;! list a directory over HTTP and must not be told a filename, so the build
 ;;! writes down what it copied. Generated beside the copies during the
-;;! synthesize above, so it is already on disk here.
+;;! synthesize above, so it is already on disk here. Staged first, then the
+;;! served ones in manifest order: the project the image already booted into
+;;! heads the list the shell offers.
 (if (and ninja-out (> (string-length ninja-out) 0))
-    (check "assets/projects.json names the staged project"
+    (check "assets/projects.json names every shipped project, staged first"
            (string=? (krudd-slurp (string-append (dirname ninja-out)
                                                  "/assets/projects.json"))
-                     "[\"chess.scm\"]\n")))
+                     "[\"chess.scm\",\"carwash.scm\"]\n")))
 
 (if (and ninja-out (> (string-length ninja-out) 0))
     (begin

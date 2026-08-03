@@ -857,11 +857,14 @@ canvas {
 	 * staged project is not a special case in the engine.
 	 *
 	 * The names come from assets/projects.json, written by the build from its
-	 * own (staged-project ...) declarations — this page cannot list a
-	 * directory over HTTP, and it must not carry a filename either. A page
-	 * that names a game is a generic shell that knows one, which is the pin
-	 * #976 pulled out of the C. A build that staged nothing (or a page opened
-	 * without the assets/ directory beside it) simply shows no list.
+	 * own (staged-project ...) and (served-project ...) declarations — this
+	 * page cannot list a directory over HTTP, and it must not carry a filename
+	 * either. A page that names a game is a generic shell that knows one,
+	 * which is the pin #976 pulled out of the C. However many the build
+	 * shipped, they arrive as a list and are offered in the order it wrote
+	 * them, the one the image booted into first; a build that shipped nothing
+	 * (or a page opened without the assets/ directory beside it) simply shows
+	 * no list.
 	 */
 	function kruddStagedProjects() {
 		fetch('assets/projects.json').then(function (r) {

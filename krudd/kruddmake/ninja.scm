@@ -420,11 +420,14 @@
 
 (define ninja-project-index "projects.json")
 
-;;! Copy every (staged-project ...) source into assets/ under its own name.
-;;! This is the other half of the declaration whose embed ninja-run-codegen
-;;! handles: the same file, reachable at runtime by fetch instead of compiled
-;;! into the module, so the shell's Load Project control can open the project
-;;! this build ships by the same door a file off the user's disk comes in by.
+;;! Copy every shipped project's source into assets/ under its own name — the
+;;! staged one and every served one alike. For the staged project this is the
+;;! other half of the declaration whose embed ninja-run-codegen handles: the same
+;;! file, reachable at runtime by fetch instead of compiled into the module. For
+;;! a served project it is the whole of the declaration. Either way the shell's
+;;! Load Project control opens it by the same door a file off the user's disk
+;;! comes in by, which is what keeps a shipped project from being a special case
+;;! in the engine.
 (define (ninja-emit-project-assets manifest)
   (for-each
    (lambda (decl)
@@ -432,15 +435,16 @@
             (out (string-append ninja-assets-dir "/" (krudd-basename src))))
        (ninja-emit (string-append "build " out ": copy $srcroot/" src))
        (ninja-wasm! out)))
-   (resolve-staged-projects manifest))
+   (resolve-shipped-projects manifest))
   (ninja-emit ""))
 
-;;! Write assets/projects.json: the staged project filenames, as a JSON array.
+;;! Write assets/projects.json: the shipped project filenames, as a JSON array,
+;;! staged one first.
 ;;!
 ;;! The shell cannot list a directory over HTTP, and it must not be told a
 ;;! filename either — a page carrying a project's filename is a generic shell
 ;;! that knows a game (#976). So the build, which is the only layer that knows
-;;! what it staged, writes down what it staged and the page reads it. Written
+;;! what it shipped, writes down what it shipped and the page reads it. Written
 ;;! here at generation time rather than as a ninja edge for the same reason the
 ;;! generated/ headers are: its content is a fact about the manifest, fixed the
 ;;! moment the manifest is read, and the regen edge already re-runs the
@@ -449,7 +453,7 @@
   (let ((dir   (string-append builddir "/" ninja-assets-dir))
         (names (map (lambda (decl)
                       (krudd-basename (rz-codegen-source decl)))
-                    (resolve-staged-projects manifest))))
+                    (resolve-shipped-projects manifest))))
     (system (string-append "mkdir -p \"" dir "\""))
     (call-with-output-file (string-append dir "/" ninja-project-index)
       (lambda (port)
@@ -482,6 +486,12 @@
       ((staged-project)
        (krudd-embed-file in (out rz-staged-project-header)
                          rz-staged-project-symbol))
+      ;;! A served project generates nothing — it is the staged declaration with
+      ;;! the embed taken away, so the copy edge ninja-emit-project-assets emits
+      ;;! is the whole of it. It passes through here rather than being filtered
+      ;;! out upstream so that the `else` below keeps meaning "a kind resolve.scm
+      ;;! knows and this dispatch forgot", which is the typo it is here to catch.
+      ((served-project) #t)
       ((embed-scheme-module)
        (krudd-embed-scheme-module in (out (car args)) (out (cadr args))))
       ((emit-math-module) (krudd-emit-math-module in (out (car args))))

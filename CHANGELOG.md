@@ -1,5 +1,52 @@
 # Changelog
 
+## [21.0.0](https://github.com/kruddage/engine/compare/v20.0.0...v21.0.0) (2026-08-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* the root page is a project picker, and a pick is a ?game= away ([#1030](https://github.com/kruddage/engine/issues/1030))
+* projects live at the top level, and there are three of them ([#1028](https://github.com/kruddage/engine/issues/1028))
+* the workspace is a shell script, not a package manager ([#1010](https://github.com/kruddage/engine/issues/1010)) (#1011)
+* a project is a single .scm the engine loads at runtime ([#1007](https://github.com/kruddage/engine/issues/1007))
+* remove the GAME / EDITOR switch and the DOM editor chrome ([#985](https://github.com/kruddage/engine/issues/985))
+
+### Features
+
+* a project is a single .scm the engine loads at runtime ([#1007](https://github.com/kruddage/engine/issues/1007)) ([9b3e4e7](https://github.com/kruddage/engine/commit/9b3e4e7cbf0c4b95391b2e47343bea42f1201a1c))
+* **asset:** mesh-define! so a project brings its own meshes ([#1004](https://github.com/kruddage/engine/issues/1004)) ([8a22c9a](https://github.com/kruddage/engine/commit/8a22c9aa447a549582943d2065690afe3fd6dbf3))
+* **audio:** an audio-play! primitive a game's Scheme can reach ([#999](https://github.com/kruddage/engine/issues/999)) ([ba584d1](https://github.com/kruddage/engine/commit/ba584d1ec72fc79d33f1d0774439fa348ef96932))
+* **barriers:** rule 3 covers the games tree, not just krudd/ ([#1018](https://github.com/kruddage/engine/issues/1018)) ([#1032](https://github.com/kruddage/engine/issues/1032)) ([b5c8e55](https://github.com/kruddage/engine/commit/b5c8e5589a28154997664d3e014bd1d1f1dff24e))
+* **kruddmake:** the staged slot is single-occupancy by rule, not by collision ([#1019](https://github.com/kruddage/engine/issues/1019)) ([#1033](https://github.com/kruddage/engine/issues/1033)) ([496d264](https://github.com/kruddage/engine/commit/496d26488497909c8f0a8f8b71cdd489a553868d))
+* projects live at the top level, and there are three of them ([#1028](https://github.com/kruddage/engine/issues/1028)) ([5be2342](https://github.com/kruddage/engine/commit/5be234291c237f2747364262e9d132bdec4d758f))
+* remove the GAME / EDITOR switch and the DOM editor chrome ([#985](https://github.com/kruddage/engine/issues/985)) ([adce8cd](https://github.com/kruddage/engine/commit/adce8cdf32d1f63f03e190de08df3bfab73516b6))
+* **scene-script:** scene-clear! / scene-build! and script-define! ([#1001](https://github.com/kruddage/engine/issues/1001)) ([e218c25](https://github.com/kruddage/engine/commit/e218c255b131560ec4733fcf19f7571ab0d27a92))
+* **script:** bind the live world for the image's (tick), and add scene-selected ([#992](https://github.com/kruddage/engine/issues/992)) ([3e42214](https://github.com/kruddage/engine/commit/3e42214586c089f3fd564b0cffbf3c05e29ddba9))
+* **shell:** a Load Project button that reads a .scm and runs it ([#1009](https://github.com/kruddage/engine/issues/1009)) ([96377f2](https://github.com/kruddage/engine/commit/96377f2ad1b8d8244115a416ef7f49ddaa572aeb))
+* **shell:** the boot splash loads a project, not a game ([#973](https://github.com/kruddage/engine/issues/973)) ([c72a27a](https://github.com/kruddage/engine/commit/c72a27afdf3bddf9c9194128f3aa97f49688b7d6))
+* the root page is a project picker, and a pick is a ?game= away ([#1030](https://github.com/kruddage/engine/issues/1030)) ([85e6758](https://github.com/kruddage/engine/commit/85e6758825d555e9ffa8e7f1f1b9ba71f8744699)), closes [#1029](https://github.com/kruddage/engine/issues/1029)
+* the workspace is a shell script, not a package manager ([#1010](https://github.com/kruddage/engine/issues/1010)) ([#1011](https://github.com/kruddage/engine/issues/1011)) ([c9fa071](https://github.com/kruddage/engine/commit/c9fa07154f15060e91311f20263c51d5c85d52a3))
+
+
+### Bug Fixes
+
+* **render:** clip-&gt;uv carries the texture-origin convention per backend ([#982](https://github.com/kruddage/engine/issues/982)) ([9b5652e](https://github.com/kruddage/engine/commit/9b5652e8e8589d1adf2466d063a3590a491e81ff))
+
+
+### Refactoring
+
+* **engine:** public headers namespaced under include/&lt;module&gt;/ ([#974](https://github.com/kruddage/engine/issues/974)) ([9fd0147](https://github.com/kruddage/engine/commit/9fd0147bdb2e1a9f318dc6bd9190a82a33efc836))
+
+
+### CI
+
+* bump actions/setup-node from 4 to 7 ([#986](https://github.com/kruddage/engine/issues/986)) ([765edf6](https://github.com/kruddage/engine/commit/765edf6feab1fb41d67a2e54e68373e1c0003f52))
+
+
+### Documentation
+
+* **projects:** state the contract in one place, and enforce the half worth enforcing ([#1017](https://github.com/kruddage/engine/issues/1017)) ([#1031](https://github.com/kruddage/engine/issues/1031)) ([34fac2d](https://github.com/kruddage/engine/commit/34fac2d82ac28e4db3dda2147c0ee191e28d47b0))
+
 ## [20.0.0](https://github.com/kruddage/engine/compare/v19.2.1...v20.0.0) (2026-07-31)
 
 

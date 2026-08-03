@@ -856,12 +856,16 @@ canvas {
 	 * file to find, and the same door a file off the disk comes in by, so the
 	 * staged project is not a special case in the engine.
 	 *
-	 * The names come from assets/projects.json, written by the build from its
-	 * own (staged-project ...) declarations — this page cannot list a
-	 * directory over HTTP, and it must not carry a filename either. A page
-	 * that names a game is a generic shell that knows one, which is the pin
-	 * #976 pulled out of the C. A build that staged nothing (or a page opened
-	 * without the assets/ directory beside it) simply shows no list.
+	 * The names come from assets/projects.json, written by the build from
+	 * every project it ships — this page cannot list a directory over HTTP,
+	 * and it must not carry a filename either. A page that names a game is a
+	 * generic shell that knows one, which is the pin #976 pulled out of the
+	 * C. A build that shipped nothing (or a page opened without the assets/
+	 * directory beside it) simply shows no list.
+	 *
+	 * Every shipped project appears, not only the one the image boots into:
+	 * being embedded is what makes a project the boot default and says
+	 * nothing about whether the page can reach it.
 	 */
 	function kruddStagedProjects() {
 		fetch('assets/projects.json').then(function (r) {
@@ -1023,13 +1027,13 @@ canvas {
 var Module = {
 	locateFile: function (path, prefix) {
 		if (path.endsWith('.wasm'))
-			return prefix + path.replace(/\.wasm$/, '.c9fa0715.wasm');
+			return prefix + path.replace(/\.wasm$/, '.5be23429.wasm');
 		return prefix + path;
 	}
 };
 </script>
 
-<script async type="text/javascript" src="index.c9fa0715.js"></script>
+<script async type="text/javascript" src="index.5be23429.js"></script>
 
 </body>
 </html>

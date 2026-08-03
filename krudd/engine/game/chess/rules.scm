@@ -192,10 +192,10 @@
 
 ;;! --- camera ---------------------------------------------------------------
 ;;!
-;;! The "Camera" entity (scene.scm) carries the "chess-camera" builtin script
-;;! (builtin_scripts.h), a one-line dispatch to chess-camera-tick! below — the
-;;! actual behaviour lives here, in the same file as the turn/selection state it
-;;! reads, rather than baked into a shared built-in. Three zones: a 3/4 view of
+;;! The "Camera" entity (scene.scm) carries the chess-camera script this file
+;;! registers at the bottom, a one-line dispatch to chess-camera-tick! below —
+;;! the actual behaviour lives here, in the same file as the turn/selection
+;;! state it reads, rather than in a shared built-in. Three zones: a 3/4 view of
 ;;! the side to move, a lean toward a picked-up piece, and a park on a just-
 ;;! landed square for a beat before easing on to the next player's view. The eye
 ;;! is the only thing that moves — scene_renderer's look-at target is a fixed
@@ -302,7 +302,7 @@
     (set! *chess-cam-y* (+ *chess-cam-y* (* k (- (cadr  desired) *chess-cam-y*))))
     (set! *chess-cam-z* (+ *chess-cam-z* (* k (- (caddr desired) *chess-cam-z*))))))
 
-;;! (chess-camera-tick! self t) — the "chess-camera" builtin script's on-tick:
+;;! (chess-camera-tick! self t) — the chess-camera script's on-tick:
 ;;! ease the live eye toward chess-cam-desired and push it onto the Camera
 ;;! entity SELF via entity-set-position!. A fault (a stray tick before
 ;;! chess-reset has ever run, say) is caught so a bad frame never takes the
@@ -321,3 +321,27 @@
 ;;! the hold-arming guard without a real render clock (see chess_test.c).
 (define (chess-cam-holding? ignored)
   (if (>= *chess-cam-hold-until* 0) 1 0))
+
+;;! --- the camera script this game brings with it ----------------------------
+;;!
+;;! The catalog path scene.scm's "Camera" entity binds. It is project://, not
+;;! builtin://, because the engine seeds nothing named chess: the entry appears
+;;! in the catalog only because the form below put it there.
+(define chess-camera-script-path "project://script/chess-camera")
+
+;;! The (script ...) source itself — one on-tick clause dispatching to
+;;! chess-camera-tick! above. Written a line per string the way the engine's own
+;;! built-in script sources are (world/asset/include/asset/builtin_scripts.h),
+;;! so the text reads as the Scheme it is.
+(define chess-camera-script
+  (string-append "(script chess-camera\n"
+                 "  (on-tick (self t)\n"
+                 "    (chess-camera-tick! self t)))\n"))
+
+;;! Register it as a catalog asset when these rules load, which is before the
+;;! scene is ever built — so by the time scene.scm's (script ...) clause resolves
+;;! the path, the asset is there. A reload re-runs this and replaces the source
+;;! in place (script-define! keeps the id), so the Camera entity stays bound.
+;;! Returns 0 in the headless rules test, which boots no asset catalog; nothing
+;;! there ticks a camera, so there is nothing to bind and nothing to report.
+(script-define! chess-camera-script-path chess-camera-script)

@@ -14,9 +14,14 @@
  */
 #include <entity/world.h>
 #include <entity/scene_script.h>
+#include "entity_script.h"
+
+#include "asset.h"
+#include <abi/asset_api.h>
 
 #include <core/script.h>
 #include <log/log.h>
+#include <memory/memory.h>
 
 #include "chess_scene_scm.h"
 #include "chess_rules_scm.h"
@@ -29,6 +34,29 @@
 
 /* One world instance reused across the checks; too big for the stack. */
 static struct world w;
+
+/*
+ * The real asset catalog, assembled from asset.h the way the asset plugin
+ * assembles it for the subsystem manager. Most checks here run with no catalog
+ * at all (the rules need none), but the camera does: its script is one this
+ * game registers into the catalog itself, and binding it is the thing worth
+ * testing.
+ */
+static const struct asset_api catalog_api = {
+	.count    = asset_catalog_count,
+	.info     = asset_catalog_info,
+	.describe = asset_catalog_describe,
+	.find     = asset_catalog_find,
+	.get_data = asset_catalog_get_data,
+};
+
+static const struct asset_mut_api mut_api = {
+	.create   = asset_mut_create,
+	.set_data = asset_mut_set_data,
+	.destroy  = asset_mut_destroy,
+	.set_decl = asset_mut_set_decl,
+	.inject   = asset_mut_inject,
+};
 
 /*
  * Total entities the scene spawns: a camera, a ground plane, the board slab, 64
@@ -271,10 +299,110 @@ static void test_camera_hold_guarded_headless(void)
 	assert(cam_holding() == 0);      /* still not armed: no clock ticked */
 }
 
+/* The entity id carrying NAME, asserted to exist. */
+static uint32_t id_named(const char *name)
+{
+	uint32_t e;
+
+	for (e = 0; e < w.count; e++) {
+		const char *n = world_entity_name(&w, e);
+
+		if (n && strcmp(n, name) == 0)
+			return e;
+	}
+	assert(0 && "no such entity");
+	return 0;
+}
+
+/*
+ * The camera script's exact text. It used to be seeded by the engine as
+ * builtin://script/chess-camera (world/asset/include/asset/builtin_scripts.h);
+ * rules.scm now registers this same text itself through script-define!. Pinned
+ * here so the move cannot quietly become a rewrite — a different script is a
+ * different camera.
+ */
+static const char *CHESS_CAMERA_SRC =
+	"(script chess-camera\n"
+	"  (on-tick (self t)\n"
+	"    (chess-camera-tick! self t)))\n";
+
+#define CHESS_CAMERA_PATH "project://script/chess-camera"
+
+/*
+ * The camera end to end, over the real catalog: rules.scm registered its script
+ * when it loaded, the scene's (script ...) clause resolves that path, and the
+ * entity-script driver ticks it. The engine seeded nothing for this — the whole
+ * chain exists because the game brought it.
+ *
+ * The behaviour asserted is what is on screen: the eye rests at white's
+ * authored 3/4 view while white is to move, and eases across to black's
+ * mirrored view once black is. The authored transform is never touched.
+ */
+static void test_camera_defined_binds_and_eases(void)
+{
+	struct asset_info info;
+	uint32_t          cam;
+	float             t;
+	int               i;
+
+	/* The script is in the catalog because the rules put it there. */
+	assert(scene_script_build(&w, &catalog_api, "(scene s)") == 0);
+	world_reset(&w);
+	assert(scene_script_build(&w, &catalog_api, CHESS_SCENE_SCM)
+	       == CHESS_ENTITY_COUNT);
+	cam = id_named("Camera");
+	assert(w.mask[cam] & COMPONENT_SCRIPT);
+	assert(w.script_ref[cam] != 0);
+	assert(asset_catalog_find(w.script_ref[cam], &info) == 0);
+	assert(strcmp(info.path, CHESS_CAMERA_PATH) == 0);
+	assert(strcmp((const char *)asset_catalog_get_data(info.id, NULL),
+		      CHESS_CAMERA_SRC) == 0);
+
+	scene_script_call(&w, &catalog_api, "chess-reset", 0);
+
+	/* White to move: the eye holds the authored 3/4 view it starts at. */
+	for (i = 0, t = 0.0f; i < 30; i++) {
+		t += 0.016f;
+		world_tick(&w, 16.0f);
+		entity_script_tick(&w, &catalog_api, t);
+	}
+	assert(fabsf(w.world_xform[cam].position[0] - 5.5f) < 1e-4f);
+	assert(fabsf(w.world_xform[cam].position[1] - 8.5f) < 1e-4f);
+	assert(fabsf(w.world_xform[cam].position[2] - 10.5f) < 1e-4f);
+
+	/* A white pawn move hands the turn to black. */
+	assert(scene_script_call(&w, &catalog_api, "chess-on-selected",
+				 (int32_t)id_named("wP-e2")) == 0);
+	assert(scene_script_call(&w, &catalog_api, "chess-on-selected",
+				 (int32_t)id_named("sq-e4")) == 1);
+	assert(scene_script_call(&w, &catalog_api, "chess-turn", 0) == 2);
+
+	/* Given time to ease — past the post-move hold — it lands on black's
+	 * eye, the mirror of white's across the board's centre. */
+	for (i = 0; i < 600; i++) {
+		t += 0.016f;
+		world_tick(&w, 16.0f);
+		entity_script_tick(&w, &catalog_api, t);
+	}
+	assert(fabsf(w.world_xform[cam].position[0] + 5.5f) < 0.05f);
+	assert(fabsf(w.world_xform[cam].position[1] - 8.5f) < 0.05f);
+	assert(fabsf(w.world_xform[cam].position[2] + 10.5f) < 0.05f);
+
+	/* The authored rest pose never moved: only the render pose animates. */
+	assert(fabsf(w.local[cam].position[0] - 5.5f) < 1e-4f);
+	assert(fabsf(w.local[cam].position[2] - 10.5f) < 1e-4f);
+}
+
 int main(void)
 {
+	mem_init();
 	log_init();
+	asset_init();         /* the real catalog the camera script lands in */
 	script_init();       /* loads scene_script.scm (scene-build) */
+	entity_script_init(); /* the entity-* primitives a script clause calls */
+	/* Bind the catalog before the rules load: their top-level
+	 * script-define! is what puts the camera script in it. */
+	scene_script_bind_catalog(&catalog_api, &mut_api);
 	scene_script_init(); /* registers the scene-* host primitives */
 	script_eval(CHESS_RULES_SCM); /* load the rules into the image */
 
@@ -287,6 +415,7 @@ int main(void)
 	test_wrong_side_ignored();
 	test_outline_tracks_pick();
 	test_camera_hold_guarded_headless();
+	test_camera_defined_binds_and_eases();
 
 	printf("chess_test: ok\n");
 	return 0;

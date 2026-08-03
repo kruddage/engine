@@ -20,34 +20,35 @@ jobs:
       - name: Lint .scm comments
         run: python3 .github/scripts/lint-scm-comments.py $(git ls-files '*.scm')
 
-      # The pnpm workspace's own suite: the artifact contract, the site staging
+      # The workspace's own suite: the artifact contract, the site staging
       # rules, and the boundary check that keeps packages from reaching past
       # each other's "exports" map. No compiler and no emsdk — this is all
       # Node — so it rides along with the other lint steps rather than waiting
       # on the WASM build.
+      #
+      # There is no install step. The workspace has no third-party
+      # dependencies, so there was never anything to fetch; the one thing
+      # `pnpm install` produced was a symlink, and workspace.sh makes it
+      # itself before every task (#1010).
       - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
 
-      - name: Install workspace
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
-
       - name: Workspace tests
-        run: pnpm test
+        run: sh tools/workspace/workspace.sh test
 
       - name: Workspace boundaries
-        run: pnpm check
+        run: sh tools/workspace/workspace.sh check
 
       # kruddmake's Scheme suite, reached by path rather than through the
       # workspace — the same choice `sanitizers` and `coverage` make below,
       # and for the same reason (WORKSPACE.md, Q2): it runs on the pinned s7
       # CLI that sync.sh fetches with curl, needs no compiler, and needs no
-      # Node either, so routing it through pnpm would add a dependency for no
-      # gain. It used to arrive as a side effect of `pnpm -r run test`; that
-      # stopped working when krudd/ left the workspace and this stopped being
-      # a package's `test` script (#934), so it is named as its own step now.
+      # Node either, so routing it through the workspace would add a dependency
+      # for no gain. It used to arrive as a side effect of the recursive test
+      # task; that stopped working when krudd/ left the workspace and this
+      # stopped being a package's `test` script (#934), so it is named as its
+      # own step now.
       - name: kruddmake Scheme suite
         run: sh krudd/kruddmake/run-scheme-tests.sh
 
@@ -108,7 +109,7 @@ jobs:
             echo "version=${base}" >> "$GITHUB_OUTPUT"
           fi
 
-      # The build now enters through the pnpm workspace. @kruddage/engine still
+      # The build enters through the workspace. @kruddage/engine still
       # runs krudd/kruddmake/kruddmake.sh underneath — kruddmake remains the
       # build system for C and WASM, generating build.ninja from the directory
       # specs and driving ninja with emcc/em++ directly, no cmake and no
@@ -120,15 +121,18 @@ jobs:
         with:
           node-version-file: .nvmrc
 
-      - name: Install workspace
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
+      # Fetches nothing — there are no third-party dependencies. It makes the
+      # one symlink `packages/site` needs in order to say `@kruddage/engine`
+      # rather than reach into it by relative path, which the boundary check's
+      # rule 1 forbids (#1010). The steps below then call each package's build
+      # script by path, which is what `--filter` used to spell.
+      - name: Link workspace
+        run: sh tools/workspace/workspace.sh link
 
       - name: Build the engine
         env:
           KRUDD_VERSION: ${{ steps.version.outputs.version }}
-        run: pnpm --filter @kruddage/engine run build
+        run: node packages/engine/scripts/build.mjs
 
       # Replaces stage-site.sh. Same whitelist-only staging — the build tree
       # carries objects and archives that must never reach the Pages branch —
@@ -136,7 +140,7 @@ jobs:
       # Module.locateFile hook rather than a second, independent `git rev-parse`
       # that merely had to agree with it. See packages/site/src/stage.mjs.
       - name: Stage site
-        run: pnpm --filter @kruddage/site run build
+        run: node packages/site/scripts/build.mjs
 
       - name: Upload staged site
         uses: actions/upload-artifact@v7
@@ -234,9 +238,9 @@ jobs:
   #
   # It calls run-tests.sh by path rather than through the workspace, and that
   # is deliberate, not an oversight: this job needs no Node at all, and
-  # routing a C test run through pnpm to satisfy a slogan would put Node in
-  # its path for no gain (WORKSPACE.md, Q2). `coverage` below makes the same
-  # call for the same reason.
+  # routing a C test run through the workspace to satisfy a slogan would put
+  # Node in its path for no gain (WORKSPACE.md, Q2). `coverage` below makes
+  # the same call for the same reason.
   sanitizers:
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
     runs-on: ubuntu-latest

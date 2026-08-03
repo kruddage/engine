@@ -2,7 +2,7 @@
 //
 // Removes this package's staged output. kruddmake's own build directory is left
 // alone: it is incremental by design and rebuilding it from scratch costs
-// minutes, so `pnpm clean` drops the copy, not the cache. Remove <repo>/build
+// minutes, so `workspace.sh clean` drops the copy, not the cache. Remove <repo>/build
 // by hand for a genuinely cold build.
 
 import { rmSync } from "node:fs";

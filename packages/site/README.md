@@ -3,8 +3,8 @@
 Stages the deployable static site from `@kruddage/engine`'s artifacts.
 
 ```sh
-pnpm --filter @kruddage/site run build          # -> packages/site/dist
-pnpm --filter @kruddage/site run build /tmp/out # or anywhere
+node scripts/build.mjs          # -> packages/site/dist
+node scripts/build.mjs /tmp/out # or anywhere
 ```
 
 This is what CI uploads and what `gh-pages` serves. It replaces
@@ -22,7 +22,7 @@ part is unchanged from the shell script. What changed is where the rules come
 from — this package asks `@kruddage/engine` what was built, which of those files
 may be renamed, and what hash to rename them to. It does not look at
 `<repo>/build`, does not run kruddmake, and does not derive the hash itself.
-`pnpm check` fails the workspace if that ever stops being true.
+`workspace.sh check` fails the workspace if that ever stops being true.
 
 ## The failure this prevents
 

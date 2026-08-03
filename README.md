@@ -114,12 +114,12 @@ required.
 
 - [Emscripten](https://emscripten.org/docs/getting_started/downloads.html) (emsdk) — WASM build
 - [Ninja](https://ninja-build.org/) plus a C compiler (`cc`/`gcc`/`clang`)
-- [Node](https://nodejs.org/) 20.11+ and [pnpm](https://pnpm.io/) — the workspace layer
+- [Node](https://nodejs.org/) 20.11+ — the workspace layer (no package manager; see below)
 
 krudd renders a `build.ninja` from the directory specs and drives `ninja`
 directly — there is no CMake in the build path.
 
-### The pnpm workspace
+### The workspace
 
 **The workspace is the physical design of the JavaScript layer, and kruddmake is
 a deliberate second door: `krudd/kruddmake` builds C and WASM with a compiler and
@@ -127,50 +127,57 @@ nothing else, and the workspace never becomes a prerequisite for it.**
 [`WORKSPACE.md`](WORKSPACE.md) is the long form — what the workspace is for,
 where it stops, and why each of those was chosen over the alternatives.
 
-The engine builds through a pnpm workspace that wraps kruddmake rather than
+The engine builds through a workspace that wraps kruddmake rather than
 replacing it. `@kruddage/engine` spawns `krudd/kruddmake/kruddmake.sh` and
 publishes the resulting artifacts behind a declared surface; everything
 downstream reads that surface instead of the build tree. `krudd/` itself is not
 in the workspace — it is a C tree with a shell entry point, and the one package
 allowed to reach it by path is the one that wraps it.
 
-`pnpm install` links the workspace and downloads nothing — it does not fetch
-the toolchain below. `pnpm build` still needs everything in Prerequisites,
-emsdk included; if a tool is missing it fails fast, naming what's missing
-rather than building a partial WASM module.
+**There is no package manager, and no install step.** There are no third-party
+dependencies to fetch, so the only thing an install ever produced here was one
+symlink — `tools/workspace/workspace.sh` makes it, before every task, in about
+no time at all. See [`WORKSPACE.md`](WORKSPACE.md) (Q6) for why pnpm was removed
+and what the argument against it was. `workspace.sh build` still needs
+everything in Prerequisites, emsdk included; if a tool is missing it fails fast,
+naming what's missing rather than building a partial WASM module.
 
 ```sh
-corepack enable
-pnpm install
-
-pnpm build        # engine (WASM) then site, in dependency order
-pnpm test         # the workspace's own suite — pure Node, no toolchain
-pnpm test:native  # the native C suite, through the workspace — needs a compiler
-pnpm check        # package boundaries
+sh tools/workspace/workspace.sh build        # engine (WASM) then site, in dependency order
+sh tools/workspace/workspace.sh test         # the workspace's own suite — pure Node, no toolchain
+sh tools/workspace/workspace.sh test:native  # the native C suite, through the workspace — needs a compiler
+sh tools/workspace/workspace.sh check        # package boundaries
+sh tools/workspace/workspace.sh link         # just the symlinks (every task does this first)
 ```
+
+A task runs in every package that declares a script by that name, which is why
+`check`, `test:native` and `smoke` each reach exactly one package without a
+filter flag. To run one package's script directly, do that — every script here
+resolves its paths from `import.meta.url`, so `node packages/site/scripts/build.mjs`
+works from anywhere and is what CI calls.
 
 **Node is not a prerequisite for the native suite.** kruddmake is POSIX shell
 and Scheme all the way down, and `sh krudd/kruddmake/run-tests.sh` builds and
 runs the C tests with a compiler and nothing else — which is what the sanitizer
 and coverage jobs invoke, and the path to reach for on a box with no Node. That
-the workspace can also reach it, as `pnpm test:native`, is the second door —
-named the same way in the root scripts, this README, and CI (WORKSPACE.md,
-Q2).
+the workspace can also reach it, as `workspace.sh test:native`, is the second
+door — the same shape and named the same way in this README and in CI
+(WORKSPACE.md, Q2).
 
 | Package | What it is |
 |---|---|
 | [`@kruddage/engine`](packages/engine) | The engine's WASM build, harvested into `dist/` with a manifest describing it |
 | [`@kruddage/site`](packages/site) | Stages the deployable static site from those artifacts (replaces `stage-site.sh`) |
-| [`@kruddage/barriers`](tools/barriers) | The boundary check itself: `pnpm check` |
+| [`@kruddage/barriers`](tools/barriers) | The boundary check itself: `workspace.sh check` |
 | [`@kruddage/render-diff`](tools/render-diff) | Screenshot oracle for the WebGPU port |
-| [`@kruddage/dawn-smoke`](tools/dawn-smoke) | Proves a native Dawn build works offscreen; no `build` script, needs an out-of-tree Dawn install (`pnpm --filter @kruddage/dawn-smoke run smoke`) |
+| [`@kruddage/dawn-smoke`](tools/dawn-smoke) | Proves a native Dawn build works offscreen; no `build` script, needs an out-of-tree Dawn install (`workspace.sh smoke`) |
 
-There are no third-party dependencies. `pnpm install` links the workspace and
-downloads nothing, matching how the rest of the repo treats its supply chain
-(vendored s7, a CDP client written against Node's built-in WebSocket, no CMake).
+There are no third-party dependencies, and nothing here downloads any, matching
+how the rest of the repo treats its supply chain (vendored s7, a CDP client
+written against Node's built-in WebSocket, no CMake).
 
-The point of the split is the boundary, not the packaging. `pnpm check` fails
-the build on two things: a package reaching into another by relative path —
+The point of the split is the boundary, not the packaging. `workspace.sh check`
+fails the build on two things: a package reaching into another by relative path —
 routing around the `exports` map — and anything but `@kruddage/engine` reaching
 the build tree, by a path into `krudd/` or through the generator's environment.
 A third rule, "only `@kruddage/engine` may depend on `@kruddage/kruddmake`",
@@ -183,13 +190,13 @@ buys and where the next ones go.
 ### WASM build
 
 ```sh
-pnpm --filter @kruddage/engine run build
+node packages/engine/scripts/build.mjs
 ```
 
 Then serve the staged site with any static file server:
 
 ```sh
-pnpm --filter @kruddage/site run build
+node packages/site/scripts/build.mjs
 python3 -m http.server -d packages/site/dist
 ```
 
@@ -247,7 +254,7 @@ the GPU-free tests record against.
 | Workflow · job | What it does |
 |---|---|
 | **ci · lint** | Style-checks `.scm` comments (`lint-scm-comments.py`) and indentation; runs the workspace suite, the package-boundary check, and kruddmake's Scheme suite (which needs no compiler) |
-| **ci · build** | Builds the WASM module via Emscripten (`emsdk` container) through krudd's own Ninja build, then stages the site — both through the pnpm workspace |
+| **ci · build** | Builds the WASM module via Emscripten (`emsdk` container) through krudd's own Ninja build, then stages the site — both through the workspace |
 | **ci · deploy** | On push to `main`, publishes the staged site to GitHub Pages |
 | **ci · preview** | Deploys each PR's build to a `pr-preview/pr-<N>/` URL and tears it down on close |
 | **ci · sanitizers** | Builds + runs the native suite under ASan + UBSan + LeakSanitizer; fails on any leak, out-of-bounds, or UB |
@@ -264,7 +271,7 @@ been watched for a while.
 ## Versioning and releases
 
 [`version.txt`](version.txt) is the single source of the version, not `package.json` —
-despite the pnpm workspace sitting at the root. `introspect.scm` stamps the number into
+despite the workspace sitting at the root. `introspect.scm` stamps the number into
 the WASM build and the shell template, and the site's cache-busting hash derives from what
 that produces, so routing it through `package.json` would put Node in the path of a fact
 the C build needs. Every `package.json` in the repo, including the workspace root, pins

@@ -17,7 +17,7 @@ const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
 /* This file lives inside @kruddage/barriers now, which means it is itself a
  * package the walk below (packageDirs -> findViolations) reads on every
- * `pnpm check` — the whole point of #939. Several fixtures below exist to
+ * `workspace.sh check` — the whole point of #939. Several fixtures below exist to
  * prove rule 3 catches krudd/kruddmake/, krudd/engine/, krudd/third_party/,
  * KRUDD_TARGET and KRUDD_BUILD_DIR; if those strings sat in this file the
  * ordinary way, the check would catch this file for the same reason it is
@@ -217,11 +217,12 @@ test("the C tree is not in the workspace", () => {
 	]);
 });
 
-/* `packages/*` is expanded off the filesystem, mirroring the glob of the same
- * shape in pnpm-workspace.yaml: a new package under packages/ is inside the
- * check the moment it exists, rather than when someone remembers this list. A
- * package the boundary check does not know about is a package with no
- * boundary. */
+/* `packages/*` is expanded off the filesystem rather than listed: a new
+ * package under packages/ is inside the check the moment it exists, rather
+ * than when someone remembers this list. A package the boundary check does not
+ * know about is a package with no boundary. This used to mirror a glob of the
+ * same shape in pnpm-workspace.yaml; since #1010 removed that file, discovery
+ * is not a mirror of anything — it is where membership is defined. */
 test("packages/ is discovered, not enumerated", () => {
 	const root = mkdtempSync(join(tmpdir(), "krudd-ws-"));
 	for (const name of ["alpha", "beta"]) {
@@ -250,9 +251,9 @@ test("tools/ is discovered, and a manifest-less tool is skipped", () => {
 	assert.deepEqual(packageDirs(root).sort(), ["tools/has-manifest"]);
 });
 
-/* A workspace with no tools/ directory at all is not an error: `tools/*` is a
- * glob, and a glob with nothing to match contributes nothing, the same way
- * pnpm-workspace.yaml's tools/* would. */
+/* A workspace with no tools/ directory at all is not an error: discovery over
+ * a directory that is not there contributes nothing, the same way the glob it
+ * replaced would have. */
 test("a missing tools/ directory is not an error", () => {
 	const root = mkdtempSync(join(tmpdir(), "krudd-ws-"));
 	mkdirSync(join(root, "packages", "alpha"), { recursive: true });

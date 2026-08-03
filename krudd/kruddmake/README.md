@@ -10,7 +10,7 @@ CMake, no emcmake, no second graph.
 **This is an entry point, not a package.** `kruddmake.sh` is the front door to
 the C build, and the front door is a path: a contributor with a compiler runs it
 in a fresh checkout with no Node installed and nothing above `krudd/` set up.
-That is the property being protected, and it is why `krudd/` is not in the pnpm
+That is the property being protected, and it is why `krudd/` is not in the
 workspace (#934, [`WORKSPACE.md`](../../WORKSPACE.md) Q2). It briefly carried a
 `package.json` (#920); what that bought — "only `@kruddage/engine` may drive the
 engine build", as a dependency edge — is enforced by path instead, in
@@ -29,8 +29,8 @@ krudd/kruddmake/kruddmake.sh new-project  # scaffold a <name>.krudd-project
 
 `kruddmake.sh` builds the `krudd` host tool if it is missing or stale and execs
 it. There is no shorter name for it on `PATH`: it was briefly a workspace `bin`,
-which put it on `PATH` only for someone who had already run `pnpm install`, and
-that is the one contributor who needs it least.
+which put it on `PATH` only for someone who had already linked the workspace,
+and that is the one contributor who needs it least.
 
 There is no `clean` verb. Removing a build directory is `rm -rf` on whatever
 `KRUDD_BUILD_DIR` pointed at, and the artifact side of it —
@@ -79,7 +79,8 @@ and the ninja emitter — run on the pinned `krudds7` interpreter that
 is the point of the split: the build language is checkable without a toolchain,
 and the toolchain stages are what the native suite adds on top. CI's `lint` job
 runs this script by path for exactly that reason — it has Node and no compiler,
-and it used to reach these checks through `pnpm -r run test` (#934).
+and it used to reach these checks through the workspace's recursive test task
+(#934).
 
 The native suite is a superset and is still a shell script:
 
@@ -94,6 +95,6 @@ the native tests through the generated `build.ninja`, then the WASM link when
 **Node is not in that path.** `run-tests.sh` and `kruddmake.sh` are POSIX shell
 and reach nothing outside `krudd/`; a contributor with a compiler and no node
 installed builds and tests the engine exactly as before. That the workspace
-can also reach it — `pnpm test:native` at the root, which forwards to
-`pnpm --filter @kruddage/engine run test:native` — is a second door, not the
-door.
+can also reach it — `sh tools/workspace/workspace.sh test:native`, which
+forwards to `node packages/engine/scripts/native-test.mjs` — is a second door,
+not the door.

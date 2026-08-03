@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { stripComments } from "../strip-comments.mjs";
 
 /* This file lives inside @kruddage/barriers (#939), so it is itself walked by
- * check-barriers.mjs's rule 3 on every `pnpm check`. One fixture below wants a
+ * check-barriers.mjs's rule 3 on every `workspace.sh check`. One fixture below wants a
  * "krudd/kruddmake/" inside a fake block comment; assembled here instead of
  * spelled out in place, so the text this file's own bytes offer to that walk
  * never contains it contiguous — see the longer version of this note in

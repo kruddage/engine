@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#include "edit.h"
-#include "memory.h"
+#include <edit/edit.h>
+#include <memory/memory.h>
 
 #include <assert.h>
 #include <stdint.h>

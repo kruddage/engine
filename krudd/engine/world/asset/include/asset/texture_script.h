@@ -2,8 +2,8 @@
 #ifndef TEXTURE_SCRIPT_H
 #define TEXTURE_SCRIPT_H
 
-#include "texture.h"
-#include "memory_api.h"
+#include <asset/texture.h>
+#include <abi/memory_api.h>
 
 #include <stdint.h>
 

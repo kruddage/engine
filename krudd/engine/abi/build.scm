@@ -15,8 +15,17 @@
 ;;! order, so that a module reaching for it is a link edge the generator can
 ;;! read rather than an include path it cannot.
 ;;!
-;;! The surface is `.` — the whole module root. This is the one directory where
-;;! that is the examined answer rather than the unexamined one (contrast #922):
-;;! every header here exists to be included by another tier, so there is no
-;;! private half to separate out and an `include/` would only add a level.
-((interface-library "abi" (interface ".")))
+;;! The surface was `.` — the whole module root — on the reasoning that every
+;;! header here exists to be included by another tier, so there is no private
+;;! half to separate out and an `include/` would only add a level. True as far
+;;! as it went, and it stopped one step short: a surface at the module root is
+;;! the one surface that cannot be namespaced, because the directory a consumer
+;;! puts on its include path has to *contain* a directory named for the module.
+;;! So abi was the one module whose headers arrived unprefixed — `log_api.h`,
+;;! not `<abi/log_api.h>` — across 46 include sites, and the README's "no module
+;;! exports its own root" was false of exactly one module.
+;;!
+;;! It now exports `include/` holding `abi/`, which is the shape every module
+;;! has. The extra level is what buys the prefix, and the prefix is what makes
+;;! the highest-fan-in node in the tree legible at every site that reaches it.
+((interface-library "abi" (interface "include")))

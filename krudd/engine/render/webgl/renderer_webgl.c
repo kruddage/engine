@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "renderer.h"
-#include "subsystem.h"
-#include "subsystem_manager.h"
-#include "log_api.h"
-#include "memory_api.h"
+#include <core/subsystem.h>
+#include <core/subsystem_manager.h>
+#include <abi/log_api.h>
+#include <abi/memory_api.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -13,10 +13,10 @@
 #include <emscripten.h>
 #include <emscripten/html5.h>
 #include <GLES3/gl3.h>
-#include "script.h"
+#include <core/script.h>
 #else
-#include "log.h"
-#include "memory.h"
+#include <log/log.h>
+#include <memory/memory.h>
 static const struct log_api    native_log = { log_write };
 static const struct memory_api native_mem = {
 	mem_alloc, mem_alloc_zero, mem_free,

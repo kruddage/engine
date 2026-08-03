@@ -19,16 +19,16 @@
  */
 
 extern "C" {
-#include "subsystem.h"
-#include "subsystem_manager.h"
-#include "log_api.h"
-#include "log_level.h"
-#include "audio_api.h"
+#include <core/subsystem.h>
+#include <core/subsystem_manager.h>
+#include <abi/log_api.h>
+#include <abi/log_level.h>
+#include <abi/audio_api.h>
 #include "kgui_batch.h"
 #include "kgui_input.h"
 #include "kgui_text_edit.h"
 #include "kgui_font.h"
-#include "kruddgui_api.h"
+#include <abi/kruddgui_api.h>
 #include "renderer.h"		/* gpu_api — the panel batch draws through the device */
 }
 
@@ -41,7 +41,7 @@ extern "C" {
 
 extern "C" {
 #include "s7.h"			/* self-guards for C++ linkage */
-#include "script.h"
+#include <core/script.h>
 #include "kruddgui_scm.h"	/* KRUDDGUI_SCM — the panel image */
 
 double get_device_pixel_ratio(void);	/* plugin_abi.c (main module) */

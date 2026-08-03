@@ -9,9 +9,9 @@
  */
 #include "entity_script.h"
 
-#include "world.h"
-#include "asset_api.h"
-#include "script.h"
+#include <entity/world.h>
+#include <abi/asset_api.h>
+#include <core/script.h>
 
 #include "s7.h"
 

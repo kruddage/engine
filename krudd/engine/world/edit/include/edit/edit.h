@@ -2,7 +2,7 @@
 #ifndef EDIT_H
 #define EDIT_H
 
-#include "edit_api.h"
+#include <abi/edit_api.h>
 
 #include <stdint.h>
 

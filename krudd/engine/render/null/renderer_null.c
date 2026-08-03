@@ -1,15 +1,15 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#include "renderer_null.h"
+#include <null/renderer_null.h>
 #include "renderer.h"
-#include "log_api.h"
-#include "subsystem.h"
-#include "subsystem_manager.h"
+#include <abi/log_api.h>
+#include <core/subsystem.h>
+#include <core/subsystem_manager.h>
 
 #include <stddef.h>
 #include <stdint.h>
 
 #ifndef __EMSCRIPTEN__
-#include "log.h"
+#include <log/log.h>
 static const struct log_api native_log = { log_write };
 #endif
 

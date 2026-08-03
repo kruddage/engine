@@ -7,9 +7,9 @@
  * exhaustively by the Scheme oracle (modules/shader_test.scm); here we prove
  * the C seam, the rotating buffers, and the missing-stage NULL contract.
  */
-#include "script.h"
+#include <core/script.h>
 
-#include "log.h"
+#include <log/log.h>
 
 #include <assert.h>
 #include <stdio.h>

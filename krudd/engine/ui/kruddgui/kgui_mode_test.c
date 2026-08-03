@@ -10,7 +10,7 @@
  * the rect helper computes, on which half the accent knob lands, and on what
  * a tap asks the host for; pixel appearance is left to browser verification.
  */
-#include "script.h"
+#include <core/script.h>
 
 #include "s7.h"
 #include "kruddgui_scm.h"

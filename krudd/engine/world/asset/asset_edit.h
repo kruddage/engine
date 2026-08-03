@@ -3,8 +3,8 @@
 #define ASSET_EDIT_H
 
 #include "asset.h"		/* ASSET_PATH_MAX, asset_mut_* / asset_catalog_* */
-#include "edit_api.h"
-#include "memory_api.h"
+#include <abi/edit_api.h>
+#include <abi/memory_api.h>
 
 #include <stdint.h>
 

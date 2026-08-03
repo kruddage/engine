@@ -4,7 +4,7 @@
  * runs the right callback, an out-of-range index is inert, game_find resolves a
  * name (case-insensitively) to its slot, and game_boot_default loads by name.
  */
-#include "game.h"
+#include <host/game.h>
 
 #include <assert.h>
 #include <stdio.h>

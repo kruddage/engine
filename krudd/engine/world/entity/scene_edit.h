@@ -2,9 +2,9 @@
 #ifndef SCENE_EDIT_H
 #define SCENE_EDIT_H
 
-#include "world.h"
-#include "edit_api.h"
-#include "memory_api.h"
+#include <entity/world.h>
+#include <abi/edit_api.h>
+#include <abi/memory_api.h>
 
 #include <stdint.h>
 

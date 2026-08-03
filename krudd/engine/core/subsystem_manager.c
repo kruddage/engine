@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#include "subsystem_manager.h"
+#include <core/subsystem_manager.h>
 
 #include <stdint.h>
 #include <string.h>

@@ -10,14 +10,14 @@
  * The scripts under test are the exact SPINNER/BOUNCE/WOBBLE sources the asset
  * seeder embeds, pulled from the shared builtin_scripts.h.
  */
-#include "world.h"
-#include "scene.h"
-#include "asset_api.h"
+#include <entity/world.h>
+#include <entity/scene.h>
+#include <abi/asset_api.h>
 #include "entity_script.h"
-#include "builtin_scripts.h"
+#include <asset/builtin_scripts.h>
 
-#include "script.h"
-#include "log.h"
+#include <core/script.h>
+#include <log/log.h>
 
 #include <assert.h>
 #include <math.h>

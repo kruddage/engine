@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "asset.h"
-#include "log.h"
-#include "memory.h"
+#include <log/log.h>
+#include <memory/memory.h>
 
 #include <assert.h>
 #include <stdio.h>

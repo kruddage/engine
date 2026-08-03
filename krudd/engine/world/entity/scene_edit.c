@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "scene_edit.h"
-#include "world.h"
+#include <entity/world.h>
 
 #include <stddef.h>
 

@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "scene_edit.h"
-#include "world.h"
-#include "edit.h"
-#include "memory.h"
-#include "memory_api.h"
+#include <entity/world.h>
+#include <edit/edit.h>
+#include <memory/memory.h>
+#include <abi/memory_api.h>
 
 #include <assert.h>
 #include <stdint.h>

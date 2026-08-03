@@ -12,7 +12,7 @@
  * verification. Where a tap's target depends on layout the y is documented and
  * kept shallow; the tree/grouping is exercised geometry-free by direct call.
  */
-#include "script.h"
+#include <core/script.h>
 
 #include "s7.h"
 #include "kruddgui_scm.h"

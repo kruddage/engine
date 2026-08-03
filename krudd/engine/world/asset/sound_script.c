@@ -11,9 +11,9 @@
  * marshals the flat buffer into the wire format (s7 float-vectors hold C
  * doubles; the blob stores float32, so the copy narrows each sample).
  */
-#include "sound_script.h"
+#include <asset/sound_script.h>
 
-#include "script.h"
+#include <core/script.h>
 
 #include "s7.h"
 

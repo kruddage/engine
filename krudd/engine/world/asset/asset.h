@@ -2,7 +2,7 @@
 #ifndef ASSET_H
 #define ASSET_H
 
-#include "asset_api.h"
+#include <abi/asset_api.h>
 #include <stdint.h>
 
 #define ASSET_PATH_MAX 256

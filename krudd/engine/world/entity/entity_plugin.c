@@ -1,16 +1,16 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#include "world.h"
-#include "entity_api.h"
+#include <entity/world.h>
+#include <abi/entity_api.h>
 #include "entity_script.h"
-#include "scene_script.h"
-#include "scene.h"
+#include <entity/scene_script.h>
+#include <entity/scene.h>
 #include "scene_edit.h"
-#include "edit_api.h"
-#include "asset_api.h"
-#include "asset_codec_api.h"
-#include "memory_api.h"
-#include "stats_api.h"
-#include "subsystem_manager.h"
+#include <abi/edit_api.h>
+#include <abi/asset_api.h>
+#include <abi/asset_codec_api.h>
+#include <abi/memory_api.h>
+#include <abi/stats_api.h>
+#include <core/subsystem_manager.h>
 
 #include <stddef.h>
 #include <stdint.h>

@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "asset.h"
-#include "asset_api.h"
-#include "log.h"
-#include "memory.h"
+#include <abi/asset_api.h>
+#include <log/log.h>
+#include <memory/memory.h>
 
 #include <assert.h>
 #include <stdio.h>

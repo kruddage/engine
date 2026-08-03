@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#include "memory.h"
+#include <memory/memory.h>
 
 #include <assert.h>
 #include <stdio.h>

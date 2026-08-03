@@ -64,23 +64,24 @@
          (set=? (resolve-includes table name) expected)))
 
 (display "resolver: include sets vs CMake ground truth\n")
-(inc-check "log" '("base/log/include" "abi"))
-(inc-check "log_test" '("base/log/include" "abi"))
+(inc-check "log" '("base/log/include" "abi/include"))
+(inc-check "log_test" '("base/log/include" "abi/include"))
 (inc-check "renderer_null" '("render/null/include" "${generated}"
                              "base/log/include"
-                             "abi" "core/include"))
+                             "abi/include" "core/include"))
 (inc-check "renderer_null_test"
            '("render/null" "render/null/include" "${generated}"
              "base/log/include"
-             "abi" "core/include"))
+             "abi/include" "core/include"))
 (inc-check "fg_test" '("render/frame_graph" "render/frame_graph/include"
                        "${generated}"
                        "render/null/include" "base/log/include"
-                       "abi" "base/memory/include"
+                       "abi/include" "base/memory/include"
                        "core/include"))
-(inc-check "asset_plugin" '("world/asset/include" "abi" "base/math/include"
-                            "world/entity/include" "base/log/include"
-                            "base/memory/include" "core/include"))
+(inc-check "asset_plugin" '("world/asset/include" "abi/include"
+                            "base/math/include" "world/entity/include"
+                            "base/log/include" "base/memory/include"
+                            "core/include"))
 
 (display "resolver: transitive link closures\n")
 (let ((libs (resolve-link-libs table "renderer_null_test")))
@@ -245,11 +246,11 @@
 (check "abi is first in the tier order"
        (= (index-of "abi" manifest-dirs) 0))
 
-(check "abi is an interface-library exporting its module root"
+(check "abi is an interface-library exporting include/, like every module"
        (let ((target (rz-lookup table "abi")))
          (and target
               (eq? (rz-field target 'kind) 'interface-library)
-              (equal? (rz-field target 'public) '("abi"))
+              (equal? (rz-field target 'public) '("abi/include"))
               (null? (rz-field target 'links)))))
 
 (check "abi emits no build edge"

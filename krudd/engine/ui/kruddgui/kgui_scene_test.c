@@ -10,7 +10,7 @@
  * create/destroy/select, the name / transform / binding write-backs and the
  * param-menu save path — leaving pixel layout to browser verification.
  */
-#include "script.h"
+#include <core/script.h>
 
 #include "s7.h"
 #include "kruddgui_scm.h"

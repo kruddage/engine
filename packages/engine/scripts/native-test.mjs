@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //
-// `pnpm --filter @kruddage/engine test:native` — the whole native suite.
+// `workspace.sh test:native` — the whole native suite.
 //
 // A two-line wrapper on purpose. The suite itself is kruddmake's
 // run-tests.sh: POSIX shell, no node in its path, and the thing CI's sanitizer

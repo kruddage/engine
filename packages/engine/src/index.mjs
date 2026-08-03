@@ -60,15 +60,16 @@ function manifestPath() {
  * Read the manifest written by this package's build.
  *
  * Throws with the command to run rather than returning something empty: a
- * consumer that has not built yet is a sequencing mistake, and pnpm's
- * topological ordering means it should not be reachable from `pnpm build`.
+ * consumer that has not built yet is a sequencing mistake, and the
+ * workspace builds packages/engine before packages/site, so it should not be
+ * reachable from `workspace.sh build`.
  */
 export function readManifest() {
 	const path = manifestPath();
 	if (!existsSync(path)) {
 		throw new Error(
 			`@kruddage/engine has not been built (no ${ENGINE_MANIFEST_FILE} in ${distDir}).\n` +
-				`Run: pnpm --filter @kruddage/engine run build`
+				`Run: node packages/engine/scripts/build.mjs`
 		);
 	}
 	return JSON.parse(readFileSync(path, "utf8"));

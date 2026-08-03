@@ -12,9 +12,9 @@
 # Two callers, both by this path. run-tests.sh runs it as its first two stages
 # rather than repeating them: the native suite is this suite plus a toolchain.
 # CI's lint job runs it directly, because that job has no toolchain and used to
-# reach these checks through `pnpm -r run test` — which stopped reaching them
-# when krudd/ left the workspace and this stopped being a package's `test`
-# script (#934).
+# reach these checks through the workspace's recursive test task — which
+# stopped reaching them when krudd/ left the workspace and this stopped being
+# a package's `test` script (#934).
 #
 # Side effect, and the reason KRUDD_NINJA_OUT exists: resolve_test.scm renders
 # the real manifest to a build.ninja on its way through, which is what

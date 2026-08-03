@@ -8,9 +8,9 @@ The engine is not ported. It is still C, still built by
 package wraps that build and puts a declared surface in front of its output.
 
 ```sh
-pnpm --filter @kruddage/engine run build        # needs emsdk on PATH
-pnpm --filter @kruddage/engine run test         # this package's own suite, pure Node
-pnpm --filter @kruddage/engine run test:native  # the C suite, no emsdk needed
+node scripts/build.mjs                       # needs emsdk on PATH
+node --test test/*.test.mjs                   # this package's own suite, pure Node
+node scripts/native-test.mjs                 # the C suite, no emsdk needed
 ```
 
 ## What it does
@@ -24,7 +24,7 @@ It reaches kruddmake by path. `scripts/kruddmake.mjs` derives the repo root from
 its own location and joins `krudd/kruddmake/` onto it, and it is the only file
 in this package that does — every other module here asks it.
 
-That path is what `pnpm check` rule 3 forbids to every package but this one, and
+That path is what the boundary check's rule 3 forbids to every package but this one, and
 the exemption is the whole of the permission. It used to be the second of two
 gates: `krudd/kruddmake` was a package, this one declared a dependency on it,
 and a separate rule said no other package could. That rule went with the package
@@ -100,7 +100,7 @@ This is the first membrane, not the finished shape. In rough order of value:
    its `build.scm` and sits first in `manifest.scm`: it compiles nothing, it is
    headers every tier includes and nothing links, and the tier check reads that
    position back (#919). It briefly also had a `package.json` and was the first
-   C module in the pnpm workspace. That half is reverted — see below.
+   C module in the workspace. That half is reverted — see below.
 4. ~~**Package the build system.**~~ Reverted, deliberately, and what it was for
    was kept. `krudd/kruddmake/kruddmake.sh` is the build entry point, and
    `run-scheme-tests.sh` is a suite that runs on the s7 CLI with no compiler;

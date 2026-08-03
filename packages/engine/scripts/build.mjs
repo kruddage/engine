@@ -53,9 +53,9 @@ function have(command) {
 
 /* ------------------------------------------------------------- toolchain */
 
-/* `pnpm install` links the workspace and downloads nothing, so it tells a
- * contributor nothing about whether they can actually build (README.md, "The
- * pnpm workspace"). This is the first point that can, and the issue's fix is
+/* Linking the workspace makes one symlink and downloads nothing, so it tells
+ * a contributor nothing about whether they can actually build (README.md, "The
+ * workspace"). This is the first point that can, and the issue's fix is
  * to fail fast rather than degrade: still require the full toolchain, but
  * collect every gap before reporting instead of exiting on the first
  * `fail()`. Without that, a machine missing two tools has to run the build
@@ -85,7 +85,7 @@ if (!have("emcc")) {
 			"      https://emscripten.org/docs/getting_started/downloads.html\n" +
 			"    Then `source /path/to/emsdk/emsdk_env.sh` and re-run.\n" +
 			"    (The native test suite needs no emcc — " +
-			"`pnpm --filter @kruddage/engine test`.)"
+			"`node --test packages/engine/test/*.test.mjs`.)"
 	);
 }
 

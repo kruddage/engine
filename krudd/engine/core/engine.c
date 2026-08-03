@@ -241,7 +241,7 @@ EM_JS(int, krudd_wants_webgpu, (void), {
  */
 EM_JS(void, krudd_boot_game, (char *out, int cap), {
 	var name = (typeof window.kruddBootGame === 'function')
-		? window.kruddBootGame() : '';
+		? window.kruddBootGame() : "";
 	if (typeof name !== 'string')
 		name = "";
 	stringToUTF8(name, out, cap);

@@ -38,12 +38,11 @@ body {
 /*
  * ── Canvas viewport ──
  *
- * The page is the canvas plus the overlays that sit over it (the launcher, the
- * load prompt, the error box). The DOM editor chrome that used to frame it —
- * menu bar, toolbar, docks and status bar, all built at runtime from a layout
- * spec the engine serialized out of Scheme — is gone, so the canvas is a plain
- * flex child of <body> and has the whole viewport to itself in every state the
- * page has.
+ * The page is the canvas plus the overlays that sit over it (the picker, the
+ * error box). The DOM editor chrome that used to frame it — menu bar, toolbar,
+ * docks and status bar, all built at runtime from a layout spec the engine
+ * serialized out of Scheme — is gone, so the canvas is a plain flex child of
+ * <body> and has the whole viewport to itself in every state the page has.
  */
 
 .canvas-wrap {
@@ -94,7 +93,22 @@ canvas {
 
 .webgpu-log .line.err { color: #e07a7a; }
 
-/* ── Launcher overlay ── */
+/*
+ * ── The picker ──
+ *
+ * The page's one overlay, and the whole of what a bare URL opens: the projects
+ * this build shipped, and a way to open a .scm off the device. Nothing loads
+ * until something is picked, so this is a destination rather than a splash on
+ * the way to a game — which is also why it is what the "load project" control
+ * in the corner brings back over a running scene, instead of a second panel
+ * saying the same thing somewhere else on the page.
+ *
+ * Picking a shipped project navigates to ?game=<name>. That is the whole of
+ * "open this instead": the page reloads into a fresh engine with the project
+ * named in the URL, so there is no scene to tear down and no state to reset,
+ * and a link to a project is just a link. Only a file off the device is loaded
+ * in place, because there is no URL that could name it.
+ */
 
 .launcher {
 	position: fixed;
@@ -126,7 +140,7 @@ canvas {
 
 .launcher-close:hover { border-color: #555; color: #ccc; }
 
-/* Matches .launcher-sub/.launcher-games: no dismissing a launcher that hasn't
+/* Matches .launcher-sub/.launcher-body: no dismissing a picker that hasn't
  * armed its buttons yet (see kruddSetReady below). */
 .launcher.loading .launcher-close { display: none; }
 
@@ -155,16 +169,16 @@ canvas {
 }
 
 /*
- * Until the engine has rendered its first frame the launcher is painted (static
- * HTML) but not yet armed: the game list and its prompt are hidden and a
- * "loading" note stands in, so an impatient click has no button to hit. The
- * engine flips the .loading class off via kruddSetReady once it is live.
+ * Until the engine has rendered its first frame the picker is painted (static
+ * HTML) but not yet armed: the list is hidden and a "loading" note stands in, so
+ * an impatient click has no button to hit. The engine flips the .loading class
+ * off via kruddSetReady once it is live.
  *
- * The wordmark is hidden along with them, so the ordinary boot — which loads a
- * game and dismisses this overlay the moment it is armed — shows a bare
- * "loading" and then the board, never a splash screen standing between the
- * player and the game. The title is back for ?game=none, where the overlay is
- * the destination rather than something passed through.
+ * The wordmark is hidden along with it, so a page opened ON a project — which
+ * takes this overlay down the moment the scene is up — shows a bare "loading"
+ * and then the board, never a splash screen standing between the player and the
+ * game. The title is back on a bare URL, where the picker is where the page was
+ * going all along.
  */
 .launcher-loading {
 	display: none;
@@ -178,13 +192,22 @@ canvas {
 
 .launcher.loading .launcher-title,
 .launcher.loading .launcher-sub,
-.launcher.loading .launcher-games { display: none; }
+.launcher.loading .launcher-body { display: none; }
 
-.launcher-games {
+.launcher-body,
+.launcher-list {
 	display: flex;
 	flex-direction: column;
 	gap: 10px;
 	width: 100%;
+}
+
+.launcher-label {
+	font-size: 11px;
+	color: #555;
+	letter-spacing: 0.15em;
+	text-transform: uppercase;
+	margin-top: 6px;
 }
 
 .launcher-btn {
@@ -209,97 +232,26 @@ canvas {
 }
 
 /*
- * ── Load prompt ──
- *
- * A one-tap splash that sits over the board the moment a game boots straight
- * in (the default path — see game_boot_index in game.c, which shows this
- * right where it used to just dismiss the launcher and leave bare canvas).
- *
- * It reads as a project loader — "load project" over a button named for the
- * scene that booted — rather than "Play <that game>" over a Play button. The
- * page is an engine you open a project in; the game a build ships staged is
- * one project among however many it carries, and the first screen should say
- * the former and offer the latter, not present the sample as the whole
- * product. The button carries the game's own launcher label, so a different
- * boot default renames it with no edit here.
- *
- * That button is also where the first user gesture lands, so the click handler
- * below resumes the WebAudio context there rather than counting on whatever
- * the player's first move happens to click.
- */
-.load-prompt {
-	position: fixed;
-	inset: 0;
-	background: rgba(13, 13, 13, 0.96);
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	z-index: 5000;
-	padding: 20px;
-}
-
-.load-prompt.hidden { display: none; }
-
-.load-prompt-panel {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: 18px;
-}
-
-.load-prompt-title {
-	font-size: 22px;
-	font-weight: bold;
-	letter-spacing: 0.2em;
-	text-transform: uppercase;
-	color: #fff;
-}
-
-.load-prompt-btn {
-	background: #141414;
-	border: 1px solid #333;
-	border-left: 3px solid #2d6a2d;
-	color: #ddd;
-	font-family: inherit;
-	font-size: 16px;
-	letter-spacing: 0.15em;
-	text-transform: uppercase;
-	padding: 12px 40px;
-	cursor: pointer;
-	transition: border-color 0.12s, background 0.12s;
-}
-
-.load-prompt-btn:hover {
-	background: #1c1c1c;
-	border-color: #555;
-	border-left-color: #4a9a4a;
-	color: #fff;
-}
-
-/*
  * ── Load Project ──
  *
- * The engine's one piece of permanent chrome. Everything else on this page is a
- * splash you pass through — the launcher goes down on the first pick and never
- * comes back, the load prompt goes down on its one tap — because they exist to
- * get you to a scene. This has to outlast them: opening a project is not a boot
- * step, it is the thing the page is for, and it must be reachable from the
- * scene a project is already running so that a second file replaces the first
- * (project_host_load in game/project). Hence a control parked in the corner
- * rather than a fourth overlay in the boot sequence.
+ * The engine's one piece of permanent chrome: what brings the picker back over
+ * a running scene. Opening a project is not a boot step, it is the thing the
+ * page is for, so it has to be reachable from the game a project is already
+ * running — hence a control parked in the corner rather than an overlay that
+ * only exists on the way in.
  *
  * It sits in the top-left because the engine's own UI (kruddgui) anchors to the
  * bottom of the viewport, and it is dim until hovered so that a corner of a
  * running game is not spending its contrast on a button.
  */
-.project-open {
+.launcher-open {
 	position: fixed;
 	top: 10px;
 	left: 10px;
-	/* Above the launcher and the load prompt (5000), below the panel it
-	 * opens (5500) and the error box (9999): the one control that is
-	 * reachable from every state the page has, including the boot splash
-	 * that already says "load project". */
+	/* Above the picker it opens (5000) and below the error box (9999): the
+	 * one control that is reachable from every state the page has, the
+	 * picker itself included — where it is a no-op, and still there rather
+	 * than blinking out on the one screen that already says what it does. */
 	z-index: 5200;
 	background: rgba(20, 20, 20, 0.72);
 	border: 1px solid #2a2a2a;
@@ -315,99 +267,12 @@ canvas {
 	transition: opacity 0.12s, border-color 0.12s, color 0.12s;
 }
 
-.project-open:hover {
+.launcher-open:hover {
 	opacity: 1;
 	border-color: #555;
 	border-left-color: #4a9a4a;
 	color: #ddd;
 }
-
-.project-panel {
-	position: fixed;
-	inset: 0;
-	background: rgba(13, 13, 13, 0.96);
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	z-index: 5500;
-	padding: 20px;
-}
-
-.project-panel.hidden { display: none; }
-
-.project-panel-box {
-	display: flex;
-	flex-direction: column;
-	gap: 10px;
-	width: 100%;
-	max-width: 360px;
-}
-
-.project-panel-title {
-	font-size: 22px;
-	font-weight: bold;
-	letter-spacing: 0.2em;
-	text-transform: uppercase;
-	color: #fff;
-}
-
-.project-panel-sub {
-	font-size: 12px;
-	color: #666;
-	letter-spacing: 0.1em;
-	margin-bottom: 8px;
-}
-
-.project-panel-label {
-	font-size: 11px;
-	color: #555;
-	letter-spacing: 0.15em;
-	text-transform: uppercase;
-	margin-top: 6px;
-}
-
-.project-staged {
-	display: flex;
-	flex-direction: column;
-	gap: 10px;
-}
-
-.project-btn {
-	background: #141414;
-	border: 1px solid #333;
-	border-left: 3px solid #2d6a2d;
-	color: #ddd;
-	font-family: inherit;
-	font-size: 14px;
-	letter-spacing: 0.08em;
-	padding: 12px 16px;
-	cursor: pointer;
-	text-align: left;
-	transition: border-color 0.12s, background 0.12s;
-}
-
-.project-btn:hover {
-	background: #1c1c1c;
-	border-color: #555;
-	border-left-color: #4a9a4a;
-	color: #fff;
-}
-
-.project-panel-close {
-	background: none;
-	border: 1px solid #2a2a2a;
-	color: #666;
-	font-family: inherit;
-	font-size: 11px;
-	letter-spacing: 0.1em;
-	text-transform: uppercase;
-	padding: 6px 12px;
-	margin-top: 10px;
-	cursor: pointer;
-	align-self: flex-start;
-}
-
-.project-panel-close:hover { border-color: #555; color: #aaa; }
 
 /* ── Error overlay ── */
 
@@ -589,39 +454,27 @@ canvas {
 <div class="webgpu-log" id="webgpu-log"></div>
 
 <div class="launcher loading" id="launcher">
-	<button class="launcher-close" id="launcher-close" title="close menu">&times;</button>
+	<button class="launcher-close" id="launcher-close" title="close">&times;</button>
 	<div class="launcher-panel">
 		<div class="launcher-title">KRUDD</div>
-		<div class="launcher-sub">choose a scene</div>
-		<div class="launcher-loading" id="launcher-loading">loading&hellip;</div>
-		<div class="launcher-games" id="launcher-games"></div>
+		<div class="launcher-sub">load project</div>
+		<div class="launcher-loading">loading&hellip;</div>
+		<div class="launcher-body">
+			<!-- Filled from assets/projects.json; the label appears with the
+			     first button, so a build that shipped nothing says nothing. -->
+			<div class="launcher-label" id="launcher-shipped-label" hidden>shipped with this build</div>
+			<div class="launcher-list" id="launcher-shipped"></div>
+			<div class="launcher-label">from this device</div>
+			<button class="launcher-btn" id="launcher-file-btn">choose a .scm file&hellip;</button>
+			<!-- An <input type=file> and a FileReader, not the File System Access
+			     API: this reads one file once, which is the whole of what that API
+			     would buy, and it works in every browser the engine runs in. -->
+			<input type="file" id="launcher-file" accept=".scm,text/plain" hidden>
+		</div>
 	</div>
 </div>
 
-<div class="load-prompt hidden" id="load-prompt">
-	<div class="load-prompt-panel">
-		<div class="load-prompt-title">load project</div>
-		<button class="load-prompt-btn" id="load-prompt-btn">project</button>
-	</div>
-</div>
-
-<button class="project-open" id="project-open">load project</button>
-
-<div class="project-panel hidden" id="project-panel">
-	<div class="project-panel-box">
-		<div class="project-panel-title">load project</div>
-		<div class="project-panel-sub">a project is one .scm file</div>
-		<div class="project-panel-label" id="project-staged-label" hidden>shipped with this build</div>
-		<div class="project-staged" id="project-staged"></div>
-		<div class="project-panel-label">from this device</div>
-		<button class="project-btn" id="project-file-btn">choose a .scm file&hellip;</button>
-		<!-- An <input type=file> and a FileReader, not the File System Access
-		     API: this reads one file once, which is the whole of what that API
-		     would buy, and it works in every browser the engine runs in. -->
-		<input type="file" id="project-file" accept=".scm,text/plain" hidden>
-		<button class="project-panel-close" id="project-panel-close">close</button>
-	</div>
-</div>
+<button class="launcher-open" id="launcher-open">load project</button>
 
 <div class="error-backdrop" id="error-backdrop">
 	<div class="error-box">
@@ -716,10 +569,10 @@ canvas {
 	};
 
 	/*
-	 * Arm the launcher once the first frame is on screen (called from
-	 * engine_tick). Dropping the 'loading' class reveals the game buttons;
-	 * before this the list is hidden, so a game cannot be picked into an
-	 * engine that has not rendered yet.
+	 * Arm the picker once the first frame is on screen (called from
+	 * engine_tick). Dropping the 'loading' class reveals the project list;
+	 * before this it is hidden, so a project cannot be picked into an engine
+	 * that has not rendered yet.
 	 */
 	window.kruddSetReady = function () {
 		var el = document.getElementById('launcher');
@@ -728,29 +581,14 @@ canvas {
 	};
 
 	/*
-	 * Called by game_boot_default (game.c) right after it loads the boot scene
-	 * and dismisses the launcher, so someone who lands on the default boot
-	 * sees the "load project" splash instead of the board cold. NAME is the
-	 * booted game's launcher label and becomes the button, which is the only
-	 * part of this prompt that varies — the heading names the act, the button
-	 * names the project it opens. A missing name leaves the markup's own
-	 * label in place rather than blanking the one thing there is to click.
-	 */
-	window.kruddShowLoadPrompt = function (name) {
-		var el = document.getElementById('load-prompt');
-		if (!el)
-			return;
-		var btn = document.getElementById('load-prompt-btn');
-		if (btn && name)
-			btn.textContent = name;
-		el.classList.remove('hidden');
-	};
-
-	/*
 	 * Browsers only let an AudioContext leave 'suspended' from inside a
-	 * user-gesture handler, so every button on this page that a player might
-	 * press first resumes it directly rather than hoping a later click (a
-	 * board move, say) does the job.
+	 * user-gesture handler. Nothing on this page is a tap-to-start any more —
+	 * you pick a project and the page navigates into it, so the gesture that
+	 * chose the game was spent on the page before this one — and the unlock
+	 * therefore rides on the first gesture to land anywhere, a board click
+	 * included. Capture phase, so a handler that stops propagation cannot stop
+	 * this too; resuming a running context is a no-op, so it can stay armed
+	 * rather than having to know which gesture was the first.
 	 */
 	function resumeAudio() {
 		var ctx = window.Module && Module.__kruddAudioCtx;
@@ -758,36 +596,81 @@ canvas {
 			ctx.resume();
 	}
 
-	document.getElementById('load-prompt-btn').addEventListener('click', function () {
-		document.getElementById('load-prompt').classList.add('hidden');
-		resumeAudio();
-	});
+	window.addEventListener('pointerdown', resumeAudio, true);
+	window.addEventListener('keydown', resumeAudio, true);
 
-	/*
-	 * ── Load Project ──
-	 *
-	 * Getting a .scm into a running engine. The source text goes to
-	 * window.kruddRunProject, which the module installs at boot
-	 * (project_install_bridge in game/project/project_host.c) and which
-	 * answers the launcher index the project opened on, or -1.
-	 *
-	 * Everything about pointers and the module heap is on that side of the
-	 * call on purpose: this page hands over a JS string and reads back a
-	 * number. What is left here is the two ways a project reaches the page —
-	 * a file the player picks, and one this build shipped — and what to show
-	 * when it does not load.
-	 */
-	function projectPanel(show) {
-		document.getElementById('project-panel')
+	function launcher(show) {
+		document.getElementById('launcher')
 			.classList.toggle('hidden', !show);
 	}
 
 	/*
-	 * Run SRC as a project, reporting through the error overlay rather than
-	 * failing quietly. A .scm that does not load is the expected case for a
-	 * button that opens whatever it is pointed at, so it gets the same
-	 * treatment as a renderer that would not start: named, with the reason
-	 * where it can be read, and the engine still running whatever it had.
+	 * ── The projects this build shipped ──
+	 *
+	 * assets/projects.json is the list, written by the build from every project
+	 * it ships (krudd/kruddmake/ninja.scm): this page cannot list a directory
+	 * over HTTP, and it must not carry a filename either — a page that names a
+	 * game is a generic shell that knows one, which is the pin #976 pulled out
+	 * of the C. Fetched once and shared by the two things that read it: the
+	 * picker's list, and the lookup that turns a ?game= name back into the file
+	 * to fetch. A build that shipped nothing — or a page opened without the
+	 * assets/ directory beside it — answers an empty list, and the picker
+	 * offers nothing but the file button.
+	 */
+	var kruddProjects = fetch('assets/projects.json').then(function (r) {
+		return r.ok ? r.json() : [];
+	}).then(function (names) {
+		return Array.isArray(names) ? names : [];
+	}).catch(function () {
+		return [];
+	});
+
+	/*
+	 * What a project is called on its button and in ?game=: its filename
+	 * without the extension. The display name inside the .scm is the engine's
+	 * — it is what the project registers under, and what ?game= matches for the
+	 * project the image embedded — and this page cannot know it without
+	 * fetching and running the file first. The two agree by convention
+	 * (ducks.scm holds (project "Ducks" ...)); where they would not, the fetch
+	 * below opens the project anyway, because it goes by filename.
+	 */
+	function projectName(file) {
+		return String(file).replace(/\.scm$/i, '');
+	}
+
+	/*
+	 * ── Opening a project ──
+	 *
+	 * Two ways in, and they are deliberately different.
+	 *
+	 * A project this build shipped is opened by NAVIGATING to ?game=<name>: the
+	 * page reloads into a fresh engine that opens it at boot, so there is no
+	 * scene to tear down, nothing to reset, and the URL says what is running —
+	 * which also makes a link to a project just a link. A file off the device
+	 * has no URL to navigate to, so it goes straight into the running engine
+	 * through window.kruddRunProject, which the module installs at boot
+	 * (project_install_bridge in game/project/project_host.c) and which answers
+	 * the slot the project opened on, or -1. Everything about pointers and the
+	 * module heap is on that side of the call: this page hands over a JS string
+	 * and reads back a number.
+	 */
+	function kruddPickProject(name) {
+		var q = new URLSearchParams(location.search);
+
+		/* Set rather than replace, so ?renderer=webgl (or ?webgpulog=1)
+		 * survives picking a different project — losing them here would
+		 * make the picker a way to fall off a diagnostic setting. */
+		q.set('game', name);
+		location.search = q.toString();
+	}
+
+	/*
+	 * Run SRC as a project, answering whether it opened. Reporting goes through
+	 * the error overlay rather than failing quietly: a .scm that does not load
+	 * is the expected case for a button that opens whatever it is pointed at,
+	 * so it gets the same treatment as a renderer that would not start — named,
+	 * with the reason where it can be read, and the engine still running
+	 * whatever it had.
 	 */
 	function kruddOpenProject(label, src) {
 		var run = window.kruddRunProject;
@@ -798,37 +681,90 @@ canvas {
 		if (typeof run !== 'function') {
 			window.kruddShowError('The engine is still starting',
 				'It cannot open ' + label + ' until the first frame is up.');
-			return;
+			return false;
 		}
 		if (run(src) < 0) {
 			window.kruddShowError('Could not load ' + label,
 				label + ' is not a project the engine could run \u2014 a project is '
 				+ 'one .scm holding a (project "Name" ...) form, and the reason this '
 				+ 'one was refused is on the engine log (the browser console).');
-			return;
+			return false;
 		}
-		/* It loaded: every splash standing between the page and a scene
-		 * is now stale, including the launcher this may have been opened
-		 * over. Same hide the C side does on a launcher pick. */
-		projectPanel(false);
-		document.getElementById('launcher').classList.add('hidden');
-		document.getElementById('load-prompt').classList.add('hidden');
+		/* It loaded: the picker it was opened from is stale. Same hide the
+		 * C side does when a ?game= opens a project at boot. */
+		launcher(false);
+		return true;
 	}
 
-	document.getElementById('project-open').addEventListener('click', function () {
-		resumeAudio();
-		projectPanel(true);
+	/*
+	 * Fetch a shipped project's source and run it \u2014 the path a ?game= takes
+	 * when the image does not carry that project, since the page is the half of
+	 * the engine that can wait on a round trip. A failure leaves the picker up,
+	 * because a page that cannot open what its URL asked for should offer what
+	 * it can open instead.
+	 */
+	function kruddFetchProject(file) {
+		var url = 'assets/' + encodeURIComponent(file);
+
+		return fetch(url).then(function (r) {
+			if (!r.ok)
+				throw new Error('HTTP ' + r.status);
+			return r.text();
+		}).then(function (src) {
+			if (!kruddOpenProject(projectName(file), src))
+				launcher(true);
+		}).catch(function (e) {
+			launcher(true);
+			window.kruddShowError('Could not fetch ' + file,
+				url + ' did not load: ' + String(e));
+		});
+	}
+
+	/*
+	 * ?game=<name> named nothing the image registered (krudd_boot_unresolved in
+	 * core/engine.c). For a project the build shipped but did not embed that is
+	 * the ordinary case rather than an error: its source is a file in assets/,
+	 * so opening it is a fetch, and fetching is this page's half of the job. A
+	 * name nothing ships leaves the picker up, which is what ?game=none gets.
+	 */
+	window.kruddBootProject = function (name) {
+		var wanted = String(name).toLowerCase();
+
+		/* Down while the fetch is in flight: this page was opened ON a
+		 * project, so the picker is something it is passing through. It
+		 * comes back only if the project does not arrive. */
+		launcher(false);
+		kruddProjects.then(function (files) {
+			var found = null;
+
+			files.forEach(function (file) {
+				if (projectName(file).toLowerCase() === wanted)
+					found = file;
+			});
+			if (!found) {
+				launcher(true);
+				return;
+			}
+			return kruddFetchProject(found);
+		});
+	};
+
+	/* The corner control brings the picker back over whatever is running; the
+	 * × backs out of it without picking anything, leaving the engine (and any
+	 * scene already behind the overlay) exactly as it was. */
+	document.getElementById('launcher-open').addEventListener('click', function () {
+		launcher(true);
 	});
 
-	document.getElementById('project-panel-close').addEventListener('click', function () {
-		projectPanel(false);
+	document.getElementById('launcher-close').addEventListener('click', function () {
+		launcher(false);
 	});
 
-	document.getElementById('project-file-btn').addEventListener('click', function () {
-		document.getElementById('project-file').click();
+	document.getElementById('launcher-file-btn').addEventListener('click', function () {
+		document.getElementById('launcher-file').click();
 	});
 
-	document.getElementById('project-file').addEventListener('change', function () {
+	document.getElementById('launcher-file').addEventListener('change', function () {
 		var input = this;
 		var file  = input.files && input.files[0];
 		var reader;
@@ -852,55 +788,27 @@ canvas {
 	});
 
 	/*
-	 * The projects this build ships, offered as the zero-friction path: no
-	 * file to find, and the same door a file off the disk comes in by, so the
-	 * staged project is not a special case in the engine.
-	 *
-	 * The names come from assets/projects.json, written by the build from
-	 * every project it ships — this page cannot list a directory over HTTP,
-	 * and it must not carry a filename either. A page that names a game is a
-	 * generic shell that knows one, which is the pin #976 pulled out of the
-	 * C. A build that shipped nothing (or a page opened without the assets/
-	 * directory beside it) simply shows no list.
-	 *
-	 * Every shipped project appears, not only the one the image boots into:
-	 * being embedded is what makes a project the boot default and says
-	 * nothing about whether the page can reach it.
+	 * The picker's list of what this build ships. Every project appears, the
+	 * embedded one included: being embedded is what lets a project open with no
+	 * round trip and says nothing about whether it belongs on the menu.
 	 */
-	function kruddStagedProjects() {
-		fetch('assets/projects.json').then(function (r) {
-			return r.ok ? r.json() : [];
-		}).then(function (names) {
-			var host  = document.getElementById('project-staged');
-			var label = document.getElementById('project-staged-label');
+	kruddProjects.then(function (files) {
+		var host  = document.getElementById('launcher-shipped');
+		var label = document.getElementById('launcher-shipped-label');
 
-			if (!Array.isArray(names) || names.length === 0)
-				return;
-			label.hidden = false;
-			names.forEach(function (name) {
-				var b = document.createElement('button');
-				b.className = 'project-btn';
-				b.textContent = name;
-				b.onclick = function () {
-					var url = 'assets/' + encodeURIComponent(name);
+		if (files.length === 0)
+			return;
+		label.hidden = false;
+		files.forEach(function (file) {
+			var name = projectName(file);
+			var b    = document.createElement('button');
 
-					fetch(url).then(function (r) {
-						if (!r.ok)
-							throw new Error('HTTP ' + r.status);
-						return r.text();
-					}).then(function (src) {
-						kruddOpenProject(name, src);
-					}).catch(function (e) {
-						window.kruddShowError('Could not fetch ' + name,
-							url + ' did not load: ' + String(e));
-					});
-				};
-				host.appendChild(b);
-			});
-		}).catch(function () {});
-	}
-
-	kruddStagedProjects();
+			b.className = 'launcher-btn';
+			b.textContent = name;
+			b.onclick = function () { kruddPickProject(name); };
+			host.appendChild(b);
+		});
+	});
 
 	/*
 	 * Firefox's WebGPU implementation isn't solid enough yet to default to it,
@@ -925,18 +833,17 @@ canvas {
 	};
 
 	/*
-	 * Which scene the page opens on boot, read once the subsystems are up
-	 * (krudd_boot_game in engine.c). ?game=<name> picks a registered game by
-	 * its launcher label (matched case-insensitively), and ?game=none — or any
-	 * unknown name — keeps the "choose a scene" launcher up.
+	 * Which project the page opens on boot, read once the subsystems are up
+	 * (krudd_boot_game in engine.c). ?game=<name> names one: the engine opens
+	 * it directly if it embedded it, and otherwise hands the name back for this
+	 * page to fetch out of assets/ (kruddBootProject above). ?game=none — or
+	 * any name nothing ships — leaves the picker up.
 	 *
-	 * No ?game= at all answers the empty string, which is this page saying it
-	 * has no opinion rather than naming a favourite. The engine then opens the
-	 * project the build shipped staged, by the launcher slot that project took
-	 * when it registered. That is deliberate: the page does not know which
-	 * games a build carries any more than the engine does, and a default
-	 * spelled as a literal game name here would be the same pin #976 pulled
-	 * out of engine.c, just moved into HTML.
+	 * No ?game= at all answers the empty string, and nothing opens. That is the
+	 * bare URL's whole job: the page is a picker, and a project is something
+	 * you choose, so there is no game the site is "really" for and no default
+	 * game name to spell out here — which would be the same pin #976 pulled out
+	 * of engine.c, just moved into HTML.
 	 */
 	window.kruddBootGame = function () {
 		try {
@@ -1009,12 +916,6 @@ canvas {
 		box.scrollTop = box.scrollHeight;
 	};
 
-	/* Back out of the launcher without picking a scene; the engine (and
-	 * whatever scene was already running behind the overlay) keeps going. */
-	document.getElementById('launcher-close').addEventListener('click', function () {
-		document.getElementById('launcher').classList.add('hidden');
-	});
-
 	if ('serviceWorker' in navigator) {
 		window.addEventListener('load', function () {
 			navigator.serviceWorker.register('sw.js').catch(function () {});
@@ -1027,13 +928,13 @@ canvas {
 var Module = {
 	locateFile: function (path, prefix) {
 		if (path.endsWith('.wasm'))
-			return prefix + path.replace(/\.wasm$/, '.5be23429.wasm');
+			return prefix + path.replace(/\.wasm$/, '.85e67588.wasm');
 		return prefix + path;
 	}
 };
 </script>
 
-<script async type="text/javascript" src="index.5be23429.js"></script>
+<script async type="text/javascript" src="index.85e67588.js"></script>
 
 </body>
 </html>

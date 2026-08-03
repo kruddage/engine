@@ -161,10 +161,10 @@
 ;;! project-source — a project the image boots into is self-evidently one the
 ;;! build ships — so a directory declares one or the other, never both.
 ;;!
-;;! Exactly one directory may be the staged one, and that is enforced rather than
-;;! remembered: the header name is fixed rather than per-declaration, so a second
-;;! `staged-project` writes the same generated/ file, which resolve-check-codegen
-;;! already refuses. Nothing limits how many are shipped.
+;;! Exactly one directory may be the staged one. Nothing limits how many are
+;;! shipped, and the asymmetry is a decision rather than a leftover — see the
+;;! note on resolve-check-staged below, which is where it is argued and where it
+;;! is enforced.
 ;;!
 ;;! Both are named for what the source IS to the build rather than for whichever
 ;;! game claimed the slot, since the C that evaluates it must not learn which
@@ -510,3 +510,74 @@
                 " project's own test instead.\n"
                 "    See projects/README.md.\n"))
         #t)))
+
+;;! --- the staged slot is single-occupancy, on purpose (#1019) ---------------
+;;!
+;;! Exactly one project may be the staged one, and this is the rule rather than
+;;! a consequence of one. It used to be a consequence: rz-staged-project-header
+;;! is a fixed name rather than a per-declaration one, so a second
+;;! `staged-project` wrote a generated/ file that was already spoken for and
+;;! resolve-check-codegen refused it as a duplicate output. That enforced the
+;;! right thing for the wrong reason — it failed naming a header rather than the
+;;! rule, and it would have stopped enforcing anything the moment someone gave
+;;! the embed a per-project symbol, which is exactly the change a reader who
+;;! thought the collision was an accident would reach for first.
+;;!
+;;! #1013 asked whether the rule itself should survive three projects. It should,
+;;! and the argument is not the mechanism:
+;;!
+;;!   - A boot opens ONE project. Embedding is what buys "the page opens on a
+;;!     playable scene with no network round trip" (#976 kept it deliberately),
+;;!     and it buys it by putting the source in the WASM image every visitor
+;;!     downloads. Embedding a second pays that cost again to serve a boot that
+;;!     cannot use it.
+;;!   - Since #1030 the page already offers every SHIPPED project and a pick is
+;;!     a `?game=` away, so the staged slot does not decide which projects exist
+;;!     or which are reachable — `project-source` does, and it is unlimited. It
+;;!     decides only what the bare URL does, and a default is one thing by
+;;!     definition.
+;;!   - The alternatives that would need more than one embedded — boot into the
+;;!     last opened, boot into a launcher over embedded sources — either put a
+;;!     storage read in front of the first frame or make the bare URL answer
+;;!     differently per visitor, and a shared link resolving to whatever that
+;;!     visitor opened last is worse than the thing being solved.
+;;!
+;;! What would reopen it: a boot path that must reach a second project without a
+;;! fetch. Nothing wants that today, and `?game=` costs a fetch by design.
+;;!
+;;! Exactly one, not at most one: core/engine.c includes the generated header
+;;! unconditionally, so a build with none is a missing-header compile error a
+;;! long way from the declaration that should have existed. Both directions are
+;;! worth a sentence naming the rule.
+(define (rz-staged-message decls)
+  (apply string-append
+         (map (lambda (d)
+                (string-append "  " (rz-codegen-source d) "\n"))
+              decls)))
+
+(define (resolve-check-staged manifest)
+  (let* ((staged (resolve-staged-projects manifest))
+         (n (length staged)))
+    (cond
+     ((= n 1) #t)
+     ((= n 0)
+      (error 'rz-staged-project-missing
+             (string-append
+              "no directory declares (staged-project ...).\n"
+              "    Exactly one project is embedded into the image and evaluated"
+              " at boot, so that\n"
+              "    the page opens on a playable scene with no network round"
+              " trip. Without one,\n"
+              "    core/engine.c has no " rz-staged-project-symbol " to"
+              " evaluate.\n")))
+     (else
+      (error 'rz-staged-project-duplicate
+             (string-append
+              (number->string n)
+              " directories declare (staged-project ...):\n"
+              (rz-staged-message staged)
+              "    Exactly one may. Being staged is not what makes a project"
+              " reachable from the\n"
+              "    page — (project-source ...) is, and any number may declare"
+              " one. Staged is the\n"
+              "    single default the bare URL boots into.\n"))))))

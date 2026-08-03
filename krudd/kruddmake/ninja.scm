@@ -570,6 +570,7 @@
       (resolve-check-codegen manifest)
       (resolve-check-tiers manifest)
       (resolve-check-projects manifest)
+      (resolve-check-staged manifest)
       (ninja-emit* (ninja-preamble srcroot))
       (ninja-emit-regen manifest srcroot regen-cmd)
       (for-each

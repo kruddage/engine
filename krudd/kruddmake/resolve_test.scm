@@ -172,15 +172,51 @@
             "projects/chess/chess.scm" 'staged-project
             '("staged_project_scm.h"))
 
-;;! The staged slot is single-occupancy, and that is enforced by the header name
-;;! being fixed rather than by a rule of its own: a second declaration writes the
-;;! same generated/ file, which resolve-check-codegen already refuses.
-(check "two staged projects error, the same way two embeds of one header do"
+;;! The staged slot is single-occupancy, and since #1019 that is a rule of its
+;;! own rather than a side effect of the header name being fixed. Both are still
+;;! true — the duplicate output is what resolve-check-codegen sees — so the pair
+;;! below checks each mechanism separately. The one that matters is
+;;! resolve-check-staged: it is the one that survives the embed ever growing a
+;;! per-project symbol, and the one whose message names the rule.
+(check "two staged projects collide on the fixed header, as two embeds would"
        (expect-error
         (lambda ()
           (resolve-check-codegen
            (list (cons "a" '((staged-project "a.scm")))
                  (cons "b" '((staged-project "b.scm"))))))))
+
+(check "two staged projects fail the rule of their own"
+       (expect-error
+        (lambda ()
+          (resolve-check-staged
+           (list (cons "a" '((staged-project "a.scm")))
+                 (cons "b" '((staged-project "b.scm"))))))))
+
+;;! The message is the point of the dedicated check: a reader who declared the
+;;! second one needs to be told which two directories claim the slot and that
+;;! shipping is the unlimited thing they probably wanted.
+(check "the duplicate message names both projects and points at project-source"
+       (let ((msg (error-text
+                   (lambda ()
+                     (resolve-check-staged
+                      (list (cons "a" '((staged-project "a.scm")))
+                            (cons "b" '((staged-project "b.scm")))))))))
+         (and (contains? msg "a/a.scm")
+              (contains? msg "b/b.scm")
+              (contains? msg "(project-source ...)"))))
+
+;;! Zero is the other direction, and it is an error rather than a permitted
+;;! configuration: core/engine.c includes the generated header unconditionally,
+;;! so a manifest with no staged project fails at the compiler with a missing
+;;! file rather than here with a reason.
+(check "no staged project at all is an error, not a permitted build"
+       (expect-error
+        (lambda ()
+          (resolve-check-staged
+           (list (cons "a" '((project-source "a.scm"))))))))
+
+(check "resolve-check-staged passes over the real manifest"
+       (not (expect-error (lambda () (resolve-check-staged manifest)))))
 
 (check "a staged-project takes no arguments beyond its source"
        (expect-error

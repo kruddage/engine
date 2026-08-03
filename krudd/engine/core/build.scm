@@ -28,7 +28,9 @@
              ;;! No game module in the list any more: a game is a (project ...)
              ;;! source the project host evaluates, not a plugin to link, and
              ;;! the one this image ships staged rides in as the
-             ;;! STAGED_PROJECT_SCM embed a directory under game/ declares.
+             ;;! STAGED_PROJECT_SCM embed a directory under projects/ declares.
+             ;;! Exactly one may, which resolve-check-staged enforces and
+             ;;! argues (#1019) — engine.c includes that header unconditionally.
              (wasm-modules "asset_plugin" "edit_plugin" "entity_plugin"
                            "renderer_webgl" "renderer_webgpu" "frame_graph" "scene_renderer"
                            "viewport" "kruddgui" "audio_scriptnode"

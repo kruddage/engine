@@ -174,15 +174,6 @@ static void stats_update(void)
 
 #ifdef __EMSCRIPTEN__
 /*
- * Flip the shell's status pill from "loading" to "running". kruddSetRunning is
- * defined in shell.html; the typeof guard keeps this safe if the shell changes.
- */
-EM_JS(void, krudd_signal_running, (void), {
-	if (typeof window.kruddSetRunning === 'function')
-		window.kruddSetRunning();
-})
-
-/*
  * Tell the shell the first frame is on screen, so it can arm the launcher.
  * The launcher overlay is painted from static HTML while the module is still
  * downloading, but a game can only be loaded once the subsystems are up and the
@@ -213,24 +204,6 @@ EM_JS(int, krudd_wants_webgpu, (void), {
 	} catch (e) {
 		return 1;
 	}
-})
-
-/*
- * Hand the serialized editor layout to the shell so it can build its DOM
- * chrome (#706 part C). The
- * layout is authored once in editor_layout.scm; script_layout_json() evaluates
- * it and serializes the tree, and window.kruddBuildEditor (shell.html) walks
- * that JSON into menus, toolbar, docks and status fields. Passing the data
- * rather than literals is what keeps the chrome declarative: a menu or dock
- * added to the .scm reaches the page with no edit on this side.
- *
- * kruddBuildEditor is defined before main() runs, so a missing hook is only
- * possible if the shell has been swapped out — a safe no-op, like the other
- * bridges. UTF8ToString decodes the em dashes and ellipses the layout carries.
- */
-EM_JS(void, krudd_build_editor, (const char *json), {
-	if (typeof window.kruddBuildEditor === 'function')
-		window.kruddBuildEditor(UTF8ToString(json));
 })
 #endif
 
@@ -320,19 +293,6 @@ void engine_init(void)
 	phase = emscripten_get_now();
 	script_init();
 	stats_record_phase("script_init", phase);
-
-	/*
-	 * Build the editor chrome before any plugin boots. A backend reports its
-	 * renderer through window.kruddSetRenderer from its init (finish_plugin_boot
-	 * below on the GL path), which needs the toolbar's renderer badge already in
-	 * the DOM — so the layout has to reach the shell here, not after boot.
-	 */
-	{
-		const char *layout_json = script_layout_json();
-
-		if (layout_json)
-			krudd_build_editor(layout_json);
-	}
 
 	/*
 	 * Register the statically-linked plugins now that core services exist,
@@ -462,7 +422,6 @@ int main(void)
 {
 	engine_init();
 #ifdef __EMSCRIPTEN__
-	krudd_signal_running();
 	emscripten_set_main_loop(engine_tick, 0, 1);
 #else
 	/* Native main loop not yet implemented; seam for future loop. */

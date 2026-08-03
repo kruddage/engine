@@ -16,21 +16,6 @@
 #include <stdint.h>
 
 /*
- * Editor mode (plugin_abi.c, main module): which half of kruddgui's GAME /
- * EDITOR switch is lit. Entering the editor pauses the sim the same way the
- * manual g_paused flag does — a scene's own controls shouldn't keep ticking
- * underneath the inspector — and leaving resumes it. Native builds host no
- * games and no switch (scene_renderer.c's EDITOR_CHROME() follows the same
- * pattern), so they always read as "not editor" and tick normally.
- */
-#ifdef __EMSCRIPTEN__
-int krudd_editor_mode(void);
-#define EDITOR_MODE_PAUSES_SIM() krudd_editor_mode()
-#else
-#define EDITOR_MODE_PAUSES_SIM() 0
-#endif
-
-/*
  * The runtime world is one large static instance, not a heap allocation: its
  * lifetime is the whole program and other plugins must reach it through the
  * entity_api vtable, never by importing this symbol.
@@ -47,8 +32,7 @@ static float                         g_clock;
 
 /*
  * True skips world_tick + entity scripts for the frame (entity_api's manual
- * "Paused" state). Independent of EDITOR_MODE_PAUSES_SIM() above — either one
- * alone is enough to hold the scene still, see scene_tick.
+ * "Paused" state) — see scene_tick.
  */
 static int32_t                       g_paused;
 
@@ -350,7 +334,7 @@ static void scene_tick(void)
 	/* tick() takes no args; read the frame delta from the "stats" api. */
 	float dt = g_stats ? g_stats->last_frame_ms : 0.0f;
 
-	if (g_paused || EDITOR_MODE_PAUSES_SIM())
+	if (g_paused)
 		return;
 
 	world_tick(&g_world, dt);

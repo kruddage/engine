@@ -38,18 +38,16 @@ static const struct memory_api native_mem = {
 #endif
 
 /*
- * Editor mode (plugin_abi.c, main module): which half of kruddgui's GAME /
- * EDITOR switch is lit. The selection outline is editor feedback, so in game
- * mode it stands down in favour of the in-game path below — the picked-piece
- * outline (entity_api's get_outline), which is what a player wants to see.
- * Native builds host no games and no switch, so they always outline via the
- * editor selection path.
+ * Whose selection the outline pass follows. The web build hosts games and no
+ * editor, so it follows the game's own outline target (entity_api's
+ * get_outline) — the picked chess piece, which is what a player wants to see.
+ * The native harness hosts no game, so nothing ever sets that target there and
+ * it follows the scene selection (get_selected) instead.
  */
 #ifdef __EMSCRIPTEN__
-int krudd_editor_mode(void);
-#define EDITOR_CHROME() krudd_editor_mode()
+#define OUTLINE_FOLLOWS_SELECTION() 0
 #else
-#define EDITOR_CHROME() 1
+#define OUTLINE_FOLLOWS_SELECTION() 1
 #endif
 
 /*
@@ -244,6 +242,13 @@ static const char *MASK_SHADER_SRC =
  * scaled by the border thickness; `color` is the outline colour. edge = (any of
  * eight ring taps is inside the mask) AND (this pixel is outside it), so the red
  * lands just outside the silhouette without covering the object.
+ *
+ * The UV comes from clip->uv rather than the (a_pos * 0.5 + 0.5) it reads like,
+ * because this pass samples textures a previous pass rendered and the two
+ * backends put clip y at opposite ends of a texture. Written out by hand it is
+ * right on WebGL and vertically mirrored on WebGPU; the DSL op lowers to each
+ * backend's convention. Every full-screen pass below inherits this — see the
+ * "target conventions" section of render/shader/shader.scm.
  */
 static const char *OUTLINE_SHADER_SRC =
 	"(shader sel_outline\n"
@@ -257,7 +262,7 @@ static const char *OUTLINE_SHADER_SRC =
 	"  (varyings (v_uv vec2))\n"
 	"  (targets (frag_color vec4 (location 0)))\n"
 	"  (vertex\n"
-	"    (set v_uv (+ (* a_pos 0.5) 0.5))\n"
+	"    (set v_uv (clip->uv a_pos))\n"
 	"    (set position (vec4 a_pos 0.0 1.0)))\n"
 	"  (fragment\n"
 	"    (let* ((tx   (swizzle texel x))\n"
@@ -298,7 +303,7 @@ static const char *BLOOM_EXTRACT_SHADER_SRC =
 	"  (varyings (v_uv vec2))\n"
 	"  (targets (frag_color vec4 (location 0)))\n"
 	"  (vertex\n"
-	"    (set v_uv (+ (* a_pos 0.5) 0.5))\n"
+	"    (set v_uv (clip->uv a_pos))\n"
 	"    (set position (vec4 a_pos 0.0 1.0)))\n"
 	"  (fragment\n"
 	"    (let* ((c (swizzle (sample scene v_uv) rgb))\n"
@@ -324,7 +329,7 @@ static const char *BLOOM_BLUR_SHADER_SRC =
 	"  (varyings (v_uv vec2))\n"
 	"  (targets (frag_color vec4 (location 0)))\n"
 	"  (vertex\n"
-	"    (set v_uv (+ (* a_pos 0.5) 0.5))\n"
+	"    (set v_uv (clip->uv a_pos))\n"
 	"    (set position (vec4 a_pos 0.0 1.0)))\n"
 	"  (fragment\n"
 	"    (let* ((s0 (* (swizzle (sample src v_uv) rgb) 0.2270270))\n"
@@ -350,7 +355,7 @@ static const char *BLOOM_COMPOSITE_SHADER_SRC =
 	"  (varyings (v_uv vec2))\n"
 	"  (targets (frag_color vec4 (location 0)))\n"
 	"  (vertex\n"
-	"    (set v_uv (+ (* a_pos 0.5) 0.5))\n"
+	"    (set v_uv (clip->uv a_pos))\n"
 	"    (set position (vec4 a_pos 0.0 1.0)))\n"
 	"  (fragment\n"
 	"    (let* ((s (swizzle (sample scene v_uv) rgb))\n"
@@ -2522,10 +2527,15 @@ static void shadow_pass(struct fg_pass_ctx *ctx, void *userdata)
 	 * backend (WebGPU) that would put the near half of the shadow frustum at
 	 * clip z < 0 — clipped away — and write raw NDC z into the map. Adapting
 	 * it here maps light depth into [0, 1] and stores 0.5*z + 0.5, which is
-	 * exactly the window-depth value the forward pass already reconstructs for
-	 * the compare (uvw.z = proj.z*0.5 + 0.5). So only this write copy is
-	 * adapted: the forward pass keeps the GL matrix (bind_light) and the pbr
-	 * shader needs no change. On GL the cap is clear and this is a no-op.
+	 * exactly the window-depth value the forward pass already reconstructs
+	 * for the compare (sun_shadow's proj.z*0.5 + 0.5). So only this write
+	 * copy is adapted: the forward pass keeps the GL matrix (bind_light)
+	 * and the pbr shader needs no change. On GL the cap is clear and this
+	 * is a no-op.
+	 *
+	 * That is the depth half of the divergence, and only that half. The
+	 * other — which end of the map clip y writes to — is not a matrix at
+	 * all, so it is corrected where the map is read: sun_shadow's clip->uv.
 	 */
 	shadow_vp = g_light.view_proj;
 	if (gpu->caps & GPU_CAP_CLIP_Z_ZERO_TO_ONE)
@@ -2820,13 +2830,13 @@ static int outline_selected_entity(const struct world *w, uint32_t *out_id)
 	if (!g_scene)
 		return 0;
 	/*
-	 * In editor chrome the outline follows the editor selection; in-game
-	 * (chrome off) it follows the game's own outline target — the piece the
-	 * chess rules picked up, set through entity_api.set_outline — so the ring
-	 * shows in play, not just in the editor. Either source must still name a
-	 * live, drawable mesh to be worth the pass.
+	 * On the web the outline follows the game's own outline target — the
+	 * piece the chess rules picked up, set through entity_api.set_outline —
+	 * so the ring shows in play; natively it follows the scene selection.
+	 * Either source must still name a live, drawable mesh to be worth the
+	 * pass.
 	 */
-	if (EDITOR_CHROME()) {
+	if (OUTLINE_FOLLOWS_SELECTION()) {
 		if (!g_scene->get_selected)
 			return 0;
 		sel = g_scene->get_selected();
@@ -2926,11 +2936,11 @@ static void composite_pass(struct fg_pass_ctx *ctx, void *userdata)
 	ubo[0] = g_view_w > 0.0f ? OUTLINE_THICKNESS / g_view_w : 0.0f; /* texel.x */
 	ubo[1] = g_view_h > 0.0f ? OUTLINE_THICKNESS / g_view_h : 0.0f; /* texel.y */
 	/*
-	 * Editor selection outlines red; an in-game outline (a picked chess
-	 * piece, chrome off) uses a warm gold that reads on both the ivory and
-	 * the ebony pieces where a hard red would fight the dark set.
+	 * A scene selection outlines red; an in-game outline (a picked chess
+	 * piece) uses a warm gold that reads on both the ivory and the ebony
+	 * pieces where a hard red would fight the dark set.
 	 */
-	if (EDITOR_CHROME()) {
+	if (OUTLINE_FOLLOWS_SELECTION()) {
 		ubo[4] = 1.0f;              /* red   */
 	} else {
 		ubo[4] = 1.0f;             /* gold: */

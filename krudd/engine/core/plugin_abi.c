@@ -262,44 +262,4 @@ EM_JS(int, krudd_text_input_pop_key, (void), {
 EM_JS(int, krudd_is_touch_device, (void), {
 	return (('ontouchstart' in window) || navigator.maxTouchPoints > 0) ? 1 : 0;
 })
-
-/*
- * Tell the page which half of the GAME / EDITOR switch is lit, so its own
- * chrome can follow. The shell hangs the whole editor frame — menu bar,
- * toolbar, docks, status bar — off body.editor-mode (shell.html.in), so this
- * one flag is the entire handover: game mode leaves the canvas alone with the
- * scene, editor mode dresses it back up. A shell without the hook is a safe
- * no-op, like the bridges above.
- */
-EM_JS(void, krudd_shell_editor_mode, (int on), {
-	if (typeof window.kruddSetEditorMode === 'function')
-		window.kruddSetEditorMode(!!on);
-})
-
-/*
- * Editor mode — the switch between a game's clean play view and the editor.
- * It is the twin of the g_editor_chrome flag #661 retired: that one was set
- * per game load, by the game, and there was no way for a player to reach the
- * editor once a game had turned it off. This one is driven by the GAME /
- * EDITOR switch kruddgui draws over the viewport (kruddgui.scm), so the page
- * can boot straight into the scene — g_editor_mode starts 0, matching the
- * shell's own default of no body.editor-mode class — and still be one tap
- * from the editor.
- *
- * Plain C plus the bridge above, the same shared-symbol pattern as the
- * capture flag: kruddgui reads and writes it, the page follows it, and
- * scene_renderer reads it to decide whose selection the outline tracks.
- */
-static int g_editor_mode;
-
-void krudd_set_editor_mode(int on)
-{
-	g_editor_mode = on ? 1 : 0;
-	krudd_shell_editor_mode(g_editor_mode);
-}
-
-int krudd_editor_mode(void)
-{
-	return g_editor_mode;
-}
 #endif /* __EMSCRIPTEN__ */

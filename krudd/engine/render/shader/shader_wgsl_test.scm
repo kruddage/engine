@@ -232,6 +232,51 @@
 (check "the clip-space write goes through the position builtin"
        (has? kvs "out.position = vec4<f32>(q.x, (0.0 - q.y), 0.0, 1.0);"))
 
+;;! The full-screen post pass, the same source shader_test.scm lowers to GLSL.
+;;! This is the shader that renders upside down when clip->uv is spelled out as
+;;! arithmetic: WebGPU's framebuffer origin is top-left, so clip y = +1 lands in
+;;! texture row 0, and the GL-convention remap reads the far end of the target.
+;;! The GL oracle asserts the un-flipped lowering of this exact source — the two
+;;! checks disagreeing on purpose is the point, and is what pins the flip in
+;;! place against a future "both targets should emit the same thing" cleanup.
+(define post "(shader post
+  (inputs (a_pos vec2 (location 0)))
+  (uniforms (scene sampler2D))
+  (varyings (v_uv vec2))
+  (targets (frag_color vec4 (location 0)))
+  (vertex
+    (set v_uv (clip->uv a_pos))
+    (set position (vec4 a_pos 0.0 1.0)))
+  (fragment
+    (set frag_color (sample scene v_uv))))")
+
+(define pvs (shader-transpile-wgsl post "vertex"))
+(define pfs (shader-transpile-wgsl post "fragment"))
+
+;;! The same expression-argument fixture the GLSL oracle checks, so both targets
+;;! are read off one source. sun_shadow passes clip->uv a swizzle exactly here.
+(define post-swz "(shader post_swz
+  (inputs (a_pos vec3 (location 0)))
+  (varyings (v_uv vec2))
+  (targets (frag_color vec4 (location 0)))
+  (vertex
+    (let* ((uv (clip->uv (swizzle a_pos xy))))
+      (set v_uv uv)
+      (set position (vec4 a_pos 1.0)))))")
+
+(define pswz (shader-transpile-wgsl post-swz "vertex"))
+
+(display "wgsl: clip->uv (render-target texture coordinates)\n")
+(check "clip->uv flips v, because clip y = +1 is texture row 0 on WebGPU"
+       (has? pvs "((vec2<f32>(0.5, -0.5) * in.a_pos) + vec2<f32>(0.5, 0.5))"))
+(check "and the GL-convention remap is nowhere in the WGSL"
+       (not (has? pvs "(in.a_pos * 0.5) + 0.5")))
+(check "u is untouched: only the y axis disagrees between the targets"
+       (has? pvs "vec2<f32>(0.5, -0.5)"))
+(check "the argument is emitted once, so an expression is not evaluated twice"
+       (has? pswz
+             "((vec2<f32>(0.5, -0.5) * in.a_pos.xy) + vec2<f32>(0.5, 0.5))"))
+
 ;;! Byte index of SUB in S, or -1 — for asserting module-scope order (a helper
 ;;! must sit below the vars it reads and above the entry point that calls it).
 (define (idx s sub)
@@ -317,6 +362,11 @@
                      "(shader glow (targets (c vec4 (location 0)))
                          (fragment (set c (vec4 1.0 1.0 1.0 1.0))))"
                      "fragment"))
+        ;;! The full-screen post pass: clip->uv emits a constructor expression
+        ;;! rather than the scalar arithmetic every other op lowers to, so naga
+        ;;! typing it is worth more here than the substring check above.
+        (write-wgsl "post.vert.wgsl" pvs)
+        (write-wgsl "post.frag.wgsl" pfs)
         (write-wgsl "helped.frag.wgsl" hfs))))
 
 (if (= fail-count 0)

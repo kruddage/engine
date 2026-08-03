@@ -15,7 +15,8 @@ fixed-timestep loop; subsystems (logging, memory, rendering) attach as plugins t
 WASM ABI.
 
 Current state: entity/scene runtime, asset pipeline with local IndexedDB persistence,
-WebGL rendering with a frame graph, and an in-browser authoring surface.
+and WebGL/WebGPU rendering with a frame graph. The page boots straight into a game; the
+in-browser authoring surface is being reworked and is not wired up.
 
 ## Roadmap: Scheme as the build system and the game
 
@@ -69,7 +70,7 @@ krudd/
                  null/, frame_graph/, particles/, scene_renderer/, plus renderer.scm
                  (the backend interface spec) and shader/ (the shader DSL)
     audio/       The mixer and its device backends
-    ui/          Editor chrome — kruddgui/, viewport/, kruddboard/
+    ui/          The engine's own UI layer — kruddgui/, viewport/, kruddboard/
     game/        host/ is the launcher registry; its siblings register with it
     shell/       The host the engine runs inside — web/
 ```

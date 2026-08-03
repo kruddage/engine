@@ -23,12 +23,7 @@
 ;;!     the same krudd-stats / krudd-startup / krudd-subsystems accessors. Its
 ;;!     ImGui draw path (draw_tab_krudd and the Scene tab's Perf roll-up) is gone.
 ;;!
-;;! Two panels are not editor chrome and draw every tick regardless:
-;;!
-;;!   - the GAME / EDITOR slider, docked bottom-centre — the switch between a
-;;!     game's clean play view (what the page boots into) and the editor. It is
-;;!     the way out of either mode, so it cannot be gated on the mode it shows.
-;;!     See kruddgui-modeswitch-draw below; and
+;;! One panel is not editor chrome and draws every tick regardless:
 ;;!
 ;;!   - the perf HUD, a small top-right FPS readout with a frame-time graph
 ;;!     underneath it so a hitch is visible in a game's own play view (chess,
@@ -307,10 +302,8 @@
 ;;! window (and draw_undo_redo) is gone. Geometry keys off kruddgui-btn so the
 ;;! chips read as finger targets alongside the mode-bar.
 ;;!
-;;! There is no play/pause chip: the simulation now follows the GAME / EDITOR
-;;! switch itself — entering the editor pauses it, leaving resumes it (see
-;;! entity_plugin.c's scene_tick) — so a manual toggle in the toolbar would only
-;;! fight that.
+;;! There is no play/pause chip: pausing is entity_api's own manual state (see
+;;! entity_plugin.c's scene_tick), not something the toolbar mirrors.
 (define kruddgui-tool-h 44)
 (define kruddgui-tool-w 92)
 
@@ -2811,79 +2804,6 @@
          (h     (max kruddgui-console-min-h
                      (min (* vh kruddgui-console-max-vh-frac) avail))))
     (kruddgui-assets-draw-into m m w h)))
-
-;;! ------------------------------------------------------------------
-;;! Mode switch — the GAME / EDITOR slider
-;;! ------------------------------------------------------------------
-;;!
-;;! The page opens on the loaded scene with nothing over it: a set to play, not
-;;! a scene to edit. This is the way back — a two-position slider docked bottom
-;;! centre, drawn every tick in both modes (kruddgui.cpp calls it beside the perf
-;;! HUD, outside the editor gate) because a switch hidden by the mode it switches
-;;! out of would strand whoever is in that mode.
-;;!
-;;! The lit half is not stored here. (kgui-editor-mode) reads plugin_abi.c's one
-;;! copy of the flag and (kgui-set-editor-mode) writes it — the same flag the
-;;! page's chrome and the selection outline follow — so the slider cannot drift
-;;! out of step with what it is switching.
-
-;;! The two positions, in slider order: GAME on the left, EDITOR on the right.
-(define kruddgui-modeswitch-modes '((game . "GAME") (editor . "EDITOR")))
-
-;;! Slider metrics. 44px tall is the finger-target minimum, deliberately shorter
-;;! than the mode-bar's 56px chips: this one sits over a game's board in play, so
-;;! it should read as a control at the edge of the frame rather than a bar across
-;;! it. The width splits evenly between the halves and clamps to a narrow phone.
-(define kruddgui-modeswitch-w 220)
-(define kruddgui-modeswitch-h 44)
-
-;;! (kruddgui-modeswitch-rect vw vh) -> the slider's (x y w h): centred across the
-;;! viewport, one margin above the bottom safe inset so it clears a phone's home
-;;! indicator. Split out from the draw so a test can assert the placement without
-;;! replaying the draw calls.
-(define (kruddgui-modeswitch-rect vw vh)
-  (let ((w (min kruddgui-modeswitch-w (- vw (* 2 kruddgui-margin))))
-        (h kruddgui-modeswitch-h)
-        (bottom (caddr (kruddgui-insets))))
-    (list (/ (- vw w) 2) (- vh bottom kruddgui-margin h) w h)))
-
-;;! (kruddgui-modeswitch-draw) the host's per-tick entry point. A translucent
-;;! backing frame, a dark track, and the lit half drawn as the accent knob over
-;;! it — the two labels sit on top, the active one in the accent's dark ink. A
-;;! tap on either half asks for that mode; tapping the half already lit is a
-;;! harmless no-op rather than a toggle, so a mis-tap can't drop a player into
-;;! the editor. The whole strip is one input region, so the gap between the
-;;! halves is caught here instead of reaching the board underneath.
-(define (kruddgui-modeswitch-draw)
-  (let* ((vp (kgui-viewport-size))
-         (vw (car vp))
-         (vh (cadr vp)))
-    (when (and (> vw 0) (> vh 0))
-      (let* ((r  (kruddgui-modeswitch-rect vw vh))
-             (x  (car r))
-             (y  (cadr r))
-             (w  (caddr r))
-             (h  (cadddr r))
-             (hw (/ w (length kruddgui-modeswitch-modes)))
-             (on (if (kgui-editor-mode) 'editor 'game))
-             (fr (kruddgui-modebar-frame x y w h)))
-        (kgui-panel-begin "kgui-modeswitch"
-                          (car fr) (cadr fr) (caddr fr) (cadddr fr))
-        (kruddgui-rect* fr kruddgui-panel-bg)
-        (kruddgui-rect* (list x y w h) kruddgui-idle-bg)
-        (let loop ((ms kruddgui-modeswitch-modes) (i 0))
-          (when (pair? ms)
-            (let* ((id  (caar ms))
-                   (hx  (+ x (* i hw)))
-                   (act (eq? id on)))
-              (when act
-                (kruddgui-rect* (list hx y hw h) kruddgui-active-bg))
-              (kruddgui-label hx y hw h (cdar ms)
-                              (if act kruddgui-active-fg kruddgui-idle-fg))
-              (when (kgui-button hx y hw h)
-                (kgui-set-editor-mode (eq? id 'editor))))
-            (loop (cdr ms) (+ i 1))))
-        (kgui-panel-end)))))
 
 ;;! ------------------------------------------------------------------
 ;;! Perf HUD — a tiny always-on FPS + frame-time strip

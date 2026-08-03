@@ -976,18 +976,6 @@ static void seed_builtins(void)
 	seed_mesh("builtin://mesh/heightfield",  HEIGHTFIELD_MESH_SCRIPT_SRC);
 	seed_mesh("builtin://mesh/sdf-rook",     SDF_ROOK_MESH_SCRIPT_SRC);
 
-	/*
-	 * The chess set — five lathed pieces plus the blocky knight (see
-	 * builtin_mesh_scripts.h). game/chess binds these by path; kept here
-	 * beside the other lathe built-ins since they showcase the same engine.
-	 */
-	seed_mesh("builtin://mesh/chess-pawn",   CHESS_PAWN_MESH_SCRIPT_SRC);
-	seed_mesh("builtin://mesh/chess-rook",   CHESS_ROOK_MESH_SCRIPT_SRC);
-	seed_mesh("builtin://mesh/chess-bishop", CHESS_BISHOP_MESH_SCRIPT_SRC);
-	seed_mesh("builtin://mesh/chess-queen",  CHESS_QUEEN_MESH_SCRIPT_SRC);
-	seed_mesh("builtin://mesh/chess-king",   CHESS_KING_MESH_SCRIPT_SRC);
-	seed_mesh("builtin://mesh/chess-knight", CHESS_KNIGHT_MESH_SCRIPT_SRC);
-
 	seed_script("builtin://script/spinner", SPINNER_SCRIPT_SRC);
 	seed_script("builtin://script/bounce",  BOUNCE_SCRIPT_SRC);
 	seed_script("builtin://script/wobble",  WOBBLE_SCRIPT_SRC);
@@ -1695,73 +1683,6 @@ static const struct asset_decl_field sdf_rook_mesh_decl[] = {
 };
 
 /*
- * The chess pieces advertise their sweep the way the other lathe built-ins do:
- * a surface of revolution over a silhouette (the knight is the exception — a
- * lathed pedestal fused with box blocks, so it lists no single profile). The
- * vertex/index counts are the geometry's fingerprint, moving only when a piece's
- * silhouette in builtin_mesh_scripts.h does.
- */
-static const struct asset_decl_field chess_pawn_mesh_decl[] = {
-	{ "format",     "krudd-mesh"                },
-	{ "topology",   "triangles"                 },
-	{ "surface",    "revolution (mesh-lathe)"   },
-	{ "segments",   "sectors 24, profile 15"    },
-	{ "vertices",   "375"                       },
-	{ "indices",    "2016"                      },
-	{ "attributes", "position, normal, uv0"     },
-};
-
-static const struct asset_decl_field chess_rook_mesh_decl[] = {
-	{ "format",     "krudd-mesh"                },
-	{ "topology",   "triangles"                 },
-	{ "surface",    "revolution (mesh-lathe)"   },
-	{ "segments",   "sectors 24, profile 15"    },
-	{ "vertices",   "375"                       },
-	{ "indices",    "2016"                      },
-	{ "attributes", "position, normal, uv0"     },
-};
-
-static const struct asset_decl_field chess_bishop_mesh_decl[] = {
-	{ "format",     "krudd-mesh"                },
-	{ "topology",   "triangles"                 },
-	{ "surface",    "revolution (mesh-lathe)"   },
-	{ "segments",   "sectors 24, profile 17"    },
-	{ "vertices",   "425"                       },
-	{ "indices",    "2304"                      },
-	{ "attributes", "position, normal, uv0"     },
-};
-
-static const struct asset_decl_field chess_queen_mesh_decl[] = {
-	{ "format",     "krudd-mesh"                },
-	{ "topology",   "triangles"                 },
-	{ "surface",    "revolution (mesh-lathe)"   },
-	{ "segments",   "sectors 24, profile 19"    },
-	{ "vertices",   "475"                       },
-	{ "indices",    "2592"                      },
-	{ "attributes", "position, normal, uv0"     },
-};
-
-static const struct asset_decl_field chess_king_mesh_decl[] = {
-	{ "format",     "krudd-mesh"                },
-	{ "topology",   "triangles"                 },
-	{ "surface",    "revolution (mesh-lathe)"   },
-	{ "segments",   "sectors 24, profile 19"    },
-	{ "vertices",   "475"                       },
-	{ "indices",    "2592"                      },
-	{ "attributes", "position, normal, uv0"     },
-};
-
-static const struct asset_decl_field chess_knight_mesh_decl[] = {
-	{ "format",     "krudd-mesh"                },
-	{ "topology",   "triangles"                 },
-	{ "surface",    "lathe + boxes (approx)"    },
-	{ "segments",   "sectors 24, profile 9"     },
-	{ "vertices",   "273"                       },
-	{ "indices",    "1224"                      },
-	{ "attributes", "position, normal, uv0"     },
-};
-
-/*
  * A texture asset is one (texture NAME (shade (u v) ...)) Scheme form. It
  * advertises its source format and its authored params — resolution-independent,
  * so it reports no fixed dimensions (the material picks the bake size), the way a
@@ -1833,18 +1754,6 @@ static const struct builtin_desc builtin_descs[] = {
 	  ARRAY_SIZE(heightfield_mesh_decl) },
 	{ "builtin://mesh/sdf-rook", sdf_rook_mesh_decl,
 	  ARRAY_SIZE(sdf_rook_mesh_decl) },
-	{ "builtin://mesh/chess-pawn", chess_pawn_mesh_decl,
-	  ARRAY_SIZE(chess_pawn_mesh_decl) },
-	{ "builtin://mesh/chess-rook", chess_rook_mesh_decl,
-	  ARRAY_SIZE(chess_rook_mesh_decl) },
-	{ "builtin://mesh/chess-bishop", chess_bishop_mesh_decl,
-	  ARRAY_SIZE(chess_bishop_mesh_decl) },
-	{ "builtin://mesh/chess-queen", chess_queen_mesh_decl,
-	  ARRAY_SIZE(chess_queen_mesh_decl) },
-	{ "builtin://mesh/chess-king", chess_king_mesh_decl,
-	  ARRAY_SIZE(chess_king_mesh_decl) },
-	{ "builtin://mesh/chess-knight", chess_knight_mesh_decl,
-	  ARRAY_SIZE(chess_knight_mesh_decl) },
 	{ "builtin://texture/checker", checker_texture_decl,
 	  ARRAY_SIZE(checker_texture_decl) },
 	{ "builtin://texture/gradient", gradient_texture_decl,

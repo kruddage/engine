@@ -62,4 +62,19 @@
                        (root "world/asset")
                        (raw "../third_party"))
               (link "asset_plugin" "script" "memory" "log"))
-  (test "script_define" "script_define_test")))
+  (test "script_define" "script_define_test")
+  ;;! mesh-define!, the geometry twin, against the same real catalog and for the
+  ;;! same reason. It also links the mesh_script bridge and takes
+  ;;! (root "world/asset/include") for its header: proving a defined mesh renders
+  ;;! identically to a seeded one means resolving both to real mesh_blobs, which
+  ;;! is what mesh_script_generate does for the renderer and the picker.
+  (executable "mesh_define_test"
+              (sources "mesh_define_test.c" "scene_script.c" "entity.c")
+              (private "." "include" (root "abi/include") (root "base/math/include")
+                       (root "core/include")
+                       (root "base/memory/include")
+                       (root "world/asset")
+                       (root "world/asset/include")
+                       (raw "../third_party"))
+              (link "asset_plugin" "mesh_script" "script" "memory" "log"))
+  (test "mesh_define" "mesh_define_test")))

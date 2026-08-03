@@ -18,6 +18,7 @@
 
 #include "asset.h"
 #include <abi/asset_api.h>
+#include <asset/mesh_script.h>
 
 #include <core/script.h>
 #include <log/log.h>
@@ -38,9 +39,9 @@ static struct world w;
 /*
  * The real asset catalog, assembled from asset.h the way the asset plugin
  * assembles it for the subsystem manager. Most checks here run with no catalog
- * at all (the rules need none), but the camera does: its script is one this
- * game registers into the catalog itself, and binding it is the thing worth
- * testing.
+ * at all (the rules need none), but the camera and the piece meshes do: those
+ * are assets this game registers into the catalog itself, and binding them is
+ * the thing worth testing.
  */
 static const struct asset_api catalog_api = {
 	.count    = asset_catalog_count,
@@ -393,6 +394,222 @@ static void test_camera_defined_binds_and_eases(void)
 	assert(fabsf(w.local[cam].position[2] - 10.5f) < 1e-4f);
 }
 
+/* ------------------------------------------------------------------ */
+/* The piece meshes this game brings with it                           */
+/* ------------------------------------------------------------------ */
+
+#define EPS 1.0e-5f
+
+static const struct memory_api test_mem_impl = {
+	mem_alloc, mem_alloc_zero, mem_free,
+	mem_pool_create, mem_pool_alloc, mem_pool_free, mem_pool_destroy,
+};
+static const struct memory_api *g_mem = &test_mem_impl;
+
+/* The stable catalog id at PATH, or 0 when nothing is there. */
+static uint32_t asset_id_at(const char *path)
+{
+	struct asset_info info;
+	uint32_t          i, n = asset_catalog_count();
+
+	for (i = 0; i < n; i++) {
+		if (asset_catalog_info(i, &info) == 0 && info.path
+		    && strcmp(info.path, path) == 0)
+			return info.id;
+	}
+	return 0;
+}
+
+static float vlen(const float *v)
+{
+	return sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+}
+
+/* Radius of a vertex from the Y axis — a turned piece's natural extent. */
+static float radius_xz(const struct mesh_vertex *v)
+{
+	return sqrtf(v->position[0] * v->position[0]
+		     + v->position[2] * v->position[2]);
+}
+
+/*
+ * Resolve the mesh registered at PATH to a real mesh_blob and check the shared
+ * contract: the expected vertex/index counts, a whole number of triangles,
+ * every index in range, every normal unit length. The counts are the geometry's
+ * fingerprint — they move only when a silhouette in rules.scm does.
+ *
+ * These checks used to live in world/asset/mesh_script_test.c against the
+ * CHESS_*_MESH_SCRIPT_SRC macros the engine seeded. The sources are this game's
+ * now, so the coverage is too — and it runs over the catalog bytes mesh-define!
+ * actually stored, which is a strictly stronger claim than checking a macro.
+ */
+static struct mesh_blob *piece_blob(const char *path, uint32_t exp_v,
+				    uint32_t exp_i)
+{
+	uint32_t                  id = asset_id_at(path);
+	const char               *src;
+	struct mesh_blob         *b;
+	const struct mesh_vertex *v;
+	const uint16_t           *idx;
+	uint32_t                  size = 0, i;
+
+	assert(id != 0);
+	src = (const char *)asset_catalog_get_data(id, NULL);
+	assert(src);
+	b = mesh_script_generate(src, NULL, 0, g_mem, &size);
+	assert(b != NULL);
+	assert(size == mesh_blob_size(exp_v, exp_i));
+	assert(b->magic        == MESH_BLOB_MAGIC);
+	assert(b->vertex_count == exp_v);
+	assert(b->index_count  == exp_i);
+	assert(b->index_count % 3 == 0);
+
+	v   = mesh_blob_vertices(b);
+	idx = mesh_blob_indices(b);
+	for (i = 0; i < exp_i; i++)
+		assert(idx[i] < exp_v);
+	for (i = 0; i < exp_v; i++)
+		assert(fabsf(vlen(v[i].normal) - 1.0f) <= EPS);
+	return b;
+}
+
+/* A lathed piece's own envelope: a foot on y = 0, within MAXR and MAXY. */
+static void check_piece(const char *path, uint32_t nv, uint32_t ni,
+			float maxr, float maxy)
+{
+	struct mesh_blob         *b = piece_blob(path, nv, ni);
+	const struct mesh_vertex *v = mesh_blob_vertices(b);
+	uint32_t                  i;
+
+	for (i = 0; i < nv; i++) {
+		assert(radius_xz(&v[i]) <= maxr + EPS);
+		assert(v[i].position[1] >= -EPS);       /* foot sits on y = 0 */
+		assert(v[i].position[1] <= maxy + EPS);
+	}
+	g_mem->free(b);
+}
+
+/*
+ * The five turned pieces — pawn, rook, bishop, queen, king — each a single
+ * silhouette swept by mesh-lathe, plus the blocky knight. The engine seeds none
+ * of them: they are in the catalog because rules.scm's mesh-define! calls put
+ * them there when the rules loaded, as authored ASSET_TYPE_MESH entries.
+ *
+ * The fingerprints are the same numbers the engine's own test asserted while
+ * the sources were seeded, so "unchanged on screen" is checked, not assumed —
+ * a silhouette that drifted in the move would move a count.
+ */
+static void test_piece_meshes_defined(void)
+{
+	struct asset_info info;
+	struct mesh_blob *b;
+	const struct mesh_vertex *v;
+	uint32_t          i;
+	float             maxz = -1.0e9f;
+
+	/* Authored, not seeded: the game put these in the catalog itself. */
+	assert(asset_catalog_find(asset_id_at("project://mesh/chess-pawn"),
+				  &info) == 0);
+	assert(info.type      == ASSET_TYPE_MESH);
+	assert(info.origin    == ASSET_ORIGIN_AUTHORED);
+	assert(info.read_only == 0);
+
+	check_piece("project://mesh/chess-pawn",   375, 2016, 0.27f, 0.80f);
+	check_piece("project://mesh/chess-rook",   375, 2016, 0.30f, 0.82f);
+	check_piece("project://mesh/chess-bishop", 425, 2304, 0.26f, 1.17f);
+	check_piece("project://mesh/chess-queen",  475, 2592, 0.30f, 1.34f);
+	check_piece("project://mesh/chess-king",   475, 2592, 0.31f, 1.44f);
+
+	/*
+	 * The knight is the one non-revolved piece — a lathed pedestal fused
+	 * with two tilted boxes — so it owes an envelope of its own: a foot on
+	 * y = 0 and a muzzle that really does lean forward into +Z.
+	 */
+	b = piece_blob("project://mesh/chess-knight", 273, 1224);
+	v = mesh_blob_vertices(b);
+	for (i = 0; i < b->vertex_count; i++) {
+		assert(radius_xz(&v[i]) <= 0.45f + EPS);
+		assert(v[i].position[1] >= -EPS);
+		assert(v[i].position[1] <= 0.93f + EPS);
+		if (v[i].position[2] > maxz)
+			maxz = v[i].position[2];
+	}
+	assert(maxz > 0.3f);
+	g_mem->free(b);
+}
+
+/*
+ * The board on screen: every piece entity in the built scene resolves its
+ * (mesh ...) clause to the game's own catalog entry, and the squares still
+ * resolve to the engine's plane. Binding is what the seeds used to buy; this is
+ * the check that mesh-define! bought it back.
+ */
+static void test_scene_binds_piece_meshes(void)
+{
+	static const struct {
+		const char *entity;
+		const char *path;
+	} PIECES[] = {
+		{ "wP-e2", "project://mesh/chess-pawn"   },
+		{ "wR-a1", "project://mesh/chess-rook"   },
+		{ "wN-b1", "project://mesh/chess-knight" },
+		{ "wB-c1", "project://mesh/chess-bishop" },
+		{ "wQ-d1", "project://mesh/chess-queen"  },
+		{ "bK-e8", "project://mesh/chess-king"   },
+	};
+	uint32_t i, e;
+
+	world_reset(&w);
+	assert(scene_script_build(&w, &catalog_api, CHESS_SCENE_SCM)
+	       == CHESS_ENTITY_COUNT);
+
+	for (i = 0; i < sizeof(PIECES) / sizeof(PIECES[0]); i++) {
+		e = id_named(PIECES[i].entity);
+		assert(w.mask[e] & COMPONENT_RENDER);
+		assert(w.render_ref[e] != 0);
+		assert(w.render_ref[e] == asset_id_at(PIECES[i].path));
+	}
+
+	/* The squares are still the engine's plane — only the pieces moved. */
+	e = id_named("sq-a1");
+	assert(w.render_ref[e] == asset_id_at("builtin://mesh/plane"));
+}
+
+/*
+ * Reloading the game re-evaluates its source, which re-runs every mesh-define!.
+ * That must replace in place: the ids the live scene is bound to have to
+ * survive, or a reload would leave every piece pointing at a dead asset. This
+ * is the redefinition contract, checked where it actually matters.
+ */
+static void test_reload_keeps_piece_bindings(void)
+{
+	uint32_t before[6], i, e;
+	static const char *PATHS[] = {
+		"project://mesh/chess-pawn",   "project://mesh/chess-rook",
+		"project://mesh/chess-knight", "project://mesh/chess-bishop",
+		"project://mesh/chess-queen",  "project://mesh/chess-king",
+	};
+
+	world_reset(&w);
+	assert(scene_script_build(&w, &catalog_api, CHESS_SCENE_SCM)
+	       == CHESS_ENTITY_COUNT);
+	for (i = 0; i < 6; i++)
+		before[i] = asset_id_at(PATHS[i]);
+	e = id_named("wQ-d1");
+	assert(w.render_ref[e] == before[4]);
+
+	/* A reload: the same source evaluated again, as chess_init would. */
+	assert(script_eval(CHESS_RULES_SCM) == 0);
+
+	for (i = 0; i < 6; i++) {
+		assert(asset_id_at(PATHS[i]) == before[i]);
+		assert(before[i] != 0);
+	}
+	/* The already-bound queen still points at live geometry. */
+	assert(w.render_ref[e] == asset_id_at("project://mesh/chess-queen"));
+	check_piece("project://mesh/chess-queen", 475, 2592, 0.30f, 1.34f);
+}
+
 int main(void)
 {
 	mem_init();
@@ -416,6 +633,9 @@ int main(void)
 	test_outline_tracks_pick();
 	test_camera_hold_guarded_headless();
 	test_camera_defined_binds_and_eases();
+	test_piece_meshes_defined();
+	test_scene_binds_piece_meshes();
+	test_reload_keeps_piece_bindings();
 
 	printf("chess_test: ok\n");
 	return 0;

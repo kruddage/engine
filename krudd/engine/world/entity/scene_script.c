@@ -12,9 +12,10 @@
  * Save and restore rather than set and clear, because a primitive may build a
  * scene from inside a call that is already bound.
  *
- * Also here: script-define!, the authoring twin of scene-script!. A scene binds
- * a script by catalog path; this is how a project puts one at a path in the
- * first place, so it need not depend on the engine having seeded it.
+ * Also here: script-define! and mesh-define!, the authoring twins of
+ * scene-script! and scene-mesh!. A scene binds a script or a mesh by catalog
+ * path; these are how a project puts one at a path in the first place, so it
+ * need not depend on the engine having seeded it.
  */
 #include <entity/scene_script.h>
 
@@ -42,11 +43,11 @@ static struct world           *g_w;
 static const struct asset_api *g_asset;
 
 /*
- * The catalog script-define! reads and writes, bound once for the session
- * rather than per call. Authoring an asset is not part of building a world: a
- * project registers the scripts it needs while its own source is being
+ * The catalog the *-define! primitives read and write, bound once for the
+ * session rather than per call. Authoring an asset is not part of building a
+ * world: a project registers the assets it needs while its own source is being
  * evaluated, which is before — and outside — any scene_script_build. Left NULL
- * on a host with no asset subsystem, where script-define! is simply inert.
+ * on a host with no asset subsystem, where the primitives are simply inert.
  */
 static const struct asset_api     *g_catalog;
 static const struct asset_mut_api *g_catalog_mut;
@@ -54,7 +55,7 @@ static const struct asset_mut_api *g_catalog_mut;
 /* Longest params/hooks list a decl field carries; longer is truncated. */
 #define SCENE_SCRIPT_DECL_MAX 64
 
-/* Most params one script-define!'d script reports, matching entity_script.c. */
+/* Most params one defined asset reports, matching entity_script.c. */
 #define SCENE_SCRIPT_MAX_PARAMS 32
 
 /* First list arg as an entity id, or -1 when it is not an integer. */
@@ -198,7 +199,7 @@ static s7_pointer sp_scene_script(s7_scheme *sc, s7_pointer args)
 
 /*
  * Look PATH up in the session catalog, filling *out on a hit; returns the
- * stable id, or 0 when there is no catalog or no such path. The script-define!
+ * stable id, or 0 when there is no catalog or no such path. The *-define!
  * twin of resolve_asset — the same linear scan, but over the catalog bound for
  * the session rather than the one bound for a build.
  */
@@ -250,14 +251,21 @@ static void script_hook_list(const char *src, char *buf, uint32_t cap)
 	}
 }
 
-/* SRC's declared parameter names, comma-separated: "amp, rate". */
-static void script_param_list(const char *src, char *buf, uint32_t cap)
+/*
+ * SRC's declared parameter names, comma-separated: "amp, rate". QUERY is the
+ * introspector for SRC's dialect — script_entity_params for a (script ...),
+ * script_mesh_params for a (mesh ...) — since a (params ...) clause reads the
+ * same wherever it appears but is reached through a different image entry.
+ */
+static void param_list(const char *src, char *buf, uint32_t cap,
+		       int (*query)(const char *, struct shader_param *,
+				    uint32_t, uint32_t *))
 {
 	struct shader_param p[SCENE_SCRIPT_MAX_PARAMS];
 	int                 n, i;
 
 	buf[0] = '\0';
-	n = script_entity_params(src, p, SCENE_SCRIPT_MAX_PARAMS, NULL);
+	n = query(src, p, SCENE_SCRIPT_MAX_PARAMS, NULL);
 	for (i = 0; i < n; i++)
 		decl_join(buf, cap, p[i].name);
 }
@@ -289,7 +297,7 @@ static void script_declare(uint32_t id, const char *src)
 		f[n].value = hooks;
 		n++;
 	}
-	script_param_list(src, params, sizeof(params));
+	param_list(src, params, sizeof(params), script_entity_params);
 	if (params[0]) {
 		f[n].key   = "params";
 		f[n].value = params;
@@ -297,6 +305,71 @@ static void script_declare(uint32_t id, const char *src)
 	}
 	if (g_catalog_mut->set_decl)
 		g_catalog_mut->set_decl(id, f, n);
+}
+
+/*
+ * Publish ID's catalog declaration for a mesh, the geometry twin of
+ * script_declare and derived from SRC the same way.
+ *
+ * Only what the source actually says: format/topology/attributes are constants
+ * of the mesh format itself — every mesh_blob is a triangle list of
+ * position/normal/uv0 vertices — and the params come out of the (params ...)
+ * clause. The seeded entries also carry prose (surface, segments) and a
+ * vertex/index fingerprint; neither is derivable without running the generator,
+ * which is a scene's work, not a registration's, so a defined mesh reports
+ * neither rather than reporting them wrong.
+ */
+static void mesh_declare(uint32_t id, const char *src)
+{
+	struct asset_decl_field f[4];
+	char                    params[SCENE_SCRIPT_DECL_MAX];
+	uint32_t                n = 0;
+
+	f[n].key   = "format";
+	f[n].value = "krudd-mesh";
+	n++;
+	f[n].key   = "topology";
+	f[n].value = "triangles";
+	n++;
+	f[n].key   = "attributes";
+	f[n].value = "position, normal, uv0";
+	n++;
+	param_list(src, params, sizeof(params), script_mesh_params);
+	if (params[0]) {
+		f[n].key   = "params";
+		f[n].value = params;
+		n++;
+	}
+	if (g_catalog_mut->set_decl)
+		g_catalog_mut->set_decl(id, f, n);
+}
+
+/*
+ * Register SRC at PATH as an authored asset of TYPE, returning its stable
+ * catalog id or 0 when it could not be registered. The shared body of
+ * script-define! and mesh-define!, whose docstrings state the contract.
+ *
+ * A path already holding an authored asset of TYPE has its bytes replaced in
+ * place, keeping the id. A read-only built-in path is refused, and so is a path
+ * holding some other type: a mesh path that quietly came to hold script bytes
+ * would render nothing and explain nothing, and no project means to do it.
+ */
+static uint32_t asset_define(const char *path, const char *src, int32_t type)
+{
+	struct asset_info info;
+	uint32_t          id, size;
+
+	if (!path || !src || !g_catalog_mut || !g_catalog_mut->create
+	    || !g_catalog_mut->set_data)
+		return 0;
+	/* Sources store the NUL: get_data() hands back a C string. */
+	size = (uint32_t)strlen(src) + 1;
+	id   = catalog_lookup(path, &info);
+	if (id && (info.read_only || info.type != type))
+		return 0;
+	if (id)
+		return g_catalog_mut->set_data(id, src, size) == 0 ? id : 0;
+	return g_catalog_mut->create(path, type, src, size);
 }
 
 /*
@@ -316,32 +389,48 @@ static void script_declare(uint32_t id, const char *src)
  * project is reloaded, and making the second load an error would mean a project
  * could only ever be loaded once. Redefining a path the engine seeded read-only
  * is refused (0): those belong to the engine, and shadowing one would change
- * every scene that binds it, not just this project's.
+ * every scene that binds it, not just this project's. So is a path already
+ * holding an asset of another type — see asset_define.
  */
 static s7_pointer sp_script_define(s7_scheme *sc, s7_pointer args)
 {
-	const char       *path = arg_str(sc, args, 0);
-	const char       *src  = arg_str(sc, args, 1);
-	struct asset_info info;
-	uint32_t          id, size;
+	const char *src = arg_str(sc, args, 1);
+	uint32_t    id;
 
-	if (!path || !src || !g_catalog_mut || !g_catalog_mut->create
-	    || !g_catalog_mut->set_data)
-		return s7_make_integer(sc, 0);
-	/* Scripts store the NUL: get_data() hands back a C string. */
-	size = (uint32_t)strlen(src) + 1;
-	id   = catalog_lookup(path, &info);
-	if (id && info.read_only)
-		return s7_make_integer(sc, 0);
-	if (id) {
-		if (g_catalog_mut->set_data(id, src, size) != 0)
-			return s7_make_integer(sc, 0);
-	} else {
-		id = g_catalog_mut->create(path, ASSET_TYPE_SCRIPT, src, size);
-		if (!id)
-			return s7_make_integer(sc, 0);
-	}
-	script_declare(id, src);
+	id = asset_define(arg_str(sc, args, 0), src, ASSET_TYPE_SCRIPT);
+	if (id)
+		script_declare(id, src);
+	return s7_make_integer(sc, id);
+}
+
+/*
+ * (mesh-define! "path" "src") -> the mesh's stable catalog id, or 0 when it
+ * could not be registered.
+ *
+ * Registers SRC — one (mesh NAME [(params ...)] (generate () ...)) form — as an
+ * authored ASSET_TYPE_MESH asset at PATH, so a project brings its own geometry
+ * instead of depending on the engine having seeded it. The path is then
+ * bindable by (scene-mesh! id path) exactly like a built-in: the renderer and
+ * the picker resolve the bytes through mesh_script_generate the same way, and
+ * the mesh's (params ...) clause introspects out of the source, not out of any
+ * table keyed by path.
+ *
+ * Redefinition REPLACES, on script-define!'s reasoning: a second call on the
+ * same path overwrites the bytes and keeps the stable id, so an entity already
+ * bound picks up the new geometry with nothing to rebind — re-evaluating a
+ * project's source is how it reloads, and an error there would mean it could
+ * only ever load once. Redefining a path the engine seeded read-only is
+ * refused (0), since shadowing a built-in would change every scene that binds
+ * it, not just this project's; so is a path holding an asset of another type.
+ */
+static s7_pointer sp_mesh_define(s7_scheme *sc, s7_pointer args)
+{
+	const char *src = arg_str(sc, args, 1);
+	uint32_t    id;
+
+	id = asset_define(arg_str(sc, args, 0), src, ASSET_TYPE_MESH);
+	if (id)
+		mesh_declare(id, src);
 	return s7_make_integer(sc, id);
 }
 
@@ -536,6 +625,13 @@ void scene_script_init(void)
 			   "call on the same path replaces the source in "
 			   "place, keeping the id; a read-only built-in path "
 			   "is refused (0).");
+	s7_define_function(sc, "mesh-define!", sp_mesh_define, 2, 0, false,
+			   "(mesh-define! path src) -> id; register a "
+			   "(mesh ...) source at a catalog path, bindable by "
+			   "scene-mesh!. A second call on the same path "
+			   "replaces the source in place, keeping the id so a "
+			   "bound entity picks up the new geometry; a "
+			   "read-only built-in path is refused (0).");
 	s7_define_function(sc, "scene-name!", sp_scene_name, 2, 0, false,
 			   "(scene-name! id name) set entity name");
 	s7_define_function(sc, "scene-entity-name", sp_scene_entity_name, 1, 0,

@@ -192,6 +192,31 @@
        (equal? (map rz-codegen-source (resolve-staged-projects manifest))
                '("projects/chess/chess.scm")))
 
+;;! Shipped is the larger set, and the distinction is the one that decides
+;;! whether a project is reachable from the page at all. A project-source
+;;! declares no generated/ output, so any number may be declared — checked here
+;;! rather than trusted, because "the staged one is the only one served" is
+;;! exactly the bug this pair was introduced to fix.
+(check "a project-source declares no generated output, so many may be shipped"
+       (and (null? (rz-codegen-outputs
+                    (rz-form->codegen "d" '(project-source "a.scm"))))
+            (resolve-check-codegen
+             (list (cons "a" '((project-source "a.scm")))
+                   (cons "b" '((project-source "b.scm")))
+                   (cons "c" '((staged-project "c.scm")))))))
+
+(check "a project-source takes no arguments beyond its source"
+       (expect-error
+        (lambda ()
+          (resolve-check-codegen
+           (list (cons "d" '((project-source "a.scm" "A_SCM"))))))))
+
+(check "resolve-shipped-projects finds every project, staged or not"
+       (equal? (map rz-codegen-source (resolve-shipped-projects manifest))
+               '("projects/chess/chess.scm"
+                 "projects/training/training.scm"
+                 "projects/ducks/ducks.scm")))
+
 (check "an embed's C symbol rides along as an argument, not an output"
        (equal? (rz-codegen-args (decl-for "core/runtime.scm"))
                '("runtime_scm.h" "RUNTIME_SCM")))
@@ -439,13 +464,24 @@
        (contains? ninja-text "build index.html | index.js index.wasm: main_module"))
 (check "wasm target present"
        (contains? ninja-text "build wasm: phony "))
-;;! The other half of a (staged-project ...): the same source copied into
-;;! assets/, and named on the wasm target so a site build actually stages it.
-(check "the staged project is copied into assets/ under its own name"
+;;! EVERY shipped project is copied into assets/ under its own name and named on
+;;! the wasm target so a site build actually stages it — not only the staged one.
+;;! The unstaged two are the point of the check: they are what a page offers
+;;! beyond the project it booted into, and before (project-source ...) existed
+;;! they built, tested green and were unreachable.
+(check "every shipped project is copied into assets/ under its own name"
        (and (contains? ninja-text
                        (string-append "build assets/chess.scm: copy "
                                       "$reporoot/projects/chess/chess.scm"))
-            (contains? ninja-text " assets/chess.scm")))
+            (contains? ninja-text
+                       (string-append "build assets/training.scm: copy "
+                                      "$reporoot/projects/training/training.scm"))
+            (contains? ninja-text
+                       (string-append "build assets/ducks.scm: copy "
+                                      "$reporoot/projects/ducks/ducks.scm"))
+            (contains? ninja-text " assets/chess.scm")
+            (contains? ninja-text " assets/training.scm")
+            (contains? ninja-text " assets/ducks.scm")))
 (check "compile rules track headers via gcc depfiles"
        (and (contains? ninja-text "deps = gcc")
             (contains? ninja-text "depfile = $out.d")))
@@ -474,15 +510,19 @@
                       (loop (cdr l)))
                      (else #f))))))
 
-;;! The index the page reads to learn what this build staged — the shell cannot
+;;! The index the page reads to learn what this build shipped — the shell cannot
 ;;! list a directory over HTTP and must not be told a filename, so the build
 ;;! writes down what it copied. Generated beside the copies during the
 ;;! synthesize above, so it is already on disk here.
+;;!
+;;! All three, in manifest order. This is the assertion that a project which is
+;;! shipped but not staged still reaches the Load Project control, which is the
+;;! whole difference between the two declarations.
 (if (and ninja-out (> (string-length ninja-out) 0))
-    (check "assets/projects.json names the staged project"
+    (check "assets/projects.json names every shipped project"
            (string=? (krudd-slurp (string-append (dirname ninja-out)
                                                  "/assets/projects.json"))
-                     "[\"chess.scm\"]\n")))
+                     "[\"chess.scm\",\"training.scm\",\"ducks.scm\"]\n")))
 
 (if (and ninja-out (> (string-length ninja-out) 0))
     (begin

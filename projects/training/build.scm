@@ -1,17 +1,26 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
 ;;! The whole room is training.scm. Like every project it is Scheme and no C, so
-;;! this directory declares two things: how the source reaches the test, and the
-;;! test.
+;;! this directory declares three things: that the build ships the room, how the
+;;! source reaches the test, and the test.
 ;;!
-;;! (embed ...) rather than (staged-project ...): the staged slot is
-;;! single-occupancy and chess holds it (see projects/chess/build.scm), because
-;;! the boot path wants a project that plays. What this room needs is narrower —
-;;! its source available to a native test with no filesystem under it — and that
-;;! is exactly what an embed is for. The generated TRAINING_SCM is included by
-;;! training_test.c and by nothing else, so the room costs the shipped WASM
-;;! module nothing; it is reached at runtime the way any unstaged project is,
-;;! through the Load Project control.
-((embed "training.scm" "training_scm.h" "TRAINING_SCM")
+;;! (project-source ...) is what puts the room on the page: it copies the .scm
+;;! into assets/ beside index.html and names it in assets/projects.json, which is
+;;! the list the shell's Load Project control offers. Without it the room would
+;;! build, test green and be unreachable — the page cannot list a directory over
+;;! HTTP, so a project the build did not write down does not exist as far as the
+;;! shell is concerned.
+;;!
+;;! Not (staged-project ...): that is the same thing PLUS embedding the source
+;;! into the image under the fixed symbol core/engine.c boots from, and it is
+;;! single-occupancy. Chess holds it (see projects/chess/build.scm) because the
+;;! boot path wants a project that plays. Shipped and booted-into are different
+;;! questions and only the second is scarce.
+;;!
+;;! The (embed ...) is for the test alone: TRAINING_SCM is included by
+;;! training_test.c and by nothing else, so it lets the test drive the real
+;;! source with no filesystem under it and costs the shipped WASM module nothing.
+((project-source "training.scm")
+ (embed "training.scm" "training_scm.h" "TRAINING_SCM")
 
  (native-only
   ;;! The harness is game/project's own: project_host.c compiled in so the

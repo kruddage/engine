@@ -1,16 +1,22 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
 ;;! The whole game is ducks.scm. Like every project it is Scheme and no C, so
-;;! this directory declares two things: how the source reaches the test, and the
-;;! test.
+;;! this directory declares three things: that the build ships the booth, how the
+;;! source reaches the test, and the test.
 ;;!
-;;! (embed ...) rather than (staged-project ...): the staged slot is
-;;! single-occupancy and chess holds it (see projects/chess/build.scm). What
-;;! this booth needs is narrower — its source available to a native test with no
-;;! filesystem under it — and that is what an embed is for. The generated
-;;! DUCKS_SCM is included by ducks_test.c and by nothing else, so the game costs
-;;! the shipped WASM module nothing; it is reached at runtime the way any
-;;! unstaged project is, through the Load Project control.
-((embed "ducks.scm" "ducks_scm.h" "DUCKS_SCM")
+;;! (project-source ...) is what puts the booth on the page: it copies the .scm
+;;! into assets/ beside index.html and names it in assets/projects.json, the list
+;;! the shell's Load Project control offers. Without it the game would build,
+;;! test green and be unreachable.
+;;!
+;;! Not (staged-project ...): that additionally embeds the source under the fixed
+;;! symbol core/engine.c boots from, and it is single-occupancy — chess holds it
+;;! (see projects/chess/build.scm). A half-finished duck shoot is not what the
+;;! site should open on in any case.
+;;!
+;;! The (embed ...) is for the test alone: DUCKS_SCM is included by ducks_test.c
+;;! and by nothing else.
+((project-source "ducks.scm")
+ (embed "ducks.scm" "ducks_scm.h" "DUCKS_SCM")
 
  (native-only
   ;;! The FAT harness, the one chess uses rather than the lean one training

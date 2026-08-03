@@ -713,16 +713,24 @@ canvas {
 }
 
 /*
- * ── Play prompt ──
+ * ── Load prompt ──
  *
  * A one-tap splash that sits over the board the moment a game boots straight
  * in (the default path — see game_boot_default in game.c, which shows this
  * right where it used to just dismiss the launcher and leave bare canvas).
- * Its Play button is also where the first user gesture lands, so the click
- * handler below resumes the WebAudio context there rather than counting on
- * whatever the player's first move happens to click.
+ *
+ * It reads as a project loader — "load project" over a button named for the
+ * scene that booted — rather than "Play Chess" over a Play button. The page is
+ * an engine you open a project in; chess is one project it ships with, and the
+ * first screen should say the former and offer the latter, not present the
+ * sample as the whole product. The button carries the game's own launcher
+ * label, so a different boot default renames it with no edit here.
+ *
+ * That button is also where the first user gesture lands, so the click handler
+ * below resumes the WebAudio context there rather than counting on whatever
+ * the player's first move happens to click.
  */
-.play-prompt {
+.load-prompt {
 	position: fixed;
 	inset: 0;
 	background: rgba(13, 13, 13, 0.96);
@@ -733,16 +741,16 @@ canvas {
 	padding: 20px;
 }
 
-.play-prompt.hidden { display: none; }
+.load-prompt.hidden { display: none; }
 
-.play-prompt-panel {
+.load-prompt-panel {
 	display: flex;
 	flex-direction: column;
 	align-items: center;
 	gap: 18px;
 }
 
-.play-prompt-title {
+.load-prompt-title {
 	font-size: 22px;
 	font-weight: bold;
 	letter-spacing: 0.2em;
@@ -750,7 +758,7 @@ canvas {
 	color: #fff;
 }
 
-.play-prompt-btn {
+.load-prompt-btn {
 	background: #141414;
 	border: 1px solid #333;
 	border-left: 3px solid #2d6a2d;
@@ -764,7 +772,7 @@ canvas {
 	transition: border-color 0.12s, background 0.12s;
 }
 
-.play-prompt-btn:hover {
+.load-prompt-btn:hover {
 	background: #1c1c1c;
 	border-color: #555;
 	border-left-color: #4a9a4a;
@@ -959,7 +967,7 @@ canvas {
 	<div class="menu-group" id="menu-group"></div>
 	<div class="menubar-right">
 		<span class="version ahead" id="version" title="click for build info">20.0.0</span>
-		<span class="version-detail" id="version-detail">commit 9fd0147b &middot; built 2026-08-03 &middot; ahead of release</span>
+		<span class="version-detail" id="version-detail">commit c72a27af &middot; built 2026-08-03 &middot; ahead of release</span>
 	</div>
 </div>
 
@@ -995,10 +1003,10 @@ canvas {
 	</div>
 </div>
 
-<div class="play-prompt hidden" id="play-prompt">
-	<div class="play-prompt-panel">
-		<div class="play-prompt-title" id="play-prompt-title">Play Chess</div>
-		<button class="play-prompt-btn" id="play-prompt-btn">Play</button>
+<div class="load-prompt hidden" id="load-prompt">
+	<div class="load-prompt-panel">
+		<div class="load-prompt-title">load project</div>
+		<button class="load-prompt-btn" id="load-prompt-btn">Chess</button>
 	</div>
 </div>
 
@@ -1115,23 +1123,25 @@ canvas {
 
 	/*
 	 * Called by game_boot_default (game.c) right after it loads the boot scene
-	 * and dismisses the launcher, so a player who lands on the default chess
-	 * boot sees a "Play Chess" splash instead of the board cold. NAME is the
-	 * booted game's launcher label; an empty/missing one falls back to
-	 * "Play" so a future non-chess default still reads sensibly.
+	 * and dismisses the launcher, so someone who lands on the default boot
+	 * sees the "load project" splash instead of the board cold. NAME is the
+	 * booted game's launcher label and becomes the button, which is the only
+	 * part of this prompt that varies — the heading names the act, the button
+	 * names the project it opens. A missing name leaves the markup's own
+	 * label in place rather than blanking the one thing there is to click.
 	 */
-	window.kruddShowPlayPrompt = function (name) {
-		var el = document.getElementById('play-prompt');
+	window.kruddShowLoadPrompt = function (name) {
+		var el = document.getElementById('load-prompt');
 		if (!el)
 			return;
-		var title = document.getElementById('play-prompt-title');
-		if (title)
-			title.textContent = name ? 'Play ' + name : 'Play';
+		var btn = document.getElementById('load-prompt-btn');
+		if (btn && name)
+			btn.textContent = name;
 		el.classList.remove('hidden');
 	};
 
-	document.getElementById('play-prompt-btn').addEventListener('click', function () {
-		document.getElementById('play-prompt').classList.add('hidden');
+	document.getElementById('load-prompt-btn').addEventListener('click', function () {
+		document.getElementById('load-prompt').classList.add('hidden');
 		/*
 		 * Browsers only let an AudioContext leave 'suspended' from inside a
 		 * user-gesture handler, so this is the one guaranteed gesture every
@@ -1969,13 +1979,13 @@ canvas {
 var Module = {
 	locateFile: function (path, prefix) {
 		if (path.endsWith('.wasm'))
-			return prefix + path.replace(/\.wasm$/, '.9fd0147b.wasm');
+			return prefix + path.replace(/\.wasm$/, '.c72a27af.wasm');
 		return prefix + path;
 	}
 };
 </script>
 
-<script async type="text/javascript" src="index.9fd0147b.js"></script>
+<script async type="text/javascript" src="index.c72a27af.js"></script>
 
 </body>
 </html>

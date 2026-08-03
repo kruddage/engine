@@ -242,6 +242,13 @@ static const char *MASK_SHADER_SRC =
  * scaled by the border thickness; `color` is the outline colour. edge = (any of
  * eight ring taps is inside the mask) AND (this pixel is outside it), so the red
  * lands just outside the silhouette without covering the object.
+ *
+ * The UV comes from clip->uv rather than the (a_pos * 0.5 + 0.5) it reads like,
+ * because this pass samples textures a previous pass rendered and the two
+ * backends put clip y at opposite ends of a texture. Written out by hand it is
+ * right on WebGL and vertically mirrored on WebGPU; the DSL op lowers to each
+ * backend's convention. Every full-screen pass below inherits this — see the
+ * "target conventions" section of render/shader/shader.scm.
  */
 static const char *OUTLINE_SHADER_SRC =
 	"(shader sel_outline\n"
@@ -255,7 +262,7 @@ static const char *OUTLINE_SHADER_SRC =
 	"  (varyings (v_uv vec2))\n"
 	"  (targets (frag_color vec4 (location 0)))\n"
 	"  (vertex\n"
-	"    (set v_uv (+ (* a_pos 0.5) 0.5))\n"
+	"    (set v_uv (clip->uv a_pos))\n"
 	"    (set position (vec4 a_pos 0.0 1.0)))\n"
 	"  (fragment\n"
 	"    (let* ((tx   (swizzle texel x))\n"
@@ -296,7 +303,7 @@ static const char *BLOOM_EXTRACT_SHADER_SRC =
 	"  (varyings (v_uv vec2))\n"
 	"  (targets (frag_color vec4 (location 0)))\n"
 	"  (vertex\n"
-	"    (set v_uv (+ (* a_pos 0.5) 0.5))\n"
+	"    (set v_uv (clip->uv a_pos))\n"
 	"    (set position (vec4 a_pos 0.0 1.0)))\n"
 	"  (fragment\n"
 	"    (let* ((c (swizzle (sample scene v_uv) rgb))\n"
@@ -322,7 +329,7 @@ static const char *BLOOM_BLUR_SHADER_SRC =
 	"  (varyings (v_uv vec2))\n"
 	"  (targets (frag_color vec4 (location 0)))\n"
 	"  (vertex\n"
-	"    (set v_uv (+ (* a_pos 0.5) 0.5))\n"
+	"    (set v_uv (clip->uv a_pos))\n"
 	"    (set position (vec4 a_pos 0.0 1.0)))\n"
 	"  (fragment\n"
 	"    (let* ((s0 (* (swizzle (sample src v_uv) rgb) 0.2270270))\n"
@@ -348,7 +355,7 @@ static const char *BLOOM_COMPOSITE_SHADER_SRC =
 	"  (varyings (v_uv vec2))\n"
 	"  (targets (frag_color vec4 (location 0)))\n"
 	"  (vertex\n"
-	"    (set v_uv (+ (* a_pos 0.5) 0.5))\n"
+	"    (set v_uv (clip->uv a_pos))\n"
 	"    (set position (vec4 a_pos 0.0 1.0)))\n"
 	"  (fragment\n"
 	"    (let* ((s (swizzle (sample scene v_uv) rgb))\n"
@@ -2520,10 +2527,15 @@ static void shadow_pass(struct fg_pass_ctx *ctx, void *userdata)
 	 * backend (WebGPU) that would put the near half of the shadow frustum at
 	 * clip z < 0 — clipped away — and write raw NDC z into the map. Adapting
 	 * it here maps light depth into [0, 1] and stores 0.5*z + 0.5, which is
-	 * exactly the window-depth value the forward pass already reconstructs for
-	 * the compare (uvw.z = proj.z*0.5 + 0.5). So only this write copy is
-	 * adapted: the forward pass keeps the GL matrix (bind_light) and the pbr
-	 * shader needs no change. On GL the cap is clear and this is a no-op.
+	 * exactly the window-depth value the forward pass already reconstructs
+	 * for the compare (sun_shadow's proj.z*0.5 + 0.5). So only this write
+	 * copy is adapted: the forward pass keeps the GL matrix (bind_light)
+	 * and the pbr shader needs no change. On GL the cap is clear and this
+	 * is a no-op.
+	 *
+	 * That is the depth half of the divergence, and only that half. The
+	 * other — which end of the map clip y writes to — is not a matrix at
+	 * all, so it is corrected where the map is read: sun_shadow's clip->uv.
 	 */
 	shadow_vp = g_light.view_proj;
 	if (gpu->caps & GPU_CAP_CLIP_Z_ZERO_TO_ONE)

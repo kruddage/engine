@@ -205,14 +205,22 @@ static void evict_entry(struct asset_entry *e)
  * neighbourhood biased by (1 - ndl), and returns the [0,1] visibility (1.0 for
  * a fragment outside the light frustum). ndl is the surface's N·L — the pbr
  * shaders pass their ndl, scene-textured its diff, both the same quantity.
+ *
+ * The projected xy and z part ways here, because they are two different
+ * conventions that used to share one (proj * 0.5 + 0.5). The xy is a texture
+ * coordinate into a map another pass rendered, so it goes through clip->uv and
+ * lands the right way up on either backend — spelled by hand it sampled the
+ * shadow map y-mirrored on WebGPU. The z is a depth compare, and its remap is
+ * the same on both: the shadow pass writes 0.5*z + 0.5 there (scene_renderer's
+ * mat4_clip_z01 adaptation), which is exactly what this reconstructs.
  */
 static const char *SUN_SHADOW_FN =
 	"    (sun_shadow ((lp vec4) (ndl float)) float\n"
 	"      (let* ((proj  (/ (swizzle lp xyz) (swizzle lp w)))\n"
-	"             (uvw   (+ (* proj 0.5) 0.5))\n"
-	"             (su    (swizzle uvw x))\n"
-	"             (sv    (swizzle uvw y))\n"
-	"             (fragd (swizzle uvw z))\n"
+	"             (uv    (clip->uv (swizzle proj xy)))\n"
+	"             (su    (swizzle uv x))\n"
+	"             (sv    (swizzle uv y))\n"
+	"             (fragd (+ (* (swizzle proj z) 0.5) 0.5))\n"
 	"             (bias  (max (* 0.0025 (- 1.0 ndl)) 0.0006))\n"
 	"             (edge  (- fragd bias))\n"
 	"             (tx    0.00048828125)\n"

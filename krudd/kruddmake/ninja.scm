@@ -569,6 +569,7 @@
       (resolve-check-all table)
       (resolve-check-codegen manifest)
       (resolve-check-tiers manifest)
+      (resolve-check-projects manifest)
       (ninja-emit* (ninja-preamble srcroot))
       (ninja-emit-regen manifest srcroot regen-cmd)
       (for-each

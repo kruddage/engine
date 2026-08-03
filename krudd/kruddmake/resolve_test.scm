@@ -395,6 +395,67 @@
 (check "a system lib carries no module and no tier edge"
        (null? (rz-tier-inversions syslib-manifest)))
 
+;;! The half of projects/README.md that is checked rather than trusted: a
+;;! project declares no library. Asserted red below, because the real manifest
+;;! passing proves nothing on its own — nothing in projects/ has ever declared
+;;! one, which is exactly the silence this check exists to replace.
+(display "projects: the contract, the enforced half\n")
+
+(check "resolve-check-projects passes over the real manifest"
+       (not (expect-error (lambda () (resolve-check-projects manifest)))))
+
+(define project-library-manifest
+  (list (cons "projects/chess" '((library "chess_rules" (sources "rules.c"))))))
+
+(check "a library declared in projects/ errors"
+       (expect-error
+        (lambda () (resolve-check-projects project-library-manifest))))
+
+;;! An interface-library declares no sources and emits no build edge, so it
+;;! reads as harmless — but it is still a name an engine module could link, and
+;;! include directories it would inherit, which is the whole of what the rule
+;;! about reaching into a project is.
+(define project-interface-manifest
+  (list (cons "projects/ducks"
+              '((interface-library "ducks_api" (interface "include"))))))
+
+(check "an interface-library in projects/ errors for the same reason"
+       (expect-error
+        (lambda () (resolve-check-projects project-interface-manifest))))
+
+(check "the failure names the project, the declaration and the contract"
+       (let ((text (error-text
+                    (lambda ()
+                      (resolve-check-projects project-library-manifest)))))
+         (and (contains? text "projects/chess")
+              (contains? text "(library \"chess_rules\")")
+              (contains? text "projects/README.md"))))
+
+;;! The two things the rule must NOT catch. Every project declares an executable
+;;! for its test — that is why all three are in the manifest — and an engine
+;;! module declaring a library is the ordinary case the rest of the build is.
+(check "a project's test executable is not a library"
+       (not (expect-error
+             (lambda ()
+               (resolve-check-projects
+                (list (cons "projects/chess"
+                            '((executable "chess_test"
+                                          (sources "chess_test.c"))))))))))
+
+(check "a library outside projects/ is nothing to do with this rule"
+       (not (expect-error
+             (lambda ()
+               (resolve-check-projects
+                (list (cons "game/host"
+                            '((library "game" (sources "game.c"))))))))))
+
+;;! The rule beside it, which this one is what holds up: with no library to
+;;! name, an engine module has nothing to link, so the tier check has no edge to
+;;! see. Stated as a test so the reasoning in resolve-check-projects is a fact
+;;! about the tree rather than an argument about it.
+(check "no project declares a library, so no tier edge can point at one"
+       (null? (rz-project-libraries manifest)))
+
 (display "emitter: rendered build.ninja\n")
 
 (define (dirname path)

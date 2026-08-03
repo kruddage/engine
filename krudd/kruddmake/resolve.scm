@@ -461,3 +461,52 @@
                 (if (= (length bad) 1) " library link:\n" " library links:\n")
                 (apply string-append (map rz-inversion-message bad))))
         #t)))
+
+;;! A project declares no library. projects/README.md is the contract this comes
+;;! from, and this is the one rule in it worth enforcing rather than trusting.
+;;!
+;;! It is what holds the rule beside it — that no engine module links a project.
+;;! resolve-check-tiers above would catch such a link, since projects/* is last
+;;! in manifest.scm and a link into it inverts the order by definition. But it
+;;! catches it for a reason that could evaporate: the check walks LINKS, and a
+;;! link needs a name to reach for. No project declares a library, so there is
+;;! no name, so there is no edge, so the tier check has nothing to say. The door
+;;! is standing open rather than shut, and it is shut here — at the declaration,
+;;! naming the project and the rule, rather than one manifest edit later at a
+;;! link that is harder to read the intent of.
+;;!
+;;! Both library kinds count. An interface-library declares no sources and emits
+;;! no build edge, so it looks harmless, but it is a name an engine module can
+;;! link and a set of include directories it would then inherit — which is the
+;;! whole of what rule 2 is about. Executables are untouched: every project has
+;;! one for its test, nothing links an executable, and that is why all three
+;;! projects are in the manifest at all.
+(define (rz-project-libraries manifest)
+  (rz-filter (lambda (target)
+               (and (rz-library-target? target)
+                    (rz-project-path? (rz-field target 'dir))))
+             (rz-target-table manifest)))
+
+(define (rz-project-library-message target)
+  (string-append
+   "  " (rz-field target 'dir) " declares ("
+   (symbol->string (rz-field target 'kind)) " \"" (car target) "\").\n"))
+
+(define (resolve-check-projects manifest)
+  (let ((bad (rz-project-libraries manifest)))
+    (if (pair? bad)
+        (error 'rz-project-library
+               (string-append
+                "a project may not declare a library:\n"
+                (apply string-append
+                       (map rz-project-library-message bad))
+                "    A project is a single .scm the engine loads at runtime, so"
+                " it reaches for the\n"
+                "    engine and nothing reaches for it. A library is a name an"
+                " engine module could\n"
+                "    link, which would put a project inside the tier order"
+                " manifest.scm lists it\n"
+                "    last to stay out of. Compile the sources into the"
+                " project's own test instead.\n"
+                "    See projects/README.md.\n"))
+        #t)))

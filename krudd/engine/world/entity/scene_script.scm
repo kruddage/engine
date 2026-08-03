@@ -73,6 +73,21 @@
      kids)
     count))
 
+;;! (scene-form? src) -> #t when SRC reads as a (scene ...) form, #f for text
+;;! that does not read at all or reads as some other form. scene-build is
+;;! deliberately lenient — a non-scene form is logged and counted as zero, so a
+;;! bad asset never takes a frame down — but the scene-build! primitive answers
+;;! a Scheme caller that has to act on the result, and owes it the -1 that
+;;! primitive's docstring promises. Only the reader can tell an empty scene (a
+;;! true 0) from text that was never a scene at all, so the check lives in a
+;;! predicate rather than in a second return path threaded through scene-build.
+(define (scene-form? src)
+  (catch #t
+         (lambda ()
+           (let ((form (with-input-from-string src (lambda () (read)))))
+             (and (pair? form) (eq? (car form) 'scene))))
+         (lambda args #f)))
+
 ;;! (scene-build src) -> entity count. Parse SRC (a (scene NAME (entity ...) ...)
 ;;! form as text) and spawn its entities into the world the host has bound. A
 ;;! malformed form, or a per-entity fault, is caught and logged, never taking the

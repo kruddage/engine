@@ -5,7 +5,7 @@
  * Registers the scene-* primitives the (scene ...) form calls, and drives one
  * build by handing a scene's source text to the image's scene-build. The
  * primitives spawn and bind entities in the world bound for the span of one
- * scene_script_build (set before the s7_call, cleared after), mirroring the
+ * scene_script_build (saved and restored around the s7_call), mirroring the
  * g_w discipline entity_script.c uses for its per-tick primitives.
  */
 #include <entity/scene_script.h>
@@ -26,7 +26,9 @@
 /*
  * The world and catalog a build acts on, valid only for the span of one
  * scene_script_build. A primitive can only run synchronously inside that call,
- * so no primitive ever observes a stale pointer.
+ * so no primitive ever observes a stale pointer. The binding nests:
+ * scene-build! runs a whole build from inside an image call that is already
+ * bound, so scene_call_bound treats these as a stack, not as a flag.
  */
 static struct world           *g_w;
 static const struct asset_api *g_asset;
@@ -257,6 +259,63 @@ static s7_pointer sp_scene_destroy_named(s7_scheme *sc, s7_pointer args)
 	return s7_make_integer(sc, n);
 }
 
+/*
+ * (scene-clear!) — empty the bound world: entities, the editor selection and
+ * the game outline all go. This is entity_api.clear_world reached from Scheme;
+ * that vtable slot (entity_plugin.c's scene_clear_world) is world_reset and
+ * nothing else, so the two doors cannot drift. A launcher runs this before
+ * building a different scene; with scene-build! beside it, a project in the
+ * image can do the same for itself instead of needing a C plugin to hold its
+ * load path.
+ */
+static s7_pointer sp_scene_clear(s7_scheme *sc, s7_pointer args)
+{
+	if (g_w)
+		world_reset(g_w);
+	return s7_unspecified(sc);
+}
+
+/*
+ * True when SRC reads as a (scene ...) form. Asked of the image's scene-form?
+ * rather than re-implemented here: it is the same reader scene-build runs a
+ * moment later, and it is already wrapped in a catch there, so malformed text
+ * answers #f instead of throwing out of a primitive. A missing predicate (an
+ * image that never loaded scene_script.scm) answers no, which lands
+ * scene-build! on the same -1 a missing scene-build would.
+ */
+static int src_is_scene_form(s7_scheme *sc, const char *src)
+{
+	s7_pointer p = s7_name_to_value(sc, "scene-form?");
+
+	if (!s7_is_procedure(p))
+		return 0;
+	return s7_is_eq(s7_call(sc, p, s7_list(sc, 1, s7_make_string(sc, src))),
+			s7_t(sc));
+}
+
+/*
+ * (scene-build! src) -> entity count, or -1 when no world is bound, the image
+ * is unusable, or SRC is not a (scene ...) form. Builds SRC into the world
+ * bound for this call — the Scheme twin of entity_api.build_scene_scm, and the
+ * second half of a project's load path.
+ *
+ * SRC is source text, not an already-read form: text is what
+ * scene_script_build takes, what an embedded project file arrives as, and what
+ * keeps this symmetric with script_eval. The cost is one extra pass of the
+ * reader (the predicate above), paid once per scene load, not per frame.
+ *
+ * The build re-enters scene_call_bound underneath this primitive's own live
+ * binding; that nests correctly because the binding is saved and restored.
+ */
+static s7_pointer sp_scene_build(s7_scheme *sc, s7_pointer args)
+{
+	const char *src = arg_str(sc, args, 0);
+
+	if (!g_w || !src || !src_is_scene_form(sc, src))
+		return s7_make_integer(sc, -1);
+	return s7_make_integer(sc, scene_script_build(g_w, g_asset, src));
+}
+
 void scene_script_init(void)
 {
 	static int registered;
@@ -288,26 +347,40 @@ void scene_script_init(void)
 	s7_define_function(sc, "scene-destroy-named!", sp_scene_destroy_named, 1,
 			   0, false,
 			   "(scene-destroy-named! name) destroy entities by name");
+	s7_define_function(sc, "scene-clear!", sp_scene_clear, 0, 0, false,
+			   "(scene-clear!) empty the world and its selection");
+	s7_define_function(sc, "scene-build!", sp_scene_build, 1, 0, false,
+			   "(scene-build! src) build a scene form -> count");
 	registered = 1;
 }
 
 /*
- * Bind W/ASSET for the span of one image call — the scene-* primitives read them
- * through g_w/g_asset — invoke FN with ARGS, then unbind. A primitive only runs
- * synchronously inside this call, so it never sees a stale pointer, and the world
- * is exposed to Scheme only while a build or a dispatched event is in flight.
+ * Bind W/ASSET for the span of one image call — the scene-* primitives read
+ * them through g_w/g_asset — invoke FN with ARGS, then put back whatever was
+ * bound before. A primitive only runs synchronously inside this call, so it
+ * never sees a stale pointer, and the world is exposed to Scheme only while a
+ * build or a dispatched event is in flight.
+ *
+ * Save/restore, not set/clear: these calls nest. scene-build! is a primitive,
+ * so it runs with its caller's binding live, and it enters scene_script_build,
+ * which comes straight back here. Clearing to NULL on the way out of that inner
+ * build would unbind the world underneath the dispatch still running around it,
+ * and every scene-* call after it would silently no-op. Restoring the saved
+ * value leaves the outermost call to do the unbinding, since it saved NULL.
  */
 static s7_pointer scene_call_bound(struct world *w,
 				   const struct asset_api *asset,
 				   s7_pointer fn, s7_pointer args)
 {
-	s7_pointer res;
+	struct world           *saved_w     = g_w;
+	const struct asset_api *saved_asset = g_asset;
+	s7_pointer              res;
 
 	g_w     = w;
 	g_asset = asset;
 	res = s7_call(script_s7(), fn, args);
-	g_w     = NULL;
-	g_asset = NULL;
+	g_w     = saved_w;
+	g_asset = saved_asset;
 	return res;
 }
 

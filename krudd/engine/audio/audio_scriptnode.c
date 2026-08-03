@@ -22,6 +22,7 @@
  * mixer_test.c / audio_core_test.c.
  */
 #include "audio_core.h"
+#include "audio_script.h"
 #include <abi/audio_api.h>
 
 #include <abi/asset_api.h>
@@ -240,15 +241,24 @@ void audio_scriptnode_plugin_entry(struct subsystem_manager *mgr)
 	g_mem   = subsystem_manager_get_api(mgr, "memory");
 	g_asset = subsystem_manager_get_api(mgr, "asset");
 	subsystem_manager_register(mgr, &desc);
+	/* audio-play! is generic script surface, not device glue: register it
+	 * regardless of the device backend below. */
+	audio_script_init(mgr);
 }
 
 #else /* !__EMSCRIPTEN__ */
 
-/* Native builds have no audio device; the backend is a no-op so the tree
- * compiles and links. The playback core itself is native-tested directly. */
+/*
+ * Native builds have no audio device, so no "audio" subsystem ever registers
+ * here -- the backend half is a no-op so the tree compiles and links (the
+ * playback core itself is native-tested directly). audio_script_init still
+ * runs: it registers audio-play! against the interpreter so native games and
+ * tests can call it, and every call is a no-op since subsystem_manager_get_api
+ * never finds an "audio" service to resolve.
+ */
 void audio_scriptnode_plugin_entry(struct subsystem_manager *mgr)
 {
-	(void)mgr;
+	audio_script_init(mgr);
 }
 
 #endif /* __EMSCRIPTEN__ */

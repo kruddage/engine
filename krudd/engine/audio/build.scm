@@ -18,16 +18,21 @@
    (public (root "abi/include") (root "world/asset/include"))
    (link "mixer" "m"))
  ;;! The ScriptProcessorNode device backend (main-thread onaudioprocess ->
- ;;! audio_core -> mixer). Browser only; a native no-op stub keeps the tree
- ;;! compiling. Listed in the core executable's wasm-modules so it links into the
- ;;! single WASM module. Needs no special link flags — the whole point of this
- ;;! variant over the AudioWorklet backend.
+ ;;! audio_core -> mixer), plus audio_script — the (audio-play! ...) primitive
+ ;;! a game's rules can call. audio_script.c carries no device logic of its own
+ ;;! (see audio_script.h): it resolves "audio" through subsystem_manager, so it
+ ;;! builds and registers the same way whether or not the backend below is
+ ;;! live. Browser device glue is browser only; a native no-op stub keeps the
+ ;;! tree compiling. Listed in the core executable's wasm-modules so it links
+ ;;! into the single WASM module. Needs no special link flags — the whole point
+ ;;! of this variant over the AudioWorklet backend.
  (library "audio_scriptnode"
-   (sources "audio_scriptnode.c")
+   (sources "audio_scriptnode.c" "audio_script.c")
    (public (root "abi/include") (root "world/asset/include"))
-   (private (root "world/asset/include") (root "core/include"))
+   (private (root "world/asset/include") (root "core/include")
+            (raw "../third_party"))
    (link "audio_core" "mixer" "sound_script" "log" "memory"
-         "subsystem" "subsystem_manager"))
+         "subsystem" "subsystem_manager" "script"))
  (native-only
   (executable "mixer_test"
               (sources "mixer_test.c")
@@ -39,4 +44,15 @@
               (sources "audio_core_test.c")
               (private "." (root "abi/include") (root "world/asset/include"))
               (link "audio_core" "mixer" "memory" "m"))
-  (test "audio_core" "audio_core_test")))
+  (test "audio_core" "audio_core_test")
+
+  ;;! Drives the real s7 interpreter (like world/entity/entity_script_test.c):
+  ;;! boots script_init, registers audio-play! via audio_script_init against a
+  ;;! hand-built subsystem_manager, and exercises it with and without a
+  ;;! registered "audio" service.
+  (executable "audio_script_test"
+              (sources "audio_script_test.c" "audio_script.c")
+              (private "." (root "abi/include") (root "core/include")
+                       (raw "../third_party"))
+              (link "script" "subsystem_manager" "memory"))
+  (test "audio_script" "audio_script_test")))

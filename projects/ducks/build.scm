@@ -1,20 +1,13 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
 ;;! The whole game is ducks.scm. Like every project it is Scheme and no C, so
 ;;! this directory declares three things: that the build ships the booth, how the
-;;! source reaches the test, and the test.
+;;! source reaches the test, and the test. The contract those declarations are
+;;! drawn from is projects/README.md.
 ;;!
-;;! (project-source ...) is what puts the booth on the page: it copies the .scm
-;;! into assets/ beside index.html and names it in assets/projects.json, the list
-;;! the shell's Load Project control offers. Without it the game would build,
-;;! test green and be unreachable.
-;;!
-;;! Not (staged-project ...): that additionally embeds the source under the fixed
-;;! symbol core/engine.c boots from, and it is single-occupancy — chess holds it
-;;! (see projects/chess/build.scm). A half-finished duck shoot is not what the
-;;! site should open on in any case.
-;;!
-;;! The (embed ...) is for the test alone: DUCKS_SCM is included by ducks_test.c
-;;! and by nothing else.
+;;! Shipped, not staged: chess holds the staged slot, and a half-finished duck
+;;! shoot is not what the site should open on in any case. The (embed ...) is
+;;! for the test alone — DUCKS_SCM is included by ducks_test.c and by nothing
+;;! else.
 ((project-source "ducks.scm")
  (embed "ducks.scm" "ducks_scm.h" "DUCKS_SCM")
 

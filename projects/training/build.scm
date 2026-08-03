@@ -1,24 +1,15 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
 ;;! The whole room is training.scm. Like every project it is Scheme and no C, so
 ;;! this directory declares three things: that the build ships the room, how the
-;;! source reaches the test, and the test.
+;;! source reaches the test, and the test. The contract those declarations are
+;;! drawn from is projects/README.md.
 ;;!
-;;! (project-source ...) is what puts the room on the page: it copies the .scm
-;;! into assets/ beside index.html and names it in assets/projects.json, which is
-;;! the list the shell's Load Project control offers. Without it the room would
-;;! build, test green and be unreachable — the page cannot list a directory over
-;;! HTTP, so a project the build did not write down does not exist as far as the
-;;! shell is concerned.
-;;!
-;;! Not (staged-project ...): that is the same thing PLUS embedding the source
-;;! into the image under the fixed symbol core/engine.c boots from, and it is
-;;! single-occupancy. Chess holds it (see projects/chess/build.scm) because the
-;;! boot path wants a project that plays. Shipped and booted-into are different
-;;! questions and only the second is scarce.
-;;!
-;;! The (embed ...) is for the test alone: TRAINING_SCM is included by
-;;! training_test.c and by nothing else, so it lets the test drive the real
-;;! source with no filesystem under it and costs the shipped WASM module nothing.
+;;! Shipped, not staged, and that is the only choice this file makes: shipped
+;;! and booted-into are different questions and only the second is scarce. Chess
+;;! holds the staged slot. The (embed ...) is for the test alone — TRAINING_SCM
+;;! is included by training_test.c and by nothing else, so the test drives the
+;;! real source with no filesystem under it and the shipped WASM module pays
+;;! nothing for it.
 ((project-source "training.scm")
  (embed "training.scm" "training_scm.h" "TRAINING_SCM")
 

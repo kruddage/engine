@@ -76,7 +76,8 @@ krudd/
     shell/       The host the engine runs inside — web/
 projects/        The games — chess/, training/, ducks/. One .scm each, and a sibling
                  of krudd/ rather than a module inside it: a project is content the
-                 engine loads at runtime, not something it links
+                 engine loads at runtime, not something it links. What a project
+                 may and may not do is projects/README.md
 ```
 
 The tiers are listed in dependency order: a module may only reach for one in a tier above

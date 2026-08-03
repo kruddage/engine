@@ -77,4 +77,19 @@
                        (root "world/asset/include")
                        (raw "../third_party"))
               (link "asset_plugin" "mesh_script" "script" "memory" "log"))
-  (test "mesh_define" "mesh_define_test")))
+  (test "mesh_define" "mesh_define_test")
+  ;;! material-define!, the third of the trio, against the same real catalog.
+  ;;! A material's stored bytes are a packed std140 blob rather than its source,
+  ;;! so the claim worth proving is that they match the ones the C seeders write
+  ;;! — which means the real seeded materials have to be there to compare
+  ;;! against. It needs no bake bridge: nothing resolves a material at draw time,
+  ;;! the packing happens once when the primitive registers it.
+  (executable "material_define_test"
+              (sources "material_define_test.c" "scene_script.c" "entity.c")
+              (private "." "include" (root "abi/include") (root "base/math/include")
+                       (root "core/include")
+                       (root "base/memory/include")
+                       (root "world/asset")
+                       (raw "../third_party"))
+              (link "asset_plugin" "script" "memory" "log"))
+  (test "material_define" "material_define_test")))

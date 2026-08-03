@@ -14,11 +14,13 @@
    (private (raw "${generated}"))
    (link "subsystem_manager" "script" "game"))
  (native-only
-  ;;! The camera and piece-mesh checks drive the real asset catalog: rules.scm
-  ;;! registers its camera script and its six piece meshes into it through
-  ;;! script-define! / mesh-define!, so proving the scene still binds them needs
-  ;;! the real thing, plus the entity-script driver that ticks a bound script and
-  ;;! the mesh_script bridge that turns a bound mesh source into geometry. Hence
+  ;;! The camera, piece-mesh and army-material checks drive the real asset
+  ;;! catalog: rules.scm registers its camera script, its six piece meshes and
+  ;;! its two piece materials into it through script-define! / mesh-define! /
+  ;;! material-define!, so proving the scene still binds them needs the real
+  ;;! thing — which is also where material-define! finds the pbr shader it packs
+  ;;! against — plus the entity-script driver that ticks a bound script and the
+  ;;! mesh_script bridge that turns a bound mesh source into geometry. Hence
   ;;! asset_plugin, mesh_script, and the two world/asset include roots.
   (executable "chess_test"
               (sources "chess_test.c"

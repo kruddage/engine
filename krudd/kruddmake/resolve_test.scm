@@ -135,6 +135,7 @@
                 "world/asset/mesh_script.scm"
                 "world/asset/texture_script.scm"
                 "world/asset/sound_script.scm"
+                "world/asset/material_script.scm"
                 "game/chess/scene.scm"
                 "game/chess/rules.scm"
                 "ui/kruddgui/kruddgui.scm"

@@ -523,3 +523,47 @@
 (mesh-define! "project://mesh/chess-queen" chess-queen-mesh)
 (mesh-define! "project://mesh/chess-king" chess-king-mesh)
 (mesh-define! "project://mesh/chess-knight" chess-knight-mesh)
+
+;;! --- the two army materials this game brings with it -----------------------
+;;!
+;;! The pieces' colours: a warm near-white "ivory" for white and a near-black
+;;! "ebony" for black, both matte dielectrics (metallic 0) at a low-ish
+;;! roughness so the analytic highlight gives a turned piece a soft sheen rather
+;;! than a plastic glare.
+;;!
+;;! Ivory alone opts into the pbr shader's subsurface term — a wrap-diffuse plus
+;;! fresnel rim that fakes the waxy translucency real ivory gets from light
+;;! scattering a millimetre in. Ebony absorbs, being near-black, so it stays at
+;;! 0; the effect is a dielectric glow, not something a dark wood should carry.
+;;!
+;;! These used to be seeded by the engine as builtin://material/chess-* (world/
+;;! asset/asset_plugin.c), packed to std140 in C. They are this game's look, not
+;;! the engine's, so they live here as (material ...) sources and reach the
+;;! catalog through material-define!, which packs them against the Material block
+;;! of the shader they name — the same bytes the C seeder wrote, to the pad byte.
+;;! The board squares stay builtin://material/board-light / -dark: those are
+;;! generic checkered furniture and name no game.
+(define chess-ivory-material
+  (string-append "(material chess-ivory\n"
+                 "  (shader \"builtin://shader/pbr\")\n"
+                 "  (base_color 0.90 0.85 0.74 1.0)\n"
+                 "  (metallic 0.0)\n"
+                 "  (roughness 0.32)\n"
+                 "  (subsurface 0.6))\n"))
+
+(define chess-ebony-material
+  (string-append "(material chess-ebony\n"
+                 "  (shader \"builtin://shader/pbr\")\n"
+                 "  (base_color 0.06 0.055 0.05 1.0)\n"
+                 "  (metallic 0.0)\n"
+                 "  (roughness 0.28)\n"
+                 "  (subsurface 0.0))\n"))
+
+;;! Register the pair alongside the meshes, and for the same reasons: before any
+;;! scene is built, so scene.scm's (material ...) clauses resolve, and replacing
+;;! in place on a reload (material-define! keeps the id) so a piece already bound
+;;! keeps its colour rather than losing it to a stale id. Returns 0 apiece in the
+;;! headless rules test, which boots no asset catalog and so has no pbr shader to
+;;! pack against; nothing there draws, so nothing binds.
+(material-define! "project://material/chess-ivory" chess-ivory-material)
+(material-define! "project://material/chess-ebony" chess-ebony-material)

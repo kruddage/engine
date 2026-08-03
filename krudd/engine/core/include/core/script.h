@@ -136,6 +136,46 @@ int script_sound_params(const char *src, struct shader_param *out,
 			uint32_t max, uint32_t *total_size);
 
 /*
+ * Resolve a (material ...) source against the Material block of the shader it
+ * names. SRC is the material source, SHADER_SRC the shader's own DSL source;
+ * out[] is filled with up to `max` fields in the shader's declaration order,
+ * *total_size (may be NULL) gets the std140 block size, and the return is the
+ * field count (>= 0).
+ *
+ * Unlike its siblings this is not an introspection but a resolution: each
+ * field's `edit_default[]`/`default_count` carry the value THIS material packs
+ * for it — the source's own if it names the field, else the shader's authored
+ * (default ...) zero-filled to `components`. Shape and offsets are the shader's,
+ * so a material source never states a byte layout.
+ *
+ * Returns -1 when the interpreter is down, either source is missing, or the
+ * image REFUSED the material: a source that is not a (material ...) form, names
+ * a field the block does not declare or cannot author, or gives a field the
+ * wrong number of components. That refusal is the point — a material whose
+ * source is wrong must register nothing, never a partly-defaulted blob.
+ */
+int script_material_fields(const char *src, const char *shader_src,
+			   struct shader_param *out, uint32_t max,
+			   uint32_t *total_size);
+
+/*
+ * The catalog path of the shader a (material ...) source names, copied into OUT
+ * (cap bytes). Returns 0 on success, -1 when SRC is not a material form, has no
+ * (shader "PATH") clause, or the path does not fit. A caller asks this first:
+ * the shader's source is what script_material_fields resolves against.
+ */
+int script_material_shader(const char *src, char *out, uint32_t cap);
+
+/*
+ * The optional (texture "PATH" W H) slot of a (material ...) source: the path
+ * into OUT (cap bytes) and the square bake size into the width/height outs.
+ * Returns 0 on success, -1 when the source carries no such clause (which is not
+ * an error — most materials are pure parametric) or it is malformed.
+ */
+int script_material_texture(const char *src, char *out, uint32_t cap,
+			    uint32_t *width, uint32_t *height);
+
+/*
  * Call the Scheme (tick) procedure if the image defines one, with nothing
  * bound — which is the whole of what this tier can offer: binding the live
  * world for the call needs world/entity, and core sits above it in the tier

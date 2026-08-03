@@ -41,7 +41,9 @@ static struct world w;
  * assembles it for the subsystem manager. Most checks here run with no catalog
  * at all (the rules need none), but the camera and the piece meshes do: those
  * are assets this game registers into the catalog itself, and binding them is
- * the thing worth testing.
+ * the thing worth testing. So are the two army materials, which need the
+ * catalog for a second reason: material-define! packs them against the Material
+ * block of the seeded pbr shader it finds there.
  */
 static const struct asset_api catalog_api = {
 	.count    = asset_catalog_count,
@@ -610,6 +612,150 @@ static void test_reload_keeps_piece_bindings(void)
 	check_piece("project://mesh/chess-queen", 475, 2592, 0.30f, 1.34f);
 }
 
+/* ------------------------------------------------------------------ */
+/* The army materials this game brings with it                         */
+/* ------------------------------------------------------------------ */
+
+/* The float stored at byte OFF of an asset's bytes. */
+static float material_float(uint32_t id, uint32_t off)
+{
+	const uint8_t *b = (const uint8_t *)asset_catalog_get_data(id, NULL);
+	float          v;
+
+	assert(b);
+	memcpy(&v, b + off, sizeof(v));
+	return v;
+}
+
+/*
+ * The two piece colours, packed by material-define! when the rules loaded. The
+ * engine seeds nothing named chess, so these are in the catalog only because
+ * rules.scm put them there — as authored ASSET_TYPE_MATERIAL entries holding the
+ * same wire form the C seeder used to write: [shader-ref u32] then the pbr
+ * shader's 48-byte std140 Material block.
+ *
+ * The values asserted here are the ones builtin://material/chess-ivory and
+ * -ebony carried while the engine seeded them, at the offsets the pbr block
+ * declares (base_color @0, metallic @16, roughness @20, emissive @32,
+ * subsurface @44, all plus the 4-byte header). That is what "the pieces are
+ * unchanged on screen" means for a material: identical bytes reach the Material
+ * UBO, so identical pixels come out.
+ */
+static void test_army_materials_defined(void)
+{
+	static const struct {
+		const char *path;
+		float       rgba[4];
+		float       roughness;
+		float       subsurface;
+	} ARMIES[] = {
+		{ "project://material/chess-ivory",
+		  { 0.90f, 0.85f, 0.74f, 1.0f }, 0.32f, 0.6f },
+		{ "project://material/chess-ebony",
+		  { 0.06f, 0.055f, 0.05f, 1.0f }, 0.28f, 0.0f },
+	};
+	uint32_t          pbr = asset_id_at("builtin://shader/pbr");
+	struct asset_info info;
+	uint32_t          i, c, size;
+
+	assert(pbr != 0);
+	for (i = 0; i < sizeof(ARMIES) / sizeof(ARMIES[0]); i++) {
+		uint32_t id = asset_id_at(ARMIES[i].path);
+
+		assert(id != 0);
+		assert(asset_catalog_find(id, &info) == 0);
+		assert(info.type      == ASSET_TYPE_MATERIAL);
+		assert(info.origin    == ASSET_ORIGIN_AUTHORED);
+		assert(info.read_only == 0);
+
+		size = 0;
+		assert(asset_catalog_get_data(id, &size) != NULL);
+		assert(size == 4u + 48u);
+		{
+			uint32_t ref;
+
+			memcpy(&ref, asset_catalog_get_data(id, NULL),
+			       sizeof(ref));
+			assert(ref == pbr);
+		}
+		for (c = 0; c < 4; c++)
+			assert(material_float(id, 4u + c * 4u)
+			       == ARMIES[i].rgba[c]);
+		assert(material_float(id, 20) == 0.0f);   /* matte dielectric */
+		assert(material_float(id, 24) == ARMIES[i].roughness);
+		assert(material_float(id, 36) == 0.0f);   /* emissive stays 0 */
+		assert(material_float(id, 40) == 0.0f);
+		assert(material_float(id, 44) == 0.0f);
+		assert(material_float(id, 48) == ARMIES[i].subsurface);
+	}
+}
+
+/*
+ * The board on screen: every white piece binds the game's own ivory and every
+ * black one its ebony, while the squares still bind the engine's generic
+ * board-light / board-dark. Binding is what the seeds used to buy; this is the
+ * check that material-define! bought it back — and that unseeding the two piece
+ * materials did not take the board's with it.
+ */
+static void test_scene_binds_army_materials(void)
+{
+	static const struct {
+		const char *entity;
+		const char *path;
+	} BOUND[] = {
+		{ "wP-e2",  "project://material/chess-ivory" },
+		{ "wK-e1",  "project://material/chess-ivory" },
+		{ "bQ-d8",  "project://material/chess-ebony" },
+		{ "bN-g8",  "project://material/chess-ebony" },
+		{ "sq-a1",  "builtin://material/board-dark"  },
+		{ "sq-b1",  "builtin://material/board-light" },
+		{ "ground", "builtin://material/pbr-stone"   },
+	};
+	uint32_t i, e;
+
+	world_reset(&w);
+	assert(scene_script_build(&w, &catalog_api, CHESS_SCENE_SCM)
+	       == CHESS_ENTITY_COUNT);
+
+	for (i = 0; i < sizeof(BOUND) / sizeof(BOUND[0]); i++) {
+		e = id_named(BOUND[i].entity);
+		assert(w.material_ref[e] != 0);
+		assert(w.material_ref[e] == asset_id_at(BOUND[i].path));
+	}
+
+	/* Nothing named chess is seeded on chess's behalf any more. */
+	assert(asset_id_at("builtin://material/chess-ivory") == 0);
+	assert(asset_id_at("builtin://material/chess-ebony") == 0);
+}
+
+/*
+ * Reloading the game re-evaluates its source, which re-runs both
+ * material-define! calls. That must repack in place: the ids the live scene is
+ * bound to have to survive, or a reload would leave every piece pointing at a
+ * dead material and drawing with the default pipeline.
+ */
+static void test_reload_keeps_army_bindings(void)
+{
+	uint32_t ivory, ebony, e;
+
+	world_reset(&w);
+	assert(scene_script_build(&w, &catalog_api, CHESS_SCENE_SCM)
+	       == CHESS_ENTITY_COUNT);
+	ivory = asset_id_at("project://material/chess-ivory");
+	ebony = asset_id_at("project://material/chess-ebony");
+	assert(ivory != 0 && ebony != 0);
+	e = id_named("wQ-d1");
+	assert(w.material_ref[e] == ivory);
+
+	/* A reload: the same source evaluated again, as chess_init would. */
+	assert(script_eval(CHESS_RULES_SCM) == 0);
+
+	assert(asset_id_at("project://material/chess-ivory") == ivory);
+	assert(asset_id_at("project://material/chess-ebony") == ebony);
+	assert(w.material_ref[e] == ivory);
+	test_army_materials_defined();
+}
+
 int main(void)
 {
 	mem_init();
@@ -636,6 +782,9 @@ int main(void)
 	test_piece_meshes_defined();
 	test_scene_binds_piece_meshes();
 	test_reload_keeps_piece_bindings();
+	test_army_materials_defined();
+	test_scene_binds_army_materials();
+	test_reload_keeps_army_bindings();
 
 	printf("chess_test: ok\n");
 	return 0;

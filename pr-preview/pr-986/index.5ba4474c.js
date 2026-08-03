@@ -8143,10 +8143,8 @@ function checkIncomingModuleAPI() {
   ignoredModuleProp('wasmMemory');
   ignoredModuleProp('wasmBinary');
 }
-function krudd_signal_running() { if (typeof window.kruddSetRunning === 'function') window.kruddSetRunning(); }
 function krudd_signal_ready() { if (typeof window.kruddSetReady === 'function') window.kruddSetReady(); }
 function krudd_wants_webgpu() { try { return window.kruddWantsWebGPU() ? 1 : 0; } catch (e) { return 1; } }
-function krudd_build_editor(json) { if (typeof window.kruddBuildEditor === 'function') window.kruddBuildEditor(UTF8ToString(json)); }
 function krudd_boot_game(out,cap) { var name = (typeof window.kruddBootGame === 'function') ? window.kruddBootGame() : 'chess'; if (typeof name !== 'string') name = ""; stringToUTF8(name, out, cap); }
 function get_device_pixel_ratio() { return window.devicePixelRatio || 1.0; }
 function krudd_text_input_init() { if (Module.__kruddText) return; Module.__kruddText = { chars: "", keys: [], emitted: 0 }; var el = document.createElement("input"); el.type = "text"; el.autocapitalize = "off"; el.autocomplete = "off"; el.autocorrect = "off"; el.spellcheck = false; el.style.position = "absolute"; el.style.left = "-9999px"; el.style.top = "-9999px"; el.style.width = "1px"; el.style.height = "1px"; el.style.opacity = "0"; document.body.appendChild(el); Module.__kruddTextEl = el; function emitSuffix() { var v = el.value; var kt = Module.__kruddText; if (kt.emitted > v.length) kt.emitted = v.length; if (v.length > kt.emitted) { kt.chars += v.slice(kt.emitted); kt.emitted = v.length; } } el.addEventListener("compositionstart", function() { Module.__kruddText.emitted = 0; }); el.addEventListener("input", function(ev) { emitSuffix(); if (ev.isComposing) return; el.value = ""; Module.__kruddText.emitted = 0; }); el.addEventListener("compositionend", function() { emitSuffix(); el.value = ""; Module.__kruddText.emitted = 0; }); el.addEventListener("blur", function() { emitSuffix(); el.value = ""; Module.__kruddText.emitted = 0; }); var KEY_CODES = { "Backspace": 1, "Enter": 2, "Tab": 3, "Delete": 4, "ArrowLeft": 5, "ArrowRight": 6, "ArrowUp": 7, "ArrowDown": 8, "Home": 9, "End": 10, "Escape": 11 }; el.addEventListener("keydown", function(ev) { var code = KEY_CODES[ev.key]; if (code) { Module.__kruddText.keys.push(code); ev.preventDefault(); } }); }
@@ -8155,7 +8153,6 @@ function krudd_text_input_hide() { if (Module.__kruddTextEl) Module.__kruddTextE
 function krudd_text_input_drain_chars(buf,cap) { if (!Module.__kruddText || !Module.__kruddText.chars) return 0; var str = Module.__kruddText.chars; var bytes = lengthBytesUTF8(str); if (bytes >= cap) { var truncated = ""; var used = 0; for (var i = 0; i < str.length; i++) { var cp = str.codePointAt(i); var clen = cp > 0x7FF ? (cp > 0xFFFF ? 4 : 3) : (cp > 0x7F ? 2 : 1); if (used + clen >= cap) break; truncated += str[i]; if (cp > 0xFFFF) i++; used += clen; } str = truncated; } stringToUTF8(str, buf, cap); Module.__kruddText.chars = ""; return lengthBytesUTF8(str); }
 function krudd_text_input_pop_key() { if (!Module.__kruddText || !Module.__kruddText.keys.length) return 0; return Module.__kruddText.keys.shift(); }
 function krudd_is_touch_device() { return (('ontouchstart' in window) || navigator.maxTouchPoints > 0) ? 1 : 0; }
-function krudd_shell_editor_mode(on) { if (typeof window.kruddSetEditorMode === 'function') window.kruddSetEditorMode(!!on); }
 function game_launcher_add(name,idx) { var host = document.getElementById('launcher-games'); if (!host) return; var b = document.createElement('button'); b.className = 'launcher-btn'; b.textContent = UTF8ToString(name); b.onclick = function () { Module._krudd_load_game(idx); }; host.appendChild(b); }
 function game_launcher_hide() { var el = document.getElementById('launcher'); if (el) el.classList.add('hidden'); }
 function game_show_load_prompt(name) { if (typeof window.kruddShowLoadPrompt === 'function') window.kruddShowLoadPrompt(UTF8ToString(name)); }
@@ -8654,17 +8651,11 @@ var wasmImports = {
   /** @export */
   krudd_boot_game,
   /** @export */
-  krudd_build_editor,
-  /** @export */
   krudd_is_touch_device,
   /** @export */
   krudd_report_renderer,
   /** @export */
-  krudd_shell_editor_mode,
-  /** @export */
   krudd_signal_ready,
-  /** @export */
-  krudd_signal_running,
   /** @export */
   krudd_sp_attach,
   /** @export */

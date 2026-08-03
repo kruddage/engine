@@ -38,18 +38,16 @@ static const struct memory_api native_mem = {
 #endif
 
 /*
- * Editor mode (plugin_abi.c, main module): which half of kruddgui's GAME /
- * EDITOR switch is lit. The selection outline is editor feedback, so in game
- * mode it stands down in favour of the in-game path below — the picked-piece
- * outline (entity_api's get_outline), which is what a player wants to see.
- * Native builds host no games and no switch, so they always outline via the
- * editor selection path.
+ * Whose selection the outline pass follows. The web build hosts games and no
+ * editor, so it follows the game's own outline target (entity_api's
+ * get_outline) — the picked chess piece, which is what a player wants to see.
+ * The native harness hosts no game, so nothing ever sets that target there and
+ * it follows the scene selection (get_selected) instead.
  */
 #ifdef __EMSCRIPTEN__
-int krudd_editor_mode(void);
-#define EDITOR_CHROME() krudd_editor_mode()
+#define OUTLINE_FOLLOWS_SELECTION() 0
 #else
-#define EDITOR_CHROME() 1
+#define OUTLINE_FOLLOWS_SELECTION() 1
 #endif
 
 /*
@@ -2820,13 +2818,13 @@ static int outline_selected_entity(const struct world *w, uint32_t *out_id)
 	if (!g_scene)
 		return 0;
 	/*
-	 * In editor chrome the outline follows the editor selection; in-game
-	 * (chrome off) it follows the game's own outline target — the piece the
-	 * chess rules picked up, set through entity_api.set_outline — so the ring
-	 * shows in play, not just in the editor. Either source must still name a
-	 * live, drawable mesh to be worth the pass.
+	 * On the web the outline follows the game's own outline target — the
+	 * piece the chess rules picked up, set through entity_api.set_outline —
+	 * so the ring shows in play; natively it follows the scene selection.
+	 * Either source must still name a live, drawable mesh to be worth the
+	 * pass.
 	 */
-	if (EDITOR_CHROME()) {
+	if (OUTLINE_FOLLOWS_SELECTION()) {
 		if (!g_scene->get_selected)
 			return 0;
 		sel = g_scene->get_selected();
@@ -2926,11 +2924,11 @@ static void composite_pass(struct fg_pass_ctx *ctx, void *userdata)
 	ubo[0] = g_view_w > 0.0f ? OUTLINE_THICKNESS / g_view_w : 0.0f; /* texel.x */
 	ubo[1] = g_view_h > 0.0f ? OUTLINE_THICKNESS / g_view_h : 0.0f; /* texel.y */
 	/*
-	 * Editor selection outlines red; an in-game outline (a picked chess
-	 * piece, chrome off) uses a warm gold that reads on both the ivory and
-	 * the ebony pieces where a hard red would fight the dark set.
+	 * A scene selection outlines red; an in-game outline (a picked chess
+	 * piece) uses a warm gold that reads on both the ivory and the ebony
+	 * pieces where a hard red would fight the dark set.
 	 */
-	if (EDITOR_CHROME()) {
+	if (OUTLINE_FOLLOWS_SELECTION()) {
 		ubo[4] = 1.0f;              /* red   */
 	} else {
 		ubo[4] = 1.0f;             /* gold: */

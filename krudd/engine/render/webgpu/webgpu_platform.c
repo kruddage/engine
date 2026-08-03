@@ -21,9 +21,10 @@
 #include <emscripten/html5.h>
 
 /*
- * Tell the shell WebGPU went live so the header badge flips (kruddSetRenderer
- * from shell.html). Named distinctly from the WebGL backend's reporter — both
- * are compiled into the one WASM module, so a shared symbol would collide.
+ * Tell the shell WebGPU went live (kruddSetRenderer from shell.html, which
+ * routes it to the page's diagnostic channels). Named distinctly from the
+ * WebGL backend's reporter — both are compiled into the one WASM module, so a
+ * shared symbol would collide.
  */
 EM_JS(void, webgpu_js_announce_renderer, (void), {
 	if (typeof window.kruddSetRenderer === 'function')
@@ -31,11 +32,11 @@ EM_JS(void, webgpu_js_announce_renderer, (void), {
 })
 
 /*
- * Tell the shell the WebGPU boot dead-ended, so the badge stops reading
- * "booting…" and offers the WebGL switch instead. Without this a browser that
- * hands back no adapter leaves the page indistinguishable from a slow one —
- * and it stays that way, because the render cluster and the game only boot
- * once the device lands (finish_plugin_boot in engine.c).
+ * Tell the shell the WebGPU boot dead-ended, so it can put the reason on
+ * screen and point at ?renderer=webgl. Without this a browser that hands back
+ * no adapter leaves the page indistinguishable from a slow one — and it stays
+ * that way, because the render cluster and the game only boot once the device
+ * lands (finish_plugin_boot in engine.c).
  */
 EM_JS(void, webgpu_js_announce_failed, (const char *why), {
 	if (typeof window.kruddSetRendererFailed === 'function')

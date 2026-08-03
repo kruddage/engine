@@ -48,15 +48,6 @@ double get_device_pixel_ratio(void);	/* plugin_abi.c (main module) */
 int    krudd_is_touch_device(void);
 
 /*
- * Editor mode (plugin_abi.c, main module) — the state behind the GAME /
- * EDITOR switch the panel image draws at the bottom of the viewport. The flag
- * lives over there, not here, because the page's own chrome and the scene
- * renderer's outline read it too; kruddgui is only the surface that flips it.
- */
-void krudd_set_editor_mode(int on);
-int  krudd_editor_mode(void);
-
-/*
  * The web text-input bridge (plugin_abi.c, main module) — the hidden <input>
  * and its char/key queues. kruddgui owns it now that ImGui is gone: it creates
  * it at init (krudd_text_input_init) and drives show/hide/drain for its own
@@ -1334,25 +1325,6 @@ static s7_pointer sp_kgui_safe_insets(s7_scheme *sc, s7_pointer args)
 		       s7_make_real(sc, (s7_double)v[3]));
 }
 
-/*
- * (kgui-editor-mode) -> #t while the shell is in editor mode, #f in game
- * mode. Read every tick by the switch below rather than mirrored into a
- * Scheme variable: plugin_abi.c holds the one copy, so the switch can never
- * disagree with the page chrome or the outline colour about which mode is on.
- */
-static s7_pointer sp_kgui_editor_mode(s7_scheme *sc, s7_pointer args)
-{
-	(void)args;
-	return s7_make_boolean(sc, krudd_editor_mode() != 0);
-}
-
-/* (kgui-set-editor-mode on) -> enter editor mode when ON is true. */
-static s7_pointer sp_kgui_set_editor_mode(s7_scheme *sc, s7_pointer args)
-{
-	krudd_set_editor_mode(s7_boolean(sc, s7_car(args)));
-	return s7_nil(sc);
-}
-
 } /* extern "C" */
 
 /*
@@ -1425,11 +1397,6 @@ static void register_primitives(s7_scheme *sc)
 			   "(kgui-safe-insets) -> (top right bottom left) CSS px");
 	s7_define_function(sc, "kgui-play-sound", sp_kgui_play_sound, 1, 0,
 			   false, "(kgui-play-sound id) play sound asset id");
-	s7_define_function(sc, "kgui-editor-mode", sp_kgui_editor_mode, 0, 0,
-			   false, "(kgui-editor-mode) -> #t in editor mode");
-	s7_define_function(sc, "kgui-set-editor-mode", sp_kgui_set_editor_mode,
-			   1, 0, false,
-			   "(kgui-set-editor-mode on) enter editor mode if ON");
 }
 
 /*
@@ -1632,25 +1599,14 @@ static void kruddgui_tick(void)
 	}
 
 	/*
-	 * The GAME / EDITOR switch. Like the perf HUD below it draws every
-	 * tick in both modes — it is the only way back out of either one, so
-	 * suppressing it in a game's play view would strand the player there.
-	 * It owns its own input region (kgui-panel-begin), so the tap that
-	 * flips it never falls through to the board underneath.
+	 * The perf HUD is the one panel the host draws every tick, so a hitch
+	 * is visible in a game's play view (chess, ...). It owns its own input
+	 * region (kgui-panel-begin), so it traps its own small corner rather
+	 * than leaking a tap through to the game underneath.
 	 *
-	 * The editor's own panel set (kruddgui-draw) is still parked: the
+	 * The rest of the panel image (kruddgui-draw) is still parked: the
 	 * krudd-* accessors it reads went with kruddboard in #661 and have not
-	 * been rebuilt, so editor mode is the page's DOM chrome for now and
-	 * this is the switch that will drive both once they are back.
-	 */
-	call_scm_panel("kruddgui-modeswitch-draw");
-
-	/*
-	 * The perf HUD is not editor chrome: it draws every tick regardless of
-	 * krudd_editor_mode(), so a hitch is visible in a game's play view
-	 * (chess, ...) as well as the editor. It owns its own input region
-	 * (kgui-panel-begin), so it traps its own small corner rather than
-	 * leaking a tap through to the game underneath.
+	 * been rebuilt.
 	 */
 	call_scm_panel("kruddgui-perf-hud-draw");
 

@@ -942,7 +942,7 @@ static const struct gpu_api webgl_api = {
 
 #ifdef __EMSCRIPTEN__
 /*
- * Tell the shell which renderer went live, so the header badge can show it.
+ * Tell the shell which renderer went live, so the page can report it.
  * kruddSetRenderer is defined in shell.html; the typeof guard keeps this safe
  * if the shell changes. Each backend announces its own name from init — the
  * one whose plugin_entry the engine calls is the one that reports (a future

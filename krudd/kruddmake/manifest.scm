@@ -52,14 +52,28 @@
 ;;!   audio/    the mixer and its device backends.
 ;;!   ui/       the editor chrome: immediate-mode gui, viewport, kruddboard.
 ;;!   game/     host/ is the launcher registry and project/ the generic host
-;;!             that runs a game written as one (project ...) form; the rest
-;;!             are games that register with it.
+;;!             that runs a game written as one (project ...) form. No game
+;;!             lives here any more — see projects/ below.
 ;;!   shell/    the host the engine runs inside: web/, the browser page (PWA
 ;;!             manifest, service worker, icons, the emscripten shell
-;;!             template). Last in the order on purpose — a shell may reach for
-;;!             anything, and nothing may reach for a shell. web/ builds no
-;;!             targets — its assets are copied by the generator — but it is
-;;!             listed, for the shell template it configures.
+;;!             template). Last of the engine tiers on purpose — a shell may
+;;!             reach for anything, and nothing may reach for a shell. web/
+;;!             builds no targets — its assets are copied by the generator —
+;;!             but it is listed, for the shell template it configures.
+;;!   projects/ the games. NOT an engine tier and not under krudd/engine at
+;;!             all: these entries resolve against the repository root, which
+;;!             is what the `projects/` prefix means to rz-spec-path. A project
+;;!             is a single .scm the engine loads at runtime (#976), so it is
+;;!             content the build stages, not a module the engine links —
+;;!             which is why it sits at the top level next to krudd/ rather
+;;!             than inside it. They are listed here for two reasons only: one
+;;!             of them claims the (staged-project ...) slot, and each declares
+;;!             a native test that drives its rules. Last in the order because
+;;!             a project may reach for anything and nothing may reach for a
+;;!             project; nothing here declares a library, so no tier edge can
+;;!             point at one in any case.
+
+
 
 ("abi"
  "base/log"
@@ -83,5 +97,7 @@
  "ui/viewport"
  "game/host"
  "game/project"
- "game/chess"
- "shell/web")
+ "shell/web"
+ "projects/chess"
+ "projects/training"
+ "projects/ducks")

@@ -85,20 +85,23 @@ export const ENGINE_ARTIFACTS = [
 	},
 ];
 
-/* Runtime files the page fetches by path rather than linking in: the project
- * sources this build ships staged (assets/*.scm) and the index naming them
+/* Runtime files the page fetches by path rather than linking in: every project
+ * source this build ships (assets/*.scm) and the index naming them
  * (assets/projects.json), which is how the shell's Load Project control offers
  * a project without the page carrying a filename. Copied wholesale when the
- * build produced any; absent from a build that staged nothing, which is not an
+ * build produced any; absent from a build that shipped nothing, which is not an
  * error. */
 export const ENGINE_ASSET_DIR = "assets";
 
 /* The index inside ENGINE_ASSET_DIR: a JSON array of the project filenames
- * beside it. Written by the build from the (staged-project ...) declarations in
- * the C tree (krudd/kruddmake/ninja.scm) and read by the shell, which cannot
- * list a directory over HTTP and must not carry a project's filename. Named
+ * beside it. Written by the build from the (project-source ...) /
+ * (staged-project ...) declarations in the C tree (krudd/kruddmake/ninja.scm)
+ * and read by the shell, which cannot list a directory over HTTP and must not
+ * carry a project's filename. Every project the build ships is listed, not only
+ * the one the image boots into — being embedded is what makes a project the
+ * boot default and says nothing about whether the page can reach it. Named
  * here because it is a fact about the published layout, and the staging step
- * checks the staged directory against it. */
+ * checks the shipped directory against it. */
 export const ENGINE_PROJECT_INDEX = "projects.json";
 
 /* The C entry points the WASM module exports to JS. Mirrors -sEXPORTED_FUNCTIONS

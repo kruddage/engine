@@ -19,9 +19,7 @@
     read))
 
 (define (load-spec dir)
-  (call-with-input-file
-      (string-append krudd-root "/krudd/engine/" dir "/build.scm")
-    read))
+  (call-with-input-file (rz-spec-path krudd-root dir) read))
 
 (define manifest
   (map (lambda (dir) (cons dir (load-spec dir))) owned-directories))

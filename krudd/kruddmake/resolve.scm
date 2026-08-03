@@ -22,6 +22,37 @@
          (car clauses))
         (else (rz-clause head (cdr clauses)))))
 
+;;! TWO SOURCE ROOTS, not one. An engine module's directory is relative to
+;;! `krudd/engine`; a project's is relative to the repository root, because a
+;;! project is not an engine module. #976 made a project a single `.scm` the
+;;! engine loads at runtime, and the last thing still saying otherwise was where
+;;! chess sat on disk — inside the engine tree, in the manifest between `ui/`
+;;! and `shell/`, as though it were a tier. `projects/` at the top level is that
+;;! sentence written into the layout, where it is legible from `ls` rather than
+;;! only from this file.
+;;!
+;;! One prefix distinguishes the two, and it is tested against the RESOLVED PATH
+;;! rather than only against the manifest directory. That is what lets a
+;;! project's own sources take the project root while the `(root …)` paths it
+;;! reaches back into the engine for keep taking the engine's — a project links
+;;! engine libraries and compiles a few engine sources into its test, and those
+;;! are engine-relative exactly as they are from anywhere else. Everything
+;;! downstream — include flags, object paths, codegen inputs, the regen edge —
+;;! derives from this one predicate rather than carrying its own idea of where a
+;;! file lives.
+(define rz-project-prefix "projects/")
+
+(define (rz-project-path? p) (rz-prefix? p rz-project-prefix))
+
+;;! The on-disk `build.scm` a manifest entry names. Both entry points into the
+;;! generator — `kruddmake/build.scm` and `resolve_test.scm` — read their specs
+;;! through here, so the two cannot come to disagree about where a spec lives
+;;! the way they would if each spelled the root out for itself.
+(define (rz-spec-path krudd-root dir)
+  (string-append krudd-root
+                 (if (rz-project-path? dir) "" "/krudd/engine")
+                 "/" dir "/build.scm"))
+
 (define rz-system-libs (list "m"))
 
 (define (rz-system-lib? name) (member name rz-system-libs))
@@ -103,31 +134,49 @@
 ;;!   (embed-scheme-module IN HEADER SHIM)   ABI header + s7 image shim
 ;;!   (emit-math-module IN OUT)              (define-c-fn) bodies lowered to C
 ;;!   (emit-interface-header IN OUT)         the backend interface header
-;;!   (staged-project IN)                    the project this image ships
+;;!   (project-source IN)                    a project this build ships
+;;!   (staged-project IN)                    the project it also boots into
 ;;!
 ;;! IN resolves against the declaring module like a source path; every output is
 ;;! named relative to `generated/`. The number paired with each kind below is how
 ;;! many arguments follow IN, which is what makes a typo'd declaration an arity
 ;;! error rather than a silently different one.
 ;;!
-;;! `staged-project` is the one that takes none, and that is the point of it. It
-;;! names a `.scm` twice over — embedded into the image under the fixed symbol
-;;! below (what core/engine.c evaluates at boot, so the page opens on a playable
-;;! scene with no network round trip) and copied into `assets/` beside
-;;! index.html (what the shell's Load Project control offers, so the staged
-;;! project is reachable by the same door a file off the user's disk comes in
-;;! by). Two destinations, one declaration, one file: the served copy cannot
-;;! drift from the embedded one because there is only ever one source. The
-;;! header name being fixed rather than per-declaration is what makes "exactly
-;;! one directory may claim the staged slot" a build error — a second
-;;! declaration writes the same generated/ file, which resolve-check-codegen
-;;! already refuses.
+;;! --- shipping a project, versus booting into one ---------------------------
+;;!
+;;! The last two are the pair, and the distinction between them is the whole of
+;;! what a project's build.scm has to decide.
+;;!
+;;! `project-source` SHIPS a project: the `.scm` is copied into `assets/` beside
+;;! index.html and named in `assets/projects.json`, which is the list the shell's
+;;! Load Project control offers. It generates nothing — it is a copy edge and an
+;;! index entry, which is why its output list is empty. Any number of directories
+;;! may declare one, and every project that wants to be reachable from the page
+;;! MUST, because the page cannot list a directory over HTTP and must not carry a
+;;! filename: what the build wrote down is the only way it learns what exists.
+;;!
+;;! `staged-project` is that plus one thing: the source is also embedded into the
+;;! image under the fixed symbol below, which core/engine.c evaluates at boot so
+;;! the page opens on a playable scene with no network round trip. It implies
+;;! project-source — a project the image boots into is self-evidently one the
+;;! build ships — so a directory declares one or the other, never both.
+;;!
+;;! Exactly one directory may be the staged one, and that is enforced rather than
+;;! remembered: the header name is fixed rather than per-declaration, so a second
+;;! `staged-project` writes the same generated/ file, which resolve-check-codegen
+;;! already refuses. Nothing limits how many are shipped.
+;;!
+;;! Both are named for what the source IS to the build rather than for whichever
+;;! game claimed the slot, since the C that evaluates it must not learn which
+;;! project it got (#976). And in both cases the served copy cannot drift from
+;;! whatever else is made of the file, because there is only ever one source.
 (define rz-codegen-kinds
   '((configure-file . 1)
     (embed . 2)
     (embed-scheme-module . 2)
     (emit-math-module . 1)
     (emit-interface-header . 1)
+    (project-source . 0)
     (staged-project . 0)))
 
 ;;! The generated header and C symbol a (staged-project ...) embeds under. Named
@@ -158,11 +207,15 @@
 
 ;;! The generated/ files a declaration writes. For `embed` the second argument
 ;;! is a C symbol rather than a file, so it is not an output; `staged-project`
-;;! carries no arguments at all and writes the one fixed header above.
+;;! carries no arguments at all and writes the one fixed header above; and
+;;! `project-source` writes nothing — it is a copy edge and an index entry, so
+;;! it has no generated/ output to collide with anything, which is exactly why
+;;! any number of directories may declare one.
 (define (rz-codegen-outputs decl)
   (case (rz-codegen-kind decl)
     ((embed) (list (car (rz-codegen-args decl))))
     ((staged-project) (list rz-staged-project-header))
+    ((project-source) '())
     (else (rz-codegen-args decl))))
 
 (define (rz-spec-codegen dir spec)
@@ -182,10 +235,20 @@
          (map (lambda (pair) (rz-spec-codegen (car pair) (cdr pair)))
               manifest)))
 
-;;! The (staged-project ...) declarations, in manifest order. Read off the same
-;;! list every other consumer reads, so the sources copied into `assets/` are by
-;;! construction the sources embedded into the image — the whole reason the two
-;;! are one declaration.
+;;! Every project this build SHIPS, in manifest order — the sources copied into
+;;! `assets/` and named in `assets/projects.json`. Both kinds count: a staged
+;;! project is a shipped one that is additionally embedded, so a page that
+;;! offered only the staged one would be hiding the projects the build had
+;;! already put beside it. Read off the same declaration list every other
+;;! consumer reads, so the copies and the index cannot disagree about what
+;;! shipped.
+(define (resolve-shipped-projects manifest)
+  (rz-filter (lambda (decl)
+               (memq (rz-codegen-kind decl) '(project-source staged-project)))
+             (resolve-codegen manifest)))
+
+;;! The (staged-project ...) declaration — the one project the image also boots
+;;! into. A subset of the shipped ones, and the only kind that embeds.
 (define (resolve-staged-projects manifest)
   (rz-filter (lambda (decl) (eq? (rz-codegen-kind decl) 'staged-project))
              (resolve-codegen manifest)))

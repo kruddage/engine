@@ -20,10 +20,27 @@
           ((char=? (string-ref s i) #\$) #t)
           (else (loop (+ i 1))))))
 
+;;! Which root a path hangs off, as the ninja variable to prefix it with. The
+;;! two are `$srcroot` (the engine tree) and `$reporoot` (the repository root,
+;;! where `projects/` lives) — see rz-project-path? for why there are two. A
+;;! project path keeps its `projects/` segment rather than having it stripped
+;;! into the variable, so the emitted `$reporoot/projects/ducks/ducks.scm` reads
+;;! as the path it actually is on disk.
+(define (ninja-root-var path)
+  (if (rz-project-path? path) "$reporoot/" "$srcroot/"))
+
 (define (ninja-ref path)
   (if (ninja-has-dollar? path)
       (ninja-resolve-var path)
-      (string-append "$srcroot/" path)))
+      (string-append (ninja-root-var path) path)))
+
+;;! The same choice for a real filesystem path — one the generator itself opens
+;;! at generation time (a codegen input, a spec on the regen edge) rather than
+;;! one ninja expands later.
+(define (ninja-source-path srcroot path)
+  (if (rz-project-path? path)
+      (string-append (krudd-repo-root) "/" path)
+      (string-append srcroot "/" path)))
 
 (define (ninja-include-flags dirs)
   (ninja-join " " (map (lambda (d) (string-append "-I" (ninja-ref d)))
@@ -35,7 +52,7 @@
 (define (ninja-wasm-ref path)
   (if (ninja-has-dollar? path)
       (ninja-resolve-var path)
-      (string-append "$srcroot/" path)))
+      (string-append (ninja-root-var path) path)))
 
 (define (ninja-wasm-include-flags dirs)
   (ninja-join " " (map (lambda (d) (string-append "-I" (ninja-wasm-ref d)))
@@ -191,6 +208,10 @@
      "# Regenerate: see krudd/kruddmake/run-tests.sh"
      ""
      "ninja_required_version = 1.10"
+     ;;! The repository root, and the engine tree inside it. Both are here
+     ;;! because the build reads from two roots: engine modules from $srcroot,
+     ;;! projects from $reporoot/projects (rz-project-path?).
+     (string-append "reporoot = " (krudd-repo-root))
      (string-append "srcroot = " srcroot)
      (string-append "cc = " native-cc)
      (string-append "cxx = " native-cxx)
@@ -420,22 +441,23 @@
 
 (define ninja-project-index "projects.json")
 
-;;! Copy every (staged-project ...) source into assets/ under its own name.
-;;! This is the other half of the declaration whose embed ninja-run-codegen
-;;! handles: the same file, reachable at runtime by fetch instead of compiled
-;;! into the module, so the shell's Load Project control can open the project
-;;! this build ships by the same door a file off the user's disk comes in by.
+;;! Copy every SHIPPED project's source into assets/ under its own name —
+;;! reachable at runtime by fetch, so the shell's Load Project control opens one
+;;! by the same door a file off the user's disk comes in by. Every project the
+;;! build ships lands here, not only the staged one: being embedded into the
+;;! image is what makes a project the one booted into, and has nothing to do
+;;! with whether the page can reach it.
 (define (ninja-emit-project-assets manifest)
   (for-each
    (lambda (decl)
      (let* ((src (rz-codegen-source decl))
             (out (string-append ninja-assets-dir "/" (krudd-basename src))))
-       (ninja-emit (string-append "build " out ": copy $srcroot/" src))
+       (ninja-emit (string-append "build " out ": copy " (ninja-ref src)))
        (ninja-wasm! out)))
-   (resolve-staged-projects manifest))
+   (resolve-shipped-projects manifest))
   (ninja-emit ""))
 
-;;! Write assets/projects.json: the staged project filenames, as a JSON array.
+;;! Write assets/projects.json: the shipped project filenames, as a JSON array.
 ;;!
 ;;! The shell cannot list a directory over HTTP, and it must not be told a
 ;;! filename either — a page carrying a project's filename is a generic shell
@@ -449,7 +471,7 @@
   (let ((dir   (string-append builddir "/" ninja-assets-dir))
         (names (map (lambda (decl)
                       (krudd-basename (rz-codegen-source decl)))
-                    (resolve-staged-projects manifest))))
+                    (resolve-shipped-projects manifest))))
     (system (string-append "mkdir -p \"" dir "\""))
     (call-with-output-file (string-append dir "/" ninja-project-index)
       (lambda (port)
@@ -463,7 +485,7 @@
          port)))))
 
 (define (ninja-codegen-input srcroot decl)
-  (string-append srcroot "/" (rz-codegen-source decl)))
+  (ninja-source-path srcroot (rz-codegen-source decl)))
 
 ;;! Dispatch one declaration onto its introspect.scm generator. Outputs are
 ;;! named relative to `generated/` in the declaration, since that is the one
@@ -482,6 +504,10 @@
       ((staged-project)
        (krudd-embed-file in (out rz-staged-project-header)
                          rz-staged-project-symbol))
+      ;;! Generates nothing: shipping a project is the copy edge
+      ;;! ninja-emit-project-assets renders plus a name in the index, both of
+      ;;! which are driven off the declaration rather than produced here.
+      ((project-source) #t)
       ((embed-scheme-module)
        (krudd-embed-scheme-module in (out (car args)) (out (cadr args))))
       ((emit-math-module) (krudd-emit-math-module in (out (car args))))
@@ -512,7 +538,7 @@
         (list "ninja.scm" "introspect.scm" "resolve.scm"
               "build.scm" "manifest.scm"))
    (map (lambda (pair)
-          (string-append srcroot "/" (car pair) "/build.scm"))
+          (ninja-source-path srcroot (string-append (car pair) "/build.scm")))
         manifest)))
 
 ;;! Emit the generator edge. `regen-cmd` is the exact shell command that

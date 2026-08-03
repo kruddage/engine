@@ -11,12 +11,17 @@
 ;;! to remove) from putting a game's name back into generic C. Exactly one
 ;;! directory may claim it: a second declaration writes the same generated
 ;;! header, which is a build error (resolve-check-codegen), so the staged slot
-;;! cannot silently be taken twice.
+;;! cannot silently be taken twice. Chess is the sibling in projects/ that holds
+;;! it — it is the one with a finished game behind it, and the boot path needs a
+;;! project that plays.
 ;;!
-;;! The same declaration also copies this file into assets/ next to index.html,
-;;! which is what #984's Load Project control offers — so the staged project is
+;;! The same declaration also ships this file the way a (project-source ...)
+;;! does — copied into assets/ next to index.html and named in projects.json,
+;;! which is what #984's Load Project control offers. So the staged project is
 ;;! opened through exactly the path a user's own .scm takes, and the served copy
-;;! cannot drift from the embedded one because there is only one file.
+;;! cannot drift from the embedded one because there is only one file. Being
+;;! staged is not what makes a project reachable from the page; shipping it is,
+;;! and the siblings here do that without claiming this slot.
 ((staged-project "chess.scm")
 
  (native-only

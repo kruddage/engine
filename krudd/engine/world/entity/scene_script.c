@@ -8,11 +8,11 @@
  * scene_script_build (set before the s7_call, cleared after), mirroring the
  * g_w discipline entity_script.c uses for its per-tick primitives.
  */
-#include "scene_script.h"
+#include <entity/scene_script.h>
 
-#include "world.h"
-#include "asset_api.h"
-#include "script.h"
+#include <entity/world.h>
+#include <abi/asset_api.h>
+#include <core/script.h>
 
 #include "s7.h"
 

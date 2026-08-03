@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#include "math_types.h"
+#include <math/math_types.h>
 
 #include <math.h>
 #include <string.h>

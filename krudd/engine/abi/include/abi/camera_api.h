@@ -2,7 +2,7 @@
 #ifndef CAMERA_API_H
 #define CAMERA_API_H
 
-#include "math_types.h"
+#include <math/math_types.h>
 
 /*
  * The "camera" subsystem api — read the live scene camera and keep its

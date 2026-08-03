@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#include "edit.h"
-#include "edit_api.h"
-#include "subsystem_manager.h"
+#include <edit/edit.h>
+#include <abi/edit_api.h>
+#include <core/subsystem_manager.h>
 
 #include <stddef.h>
 #include <stdint.h>

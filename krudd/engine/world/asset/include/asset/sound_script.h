@@ -2,8 +2,8 @@
 #ifndef SOUND_SCRIPT_H
 #define SOUND_SCRIPT_H
 
-#include "sound.h"
-#include "memory_api.h"
+#include <asset/sound.h>
+#include <abi/memory_api.h>
 
 #include <stdint.h>
 

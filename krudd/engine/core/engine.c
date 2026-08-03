@@ -1,14 +1,14 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#include "engine.h"
-#include "subsystem_manager.h"
+#include <core/engine.h>
+#include <core/subsystem_manager.h>
 
-#include "game.h"
-#include "log.h"
-#include "memory.h"
-#include "memory_api.h"
+#include <host/game.h>
+#include <log/log.h>
+#include <memory/memory.h>
+#include <abi/memory_api.h>
 #include "renderer.h"
-#include "script.h"
-#include "stats_api.h"
+#include <core/script.h>
+#include <abi/stats_api.h>
 #include "version.h"
 
 #include <stddef.h>

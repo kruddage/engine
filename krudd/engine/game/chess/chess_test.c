@@ -12,11 +12,11 @@
  * checks the two-click select→move flow: a slide, a capture, re-picking, a
  * deselect, and turn alternation. No GPU or browser is needed.
  */
-#include "world.h"
-#include "scene_script.h"
+#include <entity/world.h>
+#include <entity/scene_script.h>
 
-#include "script.h"
-#include "log.h"
+#include <core/script.h>
+#include <log/log.h>
 
 #include "chess_scene_scm.h"
 #include "chess_rules_scm.h"

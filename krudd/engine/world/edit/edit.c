@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#include "edit.h"
+#include <edit/edit.h>
 
 #include <stddef.h>
 #include <string.h>

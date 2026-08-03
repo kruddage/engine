@@ -6,12 +6,12 @@
  * check the returned mesh_blob satisfies the same geometric invariants
  * primitive_test.c checks for the four built-in primitives.
  */
-#include "mesh_script.h"
-#include "builtin_mesh_scripts.h"
+#include <asset/mesh_script.h>
+#include <asset/builtin_mesh_scripts.h>
 
-#include "script.h"
-#include "log.h"
-#include "memory.h"
+#include <core/script.h>
+#include <log/log.h>
+#include <memory/memory.h>
 
 #include <assert.h>
 #include <math.h>

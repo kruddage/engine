@@ -1,10 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "asset_edit.h"
 #include "asset.h"
-#include "edit.h"
-#include "log.h"
-#include "memory.h"
-#include "memory_api.h"
+#include <edit/edit.h>
+#include <log/log.h>
+#include <memory/memory.h>
+#include <abi/memory_api.h>
 
 #include <assert.h>
 #include <stdint.h>

@@ -10,7 +10,7 @@
    ;;! is reached through the registry it registers with rather than by
    ;;! including anything from here. What is listed is the re-export of what
    ;;! the plugin's own signatures are written in.
-   (public (root "abi") (root "world/entity/include") (root "base/math/include") (root "core/include") (root "game/host/include"))
+   (public (root "abi/include") (root "world/entity/include") (root "base/math/include") (root "core/include") (root "game/host/include"))
    (private (raw "${generated}"))
    (link "subsystem_manager" "script" "game"))
  (native-only
@@ -18,7 +18,7 @@
               (sources "chess_test.c"
                        (root "world/entity/scene_script.c")
                        (root "world/entity/entity.c"))
-              (private "." (root "abi") (root "world/entity/include") (root "base/math/include")
+              (private "." (root "abi/include") (root "world/entity/include") (root "base/math/include")
                        (root "world/entity")
                        (root "core/include")
                        (root "base/memory/include")

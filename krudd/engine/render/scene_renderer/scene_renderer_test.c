@@ -1,16 +1,16 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "renderer.h"
-#include "renderer_null.h"
-#include "fg.h"
-#include "entity_api.h"
-#include "camera_api.h"
-#include "asset_api.h"
-#include "mesh.h"
-#include "builtin_mesh_scripts.h"
-#include "subsystem_manager.h"
-#include "memory.h"
-#include "script.h"
-#include "world.h"
+#include <null/renderer_null.h>
+#include <frame_graph/fg.h>
+#include <abi/entity_api.h>
+#include <abi/camera_api.h>
+#include <abi/asset_api.h>
+#include <asset/mesh.h>
+#include <asset/builtin_mesh_scripts.h>
+#include <core/subsystem_manager.h>
+#include <memory/memory.h>
+#include <core/script.h>
+#include <entity/world.h>
 
 #include <assert.h>
 #include <math.h>

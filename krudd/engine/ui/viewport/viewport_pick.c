@@ -15,12 +15,12 @@
  */
 #include "viewport_pick.h"
 
-#include "world.h"
-#include "asset_api.h"
-#include "memory_api.h"
-#include "mesh.h"
-#include "mesh_script.h"
-#include "math_types.h"
+#include <entity/world.h>
+#include <abi/asset_api.h>
+#include <abi/memory_api.h>
+#include <asset/mesh.h>
+#include <asset/mesh_script.h>
+#include <math/math_types.h>
 
 #include <float.h>
 

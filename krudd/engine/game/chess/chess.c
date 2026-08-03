@@ -13,11 +13,11 @@
  * This slice is free movement + capture + turn alternation; full legality (check,
  * castling, en passant, promotion) is a later slice layered on the same plumbing.
  */
-#include "entity_api.h"
-#include "subsystem_manager.h"
-#include "game.h"
-#include "script.h"
-#include "audio_api.h"
+#include <abi/entity_api.h>
+#include <core/subsystem_manager.h>
+#include <host/game.h>
+#include <core/script.h>
+#include <abi/audio_api.h>
 
 #include "chess_scene_scm.h"
 #include "chess_rules_scm.h"

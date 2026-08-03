@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#include "world.h"
-#include "memory_api.h"
+#include <entity/world.h>
+#include <abi/memory_api.h>
 
 #include <stddef.h>
 #include <stdint.h>

@@ -2,7 +2,7 @@
 #ifndef SCENE_H
 #define SCENE_H
 
-#include "math_types.h"
+#include <math/math_types.h>
 
 #include <stdint.h>
 

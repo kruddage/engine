@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#include "fg.h"
+#include <frame_graph/fg.h>
 #include "renderer.h"
-#include "renderer_null.h"
-#include "subsystem_manager.h"
+#include <null/renderer_null.h>
+#include <core/subsystem_manager.h>
 
 #include <assert.h>
 #include <stddef.h>

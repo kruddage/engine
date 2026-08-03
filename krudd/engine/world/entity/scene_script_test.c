@@ -7,13 +7,13 @@
  * mesh/material/script bindings the form declared, and that the resolver turned
  * catalog paths into the right stable ids.
  */
-#include "world.h"
-#include "scene.h"
-#include "asset_api.h"
-#include "scene_script.h"
+#include <entity/world.h>
+#include <entity/scene.h>
+#include <abi/asset_api.h>
+#include <entity/scene_script.h>
 
-#include "script.h"
-#include "log.h"
+#include <core/script.h>
+#include <log/log.h>
 
 #include <assert.h>
 #include <math.h>

@@ -17,7 +17,7 @@
  * No browser, no GPU — just the shared s7 image, so a broken walk or a
  * malformed escape fails here long before it reaches a page.
  */
-#include "script.h"
+#include <core/script.h>
 
 #include "s7.h"
 

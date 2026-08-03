@@ -11,17 +11,17 @@
  */
 #include "viewport_pick.h"
 
-#include "world.h"
-#include "asset_api.h"
-#include "camera.h"
-#include "math_types.h"
-#include "mesh.h"
-#include "builtin_mesh_scripts.h"
+#include <entity/world.h>
+#include <abi/asset_api.h>
+#include <math/camera.h>
+#include <math/math_types.h>
+#include <asset/mesh.h>
+#include <asset/builtin_mesh_scripts.h>
 
-#include "script.h"
-#include "log.h"
-#include "memory.h"
-#include "memory_api.h"
+#include <core/script.h>
+#include <log/log.h>
+#include <memory/memory.h>
+#include <abi/memory_api.h>
 
 #include <assert.h>
 #include <stdint.h>

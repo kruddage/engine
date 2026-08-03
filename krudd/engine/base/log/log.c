@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#include "log.h"
+#include <log/log.h>
 #include "ring_buf.h"
 
 #include <stdarg.h>

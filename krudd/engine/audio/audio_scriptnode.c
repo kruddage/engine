@@ -22,17 +22,17 @@
  * mixer_test.c / audio_core_test.c.
  */
 #include "audio_core.h"
-#include "audio_api.h"
+#include <abi/audio_api.h>
 
-#include "asset_api.h"
-#include "log_api.h"
-#include "memory_api.h"
-#include "subsystem.h"
-#include "subsystem_manager.h"
+#include <abi/asset_api.h>
+#include <abi/log_api.h>
+#include <abi/memory_api.h>
+#include <core/subsystem.h>
+#include <core/subsystem_manager.h>
 
 #ifdef __EMSCRIPTEN__
 
-#include "sound_script.h" /* sound_script_generate */
+#include <asset/sound_script.h> /* sound_script_generate */
 
 #include <emscripten/emscripten.h>
 #include <emscripten/html5.h>

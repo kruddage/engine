@@ -9,7 +9,7 @@
 ((wasm-only
   (library "viewport"
     (sources "viewport.c" "viewport_pick.c")
-    (private "." (root "abi") (root "world/entity/include") (root "base/math/include") (root "core/include") (root "world/asset/include")
+    (private "." (root "abi/include") (root "world/entity/include") (root "base/math/include") (root "core/include") (root "world/asset/include")
              (raw "${generated}"))
     (link "mesh_script" "script" "log" "memory"
           "subsystem" "subsystem_manager")))
@@ -23,7 +23,7 @@
                        (root "world/entity/entity.c")
                        (root "base/math/math.c") (root "base/math/camera.c")
                        (raw "${generated}/math_gen.c"))
-              (private "." (root "abi") (root "world/entity/include") (root "base/math/include") (root "core/include")
+              (private "." (root "abi/include") (root "world/entity/include") (root "base/math/include") (root "core/include")
                        (root "base/memory/include") (root "world/asset/include")
                        (raw "${generated}") (raw "../third_party"))
               (link "mesh_script" "script" "memory" "log" "m"))

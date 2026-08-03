@@ -2,8 +2,8 @@
 #ifndef SUBSYSTEM_MANAGER_H
 #define SUBSYSTEM_MANAGER_H
 
-#include "subsystem.h"
-#include "async_subsystem.h"
+#include <core/subsystem.h>
+#include <core/async_subsystem.h>
 #include <stdint.h>
 
 #define SUBSYSTEM_MANAGER_MAX_DYNAMIC    16

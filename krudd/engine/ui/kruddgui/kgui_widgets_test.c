@@ -15,7 +15,7 @@
  * one-picker-open discipline, and the fold's independent open state — leaving
  * pixel layout to browser verification.
  */
-#include "script.h"
+#include <core/script.h>
 
 #include "s7.h"
 #include "kruddgui_scm.h"

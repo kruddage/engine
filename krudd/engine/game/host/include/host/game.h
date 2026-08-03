@@ -40,11 +40,24 @@ int  game_find(const char *name);
 void game_load(int index);
 
 /*
- * Open the game named NAME as the boot default, exactly as a launcher click
- * would: load it and (in the browser) dismiss the launcher overlay. NULL, "",
- * or an unregistered name is a no-op that leaves the launcher up, so ?game=none
- * is how a page opts back into the "choose a scene" menu. Returns the loaded
- * index, or -1.
+ * Open the game at INDEX as the boot default, exactly as a launcher click
+ * would: load it and (in the browser) dismiss the launcher overlay and show the
+ * "load project" splash. An out-of-range index (including the -1 a failed
+ * registration hands back) is a no-op that leaves the launcher up. Returns the
+ * loaded index, or -1.
+ *
+ * This is the by-slot half of the pair below, and it exists because a boot
+ * default is not always a name: the engine's own default is whichever project
+ * the build staged, which registered itself moments earlier and reported the
+ * slot it took. Resolving that back through a name would mean core knowing one.
+ */
+int  game_boot_index(int index);
+
+/*
+ * Open the game named NAME as the boot default — game_boot_index against
+ * game_find. NULL, "", or an unregistered name is a no-op that leaves the
+ * launcher up, so ?game=none is how a page opts back into the "choose a scene"
+ * menu. Returns the loaded index, or -1.
  */
 int  game_boot_default(const char *name);
 
@@ -55,6 +68,12 @@ int  game_boot_default(const char *name);
  * game whose tick reaches into its own rules must gate on
  * game_active_index() == <its own registered index> first — otherwise it
  * fires against whatever scene happens to be loaded, not just its own.
+ *
+ * game_load sets this BEFORE running the load callback, so a callback may read
+ * it to learn which slot it was loaded through. That is what lets one callback
+ * serve several entries — a host that registers a slot per thing it is handed
+ * (game/project) registers one trampoline and works out which entry fired from
+ * here, rather than minting a callback per slot.
  */
 int  game_active_index(void);
 

@@ -1,9 +1,13 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
-;;! The three asset script sources, embedded into the s7 image: each is the
-;;! source-of-truth its `*_script.c` bridge below evaluates to bake a blob.
+;;! The four asset script sources, embedded into the s7 image. Three are the
+;;! source-of-truth their `*_script.c` bridge below evaluates to bake a blob;
+;;! material_script.scm has no bridge here because a material is packed once at
+;;! registration (world/entity/scene_script.c's material-define!) rather than
+;;! baked on demand, so its host side is core/script.c's marshaller alone.
 ((embed "mesh_script.scm" "mesh_script_scm.h" "MESH_SCRIPT_SCM")
  (embed "texture_script.scm" "texture_script_scm.h" "TEXTURE_SCRIPT_SCM")
  (embed "sound_script.scm" "sound_script_scm.h" "SOUND_SCRIPT_SCM")
+ (embed "material_script.scm" "material_script_scm.h" "MATERIAL_SCRIPT_SCM")
 
  (library "asset_plugin"
    (sources "asset_plugin.c" "asset_edit.c")

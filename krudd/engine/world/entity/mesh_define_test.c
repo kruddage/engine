@@ -143,7 +143,7 @@ static const char *PROJECT_SRC =
 	"(define probe-mesh-id"
 	"  (mesh-define! \"project://mesh/probe\" probe-mesh-src))";
 
-/* The (scene ...) form that binds it, exactly as chess's scene.scm does. */
+/* The (scene ...) form that binds it, exactly as a project's scene clause. */
 static const char *SCENE_SRC =
 	"(scene probe"
 	"  (entity (name \"Tri\") (at 1 2 3)"

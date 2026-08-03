@@ -11,9 +11,9 @@
  *      the scene — the "fishbowl".
  *   2. Turn a click on the bare viewport into an entity pick (raycast the
  *      pointer against entity meshes, hand the hit to entity_api's
- *      set_selected). The built-in games read the selection edge each tick:
- *      tic-tac-toe places on the picked cell, chess picks up and moves the
- *      picked piece. With no pick, no click ever reaches a game.
+ *      set_selected). A loaded game reads the selection edge each tick — it
+ *      is how a click becomes a move. With no pick, no click ever reaches a
+ *      game.
  *
  * Both were the game-facing half of the editor overlay that lived in the
  * removed kruddboard.cpp (#661): its draw_viewport_tools synced the aspect and

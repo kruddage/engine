@@ -12,10 +12,11 @@
  * Save and restore rather than set and clear, because a primitive may build a
  * scene from inside a call that is already bound.
  *
- * Also here: script-define! and mesh-define!, the authoring twins of
- * scene-script! and scene-mesh!. A scene binds a script or a mesh by catalog
- * path; these are how a project puts one at a path in the first place, so it
- * need not depend on the engine having seeded it.
+ * Also here: script-define!, mesh-define! and material-define!, the authoring
+ * twins of scene-script!, scene-mesh! and scene-material!. A scene binds a
+ * script, a mesh or a material by catalog path; these are how a project puts one
+ * at a path in the first place, so it need not depend on the engine having
+ * seeded it.
  */
 #include <entity/scene_script.h>
 
@@ -28,6 +29,7 @@
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #define SCENE_SCRIPT_PI 3.14159265358979323846
@@ -57,6 +59,25 @@ static const struct asset_mut_api *g_catalog_mut;
 
 /* Most params one defined asset reports, matching entity_script.c. */
 #define SCENE_SCRIPT_MAX_PARAMS 32
+
+/* Longest catalog path material-define! reads out of a (shader ...) clause. */
+#define SCENE_SCRIPT_PATH_MAX 128
+
+/*
+ * The leading uint32 shader-ref every material's wire form starts with, before
+ * the shader's std140 Material block — MATERIAL_HEADER_BYTES as the renderer
+ * spells it (render/scene_renderer/scene_renderer.c).
+ */
+#define SCENE_SCRIPT_MATERIAL_HEADER 4u
+
+/*
+ * Ceiling on a packed material: the header, a std140 Material block, and the
+ * optional [tex-ref][width][height] trailer. A Material uniform block anywhere
+ * near this size would not fit a real UBO either, so a source that overruns it
+ * is refused rather than truncated — a short blob would be read as "no texture
+ * slot" and shade with garbage where the block ran out.
+ */
+#define SCENE_SCRIPT_MATERIAL_MAX 512u
 
 /* First list arg as an entity id, or -1 when it is not an integer. */
 static int32_t arg_id(s7_pointer args)
@@ -345,31 +366,43 @@ static void mesh_declare(uint32_t id, const char *src)
 }
 
 /*
- * Register SRC at PATH as an authored asset of TYPE, returning its stable
- * catalog id or 0 when it could not be registered. The shared body of
- * script-define! and mesh-define!, whose docstrings state the contract.
+ * Register SIZE bytes at PATH as an authored asset of TYPE, returning its stable
+ * catalog id or 0 when it could not be registered. The shared body of every
+ * *-define! primitive, whose docstrings state the contract.
  *
  * A path already holding an authored asset of TYPE has its bytes replaced in
  * place, keeping the id. A read-only built-in path is refused, and so is a path
  * holding some other type: a mesh path that quietly came to hold script bytes
  * would render nothing and explain nothing, and no project means to do it.
  */
-static uint32_t asset_define(const char *path, const char *src, int32_t type)
+static uint32_t asset_define_data(const char *path, const void *data,
+				  uint32_t size, int32_t type)
 {
 	struct asset_info info;
-	uint32_t          id, size;
+	uint32_t          id;
 
-	if (!path || !src || !g_catalog_mut || !g_catalog_mut->create
+	if (!path || !data || !g_catalog_mut || !g_catalog_mut->create
 	    || !g_catalog_mut->set_data)
 		return 0;
-	/* Sources store the NUL: get_data() hands back a C string. */
-	size = (uint32_t)strlen(src) + 1;
-	id   = catalog_lookup(path, &info);
+	id = catalog_lookup(path, &info);
 	if (id && (info.read_only || info.type != type))
 		return 0;
 	if (id)
-		return g_catalog_mut->set_data(id, src, size) == 0 ? id : 0;
-	return g_catalog_mut->create(path, type, src, size);
+		return g_catalog_mut->set_data(id, data, size) == 0 ? id : 0;
+	return g_catalog_mut->create(path, type, data, size);
+}
+
+/*
+ * The source-text form of asset_define_data, for the asset types whose stored
+ * bytes ARE their source: a script and a mesh are baked on demand from the text
+ * the project wrote. (A material is not — see material_define.)
+ */
+static uint32_t asset_define(const char *path, const char *src, int32_t type)
+{
+	if (!src)
+		return 0;
+	/* Sources store the NUL: get_data() hands back a C string. */
+	return asset_define_data(path, src, (uint32_t)strlen(src) + 1, type);
 }
 
 /*
@@ -434,6 +467,217 @@ static s7_pointer sp_mesh_define(s7_scheme *sc, s7_pointer args)
 	return s7_make_integer(sc, id);
 }
 
+/*
+ * Publish ID's catalog declaration for a material, the third of the trio.
+ *
+ * Shorter than its siblings', and deliberately: a material has no parameter set
+ * of its own to advertise. It names a shader, and that shader's Material block
+ * IS its schema — the same fact the editor's material inspector is built on — so
+ * naming the shader says everything a list of field names would, and says it in
+ * a form an inspector can follow to the types, ranges and edit hints too. The
+ * seeded checker entry is shaped the same way (format / shader / texture); the
+ * seeded pbr ones also spell a couple of values, which a derived declaration has
+ * no business restating from bytes the catalog already holds.
+ */
+static void material_declare(uint32_t id, const char *shader_path,
+			     const char *src)
+{
+	struct asset_decl_field d[3];
+	char                    path[SCENE_SCRIPT_PATH_MAX];
+	/* Sized so the longest path plus " @ NNNNNNNNNN" cannot truncate. */
+	char                    tex[SCENE_SCRIPT_PATH_MAX + 16];
+	uint32_t                c = 0, tw = 0, th = 0;
+
+	d[c].key   = "format";
+	d[c].value = "krudd-material";
+	c++;
+	d[c].key   = "shader";
+	d[c].value = shader_path;
+	c++;
+	if (script_material_texture(src, path, sizeof(path), &tw, &th) == 0) {
+		/* "path @ 256" for the square bake the seeded checker entry
+		 * spells that way; "path @ 256x128" when it is not square. */
+		if (tw == th)
+			snprintf(tex, sizeof(tex), "%s @ %u", path, tw);
+		else
+			snprintf(tex, sizeof(tex), "%s @ %ux%u", path, tw, th);
+		d[c].key   = "texture";
+		d[c].value = tex;
+		c++;
+	}
+	if (g_catalog_mut->set_decl)
+		g_catalog_mut->set_decl(id, d, c);
+}
+
+/*
+ * Write the resolved fields F (n of them) into BUF as the material wire form:
+ * [shader-ref u32][std140 Material block], returning the byte count, or 0 when
+ * the block does not fit BUF. TOTAL is the block size the shader reports.
+ *
+ * The zero fill is load-bearing and matches the C seeders exactly: std140 leaves
+ * gaps between fields (the pbr block pads 24..31 between roughness and emissive)
+ * and the seeders memset before writing, so a defined material and a seeded one
+ * agree byte for byte down to the padding. Each field is written at the offset
+ * the shader's own introspection reported — nothing here knows a layout.
+ *
+ * An `int` field is written as an int32, not as the float its value arrived in:
+ * the two share a 4-byte lane, and a shader reading a float bit pattern as an
+ * integer is precisely the silently-wrong blob this whole path exists to rule
+ * out.
+ */
+static uint32_t material_pack(const struct shader_param *f, int n,
+			      uint32_t total, uint32_t shader_ref,
+			      unsigned char *buf, uint32_t cap)
+{
+	uint32_t size = SCENE_SCRIPT_MATERIAL_HEADER + total;
+	int      i, c;
+
+	if (size > cap)
+		return 0;
+	memset(buf, 0, size);
+	memcpy(buf, &shader_ref, sizeof(shader_ref));
+	for (i = 0; i < n; i++) {
+		int is_int = strcmp(f[i].type, "int") == 0;
+
+		for (c = 0; c < (int)f[i].default_count; c++) {
+			uint32_t off = SCENE_SCRIPT_MATERIAL_HEADER
+				       + f[i].offset + (uint32_t)c * 4u;
+
+			if (off + 4u > size)
+				return 0;
+			if (is_int) {
+				int32_t v = (int32_t)f[i].edit_default[c];
+
+				memcpy(buf + off, &v, sizeof(v));
+			} else {
+				memcpy(buf + off, &f[i].edit_default[c],
+				       sizeof(float));
+			}
+		}
+	}
+	return size;
+}
+
+/*
+ * Append SRC's optional (texture "PATH" W H) slot to BUF — the trailer the
+ * renderer reads after the Material block: [tex-ref u32][width u32][height u32].
+ * Returns the new byte count, SIZE unchanged when the source declares no slot,
+ * or 0 when it declares one that cannot be honoured (an unknown path, a path
+ * that is not a texture, or no room). A named-but-unresolvable texture is a
+ * refusal and not a silent drop: a material that meant to show a texture and
+ * quietly does not is the same class of wrong as a mis-packed field.
+ */
+static uint32_t material_pack_texture(const char *src, unsigned char *buf,
+				      uint32_t size, uint32_t cap)
+{
+	char              path[SCENE_SCRIPT_PATH_MAX];
+	struct asset_info info;
+	uint32_t          w = 0, h = 0, tex;
+
+	if (script_material_texture(src, path, sizeof(path), &w, &h) != 0)
+		return size;
+	tex = catalog_lookup(path, &info);
+	if (!tex || info.type != ASSET_TYPE_TEXTURE)
+		return 0;
+	if (size + 3u * sizeof(uint32_t) > cap)
+		return 0;
+	memcpy(buf + size,      &tex, sizeof(tex));
+	memcpy(buf + size + 4u, &w,   sizeof(w));
+	memcpy(buf + size + 8u, &h,   sizeof(h));
+	return size + 3u * (uint32_t)sizeof(uint32_t);
+}
+
+/*
+ * Register SRC — one (material ...) form — at PATH, returning its stable catalog
+ * id or 0 when it was refused. The body of material-define!, whose docstring
+ * states the contract.
+ *
+ * Unlike script-define! and mesh-define! this stores no source text. A script
+ * and a mesh are baked from their bytes on demand, so the bytes are the source;
+ * a material's bytes are uploaded to a uniform buffer verbatim, per draw, so the
+ * bytes are the packed std140 block. Packing here rather than at draw time is
+ * also what makes a bad source a registration failure — the one moment a project
+ * can be told about it — instead of a per-frame surprise.
+ */
+static uint32_t material_define(const char *path, const char *src)
+{
+	/*
+	 * One slot past the cap, so a block with MORE fields than can be
+	 * marshalled is distinguishable from one with exactly the cap. The
+	 * former is refused: the fields past the cap would pack as zeros, which
+	 * is the silently wrong blob again.
+	 */
+	struct shader_param f[SCENE_SCRIPT_MAX_PARAMS + 1];
+	unsigned char       buf[SCENE_SCRIPT_MATERIAL_MAX];
+	char                shader_path[SCENE_SCRIPT_PATH_MAX];
+	struct asset_info   info;
+	const char         *shader_src;
+	uint32_t            shader_ref, total = 0, size, id;
+	int                 n;
+
+	if (!path || !src || !g_catalog || !g_catalog->get_data)
+		return 0;
+	if (script_material_shader(src, shader_path, sizeof(shader_path)) != 0)
+		return 0;
+	shader_ref = catalog_lookup(shader_path, &info);
+	if (!shader_ref || info.type != ASSET_TYPE_SHADER)
+		return 0;
+	shader_src = (const char *)g_catalog->get_data(shader_ref, NULL);
+	if (!shader_src)
+		return 0;
+	n = script_material_fields(src, shader_src, f,
+				   SCENE_SCRIPT_MAX_PARAMS + 1, &total);
+	if (n < 0 || n > SCENE_SCRIPT_MAX_PARAMS)
+		return 0;
+	size = material_pack(f, n, total, shader_ref, buf, sizeof(buf));
+	if (!size)
+		return 0;
+	size = material_pack_texture(src, buf, size, sizeof(buf));
+	if (!size)
+		return 0;
+	id = asset_define_data(path, buf, size, ASSET_TYPE_MATERIAL);
+	if (id)
+		material_declare(id, shader_path, src);
+	return id;
+}
+
+/*
+ * (material-define! "path" "src") -> the material's stable catalog id, or 0 when
+ * it could not be registered.
+ *
+ * Registers SRC — one (material NAME (shader "PATH") (FIELD V ...) ...) form —
+ * as an authored ASSET_TYPE_MATERIAL asset at PATH, so a project brings its own
+ * materials instead of depending on the engine having seeded them. The path is
+ * then bindable by (scene-material! id path) exactly like a built-in: the stored
+ * bytes are the same wire form the C seeders write, so nothing downstream of the
+ * catalog can tell the two apart.
+ *
+ * The source names FIELDS, never a layout. Offsets, padding and block size come
+ * from the Material block of the shader the source names — the same
+ * introspection the renderer sizes its Material UBO with — so a project's source
+ * cannot get std140 wrong. What it can get wrong is naming, and every one of
+ * those is REFUSED (0), registering nothing: text that is not a (material ...)
+ * form, a missing or unresolvable (shader ...) clause, a shader path holding
+ * something that is not a shader, a field the block does not declare, a field
+ * given the wrong number of components, and a (texture ...) clause naming
+ * something that is not a texture. A field the source simply omits is not an
+ * error — it takes the shader's own authored (default ...) — which is a declared
+ * value rather than a silent zero.
+ *
+ * Redefinition REPLACES, on script-define!'s reasoning: a second call on the
+ * same path repacks the bytes and keeps the stable id, so an entity already
+ * bound picks up the new look with nothing to rebind — re-evaluating a project's
+ * source is how it reloads, and an error there would mean it could only ever
+ * load once. Redefining a path the engine seeded read-only is refused (0), since
+ * shadowing a built-in would change every scene that binds it, not just this
+ * project's; so is a path holding an asset of another type.
+ */
+static s7_pointer sp_material_define(s7_scheme *sc, s7_pointer args)
+{
+	return s7_make_integer(sc, material_define(arg_str(sc, args, 0),
+						   arg_str(sc, args, 1)));
+}
+
 /* (scene-name! id "name"): set id's human-readable label. */
 static s7_pointer sp_scene_name(s7_scheme *sc, s7_pointer args)
 {
@@ -460,7 +704,7 @@ static s7_pointer sp_scene_entity_name(s7_scheme *sc, s7_pointer args)
 /*
  * (scene-entity-pos id) -> the entity's authored local position as a three-item
  * list (x y z), or #f when id is not a live entity. The read twin of the position
- * scene-xform! writes: game rules that relocate a picked entity (a chess piece
+ * scene-xform! writes: game rules that relocate a picked entity (a board piece
  * moving to a captured square) need the target's current spot, which only the
  * host knows. Top-level entities have no parent, so local is world here — the
  * pieces a game moves are all roots.
@@ -632,6 +876,16 @@ void scene_script_init(void)
 			   "replaces the source in place, keeping the id so a "
 			   "bound entity picks up the new geometry; a "
 			   "read-only built-in path is refused (0).");
+	s7_define_function(sc, "material-define!", sp_material_define, 2, 0,
+			   false,
+			   "(material-define! path src) -> id; pack a "
+			   "(material ...) source to the std140 block of the "
+			   "shader it names and register it at a catalog path, "
+			   "bindable by scene-material!. A second call on the "
+			   "same path repacks in place, keeping the id so a "
+			   "bound entity picks up the new look; a malformed "
+			   "source, an unknown field, a wrong component count "
+			   "and a read-only built-in path are all refused (0).");
 	s7_define_function(sc, "scene-name!", sp_scene_name, 2, 0, false,
 			   "(scene-name! id name) set entity name");
 	s7_define_function(sc, "scene-entity-name", sp_scene_entity_name, 1, 0,

@@ -1,16 +1,24 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
- * chess — the scene end to end against the real image. It boots s7, registers
- * the scene-* primitives, then builds the embedded chess scene into a world the
- * way the plugin's load does (scene_script_build) and checks the result is the
- * standard opening position: the right entity count, and the key pieces sitting
- * on the right squares by name. No GPU and no asset catalog are needed — the
- * mesh/material paths resolve to "unbound", which still spawns every named
- * entity, so the layout is fully checkable headless. It then drives the rules the
- * way the plugin's tick does — hand a picked entity's id to chess-on-selected
- * with the world bound (scene_script_call) — over a small hand-built board, and
- * checks the two-click select→move flow: a slide, a capture, re-picking, a
- * deselect, and turn alternation. No GPU or browser is needed.
+ * chess — the game end to end against the real image, with no C plugin behind
+ * it. chess.scm is one (project ...) form, so this test drives it the way the
+ * engine does: project_host_eval registers the form on the real launcher
+ * registry, and game_load runs the host's own load path — clear the world,
+ * build the (scene ...) clause, run the (on-load ...) hook — over a stand-in
+ * "scene" api bound to the world below. That is the whole of what chess.c used
+ * to be, so pointing the harness at the project source rather than at two
+ * embedded fragments is the only shape change here; every check it was already
+ * making it still makes.
+ *
+ * What it checks: the scene builds to the standard opening position (the right
+ * entity count, and the key pieces on the right squares by name); the rules run
+ * the two-click select→move flow over a small hand-built board — a slide, a
+ * capture, re-picking, a deselect, turn alternation and the selection outline;
+ * the camera script the game registers binds and eases; and the six piece
+ * meshes and two army materials it registers land in the catalog with the
+ * geometry and the bytes they had when the engine seeded them. No GPU and no
+ * browser is needed — a mesh/material path that resolves to "unbound" still
+ * spawns every named entity, so the layout is fully checkable headless.
  */
 #include <entity/world.h>
 #include <entity/scene_script.h>
@@ -18,14 +26,17 @@
 
 #include "asset.h"
 #include <abi/asset_api.h>
+#include <abi/entity_api.h>
 #include <asset/mesh_script.h>
 
 #include <core/script.h>
+#include <core/subsystem_manager.h>
+#include <host/game.h>
 #include <log/log.h>
 #include <memory/memory.h>
+#include <project/project_host.h>
 
-#include "chess_scene_scm.h"
-#include "chess_rules_scm.h"
+#include "staged_project_scm.h"
 
 #include <assert.h>
 #include <math.h>
@@ -36,12 +47,19 @@
 /* One world instance reused across the checks; too big for the stack. */
 static struct world w;
 
+static struct subsystem_manager mgr;
+
+/* The launcher slot chess.scm took, from project_host_eval in main. */
+static int32_t g_chess;
+
 /*
  * The real asset catalog, assembled from asset.h the way the asset plugin
- * assembles it for the subsystem manager. Most checks here run with no catalog
- * at all (the rules need none), but the camera and the piece meshes do: those
- * are assets this game registers into the catalog itself, and binding them is
- * the thing worth testing.
+ * assembles it for the subsystem manager. The rules checks need no catalog and
+ * drive their hand-built board without one, but the camera and the piece meshes
+ * do: those are assets this game registers into the catalog itself, and binding
+ * them is the thing worth testing. So are the two army materials, which need
+ * the catalog for a second reason: material-define! packs them against the
+ * Material block of the seeded pbr shader it finds there.
  */
 static const struct asset_api catalog_api = {
 	.count    = asset_catalog_count,
@@ -60,11 +78,59 @@ static const struct asset_mut_api mut_api = {
 };
 
 /*
+ * The stand-in "scene" subsystem: the three entity_api entries a project's host
+ * uses, each binding this test's world exactly as entity_plugin.c binds the
+ * live one. The real asset catalog is passed on every call, because that is
+ * what the checks below are about — the meshes, materials and script chess.scm
+ * registers only bind if the build and the dispatch can see the catalog.
+ */
+static int32_t t_build_scene_scm(const char *src)
+{
+	return scene_script_build(&w, &catalog_api, src);
+}
+
+static int32_t t_dispatch_scm(const char *fn, int32_t arg)
+{
+	return scene_script_call(&w, &catalog_api, fn, arg);
+}
+
+static void t_clear_world(void)
+{
+	world_reset(&w);
+}
+
+static const struct entity_api t_scene_api = {
+	.build_scene_scm = t_build_scene_scm,
+	.dispatch_scm    = t_dispatch_scm,
+	.clear_world     = t_clear_world,
+};
+
+static const struct subsystem t_subsystems[] = {
+	{ .name = "scene", .api = &t_scene_api },
+	{ NULL }
+};
+
+/*
  * Total entities the scene spawns: a camera, a ground plane, the board slab, 64
  * square tiles, 32 pieces, and the two kings' crosses (two boxes each). Its
- * fingerprint — it moves only when scene.scm gains or loses an entity.
+ * fingerprint — it moves only when the (scene ...) clause of chess.scm gains or
+ * loses an entity.
  */
 #define CHESS_ENTITY_COUNT 103
+
+/*
+ * Open the game the way the launcher does, and answer how many entities stand
+ * afterwards. game_load runs the project host's own load callback, which clears
+ * the world, builds chess.scm's (scene ...) clause into it and then runs the
+ * (on-load ...) hook — the three steps chess_load used to do in C. Every check
+ * that used to call scene_script_build on the embedded scene source calls this
+ * instead, so what is tested is the path the engine actually takes.
+ */
+static uint32_t open_chess(void)
+{
+	game_load(g_chess);
+	return w.count;
+}
 
 /* #t when a live entity named NAME exists — the piece-on-square check. */
 static int has_named(const char *name)
@@ -83,11 +149,7 @@ static int has_named(const char *name)
 /* The scene builds to the full opening set, every entity accounted for. */
 static void test_scene_builds(void)
 {
-	int32_t n;
-
-	world_reset(&w);
-	n = scene_script_build(&w, NULL, CHESS_SCENE_SCM);
-	assert(n == CHESS_ENTITY_COUNT);
+	assert(open_chess() == CHESS_ENTITY_COUNT);
 }
 
 /*
@@ -98,9 +160,7 @@ static void test_scene_builds(void)
  */
 static void test_starting_position(void)
 {
-	world_reset(&w);
-	assert(scene_script_build(&w, NULL, CHESS_SCENE_SCM)
-	       == CHESS_ENTITY_COUNT);
+	assert(open_chess() == CHESS_ENTITY_COUNT);
 
 	/* White back rank: R N B Q K B N R on rank 1. */
 	assert(has_named("wR-a1") && has_named("wN-b1") && has_named("wB-c1"));
@@ -123,15 +183,17 @@ static void test_starting_position(void)
 	assert(!has_named("wP-a4"));
 }
 
-/* Rebuilding after a reset yields the same count — the build is deterministic. */
+/*
+ * Opening the game twice yields the same count — the build is deterministic,
+ * and the host's load clears the world before it builds rather than stacking a
+ * second set on top of the first.
+ */
 static void test_rebuild_is_stable(void)
 {
-	int32_t a, b;
+	uint32_t a, b;
 
-	world_reset(&w);
-	a = scene_script_build(&w, NULL, CHESS_SCENE_SCM);
-	world_reset(&w);
-	b = scene_script_build(&w, NULL, CHESS_SCENE_SCM);
+	a = open_chess();
+	b = open_chess();
 	assert(a == b && a == CHESS_ENTITY_COUNT);
 }
 
@@ -300,6 +362,64 @@ static void test_camera_hold_guarded_headless(void)
 	assert(cam_holding() == 0);      /* still not armed: no clock ticked */
 }
 
+/* What the stand-in recorder below last heard: 0 nothing, 1 blip, 2 beep. */
+static int32_t sound(void)
+{
+	return scene_script_call(&w, NULL, "chess-test-sound", 0);
+}
+
+static void sound_clear(void)
+{
+	scene_script_call(&w, NULL, "chess-test-sound-clear", 0);
+}
+
+/*
+ * The move cue. chess.c used to read chess-on-selected's return code in C and
+ * pick a sound from it; the rules now do that themselves through audio-play!
+ * (#979), which is the same call the C made through the audio api, one layer
+ * closer to the thing that knows what happened.
+ *
+ * No audio subsystem is up here, so the primitive is genuinely absent and the
+ * board plays silently — the guard that makes that a no-op rather than a fault
+ * is checked by every other rules test in this file passing. Standing in for it
+ * with a recorder of the same name is what proves the MAPPING survived the
+ * move: a pick is silent, a slide taps (blip at 0.6), a capture is the sharper
+ * cue (beep at 0.7). Defined here rather than in chess.scm because a game must
+ * not carry a stub for a primitive the engine owns.
+ */
+static void test_sound_cues(void)
+{
+	assert(script_eval(
+		"(define *chess-test-sound* \"\")"
+		"(define (audio-play! path . rest)"
+		"  (set! *chess-test-sound* path))"
+		"(define (chess-test-sound ignored)"
+		"  (cond ((string=? *chess-test-sound* \"builtin://sound/blip\") 1)"
+		"        ((string=? *chess-test-sound* \"builtin://sound/beep\") 2)"
+		"        (else 0)))"
+		"(define (chess-test-sound-clear ignored)"
+		"  (set! *chess-test-sound* \"\") 0)") == 0);
+
+	reset_rules_board();
+	sound_clear();
+	assert(click(0) == 0);           /* picking a piece up moves nothing */
+	assert(sound() == 0);            /* so it is silent */
+	assert(click(1) == 1);           /* slide it to e4 */
+	assert(sound() == 1);            /* a soft wood tap */
+
+	reset_rules_board();
+	sound_clear();
+	assert(click(0) == 0);
+	assert(click(2) == 2);           /* take the black pawn */
+	assert(sound() == 2);            /* the sharper cue */
+
+	/* A click that resolves to nothing stays silent. */
+	reset_rules_board();
+	sound_clear();
+	assert(click(2) == 0);           /* black piece, white to move */
+	assert(sound() == 0);
+}
+
 /* The entity id carrying NAME, asserted to exist. */
 static uint32_t id_named(const char *name)
 {
@@ -318,7 +438,7 @@ static uint32_t id_named(const char *name)
 /*
  * The camera script's exact text. It used to be seeded by the engine as
  * builtin://script/chess-camera (world/asset/include/asset/builtin_scripts.h);
- * rules.scm now registers this same text itself through script-define!. Pinned
+ * chess.scm now registers this same text itself through script-define!. Pinned
  * here so the move cannot quietly become a rewrite — a different script is a
  * different camera.
  */
@@ -330,10 +450,10 @@ static const char *CHESS_CAMERA_SRC =
 #define CHESS_CAMERA_PATH "project://script/chess-camera"
 
 /*
- * The camera end to end, over the real catalog: rules.scm registered its script
- * when it loaded, the scene's (script ...) clause resolves that path, and the
- * entity-script driver ticks it. The engine seeded nothing for this — the whole
- * chain exists because the game brought it.
+ * The camera end to end, over the real catalog: chess.scm registered its script
+ * when it was evaluated, the scene clause's (script ...) resolves that path, and
+ * the entity-script driver ticks it. The engine seeded nothing for this — the
+ * whole chain exists because the game brought it.
  *
  * The behaviour asserted is what is on screen: the eye rests at white's
  * authored 3/4 view while white is to move, and eases across to black's
@@ -346,11 +466,8 @@ static void test_camera_defined_binds_and_eases(void)
 	float             t;
 	int               i;
 
-	/* The script is in the catalog because the rules put it there. */
-	assert(scene_script_build(&w, &catalog_api, "(scene s)") == 0);
-	world_reset(&w);
-	assert(scene_script_build(&w, &catalog_api, CHESS_SCENE_SCM)
-	       == CHESS_ENTITY_COUNT);
+	/* The script is in the catalog because the game's source put it there. */
+	assert(open_chess() == CHESS_ENTITY_COUNT);
 	cam = id_named("Camera");
 	assert(w.mask[cam] & COMPONENT_SCRIPT);
 	assert(w.script_ref[cam] != 0);
@@ -359,7 +476,8 @@ static void test_camera_defined_binds_and_eases(void)
 	assert(strcmp((const char *)asset_catalog_get_data(info.id, NULL),
 		      CHESS_CAMERA_SRC) == 0);
 
-	scene_script_call(&w, &catalog_api, "chess-reset", 0);
+	/* No chess-reset call here: the load already ran it, since that is the
+	 * project's (on-load ...) hook. */
 
 	/* White to move: the eye holds the authored 3/4 view it starts at. */
 	for (i = 0, t = 0.0f; i < 30; i++) {
@@ -440,8 +558,9 @@ static float radius_xz(const struct mesh_vertex *v)
  *
  * These checks used to live in world/asset/mesh_script_test.c against the
  * CHESS_*_MESH_SCRIPT_SRC macros the engine seeded. The sources are this game's
- * now, so the coverage is too — and it runs over the catalog bytes mesh-define!
- * actually stored, which is a strictly stronger claim than checking a macro.
+ * own now, so the coverage is too — and it runs over the catalog bytes
+ * mesh-define! actually stored, which is a strictly stronger claim than
+ * checking a macro.
  */
 static struct mesh_blob *piece_blob(const char *path, uint32_t exp_v,
 				    uint32_t exp_i)
@@ -492,12 +611,13 @@ static void check_piece(const char *path, uint32_t nv, uint32_t ni,
 /*
  * The five turned pieces — pawn, rook, bishop, queen, king — each a single
  * silhouette swept by mesh-lathe, plus the blocky knight. The engine seeds none
- * of them: they are in the catalog because rules.scm's mesh-define! calls put
- * them there when the rules loaded, as authored ASSET_TYPE_MESH entries.
+ * of them: they are in the catalog because chess.scm's mesh-define! calls put
+ * them there when the project source was evaluated, as authored ASSET_TYPE_MESH
+ * entries.
  *
  * The fingerprints are the same numbers the engine's own test asserted while
  * the sources were seeded, so "unchanged on screen" is checked, not assumed —
- * a silhouette that drifted in the move would move a count.
+ * a silhouette that drifted in either move would move a count.
  */
 static void test_piece_meshes_defined(void)
 {
@@ -559,9 +679,7 @@ static void test_scene_binds_piece_meshes(void)
 	};
 	uint32_t i, e;
 
-	world_reset(&w);
-	assert(scene_script_build(&w, &catalog_api, CHESS_SCENE_SCM)
-	       == CHESS_ENTITY_COUNT);
+	assert(open_chess() == CHESS_ENTITY_COUNT);
 
 	for (i = 0; i < sizeof(PIECES) / sizeof(PIECES[0]); i++) {
 		e = id_named(PIECES[i].entity);
@@ -590,16 +708,16 @@ static void test_reload_keeps_piece_bindings(void)
 		"project://mesh/chess-queen",  "project://mesh/chess-king",
 	};
 
-	world_reset(&w);
-	assert(scene_script_build(&w, &catalog_api, CHESS_SCENE_SCM)
-	       == CHESS_ENTITY_COUNT);
+	assert(open_chess() == CHESS_ENTITY_COUNT);
 	for (i = 0; i < 6; i++)
 		before[i] = asset_id_at(PATHS[i]);
 	e = id_named("wQ-d1");
 	assert(w.render_ref[e] == before[4]);
 
-	/* A reload: the same source evaluated again, as chess_init would. */
-	assert(script_eval(CHESS_RULES_SCM) == 0);
+	/* A reload: the whole project source evaluated again, which is how a
+	 * project reloads. It keeps its launcher slot rather than stacking a
+	 * second "Chess" beside the first. */
+	assert(project_host_eval(STAGED_PROJECT_SCM) == g_chess);
 
 	for (i = 0; i < 6; i++) {
 		assert(asset_id_at(PATHS[i]) == before[i]);
@@ -610,6 +728,148 @@ static void test_reload_keeps_piece_bindings(void)
 	check_piece("project://mesh/chess-queen", 475, 2592, 0.30f, 1.34f);
 }
 
+/* ------------------------------------------------------------------ */
+/* The army materials this game brings with it                         */
+/* ------------------------------------------------------------------ */
+
+/* The float stored at byte OFF of an asset's bytes. */
+static float material_float(uint32_t id, uint32_t off)
+{
+	const uint8_t *b = (const uint8_t *)asset_catalog_get_data(id, NULL);
+	float          v;
+
+	assert(b);
+	memcpy(&v, b + off, sizeof(v));
+	return v;
+}
+
+/*
+ * The two piece colours, packed by material-define! when the project source was
+ * evaluated. The engine seeds nothing named chess, so these are in the catalog
+ * only because chess.scm put them there — authored ASSET_TYPE_MATERIAL entries
+ * holding the
+ * same wire form the C seeder used to write: [shader-ref u32] then the pbr
+ * shader's 48-byte std140 Material block.
+ *
+ * The values asserted here are the ones builtin://material/chess-ivory and
+ * -ebony carried while the engine seeded them, at the offsets the pbr block
+ * declares (base_color @0, metallic @16, roughness @20, emissive @32,
+ * subsurface @44, all plus the 4-byte header). That is what "the pieces are
+ * unchanged on screen" means for a material: identical bytes reach the Material
+ * UBO, so identical pixels come out.
+ */
+static void test_army_materials_defined(void)
+{
+	static const struct {
+		const char *path;
+		float       rgba[4];
+		float       roughness;
+		float       subsurface;
+	} ARMIES[] = {
+		{ "project://material/chess-ivory",
+		  { 0.90f, 0.85f, 0.74f, 1.0f }, 0.32f, 0.6f },
+		{ "project://material/chess-ebony",
+		  { 0.06f, 0.055f, 0.05f, 1.0f }, 0.28f, 0.0f },
+	};
+	uint32_t          pbr = asset_id_at("builtin://shader/pbr");
+	struct asset_info info;
+	uint32_t          i, c, size;
+
+	assert(pbr != 0);
+	for (i = 0; i < sizeof(ARMIES) / sizeof(ARMIES[0]); i++) {
+		uint32_t id = asset_id_at(ARMIES[i].path);
+
+		assert(id != 0);
+		assert(asset_catalog_find(id, &info) == 0);
+		assert(info.type      == ASSET_TYPE_MATERIAL);
+		assert(info.origin    == ASSET_ORIGIN_AUTHORED);
+		assert(info.read_only == 0);
+
+		size = 0;
+		assert(asset_catalog_get_data(id, &size) != NULL);
+		assert(size == 4u + 48u);
+		{
+			uint32_t ref;
+
+			memcpy(&ref, asset_catalog_get_data(id, NULL),
+			       sizeof(ref));
+			assert(ref == pbr);
+		}
+		for (c = 0; c < 4; c++)
+			assert(material_float(id, 4u + c * 4u)
+			       == ARMIES[i].rgba[c]);
+		assert(material_float(id, 20) == 0.0f);   /* matte dielectric */
+		assert(material_float(id, 24) == ARMIES[i].roughness);
+		assert(material_float(id, 36) == 0.0f);   /* emissive stays 0 */
+		assert(material_float(id, 40) == 0.0f);
+		assert(material_float(id, 44) == 0.0f);
+		assert(material_float(id, 48) == ARMIES[i].subsurface);
+	}
+}
+
+/*
+ * The board on screen: every white piece binds the game's own ivory and every
+ * black one its ebony, while the squares still bind the engine's generic
+ * board-light / board-dark. Binding is what the seeds used to buy; this is the
+ * check that material-define! bought it back — and that unseeding the two piece
+ * materials did not take the board's with it.
+ */
+static void test_scene_binds_army_materials(void)
+{
+	static const struct {
+		const char *entity;
+		const char *path;
+	} BOUND[] = {
+		{ "wP-e2",  "project://material/chess-ivory" },
+		{ "wK-e1",  "project://material/chess-ivory" },
+		{ "bQ-d8",  "project://material/chess-ebony" },
+		{ "bN-g8",  "project://material/chess-ebony" },
+		{ "sq-a1",  "builtin://material/board-dark"  },
+		{ "sq-b1",  "builtin://material/board-light" },
+		{ "ground", "builtin://material/pbr-stone"   },
+	};
+	uint32_t i, e;
+
+	assert(open_chess() == CHESS_ENTITY_COUNT);
+
+	for (i = 0; i < sizeof(BOUND) / sizeof(BOUND[0]); i++) {
+		e = id_named(BOUND[i].entity);
+		assert(w.material_ref[e] != 0);
+		assert(w.material_ref[e] == asset_id_at(BOUND[i].path));
+	}
+
+	/* Nothing named chess is seeded on chess's behalf any more. */
+	assert(asset_id_at("builtin://material/chess-ivory") == 0);
+	assert(asset_id_at("builtin://material/chess-ebony") == 0);
+}
+
+/*
+ * Reloading the game re-evaluates its source, which re-runs both
+ * material-define! calls. That must repack in place: the ids the live scene is
+ * bound to have to survive, or a reload would leave every piece pointing at a
+ * dead material and drawing with the default pipeline.
+ */
+static void test_reload_keeps_army_bindings(void)
+{
+	uint32_t ivory, ebony, e;
+
+	assert(open_chess() == CHESS_ENTITY_COUNT);
+	ivory = asset_id_at("project://material/chess-ivory");
+	ebony = asset_id_at("project://material/chess-ebony");
+	assert(ivory != 0 && ebony != 0);
+	e = id_named("wQ-d1");
+	assert(w.material_ref[e] == ivory);
+
+	/* A reload: the whole project source evaluated again, which is how a
+	 * project reloads. */
+	assert(project_host_eval(STAGED_PROJECT_SCM) == g_chess);
+
+	assert(asset_id_at("project://material/chess-ivory") == ivory);
+	assert(asset_id_at("project://material/chess-ebony") == ebony);
+	assert(w.material_ref[e] == ivory);
+	test_army_materials_defined();
+}
+
 int main(void)
 {
 	mem_init();
@@ -617,11 +877,25 @@ int main(void)
 	asset_init();         /* the real catalog the camera script lands in */
 	script_init();       /* loads scene_script.scm (scene-build) */
 	entity_script_init(); /* the entity-* primitives a script clause calls */
-	/* Bind the catalog before the rules load: their top-level
-	 * script-define! is what puts the camera script in it. */
+	/* Bind the catalog before the project source is evaluated: its
+	 * top-level script-define! is what puts the camera script in it. */
 	scene_script_bind_catalog(&catalog_api, &mut_api);
 	scene_script_init(); /* registers the scene-* host primitives */
-	script_eval(CHESS_RULES_SCM); /* load the rules into the image */
+	world_reset(&w);
+
+	/*
+	 * The project host, brought up over a manager holding the stand-in
+	 * "scene" api — the same two steps engine.c takes, minus the rest of
+	 * the engine. Evaluating chess.scm then does everything chess.c's
+	 * register-time half did: loads the rules into the shared image,
+	 * registers the game's assets, and puts "Chess" on the launcher.
+	 */
+	subsystem_manager_init(&mgr, t_subsystems);
+	project_host_plugin_entry(&mgr);
+	g_chess = project_host_eval(STAGED_PROJECT_SCM);
+	assert(g_chess >= 0);
+	assert(game_count() == 1);
+	assert(game_find("Chess") == g_chess);
 
 	test_scene_builds();
 	test_starting_position();
@@ -632,10 +906,14 @@ int main(void)
 	test_wrong_side_ignored();
 	test_outline_tracks_pick();
 	test_camera_hold_guarded_headless();
+	test_sound_cues();
 	test_camera_defined_binds_and_eases();
 	test_piece_meshes_defined();
 	test_scene_binds_piece_meshes();
 	test_reload_keeps_piece_bindings();
+	test_army_materials_defined();
+	test_scene_binds_army_materials();
+	test_reload_keeps_army_bindings();
 
 	printf("chess_test: ok\n");
 	return 0;

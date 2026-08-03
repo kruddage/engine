@@ -22,12 +22,17 @@
  (executable "index"
              (sources "engine.c")
              (private "include" (raw "${generated}")
-                      (root "abi/include") (root "world/entity/include") (root "base/math/include") (root "game/host/include"))
+                      (root "abi/include") (root "world/entity/include") (root "base/math/include")
+                      (root "game/host/include") (root "game/project/include"))
              (link "subsystem" "subsystem_manager" "log" "memory" "script")
+             ;;! No game module in the list any more: a game is a (project ...)
+             ;;! source the project host evaluates, not a plugin to link, and
+             ;;! the one this image ships staged rides in as the
+             ;;! STAGED_PROJECT_SCM embed a directory under game/ declares.
              (wasm-modules "asset_plugin" "edit_plugin" "entity_plugin"
                            "renderer_webgl" "renderer_webgpu" "frame_graph" "scene_renderer"
                            "viewport" "kruddgui" "audio_scriptnode"
-                           "chess_game"))
+                           "project_host"))
 
  (native-only
   ;;! The offscreen WebGPU harness. Needs native Dawn, so it is skipped

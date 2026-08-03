@@ -10,6 +10,7 @@
 #include <core/script.h>
 #include <abi/entity_api.h>
 #include <abi/stats_api.h>
+#include <project/project_host.h>
 #include "version.h"
 
 #include <stddef.h>
@@ -20,6 +21,15 @@
 #include <emscripten.h>
 /* The Scheme image, baked into the module at build time (krudd-embed-file). */
 #include "runtime_scm.h"
+/*
+ * The project this build ships staged: one (project ...) source baked in the
+ * same way, so the page opens on a playable scene with no network round trip.
+ * Which project that is, is a build fact — a directory under game/ declares
+ * the embed under this generic name, and nothing here learns which one did.
+ * Everything below treats it as an opaque source handed to the project host.
+ * #984 layers loading one off disk on top, with this as the fallback.
+ */
+#include "staged_project_scm.h"
 #endif
 
 /*
@@ -74,7 +84,7 @@ void scene_renderer_plugin_entry(struct subsystem_manager *mgr);
 void viewport_plugin_entry(struct subsystem_manager *mgr);
 void kruddgui_plugin_entry(struct subsystem_manager *mgr);
 void audio_scriptnode_plugin_entry(struct subsystem_manager *mgr);
-void chess_plugin_entry(struct subsystem_manager *mgr);
+/* project_host_plugin_entry comes from <project/project_host.h> above. */
 
 /*
  * The boot order, as data so the profiler can time each entry point and label
@@ -101,12 +111,15 @@ static const struct {
 	{ "viewport",       viewport_plugin_entry       },
 	{ "kruddgui",       kruddgui_plugin_entry       },
 	/*
-	 * Built-in games register last: they resolve the "scene" api (entity
-	 * plugin) and register on the launcher, which needs the asset catalog the
-	 * asset plugin seeded, so both must already be up. Registration order is
-	 * launcher-button order.
+	 * The project host registers last: it resolves the "scene" api (entity
+	 * plugin) and puts a launcher entry on the menu for every project it is
+	 * handed, which needs the asset catalog the asset plugin seeded, so both
+	 * must already be up. It is a host rather than a game — it knows no
+	 * game's name and registers nothing of its own — and it is the only
+	 * entry left on this side of the boot: a game is a (project ...) source
+	 * now, evaluated below, not a plugin with a table row.
 	 */
-	{ "chess",          chess_plugin_entry          },
+	{ "project",        project_host_plugin_entry   },
 };
 #endif
 
@@ -210,17 +223,25 @@ EM_JS(int, krudd_wants_webgpu, (void), {
 
 #ifdef __EMSCRIPTEN__
 /*
- * The scene to open once boot finishes, written into OUT (a C buffer of CAP
- * bytes). The shell owns the choice — window.kruddBootGame reads ?game= and
- * defaults to chess — for the same reason the renderer choice lives there
+ * The scene ?game= asks for, written into OUT (a C buffer of CAP bytes), or the
+ * empty string when the page asks for nothing in particular. The shell owns the
+ * reading of the query for the same reason the renderer choice lives there
  * (krudd_wants_webgpu): the overlay and the auto-load can never disagree about
- * what boots. An empty string, or a name no game registered under, leaves the
- * launcher up (that is what ?game=none gets you). Truncation past CAP is fine —
- * an over-long name simply won't match, so the launcher stands.
+ * what boots.
+ *
+ * The DEFAULT is deliberately not expressed here as a name. It used to be one
+ * game's, spelled out — the sort of pin #976 exists to pull: a generic engine
+ * cannot know which game a build ships. By the time the answer is needed it
+ * does not have to guess either, because finish_plugin_boot has just evaluated
+ * the staged project and holds the launcher slot it took — so "no opinion"
+ * means "open whatever this build staged", answered by discovery rather than
+ * by a name. A name that no game registered under still leaves the launcher
+ * up, which is what ?game=none gets you. Truncation past CAP is fine — an
+ * over-long name simply won't match, so the launcher stands.
  */
 EM_JS(void, krudd_boot_game, (char *out, int cap), {
 	var name = (typeof window.kruddBootGame === 'function')
-		? window.kruddBootGame() : 'chess';
+		? window.kruddBootGame() : "";
 	if (typeof name !== 'string')
 		name = "";
 	stringToUTF8(name, out, cap);
@@ -237,9 +258,10 @@ EM_JS(void, krudd_boot_game, (char *out, int cap), {
  */
 static void finish_plugin_boot(int webgpu)
 {
-	size_t i;
-	double phase;
-	char   boot_game[32];
+	size_t  i;
+	double  phase;
+	char    boot_game[32];
+	int32_t staged;
 
 	/* The frame graph is about to own the backbuffer; the probe must stop
 	 * clearing it. Before the loop, so no tick can land in between. */
@@ -260,16 +282,38 @@ static void finish_plugin_boot(int webgpu)
 	stats_record_phase("runtime_scm", phase);
 
 	/*
-	 * Open the boot scene now that every game has registered and the scene api
-	 * is live — the same state a launcher click would find, so this is just
-	 * that click made programmatically. game_boot_default clears the demo scene
-	 * seeded in scene_renderer_init and builds the chosen one in its place, then
-	 * hides the launcher; an unset/unknown ?game= leaves the demo scene and the
-	 * "choose a scene" overlay exactly as before.
+	 * Bring up the project this build ships staged. Evaluating it is the
+	 * whole of what a built-in game's plugin entry used to be: its rules and
+	 * its assets land in the shared image and the catalog, and it takes a
+	 * launcher slot. It runs after the plugin loop because it needs the asset
+	 * catalog and the scene api those brought up, and after the runtime image
+	 * so a project may lean on anything in the prelude.
+	 */
+	phase = emscripten_get_now();
+	staged = project_host_eval(STAGED_PROJECT_SCM);
+	stats_record_phase("staged_project", phase);
+
+	/*
+	 * Open the boot scene now that everything loadable has registered and the
+	 * scene api is live — the same state a launcher click would find, so this
+	 * is just that click made programmatically. Either way the boot clears the
+	 * demo scene seeded in scene_renderer_init and builds the chosen one in
+	 * its place, then hides the launcher.
+	 *
+	 * ?game=<name> wins when the page asked for one; an unknown name (?game=
+	 * none) leaves the demo scene and the "choose a scene" overlay exactly as
+	 * before. With no ?game= at all the default is the staged project, by the
+	 * slot it just took rather than by a name this file would have to know —
+	 * and a build whose staged project refused to register (staged < 0) lands
+	 * on the launcher, which is the honest thing to show when there is
+	 * nothing to open.
 	 */
 	boot_game[0] = '\0';
 	krudd_boot_game(boot_game, (int)sizeof(boot_game));
-	game_boot_default(boot_game);
+	if (boot_game[0] != '\0')
+		game_boot_default(boot_game);
+	else
+		game_boot_index(staged);
 
 	g_stats_api.init_ms = (float)(emscripten_get_now() - s_boot_ms);
 }

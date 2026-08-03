@@ -51,8 +51,9 @@
 ;;!             for the one codegen declaration each.
 ;;!   audio/    the mixer and its device backends.
 ;;!   ui/       the editor chrome: immediate-mode gui, viewport, kruddboard.
-;;!   game/     host/ is the launcher registry; its siblings are the games
-;;!             that register with it.
+;;!   game/     host/ is the launcher registry and project/ the generic host
+;;!             that runs a game written as one (project ...) form; the rest
+;;!             are games that register with it.
 ;;!   shell/    the host the engine runs inside: web/, the browser page (PWA
 ;;!             manifest, service worker, icons, the emscripten shell
 ;;!             template). Last in the order on purpose — a shell may reach for
@@ -81,5 +82,6 @@
  "ui/kruddgui"
  "ui/viewport"
  "game/host"
+ "game/project"
  "game/chess"
  "shell/web")

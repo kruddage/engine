@@ -20,6 +20,7 @@
 #include "mesh_script_scm.h"
 #include "texture_script_scm.h"
 #include "sound_script_scm.h"
+#include "material_script_scm.h"
 #include "scene_script_scm.h"
 
 #include <stddef.h>
@@ -94,6 +95,14 @@ void script_init(void)
 	 * after them.
 	 */
 	script_eval(SOUND_SCRIPT_SCM);
+	/*
+	 * Load the material-source form: (material ...) and the readers that
+	 * resolve it against a shader's Material block. It is the one asset form
+	 * with no bake bridge — a material is packed to std140 once, when
+	 * material-define! registers it — so it loads only for the shader image
+	 * it reads the layout out of, which is why it comes after SHADER_SCM.
+	 */
+	script_eval(MATERIAL_SCRIPT_SCM);
 	/*
 	 * Load the scene-script builder: the (scene ...) form and scene-build.
 	 * The entity plugin registers the scene-* host primitives its clauses
@@ -239,17 +248,22 @@ static void copy_default(struct shader_param *p, s7_pointer d)
 }
 
 /*
- * Call the image's parameter-introspection procedure PROC (given SRC), which
- * returns (TOTAL-SIZE (NAME TYPE OFFSET SIZE COMPONENTS EDIT-KIND EDIT-MIN
- * EDIT-MAX) ...), and marshal it into the caller's shader_param array. The
- * layout math lives in Scheme; this only walks the result. Backs both the
- * shader (std140) and script (tight) params — one shape, two packings.
+ * Call the image's parameter-introspection procedure PROC — given SRC, and SRC2
+ * too when it is non-NULL — which returns (TOTAL-SIZE (NAME TYPE OFFSET SIZE
+ * COMPONENTS EDIT-KIND EDIT-MIN EDIT-MAX DEFAULT) ...), and marshal it into the
+ * caller's shader_param array. The layout math lives in Scheme; this only walks
+ * the result. Backs the shader (std140), script/mesh/texture/sound (tight) and
+ * material (std140, values resolved) queries — one shape, one marshaller.
+ *
+ * A result that is not a pair is the image saying "refused", and comes back as
+ * -1: material-script-fields answers #f for a source it will not pack, and a
+ * caller must be able to tell that from an empty-but-valid block.
  */
-static int query_params(const char *proc, const char *src,
-			struct shader_param *out, uint32_t max,
-			uint32_t *total_size)
+static int query_params_2(const char *proc, const char *src, const char *src2,
+			  struct shader_param *out, uint32_t max,
+			  uint32_t *total_size)
 {
-	s7_pointer fn, res, rest;
+	s7_pointer fn, res, rest, args;
 	uint32_t   count = 0;
 
 	if (total_size)
@@ -259,7 +273,10 @@ static int query_params(const char *proc, const char *src,
 	fn = s7_name_to_value(g_s7, proc);
 	if (!s7_is_procedure(fn))
 		return -1;
-	res = s7_call(g_s7, fn, s7_list(g_s7, 1, s7_make_string(g_s7, src)));
+	args = src2 ? s7_list(g_s7, 2, s7_make_string(g_s7, src),
+			      s7_make_string(g_s7, src2))
+		    : s7_list(g_s7, 1, s7_make_string(g_s7, src));
+	res = s7_call(g_s7, fn, args);
 	if (!s7_is_pair(res))
 		return -1;
 	if (total_size)
@@ -284,6 +301,14 @@ static int query_params(const char *proc, const char *src,
 		count++;
 	}
 	return (int)count;
+}
+
+/* The one-argument form, which every query but the material one takes. */
+static int query_params(const char *proc, const char *src,
+			struct shader_param *out, uint32_t max,
+			uint32_t *total_size)
+{
+	return query_params_2(proc, src, NULL, out, max, total_size);
 }
 
 int script_shader_material_params(const char *src, struct shader_param *out,
@@ -314,6 +339,58 @@ int script_sound_params(const char *src, struct shader_param *out,
 			uint32_t max, uint32_t *total_size)
 {
 	return query_params("sound-script-params", src, out, max, total_size);
+}
+
+int script_material_fields(const char *src, const char *shader_src,
+			   struct shader_param *out, uint32_t max,
+			   uint32_t *total_size)
+{
+	if (!shader_src)
+		return -1;
+	return query_params_2("material-script-fields", src, shader_src, out,
+			      max, total_size);
+}
+
+int script_material_shader(const char *src, char *out, uint32_t cap)
+{
+	s7_pointer fn, res;
+
+	if (!g_s7 || !src || !out || cap == 0)
+		return -1;
+	out[0] = '\0';
+	fn = s7_name_to_value(g_s7, "material-script-shader");
+	if (!s7_is_procedure(fn))
+		return -1;
+	res = s7_call(g_s7, fn, s7_list(g_s7, 1, s7_make_string(g_s7, src)));
+	if (!s7_is_string(res))
+		return -1;
+	if (strlen(s7_string(res)) >= cap)
+		return -1;
+	copy_field(out, cap, res);
+	return 0;
+}
+
+int script_material_texture(const char *src, char *out, uint32_t cap,
+			    uint32_t *width, uint32_t *height)
+{
+	s7_pointer fn, res;
+
+	if (!g_s7 || !src || !out || cap == 0 || !width || !height)
+		return -1;
+	out[0] = '\0';
+	*width = *height = 0;
+	fn = s7_name_to_value(g_s7, "material-script-texture");
+	if (!s7_is_procedure(fn))
+		return -1;
+	res = s7_call(g_s7, fn, s7_list(g_s7, 1, s7_make_string(g_s7, src)));
+	if (!s7_is_pair(res) || !s7_is_string(s7_list_ref(g_s7, res, 0)))
+		return -1;
+	if (strlen(s7_string(s7_list_ref(g_s7, res, 0))) >= cap)
+		return -1;
+	copy_field(out, cap, s7_list_ref(g_s7, res, 0));
+	*width  = field_u32(s7_list_ref(g_s7, res, 1));
+	*height = field_u32(s7_list_ref(g_s7, res, 2));
+	return 0;
 }
 
 void script_tick(void)

@@ -89,8 +89,9 @@ int game_count(void)
 /*
  * ASCII case-insensitive equality. The launcher label is a plain-ASCII string
  * literal and the boot request comes from a URL query, so a locale-free compare
- * is enough to let ?game=chess match the "Chess" a game registered under — and
- * it drags in no ctype/locale dependency the WASM build would otherwise carry.
+ * is enough to let a lowercase ?game= match the capitalised label a game
+ * registered under — and it drags in no ctype/locale dependency the WASM build
+ * would otherwise carry.
  */
 static int name_eq_ci(const char *a, const char *b)
 {
@@ -133,11 +134,9 @@ int game_active_index(void)
 	return g_active;
 }
 
-int game_boot_default(const char *name)
+int game_boot_index(int index)
 {
-	int index = game_find(name);
-
-	if (index < 0)
+	if (index < 0 || index >= g_count || !g_games[index].load)
 		return -1;
 	game_load(index);
 #ifdef __EMSCRIPTEN__
@@ -156,6 +155,11 @@ int game_boot_default(const char *name)
 	game_show_load_prompt(g_games[index].name);
 #endif
 	return index;
+}
+
+int game_boot_default(const char *name)
+{
+	return game_boot_index(game_find(name));
 }
 
 #ifdef __EMSCRIPTEN__

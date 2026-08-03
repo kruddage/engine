@@ -1064,42 +1064,25 @@ static void seed_builtins(void)
 			seed_pbr_material("builtin://material/pbr-sapphire", pshader,
 					  SAPPHIRE, 0.05f, 0.12f, 0.0f);
 			/*
-			 * A calm, neutral dielectric for a game's ground plane
-			 * (game/chess/scene.scm): matte sandstone rather than a
-			 * busy pattern.
+			 * A calm, neutral dielectric for a scene's ground
+			 * plane: matte sandstone rather than a busy pattern.
 			 */
 			seed_pbr_material("builtin://material/pbr-stone", pshader,
 					  STONE, 0.0f, 0.75f, 0.0f);
 		}
 
 		/*
-		 * The chess set's four materials, all off the same pbr shader
-		 * (game/chess). The two piece materials are matte dielectrics
-		 * (metallic 0): a warm near-white "ivory" for the white army and
-		 * a near-black "ebony" for the black, both at a low-ish roughness
-		 * so the analytic highlight gives turned pieces a soft sheen
-		 * rather than a plastic glare. The two board materials are the
-		 * light and dark squares — a warm maple and a deep walnut, matte
-		 * (higher roughness) so the wood reads as a surface the polished
-		 * pieces sit on, not a second set of mirrors.
-		 *
-		 * Ivory alone opts into the pbr shader's subsurface term (the
-		 * last seed_pbr_material argument): a wrap-diffuse + fresnel rim
-		 * that fakes the waxy translucency real ivory gets from light
-		 * scattering a millimetre in. Ebony (near-black, absorbs) and the
-		 * wood squares stay at 0 — the effect is a dielectric-glow, not
-		 * something metals or dark wood should carry.
+		 * A light/dark pair for a checkered surface — a warm maple and a
+		 * deep walnut, both matte (higher roughness) so the wood reads
+		 * as a surface polished objects sit on rather than a second set
+		 * of mirrors. Generic board furniture, not any one game's: a
+		 * game that wants its own look brings it through
+		 * material-define! (world/entity/scene_script.c) instead.
 		 */
 		{
-			static const float IVORY[4]  = { 0.90f, 0.85f, 0.74f, 1.0f };
-			static const float EBONY[4]  = { 0.06f, 0.055f, 0.05f, 1.0f };
 			static const float LIGHTSQ[4] = { 0.80f, 0.66f, 0.46f, 1.0f };
 			static const float DARKSQ[4]  = { 0.28f, 0.17f, 0.10f, 1.0f };
 
-			seed_pbr_material("builtin://material/chess-ivory", pshader,
-					  IVORY, 0.0f, 0.32f, 0.6f);
-			seed_pbr_material("builtin://material/chess-ebony", pshader,
-					  EBONY, 0.0f, 0.28f, 0.0f);
 			seed_pbr_material("builtin://material/board-light", pshader,
 					  LIGHTSQ, 0.0f, 0.55f, 0.0f);
 			seed_pbr_material("builtin://material/board-dark", pshader,

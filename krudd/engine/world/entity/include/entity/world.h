@@ -252,7 +252,7 @@ int32_t world_get_selected(const struct world *w);
 /*
  * The game-driven outline target: the entity the renderer's selection-outline
  * pass highlights in-game, independent of the editor `selected` above. A game's
- * rules set it (a chess piece the player picked up) so the outline shows outside
+ * rules set it (the piece the player picked up) so the outline shows outside
  * editor chrome; -1 = none. Same stale-id discipline as selected.
  */
 void    world_set_outline(struct world *w, int32_t e);

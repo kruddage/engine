@@ -213,7 +213,7 @@
 ;;! points on either side, and the outward normal is that tangent turned a quarter
 ;;! turn, (ty . -tr), which points away from the axis for a foot-to-crown ordering
 ;;! (a vertical wall yields +r, a bottom cap yields -y). V rides 0..1 up the point
-;;! index. So a turned shape — a chess pawn, a goblet, a bottle — is authored as
+;;! index. So a turned shape — a pawn, a goblet, a bottle — is authored as
 ;;! just its outline, one point per silhouette vertex, and reads as a lathed solid.
 ;;! A closed foot is a leading (0 y) point; a closed crown a trailing (0 y) point.
 (define (mesh-lathe silhouette sectors)

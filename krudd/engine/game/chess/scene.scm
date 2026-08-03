@@ -4,8 +4,8 @@
 ;;! showcase for the engine's lathed meshes and PBR materials. Authored the way
 ;;! game/tictactoe/scene.scm is: one static (scene ...) form of (entity ...)
 ;;! declarations the engine's scene-build walks
-;;! (world/entity/scene_script.scm), each binding a builtin mesh + material
-;;! and an authored transform. There is no
+;;! (world/entity/scene_script.scm), each binding a mesh + material by catalog
+;;! path and an authored transform. There is no
 ;;! game logic here and none alongside it — this slice is a set to look at, not
 ;;! a rules engine (see game/chess/chess.c); a later slice can add moves.
 ;;!
@@ -14,9 +14,11 @@
 ;;! (z = 3.5 - rank). Squares are one unit, so a piece drops straight onto a
 ;;! square centre. a1 is dark: a square is dark when file+rank is even.
 ;;!
-;;! The pieces are the six builtin://mesh/chess-* lathed/blocky meshes (see
-;;! world/asset/builtin_mesh_scripts.h), authored foot-on-y=0 so they sit at the
-;;! board top (y = 0.03). White wears builtin://material/chess-ivory, black
+;;! The pieces are the six project://mesh/chess-* lathed/blocky meshes, authored
+;;! foot-on-y=0 so they sit at the board top (y = 0.03). Those are this game's
+;;! own geometry, not the engine's: rules.scm holds the six (mesh ...) sources
+;;! and registers them through mesh-define!, so nothing named chess is seeded on
+;;! chess's behalf. White wears builtin://material/chess-ivory, black
 ;;! chess-ebony. Knights face the enemy: the mesh faces +Z, so white's knights
 ;;! (high Z) are turned 180 to face -Z while black's keep the default. Each king
 ;;! carries its cross as two small crossed boxes (children), the way tic-tac-toe
@@ -179,81 +181,81 @@
                (material "builtin://material/board-dark") (at 3.5 0.02 -3.5) (scale 0.97 1 0.97))
 
        ;;! White army (ivory) on ranks 1-2, nearest the camera.
-       (entity (name "wR-a1") (mesh "builtin://mesh/chess-rook")
+       (entity (name "wR-a1") (mesh "project://mesh/chess-rook")
                (material "builtin://material/chess-ivory") (at -3.5 0.03 3.5))
-       (entity (name "wN-b1") (mesh "builtin://mesh/chess-knight")
+       (entity (name "wN-b1") (mesh "project://mesh/chess-knight")
                (material "builtin://material/chess-ivory") (at -2.5 0.03 3.5) (rotate 0 180 0))
-       (entity (name "wB-c1") (mesh "builtin://mesh/chess-bishop")
+       (entity (name "wB-c1") (mesh "project://mesh/chess-bishop")
                (material "builtin://material/chess-ivory") (at -1.5 0.03 3.5))
-       (entity (name "wQ-d1") (mesh "builtin://mesh/chess-queen")
+       (entity (name "wQ-d1") (mesh "project://mesh/chess-queen")
                (material "builtin://material/chess-ivory") (at -0.5 0.03 3.5))
        (entity (name "wK-e1")
-               (mesh "builtin://mesh/chess-king") (material "builtin://material/chess-ivory")
+               (mesh "project://mesh/chess-king") (material "builtin://material/chess-ivory")
                (at 0.5 0.03 3.5)
                (children
                 (entity (mesh "builtin://mesh/box") (material "builtin://material/chess-ivory")
                         (at 0 1.55 0) (scale 0.05 0.24 0.05))
                 (entity (mesh "builtin://mesh/box") (material "builtin://material/chess-ivory")
                         (at 0 1.57 0) (scale 0.17 0.05 0.05))))
-       (entity (name "wB-f1") (mesh "builtin://mesh/chess-bishop")
+       (entity (name "wB-f1") (mesh "project://mesh/chess-bishop")
                (material "builtin://material/chess-ivory") (at 1.5 0.03 3.5))
-       (entity (name "wN-g1") (mesh "builtin://mesh/chess-knight")
+       (entity (name "wN-g1") (mesh "project://mesh/chess-knight")
                (material "builtin://material/chess-ivory") (at 2.5 0.03 3.5) (rotate 0 180 0))
-       (entity (name "wR-h1") (mesh "builtin://mesh/chess-rook")
+       (entity (name "wR-h1") (mesh "project://mesh/chess-rook")
                (material "builtin://material/chess-ivory") (at 3.5 0.03 3.5))
-       (entity (name "wP-a2") (mesh "builtin://mesh/chess-pawn")
+       (entity (name "wP-a2") (mesh "project://mesh/chess-pawn")
                (material "builtin://material/chess-ivory") (at -3.5 0.03 2.5))
-       (entity (name "wP-b2") (mesh "builtin://mesh/chess-pawn")
+       (entity (name "wP-b2") (mesh "project://mesh/chess-pawn")
                (material "builtin://material/chess-ivory") (at -2.5 0.03 2.5))
-       (entity (name "wP-c2") (mesh "builtin://mesh/chess-pawn")
+       (entity (name "wP-c2") (mesh "project://mesh/chess-pawn")
                (material "builtin://material/chess-ivory") (at -1.5 0.03 2.5))
-       (entity (name "wP-d2") (mesh "builtin://mesh/chess-pawn")
+       (entity (name "wP-d2") (mesh "project://mesh/chess-pawn")
                (material "builtin://material/chess-ivory") (at -0.5 0.03 2.5))
-       (entity (name "wP-e2") (mesh "builtin://mesh/chess-pawn")
+       (entity (name "wP-e2") (mesh "project://mesh/chess-pawn")
                (material "builtin://material/chess-ivory") (at 0.5 0.03 2.5))
-       (entity (name "wP-f2") (mesh "builtin://mesh/chess-pawn")
+       (entity (name "wP-f2") (mesh "project://mesh/chess-pawn")
                (material "builtin://material/chess-ivory") (at 1.5 0.03 2.5))
-       (entity (name "wP-g2") (mesh "builtin://mesh/chess-pawn")
+       (entity (name "wP-g2") (mesh "project://mesh/chess-pawn")
                (material "builtin://material/chess-ivory") (at 2.5 0.03 2.5))
-       (entity (name "wP-h2") (mesh "builtin://mesh/chess-pawn")
+       (entity (name "wP-h2") (mesh "project://mesh/chess-pawn")
                (material "builtin://material/chess-ivory") (at 3.5 0.03 2.5))
 
        ;;! Black army (ebony) on ranks 7-8.
-       (entity (name "bP-a7") (mesh "builtin://mesh/chess-pawn")
+       (entity (name "bP-a7") (mesh "project://mesh/chess-pawn")
                (material "builtin://material/chess-ebony") (at -3.5 0.03 -2.5))
-       (entity (name "bP-b7") (mesh "builtin://mesh/chess-pawn")
+       (entity (name "bP-b7") (mesh "project://mesh/chess-pawn")
                (material "builtin://material/chess-ebony") (at -2.5 0.03 -2.5))
-       (entity (name "bP-c7") (mesh "builtin://mesh/chess-pawn")
+       (entity (name "bP-c7") (mesh "project://mesh/chess-pawn")
                (material "builtin://material/chess-ebony") (at -1.5 0.03 -2.5))
-       (entity (name "bP-d7") (mesh "builtin://mesh/chess-pawn")
+       (entity (name "bP-d7") (mesh "project://mesh/chess-pawn")
                (material "builtin://material/chess-ebony") (at -0.5 0.03 -2.5))
-       (entity (name "bP-e7") (mesh "builtin://mesh/chess-pawn")
+       (entity (name "bP-e7") (mesh "project://mesh/chess-pawn")
                (material "builtin://material/chess-ebony") (at 0.5 0.03 -2.5))
-       (entity (name "bP-f7") (mesh "builtin://mesh/chess-pawn")
+       (entity (name "bP-f7") (mesh "project://mesh/chess-pawn")
                (material "builtin://material/chess-ebony") (at 1.5 0.03 -2.5))
-       (entity (name "bP-g7") (mesh "builtin://mesh/chess-pawn")
+       (entity (name "bP-g7") (mesh "project://mesh/chess-pawn")
                (material "builtin://material/chess-ebony") (at 2.5 0.03 -2.5))
-       (entity (name "bP-h7") (mesh "builtin://mesh/chess-pawn")
+       (entity (name "bP-h7") (mesh "project://mesh/chess-pawn")
                (material "builtin://material/chess-ebony") (at 3.5 0.03 -2.5))
-       (entity (name "bR-a8") (mesh "builtin://mesh/chess-rook")
+       (entity (name "bR-a8") (mesh "project://mesh/chess-rook")
                (material "builtin://material/chess-ebony") (at -3.5 0.03 -3.5))
-       (entity (name "bN-b8") (mesh "builtin://mesh/chess-knight")
+       (entity (name "bN-b8") (mesh "project://mesh/chess-knight")
                (material "builtin://material/chess-ebony") (at -2.5 0.03 -3.5))
-       (entity (name "bB-c8") (mesh "builtin://mesh/chess-bishop")
+       (entity (name "bB-c8") (mesh "project://mesh/chess-bishop")
                (material "builtin://material/chess-ebony") (at -1.5 0.03 -3.5))
-       (entity (name "bQ-d8") (mesh "builtin://mesh/chess-queen")
+       (entity (name "bQ-d8") (mesh "project://mesh/chess-queen")
                (material "builtin://material/chess-ebony") (at -0.5 0.03 -3.5))
        (entity (name "bK-e8")
-               (mesh "builtin://mesh/chess-king") (material "builtin://material/chess-ebony")
+               (mesh "project://mesh/chess-king") (material "builtin://material/chess-ebony")
                (at 0.5 0.03 -3.5)
                (children
                 (entity (mesh "builtin://mesh/box") (material "builtin://material/chess-ebony")
                         (at 0 1.55 0) (scale 0.05 0.24 0.05))
                 (entity (mesh "builtin://mesh/box") (material "builtin://material/chess-ebony")
                         (at 0 1.57 0) (scale 0.17 0.05 0.05))))
-       (entity (name "bB-f8") (mesh "builtin://mesh/chess-bishop")
+       (entity (name "bB-f8") (mesh "project://mesh/chess-bishop")
                (material "builtin://material/chess-ebony") (at 1.5 0.03 -3.5))
-       (entity (name "bN-g8") (mesh "builtin://mesh/chess-knight")
+       (entity (name "bN-g8") (mesh "project://mesh/chess-knight")
                (material "builtin://material/chess-ebony") (at 2.5 0.03 -3.5))
-       (entity (name "bR-h8") (mesh "builtin://mesh/chess-rook")
+       (entity (name "bR-h8") (mesh "project://mesh/chess-rook")
                (material "builtin://material/chess-ebony") (at 3.5 0.03 -3.5)))

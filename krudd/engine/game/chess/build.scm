@@ -14,10 +14,12 @@
    (private (raw "${generated}"))
    (link "subsystem_manager" "script" "game"))
  (native-only
-  ;;! The camera check drives the real asset catalog: rules.scm registers its
-  ;;! camera script into it through script-define!, so proving the Camera entity
-  ;;! still binds and eases needs the real thing, plus the entity-script driver
-  ;;! that ticks a bound script. Hence asset_plugin and (root "world/asset").
+  ;;! The camera and piece-mesh checks drive the real asset catalog: rules.scm
+  ;;! registers its camera script and its six piece meshes into it through
+  ;;! script-define! / mesh-define!, so proving the scene still binds them needs
+  ;;! the real thing, plus the entity-script driver that ticks a bound script and
+  ;;! the mesh_script bridge that turns a bound mesh source into geometry. Hence
+  ;;! asset_plugin, mesh_script, and the two world/asset include roots.
   (executable "chess_test"
               (sources "chess_test.c"
                        (root "world/entity/scene_script.c")
@@ -28,7 +30,8 @@
                        (root "core/include")
                        (root "base/memory/include")
                        (root "world/asset")
+                       (root "world/asset/include")
                        (raw "../third_party")
                        (raw "${generated}"))
-              (link "asset_plugin" "script" "memory" "log"))
+              (link "asset_plugin" "mesh_script" "script" "memory" "log"))
   (test "chess" "chess_test")))

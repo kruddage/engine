@@ -23,17 +23,18 @@
 /*
  * Register the scene-* host primitives (scene-spawn, scene-xform!, scene-mesh!,
  * scene-material!, scene-script!, scene-name!, and the load pair scene-clear! /
- * scene-build!) plus script-define!. Idempotent; safe to call before any world
- * is bound, since the primitives only touch a world during a build —
- * script-define! touches none at all.
+ * scene-build!) plus the authoring pair script-define! / mesh-define!.
+ * Idempotent; safe to call before any world is bound, since the primitives only
+ * touch a world during a build — the *-define! pair touches none at all.
  */
 void scene_script_init(void);
 
 /*
- * Bind the catalog script-define! registers into, for the session. Unlike the
- * world and catalog a build borrows for one call, this pair outlives any build:
- * a project declares its assets while its own source is being evaluated, which
- * is not inside one. Either pointer may be NULL (script-define! is then inert).
+ * Bind the catalog script-define! and mesh-define! register into, for the
+ * session. Unlike the world and catalog a build borrows for one call, this pair
+ * outlives any build: a project declares its assets while its own source is
+ * being evaluated, which is not inside one. Either pointer may be NULL (the
+ * *-define! primitives are then inert).
  */
 void scene_script_bind_catalog(const struct asset_api *asset,
 			       const struct asset_mut_api *mut);

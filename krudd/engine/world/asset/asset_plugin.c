@@ -1,18 +1,18 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "asset.h"
-#include "asset_api.h"
-#include "asset_codec_api.h"
-#include "scene.h"
-#include "builtin_scripts.h"
-#include "builtin_mesh_scripts.h"
+#include <abi/asset_api.h>
+#include <abi/asset_codec_api.h>
+#include <entity/scene.h>
+#include <asset/builtin_scripts.h>
+#include <asset/builtin_mesh_scripts.h>
 #include "builtin_texture_scripts.h"
 #include "builtin_sound_scripts.h"
 #include "asset_edit.h"
-#include "edit_api.h"
-#include "subsystem.h"
-#include "subsystem_manager.h"
-#include "log_api.h"
-#include "memory_api.h"
+#include <abi/edit_api.h>
+#include <core/subsystem.h>
+#include <core/subsystem_manager.h>
+#include <abi/log_api.h>
+#include <abi/memory_api.h>
 
 #include <string.h>
 #include <stdint.h>
@@ -21,8 +21,8 @@
 #include <emscripten/fetch.h>
 #else
 #include <stdio.h>
-#include "log.h"
-#include "memory.h"
+#include <log/log.h>
+#include <memory/memory.h>
 static const struct log_api    native_log = { log_write };
 static const struct memory_api native_mem = {
 	mem_alloc, mem_alloc_zero, mem_free,

@@ -9,9 +9,9 @@
  * proof that a value produced inside the Scheme image crosses back into the
  * engine's C services. More of the plugin ABI is meant to be exposed here.
  */
-#include "script.h"
+#include <core/script.h>
 
-#include "log.h"
+#include <log/log.h>
 
 #include "s7.h"
 

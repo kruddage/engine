@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#include "camera.h"
+#include <math/camera.h>
 
 void camera_update(struct camera *cam)
 {

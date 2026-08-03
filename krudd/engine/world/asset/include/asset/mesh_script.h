@@ -2,8 +2,8 @@
 #ifndef MESH_SCRIPT_H
 #define MESH_SCRIPT_H
 
-#include "mesh.h"
-#include "memory_api.h"
+#include <asset/mesh.h>
+#include <abi/memory_api.h>
 
 /*
  * mesh_script — the bridge between an ASSET_TYPE_MESH asset's Scheme source

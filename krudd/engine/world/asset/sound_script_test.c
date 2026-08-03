@@ -10,12 +10,12 @@
  * rate. The texture test's resolution independence, now for audio — plus the
  * channel count, which is the caller's choice, not the sound's.
  */
-#include "sound_script.h"
+#include <asset/sound_script.h>
 #include "builtin_sound_scripts.h"
 
-#include "script.h"
-#include "log.h"
-#include "memory.h"
+#include <core/script.h>
+#include <log/log.h>
+#include <memory/memory.h>
 
 #include <assert.h>
 #include <math.h>

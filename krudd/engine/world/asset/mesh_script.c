@@ -9,9 +9,9 @@
  * host/image seam — the geometry logic lives in Scheme, this file only
  * marshals the result into the wire format primitives.c also produces.
  */
-#include "mesh_script.h"
+#include <asset/mesh_script.h>
 
-#include "script.h"
+#include <core/script.h>
 
 #include "s7.h"
 

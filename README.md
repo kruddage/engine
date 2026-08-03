@@ -90,7 +90,12 @@ source can't be generated from without also being rebuilt for. A module that oth
 consume exports an
 `include/` directory holding exactly what they consume; everything else stays private at
 the module root. A module nothing outside consumes exports nothing — an empty surface is
-the assertion that it is a leaf, not an oversight — and no module exports its own root. `kruddmake/` is the thin build layer that reads those specs and emits +
+the assertion that it is a leaf, not an oversight — and no module exports its own root.
+Inside `include/` the headers sit one level down, in a directory named for the module, so
+a public header is reached as `#include <webgpu/renderer_webgpu.h>` and a private one as
+`#include "texture_registry.h"`. The prefix is the point: it puts the module boundary in
+the source, where a reader sees a reach at the line that makes it, rather than only in the
+build graph (`CODING_STANDARD.md`, "Public and private, and the two include forms"). `kruddmake/` is the thin build layer that reads those specs and emits +
 compiles them; it holds no engine domain logic.
 
 Every module is compiled straight into the one WASM module; at boot `engine.c` calls each

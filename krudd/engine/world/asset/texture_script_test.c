@@ -8,12 +8,12 @@
  * the same normalized pattern at 8x8 and 32x32, because shade is a pure
  * function of u,v in [0,1) and never sees a size.
  */
-#include "texture_script.h"
+#include <asset/texture_script.h>
 #include "builtin_texture_scripts.h"
 
-#include "script.h"
-#include "log.h"
-#include "memory.h"
+#include <core/script.h>
+#include <log/log.h>
+#include <memory/memory.h>
 
 #include <assert.h>
 #include <math.h>

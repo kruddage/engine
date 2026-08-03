@@ -26,13 +26,13 @@
  * reporting — so that the native build is a debugger on this code rather than a
  * parallel copy of it. See spec-dawn-native-build.
  */
-#include "subsystem.h"
-#include "subsystem_manager.h"
+#include <core/subsystem.h>
+#include <core/subsystem_manager.h>
 
 #include "renderer.h"
-#include "log_api.h"
-#include "memory_api.h"
-#include "script.h"
+#include <abi/log_api.h>
+#include <abi/memory_api.h>
+#include <core/script.h>
 #include "webgpu_platform.h"
 #include "texture_registry.h"
 

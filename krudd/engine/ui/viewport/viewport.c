@@ -35,23 +35,23 @@
  * wasm-only: native builds host no games, no canvas, and no kruddgui pointer.
  */
 
-#include "subsystem.h"
-#include "subsystem_manager.h"
-#include "log_api.h"
-#include "log_level.h"
+#include <core/subsystem.h>
+#include <core/subsystem_manager.h>
+#include <abi/log_api.h>
+#include <abi/log_level.h>
 
 static const struct log_api           *g_log;
 static const struct subsystem_manager *g_mgr;
 
 #ifdef __EMSCRIPTEN__
-#include "kruddgui_api.h"
-#include "camera_api.h"
-#include "entity_api.h"
-#include "asset_api.h"
-#include "memory_api.h"
-#include "math_types.h"
+#include <abi/kruddgui_api.h>
+#include <abi/camera_api.h>
+#include <abi/entity_api.h>
+#include <abi/asset_api.h>
+#include <abi/memory_api.h>
+#include <math/math_types.h>
 #include "viewport_pick.h"
-#include "world.h"
+#include <entity/world.h>
 
 #include <stdint.h>
 

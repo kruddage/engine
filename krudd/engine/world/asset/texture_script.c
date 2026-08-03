@@ -8,9 +8,9 @@
  * the pixel logic lives in Scheme, this file only resolves the param override
  * and marshals the flat buffer into the wire format.
  */
-#include "texture_script.h"
+#include <asset/texture_script.h>
 
-#include "script.h"
+#include <core/script.h>
 
 #include "s7.h"
 

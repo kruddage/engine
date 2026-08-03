@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#include "subsystem.h"
+#include <core/subsystem.h>
 
 static int table_len(const struct subsystem *table)
 {

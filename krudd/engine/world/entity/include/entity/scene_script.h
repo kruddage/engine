@@ -2,8 +2,8 @@
 #ifndef SCENE_SCRIPT_H
 #define SCENE_SCRIPT_H
 
-#include "world.h"
-#include "asset_api.h"
+#include <entity/world.h>
+#include <abi/asset_api.h>
 
 #include <stdint.h>
 

@@ -11,7 +11,7 @@
  */
 #include "audio_core.h"
 
-#include "memory.h"
+#include <memory/memory.h>
 
 #include <assert.h>
 #include <math.h>

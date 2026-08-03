@@ -2,7 +2,7 @@
 #ifndef ENTITY_SCRIPT_H
 #define ENTITY_SCRIPT_H
 
-#include "world.h"
+#include <entity/world.h>
 #include <stdint.h>
 
 /*

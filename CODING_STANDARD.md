@@ -157,6 +157,34 @@ uppercase with underscores:
 
 No `#pragma once`.
 
+### Public and private, and the two include forms
+
+A module's public surface is `include/<module>/`, where `<module>` is the last
+segment of its directory — `render/webgpu` exports
+`include/webgpu/renderer_webgpu.h`. Everything else stays at the module root and
+is private. There is no `private/` directory: a quoted include already searches
+the including file's own directory first, so a `.c` beside its private header
+needs no include path at all, and a directory would only name what the layout
+already says.
+
+That gives exactly two forms, and which one to write is never a judgment call:
+
+```c
+#include <webgpu/renderer_webgpu.h>   /* any public header, including your own */
+#include "texture_registry.h"          /* a private header of your own module */
+```
+
+Angle brackets and a module prefix for public headers — **including a module's
+own**. One spelling per header across the whole tree means `grep` finds every
+consumer of a surface in one pass, and it costs a module nothing to spell its
+own header the way everyone else must.
+
+The doubled level (`webgpu/include/webgpu/`) is what buys the prefix: a
+consumer puts `include/` on its path, so `include/` has to *contain* a
+directory named for the module. Without it every public header lands in one
+flat namespace, and `#include "scene.h"` tells a reader nothing about which of
+twenty-three modules it came from — or whether it was theirs to reach for.
+
 ---
 
 ## ABI exports

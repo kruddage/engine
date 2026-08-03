@@ -2,8 +2,8 @@
 #ifndef WORLD_H
 #define WORLD_H
 
-#include "math_types.h"
-#include "scene.h"
+#include <math/math_types.h>
+#include <entity/scene.h>
 
 #include <stdint.h>
 

@@ -2,7 +2,7 @@
 #ifndef CAMERA_H
 #define CAMERA_H
 
-#include "math_types.h"
+#include <math/math_types.h>
 
 /*
  * Fixed camera that produces a view_proj matrix each frame.

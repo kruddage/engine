@@ -6,7 +6,7 @@
  * buttons call. The registry itself is plain C and host-testable; only the
  * DOM bridge is emscripten-only.
  */
-#include "game.h"
+#include <host/game.h>
 
 #include <stddef.h>
 

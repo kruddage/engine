@@ -2,7 +2,7 @@
 #ifndef LOG_H
 #define LOG_H
 
-#include "log_api.h"
+#include <abi/log_api.h>
 
 void     log_init(void);
 void     log_shutdown(void);

@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#include "particles.h"
+#include <particles/particles.h>
 
 #include <assert.h>
 #include <stdint.h>

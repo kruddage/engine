@@ -8,7 +8,7 @@
  * import of log_write from the main module.
  */
 
-#include "log_level.h"
+#include <abi/log_level.h>
 
 #include <stdarg.h>
 #include <stdint.h>

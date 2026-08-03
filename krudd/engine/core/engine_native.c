@@ -21,13 +21,13 @@
  * binding and both draw paths — the machinery under suspicion — without the
  * cluster on top of it.
  */
-#include "subsystem.h"
-#include "subsystem_manager.h"
-#include "log.h"
-#include "log_api.h"
-#include "memory.h"
-#include "memory_api.h"
-#include "script.h"
+#include <core/subsystem.h>
+#include <core/subsystem_manager.h>
+#include <log/log.h>
+#include <abi/log_api.h>
+#include <memory/memory.h>
+#include <abi/memory_api.h>
+#include <core/script.h>
 
 #include <stdint.h>
 #include <stdio.h>

@@ -9,7 +9,7 @@
  * krudd-stats, and asserts on the recorded draws plus the ring-buffer state
  * the graph reads. Pixel layout is left to browser verification.
  */
-#include "script.h"
+#include <core/script.h>
 
 #include "s7.h"
 #include "kruddgui_scm.h"

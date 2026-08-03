@@ -29,6 +29,9 @@ const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const KRUDDMAKE_PATH = "krudd" + "/kruddmake/";
 const ENGINE_PATH = "krudd" + "/engine/";
 const THIRD_PARTY_PATH = "krudd" + "/third_party/";
+const PROJECTS_PATH = "projects" + "/chess/";
+const UNKNOWN_PROJECT_PATH = "projects" + "/no-such-game/";
+const PROJECT_INDEX = "projects" + ".json";
 const TARGET_ENV = "KRUDD" + "_TARGET";
 const BUILD_DIR_ENV = "KRUDD" + "_BUILD_DIR";
 const ESCAPING_SPECIFIER = "../../engine/src/b.mjs";
@@ -121,6 +124,49 @@ test("catches a non-engine package reaching krudd/ by path", () => {
 	}
 });
 
+/* The games are a fourth subtree the C build owns, and they are not under
+ * krudd/ — so they need a pattern of their own rather than riding along on
+ * `\bkrudd\/` (#1018). Nothing reaches into them today; this is what proves the
+ * door stays shut. The path asserted is the one a site build would reasonably
+ * reach for to list what it can offer, because that is the temptation the rule
+ * exists to close off — the answer is assets/projects.json, which the build
+ * already writes. */
+test("catches a non-engine package reaching the games tree by path", () => {
+	const problems = check({
+		"packages/other/src/a.mjs": `readFileSync("${PROJECTS_PATH}board.scm");\n`,
+	});
+
+	assert.equal(problems.length, 1);
+	assert.match(problems[0], /games tree by path/);
+});
+
+/* The rule is a path SHAPE, not the three directory names that happen to be
+ * there now. A fourth game is inside the check the day it is added rather than
+ * when someone remembers to extend a list — the same property packageDirs
+ * gives packages/, and the reason this test names a directory that does not
+ * exist. */
+test("a game directory the check has never heard of is still covered", () => {
+	const problems = check({
+		"packages/other/src/a.mjs": `readFileSync("${UNKNOWN_PROJECT_PATH}a.scm");\n`,
+	});
+
+	assert.equal(problems.length, 1);
+	assert.match(problems[0], /games tree by path/);
+});
+
+/* The other side of requiring a trailing segment: the index IS the supported
+ * way to ask what shipped, so naming it must stay clean. A pattern that
+ * matched the directory name alone would forbid the thing it wants callers to
+ * use. */
+test("naming assets/projects.json is not reaching into the games tree", () => {
+	assert.deepEqual(
+		check({
+			"packages/other/src/a.mjs": `fetch("assets/${PROJECT_INDEX}");\n`,
+		}),
+		[]
+	);
+});
+
 /* The path rule is what stands behind the deleted dependency rule: a package
  * that wants to drive the build has to spell a path to reach kruddmake now that
  * there is no package name to ask for, and that path is what this catches. */
@@ -170,7 +216,8 @@ test("the engine package may do all of that", () => {
 				`spawnSync("sh", [sh, "build"], {\n` +
 				`	env: { ${TARGET_ENV}: "wasm", ${BUILD_DIR_ENV}: out },\n` +
 				`});\n` +
-				`readFileSync("${KRUDDMAKE_PATH}manifest.scm");\n`,
+				`readFileSync("${KRUDDMAKE_PATH}manifest.scm");\n` +
+				`readFileSync("${PROJECTS_PATH}board.scm");\n`,
 		}),
 		[]
 	);

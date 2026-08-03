@@ -68,6 +68,32 @@ const ENGINE_PRIVATE = [
 		pattern: /\bkrudd\/(kruddmake|engine|third_party)\//,
 		what: "krudd/ by path",
 	},
+	/* The games are the fourth subtree the build owns, and the one a reader
+	 * will assume is already covered: they are NOT under krudd/, so the prefix
+	 * above does not reach them (#1028 moved them out, #1018 closed this).
+	 *
+	 * Nothing reaches for them today. The door is a plausible one to walk
+	 * through, though — a site build that wanted to offer the available games
+	 * would reasonably read that directory, and the answer is the index the
+	 * build already writes for exactly that question, assets/projects.json.
+	 * That index is the supported way to learn what shipped; the directory is
+	 * not, for the same reason none of the rest of the build tree is.
+	 *
+	 * A trailing path segment is required rather than the directory names
+	 * being listed. Listing them would make a fourth game unguarded until
+	 * someone remembered this line, which is the drift packageDirs below
+	 * refuses for packages; the same argument applies here, and the shape is
+	 * what the rule is actually about. It also keeps the pattern off
+	 * assets/projects.json, which is the thing callers are supposed to use. */
+	{
+		pattern: /\bprojects\/[\w.-]+\//,
+		/* Worded so it does not describe itself in the shape it forbids. The
+		 * prose above is safe — comments are stripped before matching — but a
+		 * `what` string is a live string literal in a package that is not
+		 * exempt, so "projects/<something>/" here would make this file its own
+		 * first violation. */
+		what: "the games tree by path",
+	},
 	{ pattern: /\bKRUDD_(TARGET|BUILD_DIR)\b/, what: "the kruddmake build environment" },
 ];
 

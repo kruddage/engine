@@ -71,8 +71,12 @@ krudd/
                  (the backend interface spec) and shader/ (the shader DSL)
     audio/       The mixer and its device backends
     ui/          The engine's own UI layer — kruddgui/, viewport/, kruddboard/
-    game/        host/ is the launcher registry; its siblings register with it
+    game/        host/ is the launcher registry, project/ the generic host that
+                 runs a game written as one (project ...) form
     shell/       The host the engine runs inside — web/
+projects/        The games — chess/, training/, ducks/. One .scm each, and a sibling
+                 of krudd/ rather than a module inside it: a project is content the
+                 engine loads at runtime, not something it links
 ```
 
 The tiers are listed in dependency order: a module may only reach for one in a tier above

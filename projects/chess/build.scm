@@ -11,7 +11,9 @@
 ;;! to remove) from putting a game's name back into generic C. Exactly one
 ;;! directory may claim it: a second declaration writes the same generated
 ;;! header, which is a build error (resolve-check-codegen), so the staged slot
-;;! cannot silently be taken twice.
+;;! cannot silently be taken twice. Chess is the sibling in projects/ that holds
+;;! it — it is the one with a finished game behind it, and the boot path needs a
+;;! project that plays.
 ;;!
 ;;! The same declaration also copies this file into assets/ next to index.html,
 ;;! which is what #984's Load Project control offers — so the staged project is

@@ -20,10 +20,27 @@
           ((char=? (string-ref s i) #\$) #t)
           (else (loop (+ i 1))))))
 
+;;! Which root a path hangs off, as the ninja variable to prefix it with. The
+;;! two are `$srcroot` (the engine tree) and `$reporoot` (the repository root,
+;;! where `projects/` lives) — see rz-project-path? for why there are two. A
+;;! project path keeps its `projects/` segment rather than having it stripped
+;;! into the variable, so the emitted `$reporoot/projects/ducks/ducks.scm` reads
+;;! as the path it actually is on disk.
+(define (ninja-root-var path)
+  (if (rz-project-path? path) "$reporoot/" "$srcroot/"))
+
 (define (ninja-ref path)
   (if (ninja-has-dollar? path)
       (ninja-resolve-var path)
-      (string-append "$srcroot/" path)))
+      (string-append (ninja-root-var path) path)))
+
+;;! The same choice for a real filesystem path — one the generator itself opens
+;;! at generation time (a codegen input, a spec on the regen edge) rather than
+;;! one ninja expands later.
+(define (ninja-source-path srcroot path)
+  (if (rz-project-path? path)
+      (string-append (krudd-repo-root) "/" path)
+      (string-append srcroot "/" path)))
 
 (define (ninja-include-flags dirs)
   (ninja-join " " (map (lambda (d) (string-append "-I" (ninja-ref d)))
@@ -35,7 +52,7 @@
 (define (ninja-wasm-ref path)
   (if (ninja-has-dollar? path)
       (ninja-resolve-var path)
-      (string-append "$srcroot/" path)))
+      (string-append (ninja-root-var path) path)))
 
 (define (ninja-wasm-include-flags dirs)
   (ninja-join " " (map (lambda (d) (string-append "-I" (ninja-wasm-ref d)))
@@ -191,6 +208,10 @@
      "# Regenerate: see krudd/kruddmake/run-tests.sh"
      ""
      "ninja_required_version = 1.10"
+     ;;! The repository root, and the engine tree inside it. Both are here
+     ;;! because the build reads from two roots: engine modules from $srcroot,
+     ;;! projects from $reporoot/projects (rz-project-path?).
+     (string-append "reporoot = " (krudd-repo-root))
      (string-append "srcroot = " srcroot)
      (string-append "cc = " native-cc)
      (string-append "cxx = " native-cxx)
@@ -430,7 +451,7 @@
    (lambda (decl)
      (let* ((src (rz-codegen-source decl))
             (out (string-append ninja-assets-dir "/" (krudd-basename src))))
-       (ninja-emit (string-append "build " out ": copy $srcroot/" src))
+       (ninja-emit (string-append "build " out ": copy " (ninja-ref src)))
        (ninja-wasm! out)))
    (resolve-staged-projects manifest))
   (ninja-emit ""))
@@ -463,7 +484,7 @@
          port)))))
 
 (define (ninja-codegen-input srcroot decl)
-  (string-append srcroot "/" (rz-codegen-source decl)))
+  (ninja-source-path srcroot (rz-codegen-source decl)))
 
 ;;! Dispatch one declaration onto its introspect.scm generator. Outputs are
 ;;! named relative to `generated/` in the declaration, since that is the one
@@ -512,7 +533,7 @@
         (list "ninja.scm" "introspect.scm" "resolve.scm"
               "build.scm" "manifest.scm"))
    (map (lambda (pair)
-          (string-append srcroot "/" (car pair) "/build.scm"))
+          (ninja-source-path srcroot (string-append (car pair) "/build.scm")))
         manifest)))
 
 ;;! Emit the generator edge. `regen-cmd` is the exact shell command that

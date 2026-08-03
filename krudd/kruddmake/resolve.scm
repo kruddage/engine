@@ -22,6 +22,37 @@
          (car clauses))
         (else (rz-clause head (cdr clauses)))))
 
+;;! TWO SOURCE ROOTS, not one. An engine module's directory is relative to
+;;! `krudd/engine`; a project's is relative to the repository root, because a
+;;! project is not an engine module. #976 made a project a single `.scm` the
+;;! engine loads at runtime, and the last thing still saying otherwise was where
+;;! chess sat on disk — inside the engine tree, in the manifest between `ui/`
+;;! and `shell/`, as though it were a tier. `projects/` at the top level is that
+;;! sentence written into the layout, where it is legible from `ls` rather than
+;;! only from this file.
+;;!
+;;! One prefix distinguishes the two, and it is tested against the RESOLVED PATH
+;;! rather than only against the manifest directory. That is what lets a
+;;! project's own sources take the project root while the `(root …)` paths it
+;;! reaches back into the engine for keep taking the engine's — a project links
+;;! engine libraries and compiles a few engine sources into its test, and those
+;;! are engine-relative exactly as they are from anywhere else. Everything
+;;! downstream — include flags, object paths, codegen inputs, the regen edge —
+;;! derives from this one predicate rather than carrying its own idea of where a
+;;! file lives.
+(define rz-project-prefix "projects/")
+
+(define (rz-project-path? p) (rz-prefix? p rz-project-prefix))
+
+;;! The on-disk `build.scm` a manifest entry names. Both entry points into the
+;;! generator — `kruddmake/build.scm` and `resolve_test.scm` — read their specs
+;;! through here, so the two cannot come to disagree about where a spec lives
+;;! the way they would if each spelled the root out for itself.
+(define (rz-spec-path krudd-root dir)
+  (string-append krudd-root
+                 (if (rz-project-path? dir) "" "/krudd/engine")
+                 "/" dir "/build.scm"))
+
 (define rz-system-libs (list "m"))
 
 (define (rz-system-lib? name) (member name rz-system-libs))

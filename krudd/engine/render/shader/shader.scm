@@ -16,6 +16,11 @@
 ;;! no such stage — the "matching stage else error" contract the renderer wants.
 ;;! (shader-transpile-wgsl SRC STAGE) is its twin for the WebGPU backend, lowering
 ;;! the same DSL to WGSL (see the "WGSL backend target" section at the bottom).
+;;!
+;;! The two targets differ in spelling, with one exception that differs in
+;;! meaning: clip->uv, which carries the backends' disagreement about where
+;;! clip-space y lands in a texture. See the "target conventions" section below
+;;! before writing a shader that samples a texture another pass rendered.
 
 ;;! --- small list helpers (the runtime image has only base s7) ---
 
@@ -85,6 +90,10 @@
         ((swizzle) (shader-swizzle-type (cadr args)))
         ((dot length distance) 'float)
         ((sample) 'vec4)
+        ;;! clip->uv takes a clip-space xy and returns a texture coordinate,
+        ;;! so it is vec2 in and vec2 out on either target — see "target
+        ;;! conventions" for why it is an op and not arithmetic.
+        ((clip->uv) 'vec2)
         ((cross) 'vec3)
         ;;! fwidth reads a screen-space derivative, so it is fragment-only
         ;;! on both targets; like the rest of this group it returns its
@@ -113,6 +122,35 @@
                (caddr sig)
                (error 'shader-unknown-op op)))))))
    (else (error 'shader-bad-expr e))))
+
+;;! --- target conventions ---
+;;!
+;;! clip->uv is the one DSL form whose *meaning* is target-dependent rather than
+;;! merely its spelling: it maps a clip-space xy in [-1, 1] to the texture
+;;! coordinate that samples the texel the rasterizer wrote there. The two
+;;! backends disagree about where clip y lands in a texture, and a shader that
+;;! spells the remap by hand cannot say which one it meant.
+;;!
+;;! GL's framebuffer origin is bottom-left and its texel (0, 0) is bottom-left
+;;! too, so clip y = +1 both writes and reads at v = 1: the bare
+;;! (xy * 0.5 + 0.5) is self-consistent and needs no help. WebGPU's framebuffer
+;;! origin is top-left while v still runs downward from texel row 0, so clip
+;;! y = +1 writes row 0 (v = 0) and that same expression reads the far end of
+;;! the texture. Every pass that samples what the pass before it rendered — the
+;;! full-screen post chain, the shadow-map compare — then comes out vertically
+;;! mirrored, which is the whole of the "WebGPU renders upside down" bug.
+;;!
+;;! Naming it is what keeps it fixed. The GL-convention constant is the
+;;! plausible thing to write at a new full-screen pass, it is correct on the
+;;! backend most contributors look at first, and when it is wrong it reads as a
+;;! camera bug rather than a shader bug. So the correction belongs in the one
+;;! place that already knows which backend it is lowering for: here.
+;;!
+;;! This is the y half of a divergence whose z half the renderer already
+;;! handles — GPU_CAP_CLIP_Z_ZERO_TO_ONE and mat4_clip_z01, which adapt a
+;;! GL-built projection's depth range for a [0, 1] backend (see renderer.scm).
+;;! Depth is a matrix the host builds, so it is corrected host-side; the texture
+;;! origin is only ever visible to a shader, so it is corrected here.
 
 ;;! --- expression emit ---
 
@@ -165,6 +203,11 @@
                         (shader-join ", "
                                      (map (lambda (a) (shader-emit a env)) args))
                         ")"))
+        ;;! GL's y-up framebuffer makes the bare remap self-consistent, so this
+        ;;! emits exactly the arithmetic the hand-written form did — the op
+        ;;! costs the GL target nothing and buys the WGSL one correctness.
+        ((clip->uv)
+         (string-append "((" (shader-emit (car args) env) " * 0.5) + 0.5)"))
         (else
          (string-append (symbol->string op) "("
                         (shader-join ", "
@@ -794,6 +837,13 @@
            (if depth
                (string-append "vec4<f32>(" call ")")
                call)))
+        ((clip->uv)
+         ;;! Clip y = +1 is texture row 0 here, so v runs against x: scale by
+         ;;! (0.5, -0.5) and bias both to 0.5. The argument is emitted once, so
+         ;;! a caller may pass any expression without it being evaluated twice.
+         (string-append "((vec2<f32>(0.5, -0.5) * "
+                        (shader-wgsl-emit (car args) nm tenv)
+                        ") + vec2<f32>(0.5, 0.5))"))
         ((mod)
          ;;! GLSL mod(a,b) = a - b*floor(a/b); WGSL % is fmod-like, so
          ;;! expand to keep the DSL's GLSL semantics on either target.

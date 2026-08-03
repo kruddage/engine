@@ -237,6 +237,50 @@
   (check "and its fragment stage still transpiles"
          (string? (shader-transpile frag-only "fragment"))))
 
+;;! A full-screen post pass — the shape scene_renderer's outline and bloom
+;;! shaders share: a clip-space triangle whose fragment samples the very target
+;;! the pass before it rendered. That is the one case where the GL and WebGPU
+;;! texture-origin conventions disagree, so clip->uv is what the pass writes and
+;;! the two backends must lower it *differently*. This oracle pins the GL side;
+;;! shader_wgsl_test.scm pins the WebGPU side, and the pair failing together is
+;;! what would catch someone "simplifying" clip->uv back into arithmetic.
+(define post "(shader post
+  (inputs (a_pos vec2 (location 0)))
+  (uniforms (scene sampler2D))
+  (varyings (v_uv vec2))
+  (targets (frag_color vec4 (location 0)))
+  (vertex
+    (set v_uv (clip->uv a_pos))
+    (set position (vec4 a_pos 0.0 1.0)))
+  (fragment
+    (set frag_color (sample scene v_uv))))")
+
+(define pvs (shader-transpile post "vertex"))
+
+;;! clip->uv's argument is an expression, not only a named input — the shadow
+;;! lookup hands it (swizzle proj xy). Binding the result through let* also puts
+;;! the inferred type on the page, which is what the vec2 check below reads.
+(define post-swz "(shader post_swz
+  (inputs (a_pos vec3 (location 0)))
+  (varyings (v_uv vec2))
+  (targets (frag_color vec4 (location 0)))
+  (vertex
+    (let* ((uv (clip->uv (swizzle a_pos xy))))
+      (set v_uv uv)
+      (set position (vec4 a_pos 1.0)))))")
+
+(define pswz (shader-transpile post-swz "vertex"))
+
+(display "shader: clip->uv (render-target texture coordinates)\n")
+(check "on GL, clip->uv is the plain y-up remap — origin and NDC agree there"
+       (has? pvs "\tv_uv = ((a_pos * 0.5) + 0.5);\n"))
+(check "which is byte-for-byte the arithmetic the hand-written form emitted"
+       (has? pvs "((a_pos * 0.5) + 0.5)"))
+(check "no y flip reaches the GL target, where one would invert the frame"
+       (not (has? pvs "0.5 - ")))
+(check "it types as vec2, and takes an expression, not only a named input"
+       (has? pswz "vec2 uv = ((a_pos.xy * 0.5) + 0.5);"))
+
 ;;! Byte index of SUB in S, or -1 — for asserting one fragment precedes another
 ;;! (a helper must be emitted above the main() that calls it).
 (define (idx s sub)

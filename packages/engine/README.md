@@ -59,6 +59,15 @@ facts only the engine is in a position to know:
   users a filename that does not exist.
 - `sw.js`, `manifest.webmanifest` and the icons keep their names because the
   page and the browser reference them literally.
+- `sw.js` therefore carries the commit hash in its *contents* instead
+  (`shell/web/sw.js.in`, substituted by the same `configure-file` pass as the
+  shell template). It needs the hash for two jobs — naming a cache no later
+  deploy inherits, and recognising which URLs are immutable — and it needs to be
+  a byte-different file per build for a third: a browser reinstalls a service
+  worker only when its bytes change, so a worker that never changes is a worker
+  whose caching policy can never be corrected. `scripts/build.mjs` checks that
+  stem against `index.html`'s, because one hash appearing in three places is two
+  chances to disagree.
 
 Before this package, that knowledge lived in `.github/scripts/stage-site.sh`,
 which re-derived the hash with its own `git rev-parse --short HEAD` and trusted

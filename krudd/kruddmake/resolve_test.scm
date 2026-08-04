@@ -127,6 +127,7 @@
        (set=? (map rz-codegen-source codegen)
               '("core/version.h.in"
                 "shell/web/shell.html.in"
+                "shell/web/sw.js.in"
                 "core/runtime.scm"
                 "world/entity/entity_script.scm"
                 "world/entity/scene_script.scm"

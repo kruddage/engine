@@ -421,18 +421,26 @@
     (ninja-emit "")
     (ninja-wasm! "index.html")))
 
-;;! PWA static assets served alongside index.html — plain copies from
-;;! core/ into the build root, so the staging step (packages/site, via
-;;! @kruddage/engine's artifact contract) can pick them up next to the hashed
-;;! JS/WASM outputs. Unlike those, these filenames aren't hashed, so the
-;;! service worker itself must tolerate that (see sw.js).
+;;! PWA static assets served alongside index.html, landed in the build root so
+;;! the staging step (packages/site, via @kruddage/engine's artifact contract)
+;;! can pick them up next to the hashed JS/WASM outputs. None of these filenames
+;;! is hashed — the page and the browser reach them by literal name — so the
+;;! service worker itself must tolerate that (see sw.js.in).
+;;!
+;;! sw.js is the one that is generated rather than copied: it is configure-file
+;;! output, because the hash it cannot carry in its name it carries in its
+;;! bytes. It is emitted from `generated/` for the same reason shell.html is,
+;;! and named the same way — relative to the build root, which is where ninja
+;;! runs.
 (define (ninja-emit-static-assets srcroot)
+  (define (copy-edge name from)
+    (ninja-emit (string-append "build " name ": copy " from))
+    (ninja-wasm! name))
   (for-each
    (lambda (name)
-     (ninja-emit (string-append "build " name ": copy "
-                                (string-append srcroot "/shell/web/" name)))
-     (ninja-wasm! name))
-   (list "manifest.webmanifest" "sw.js" "icon-192.png" "icon-512.png"))
+     (copy-edge name (string-append srcroot "/shell/web/" name)))
+   (list "manifest.webmanifest" "icon-192.png" "icon-512.png"))
+  (copy-edge "sw.js" "generated/sw.js")
   (ninja-emit ""))
 
 ;;! The runtime asset directory served next to index.html, and the index the

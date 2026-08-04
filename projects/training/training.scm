@@ -14,38 +14,12 @@
 ;;!
 ;;! --- one unit is one metre -------------------------------------------------
 ;;!
-;;! The engine had no unit convention before this file: a chess square is "one
-;;! unit" and nothing said what a unit was, which was harmless while the only
-;;! project was a board you look down at from outside. It stops being harmless
-;;! the moment a human stands inside the scene, because WebXR does not offer a
-;;! choice — it reports head and controller poses in METRES, in a space whose
-;;! floor is y = 0. A renderer that draws a 6-unit room and a runtime that walks
-;;! a 1.7-metre human across it agree only if a unit is a metre.
-;;!
-;;! So: ONE UNIT IS ONE METRE, and this file is the first thing in the tree that
-;;! depends on it. Every number below is metres, and training_test.c reads the
-;;! built room back and checks the metres, so the convention is asserted rather
-;;! than commented.
-;;!
-;;! --- what the built-in meshes measure --------------------------------------
-;;!
-;;! An entity's (scale ...) multiplies its mesh's authored extent, so "the right
-;;! size in metres" means knowing what each built-in already measures. From
-;;! world/asset/include/asset/builtin_mesh_scripts.h:
-;;!
-;;!   plane     a unit quad on XZ (x,z in ±0.5), facing +Y
-;;!   box       the unit cube, 1x1x1, centred on the origin
-;;!   cylinder  radius 0.5, height 1 — so a unit across and a unit tall
-;;!   sphere    radius 0.5 — a unit across
-;;!   capsule   radius 0.5, cylinder length 1, TOTAL HEIGHT 2 — y in ±1
-;;!
-;;! Four of those five are one unit in every axis, so their scale IS their size
-;;! in metres and nothing has to be remembered. The capsule is the exception and
-;;! it is the one a human reference wants: it stands two units tall at scale 1,
-;;! so a 1.75 m figure is scaled 0.875 in Y, not 1.75. That single off-by-two is
-;;! exactly the class of mistake this project exists to catch early, so the
-;;! human below is built from a capsule on purpose rather than from something
-;;! that would have divided out cleanly.
+;;! The convention itself — why a unit is a metre, what WebXR requires of that,
+;;! and what each built-in mesh measures against it, capsule included — is
+;;! stated once, in krudd/engine/base/math/include/math/camera.h. This project
+;;! is a consumer of that convention, not its definition: it is the first scene
+;;! in the tree built to it, and training-metres-per-unit below and
+;;! training_test.c are what make that a checked fact rather than a comment.
 
 ;;! --- the room, in metres ---------------------------------------------------
 ;;!

@@ -97,11 +97,16 @@ canvas {
  * ── The picker ──
  *
  * The page's one overlay, and the whole of what a bare URL opens: the projects
- * this build shipped, and a way to open a .scm off the device. Nothing loads
- * until something is picked, so this is a destination rather than a splash on
- * the way to a game — which is also why it is what the "load project" control
- * in the corner brings back over a running scene, instead of a second panel
- * saying the same thing somewhere else on the page.
+ * this build shipped, and a way to open a .scm off the device. It is a
+ * destination rather than a splash on the way to a game — nothing here is
+ * dismissed by waiting — which is also why it is what the "load project"
+ * control in the corner brings back over a running scene, instead of a second
+ * panel saying the same thing somewhere else on the page.
+ *
+ * The engine opens its staged project behind this overlay on a bare URL (#1034,
+ * see finish_plugin_boot in core/engine.c), so the × reveals a scene rather than
+ * a clear colour. That is a backdrop, not a pick: the picker stays up until
+ * something is chosen, and the URL keeps saying nothing is.
  *
  * Picking a shipped project navigates to ?game=<name>. That is the whole of
  * "open this instead": the page reloads into a fresh engine with the project
@@ -839,11 +844,13 @@ canvas {
 	 * page to fetch out of assets/ (kruddBootProject above). ?game=none — or
 	 * any name nothing ships — leaves the picker up.
 	 *
-	 * No ?game= at all answers the empty string, and nothing opens. That is the
-	 * bare URL's whole job: the page is a picker, and a project is something
-	 * you choose, so there is no game the site is "really" for and no default
-	 * game name to spell out here — which would be the same pin #976 pulled out
-	 * of engine.c, just moved into HTML.
+	 * No ?game= at all answers the empty string, and the engine reads that as
+	 * "open the project this build staged" — by launcher slot, not by name, so
+	 * the bare URL still has a scene behind its picker without this page (or
+	 * the C that boots it) knowing what that scene is called. Naming one here
+	 * would be the same pin #976 pulled out of engine.c, just moved into HTML,
+	 * which is why the empty string stays empty rather than defaulting to a
+	 * filename.
 	 */
 	window.kruddBootGame = function () {
 		try {
@@ -928,13 +935,13 @@ canvas {
 var Module = {
 	locateFile: function (path, prefix) {
 		if (path.endsWith('.wasm'))
-			return prefix + path.replace(/\.wasm$/, '.f89b492d.wasm');
+			return prefix + path.replace(/\.wasm$/, '.455ff330.wasm');
 		return prefix + path;
 	}
 };
 </script>
 
-<script async type="text/javascript" src="index.f89b492d.js"></script>
+<script async type="text/javascript" src="index.455ff330.js"></script>
 
 </body>
 </html>

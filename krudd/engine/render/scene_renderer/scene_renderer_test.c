@@ -36,6 +36,9 @@ static const char *const CAT_PATHS[] = {
 	"material/red",
 	"shader/alt",
 	"material/blue",
+	"shader/emissive",
+	"material/glow",
+	"material/dark",
 };
 #define CAT_COUNT ((uint32_t)(sizeof(CAT_PATHS) / sizeof(CAT_PATHS[0])))
 
@@ -49,6 +52,9 @@ static const int32_t CAT_TYPES[CAT_COUNT] = {
 	ASSET_TYPE_MATERIAL, /* id 6 material/red (legacy 16-byte, no shader) */
 	ASSET_TYPE_SHADER,   /* id 7 shader/alt   */
 	ASSET_TYPE_MATERIAL, /* id 8 material/blue (v2: base_color + shader 7) */
+	ASSET_TYPE_SHADER,   /* id 9  shader/emissive (has an emissive field) */
+	ASSET_TYPE_MATERIAL, /* id 10 material/glow (emissive driven past 1)  */
+	ASSET_TYPE_MATERIAL, /* id 11 material/dark (same shader, emissive 0) */
 };
 
 /* ids 1-4 serve (mesh ...) source text — upload_mesh compiles it through the
@@ -79,6 +85,49 @@ static const struct {
 	uint32_t shader_ref;
 	float    base_color[4];
 } MATERIAL_BLUE = { 7u, { 0.0f, 0.0f, 1.0f, 1.0f } };
+
+/*
+ * A shader that declares an `emissive` colour field, the way the shipped pbr
+ * shader does — the bloom bright pass finds it by introspecting this Material
+ * block, so the test exercises the real lookup rather than a hardcoded offset.
+ * std140 puts base_color at 0, metallic at 16, roughness at 20 and the vec3
+ * emissive at 32 (its own 16-byte slot), for a 48-byte block.
+ */
+static const char *const SHADER_EMISSIVE_SRC =
+	"(shader emissive-probe\n"
+	"  (inputs (a_pos vec3 (location 0)))\n"
+	"  (uniforms\n"
+	"    (Camera (block 0) (layout std140)\n"
+	"      (view_proj mat4)\n"
+	"      (model     mat4))\n"
+	"    (Material (block 1) (layout std140)\n"
+	"      (base_color vec4  (edit color))\n"
+	"      (metallic   float (edit range 0.0 1.0))\n"
+	"      (roughness  float (edit range 0.0 1.0))\n"
+	"      (emissive   vec3  (edit color))))\n"
+	"  (targets (frag_color vec4 (location 0)))\n"
+	"  (vertex   (set position (* view_proj model (vec4 a_pos 1.0))))\n"
+	"  (fragment (set frag_color (vec4 1.0 1.0 1.0 1.0))))\n";
+
+/*
+ * Two materials on that shader, differing only in emissive: glow is driven past
+ * 1 the way training's grid lines and ducks' crosshair are, dark leaves it
+ * at 0. block[] is the std140 Material block laid out as above, so
+ * block[8..10] is the emissive vec3 at byte 32.
+ */
+#define EMISSIVE_BLOCK_FLOATS 12
+static const struct {
+	uint32_t shader_ref;
+	float    block[EMISSIVE_BLOCK_FLOATS];
+} MATERIAL_GLOW = { 9u, { 0.10f, 0.01f, 0.01f, 1.0f,   /* base_color      */
+			  0.0f, 0.5f, 0.0f, 0.0f,      /* metallic, rough */
+			  2.4f, 0.12f, 0.10f, 0.0f } };/* emissive        */
+static const struct {
+	uint32_t shader_ref;
+	float    block[EMISSIVE_BLOCK_FLOATS];
+} MATERIAL_DARK = { 9u, { 0.10f, 0.01f, 0.01f, 1.0f,
+			  0.0f, 0.5f, 0.0f, 0.0f,
+			  0.0f, 0.0f, 0.0f, 0.0f } };
 
 static uint32_t cat_count(void) { return CAT_COUNT; }
 
@@ -131,6 +180,21 @@ static const void *cat_get_data(uint32_t id, uint32_t *out_size)
 		if (out_size)
 			*out_size = (uint32_t)sizeof(MATERIAL_BLUE);
 		return &MATERIAL_BLUE;
+	}
+	if (id == 9) {
+		if (out_size)
+			*out_size = (uint32_t)strlen(SHADER_EMISSIVE_SRC) + 1;
+		return SHADER_EMISSIVE_SRC;
+	}
+	if (id == 10) {
+		if (out_size)
+			*out_size = (uint32_t)sizeof(MATERIAL_GLOW);
+		return &MATERIAL_GLOW;
+	}
+	if (id == 11) {
+		if (out_size)
+			*out_size = (uint32_t)sizeof(MATERIAL_DARK);
+		return &MATERIAL_DARK;
 	}
 	return NULL;
 }
@@ -256,6 +320,133 @@ static uint32_t count_calls(enum gpu_call_type type)
 		if (log[i].type == type)
 			hits++;
 	return hits;
+}
+
+/* Transient textures the frame graph created at exactly WxH — the shape of the
+ * per-frame targets a path declares, which is how a pass's presence is read
+ * here without the graph having to report its own pass list. */
+static uint32_t count_texture_creates(uint32_t w, uint32_t h)
+{
+	const struct gpu_call_record *log;
+	uint32_t count, i, hits = 0;
+
+	log = renderer_null_get_log(&count);
+	for (i = 0; i < count; i++) {
+		if (log[i].type == GPU_CALL_TEXTURE_CREATE &&
+		    log[i].args.texture_create.width == w &&
+		    log[i].args.texture_create.height == h)
+			hits++;
+	}
+	return hits;
+}
+
+/*
+ * A frame's declared graph, reduced to the shape two frames can be compared on:
+ * every transient the graph created, in order, with its format, size and sample
+ * count, and every render pass, in order, with its attachment count and whether
+ * colour 0 carried a resolve target. That is exactly "same passes, same
+ * attachment/sample state" in a form a test can assert equality of.
+ */
+#define GRAPH_MAX_TEX    16
+#define GRAPH_MAX_PASSES 16
+
+struct graph_shape {
+	struct {
+		uint32_t format, width, height, samples;
+	}        tex[GRAPH_MAX_TEX];
+	uint32_t tex_count;
+	struct {
+		uint32_t color_count;
+		int      color0_resolve;
+	}        pass[GRAPH_MAX_PASSES];
+	uint32_t pass_count;
+};
+
+static void capture_graph_shape(struct graph_shape *out)
+{
+	const struct gpu_call_record *log;
+	uint32_t count, i;
+
+	memset(out, 0, sizeof(*out));
+	log = renderer_null_get_log(&count);
+	for (i = 0; i < count; i++) {
+		if (log[i].type == GPU_CALL_TEXTURE_CREATE &&
+		    out->tex_count < GRAPH_MAX_TEX) {
+			uint32_t t = out->tex_count++;
+
+			out->tex[t].format  = log[i].args.texture_create.format;
+			out->tex[t].width   = log[i].args.texture_create.width;
+			out->tex[t].height  = log[i].args.texture_create.height;
+			out->tex[t].samples =
+				log[i].args.texture_create.sample_count;
+		} else if (log[i].type == GPU_CALL_CMD_BEGIN_RENDER_PASS &&
+			   out->pass_count < GRAPH_MAX_PASSES) {
+			uint32_t pi = out->pass_count++;
+			const struct gpu_call_record *r = &log[i];
+
+			out->pass[pi].color_count =
+				r->args.cmd_begin_render_pass.color_count;
+			out->pass[pi].color0_resolve =
+				r->args.cmd_begin_render_pass.color0_resolve;
+		}
+	}
+}
+
+/* The sample count the graph declared its first WxH colour target with, or 0
+ * when it declared none. */
+static uint32_t color_target_samples(const struct graph_shape *g,
+				     uint32_t w, uint32_t h)
+{
+	uint32_t i;
+
+	for (i = 0; i < g->tex_count; i++) {
+		if (g->tex[i].width == w && g->tex[i].height == h &&
+		    g->tex[i].format != GPU_FORMAT_DEPTH32_FLOAT)
+			return g->tex[i].samples;
+	}
+	return 0;
+}
+
+/* Passes that carried a colour-0 resolve target — the multisampled forward
+ * pass, and nothing else. Counted rather than indexed because the graph
+ * topo-sorts its passes and the bright pass, which reads nothing, is free to
+ * land before the forward pass. */
+static uint32_t count_resolving_passes(const struct graph_shape *g)
+{
+	uint32_t i, hits = 0;
+
+	for (i = 0; i < g->pass_count; i++)
+		if (g->pass[i].color0_resolve)
+			hits++;
+	return hits;
+}
+
+/* Is every full-res (non-half-res) target in A also in B, same descriptor, same
+ * order? HALF_W is the half-res width the bloom chain uses; targets at that
+ * width are the chain's own and are skipped, so this compares the scene path
+ * alone. */
+static int scene_targets_match(const struct graph_shape *a,
+			       const struct graph_shape *b, uint32_t half_w)
+{
+	uint32_t i, j = 0, k;
+
+	for (i = 0; i < a->tex_count; i++) {
+		if (a->tex[i].width == half_w)
+			continue;
+		while (j < b->tex_count && b->tex[j].width == half_w)
+			j++;
+		if (j >= b->tex_count)
+			return 0;
+		k = j++;
+		if (a->tex[i].format  != b->tex[k].format ||
+		    a->tex[i].width   != b->tex[k].width ||
+		    a->tex[i].height  != b->tex[k].height ||
+		    a->tex[i].samples != b->tex[k].samples)
+			return 0;
+	}
+	while (j < b->tex_count && b->tex[j].width == half_w)
+		j++;
+	return j == b->tex_count;
 }
 
 /*
@@ -390,6 +581,122 @@ static void test_camera_user_navigation(struct subsystem_manager *mgr)
 	assert(base[0] == 0.0f && base[1] == 0.0f && base[2] == 4.0f);
 }
 
+/* One live box entity carrying MATERIAL_REF. */
+static void build_world_material(uint32_t box_ref, uint32_t material_ref)
+{
+	memset(&g_world, 0, sizeof(g_world));
+	g_world.count = 1;
+
+	g_world.alive[0]        = 1;
+	g_world.mask[0]         = COMPONENT_RENDER | COMPONENT_MATERIAL;
+	g_world.render_ref[0]   = box_ref;
+	g_world.material_ref[0] = material_ref;
+	set_identity_xform(&g_world.world_xform[0], 0.0f, 0.0f, 0.0f);
+}
+
+/*
+ * Bloom (#1022), asserted where it is decided: on the graph the tick declares.
+ *
+ * The two halves of the acceptance criteria are the two halves of this test.
+ * A surface driving `emissive` past 1 must bloom, which shows up as four extra
+ * passes and the half-res chain's three transients. A surface at 0 must be
+ * unchanged — and "unchanged" here is not a pixel tolerance but the stronger
+ * structural claim: the non-emissive frame declares the SAME passes on the SAME
+ * targets at the SAME sample count as the glowing one, and differs from it by
+ * exactly the four bloom passes and their three half-res transients. Nothing
+ * about the scene path — offscreen target, depth, MSAA resolve — may move.
+ *
+ * That last part is the regression this pins. The offscreen scene target is
+ * multisampled and resolved, and it is where anti-aliasing comes from; while
+ * bloom ran unconditionally its composite was also what carried that target to
+ * the backbuffer, so gating bloom on scene content is one short step from
+ * quietly taking MSAA away from every scene that authors no emissive material.
+ * The present pass exists to keep that from happening and this asserts it did
+ * not.
+ *
+ * Both worlds carry the same mesh and the same shader, differing only in the
+ * emissive field of the material, so nothing but the emissive drive can be
+ * what moves the graph.
+ */
+static void test_bloom_follows_emissive(struct subsystem_manager *mgr)
+{
+	const struct camera_api *cam = subsystem_manager_get_api(mgr, "camera");
+	struct graph_shape       dark, glow;
+
+	assert(cam && cam->set_viewport);
+	/* Bloom sizes its targets from the reported viewport; without one there
+	 * is no offscreen path at all. 64x48 halves clean. */
+	cam->set_viewport(64.0f, 48.0f);
+
+	/* Emissive 0: the scene still goes offscreen and is presented, but no
+	 * half-res target and no bloom pass is declared. */
+	build_world_material(1, 11u);
+	renderer_null_reset_log();
+	subsystem_manager_tick(mgr);
+	capture_graph_shape(&dark);
+	assert(count_texture_creates(32, 24) == 0);
+	/* Shadow map, scene colour, scene depth, resolve — and nothing else. */
+	assert(dark.tex_count == 4);
+	/* Shadow, forward, present. */
+	assert(dark.pass_count == 3);
+	/*
+	 * And it is genuinely multisampled and genuinely resolved — this is
+	 * the anti-aliasing, and a scene with nothing to bloom gets it. The
+	 * backend advertises GPU_CAP_MSAA_RESOLVE, so the scene colour is
+	 * declared above one sample and exactly one pass carries a resolve.
+	 */
+	assert(color_target_samples(&dark, 64, 48) > 1);
+	assert(count_resolving_passes(&dark) == 1);
+	/* Shadow draw + forward draw + the present blit. */
+	assert(count_draws(NULL) == 3);
+
+	/*
+	 * Emissive past 1: the chain joins the graph — the bright pass, two
+	 * blurs and the composite — along with the three half-res transients
+	 * they hand between them. Three more passes, not four: the composite
+	 * terminates the graph, so it takes the present blit's place rather
+	 * than adding to it.
+	 */
+	build_world_material(1, 10u);
+	renderer_null_reset_log();
+	subsystem_manager_tick(mgr);
+	capture_graph_shape(&glow);
+	assert(glow.pass_count == dark.pass_count + 3);
+	assert(count_texture_creates(32, 24) == 3);
+	assert(glow.tex_count == dark.tex_count + 3);
+	/*
+	 * And the scene path is untouched: every full-res target matches the
+	 * non-emissive frame's, descriptor for descriptor, sample count
+	 * included. This is the assertion that fails if the offscreen path is
+	 * ever re-tied to whether the scene has an emissive material.
+	 */
+	assert(scene_targets_match(&dark, &glow, 32));
+	assert(count_resolving_passes(&glow) == 1);
+	/*
+	 * Shadow + forward as before, plus one bright-pass draw for the
+	 * emitting mesh and one full-screen triangle each for blur H, blur V
+	 * and the composite. The composite has replaced the present blit as
+	 * the terminator, so this is three more draws, not four.
+	 */
+	assert(count_draws(NULL) == 6);
+
+	/*
+	 * The bright pass draws the emitting mesh and nothing else: adding a
+	 * second, non-emissive entity adds a shadow draw and a forward draw,
+	 * but no bright-pass draw. That is what keeps a lit-but-not-emissive
+	 * surface out of the glow.
+	 */
+	g_world.count           = 2;
+	g_world.alive[1]        = 1;
+	g_world.mask[1]         = COMPONENT_RENDER | COMPONENT_MATERIAL;
+	g_world.render_ref[1]   = 1u;
+	g_world.material_ref[1] = 11u;
+	set_identity_xform(&g_world.world_xform[1], 2.0f, 0.0f, 0.0f);
+	renderer_null_reset_log();
+	subsystem_manager_tick(mgr);
+	assert(count_draws(NULL) == 8);
+}
+
 int main(void)
 {
 	static const struct subsystem static_table[] = {
@@ -411,13 +718,18 @@ int main(void)
 	fg_plugin_entry(&mgr);              /* "frame_graph" (needs renderer) */
 	scene_renderer_plugin_entry(&mgr);  /* resolves all, init uploads meshes */
 
-	/* One forward pass: one draw per live entity that carries both a mesh
-	 * and a material — entity 1's mesh is skipped since it has no material. */
+	/*
+	 * A shadow pass and a forward pass, each drawing once per live entity
+	 * that carries both a mesh and a material — entity 1's mesh is skipped
+	 * since it has no material. The shadow pass walks the same drawables as
+	 * the forward pass and binds neither material nor light, so it doubles
+	 * the draw count and leaves the two bind counts below alone.
+	 */
 	renderer_null_reset_log();
 	subsystem_manager_tick(&mgr);
-	assert(count_draws(&idx_count) == 1);
+	assert(count_draws(&idx_count) == 2);
 	assert(idx_count == 36);            /* box: 36 indices */
-	assert(count_material_binds() == 1); /* one per draw */
+	assert(count_material_binds() == 1); /* one per forward draw */
 	assert(count_light_binds() == 1);    /* Sun bound once for the pass */
 
 	/* Degrade safe: an empty world draws nothing and does not crash. */
@@ -429,24 +741,29 @@ int main(void)
 	/*
 	 * Per-material shader: a material that selects shader/alt gets its own
 	 * pipeline, compiled once and off-frame (from the tick, not the pass).
-	 * Every live entity still draws. (The recording backend returns a 0
-	 * pipeline handle for every create, so a bind can't be attributed to a
-	 * specific pipeline here — the create count is the observable signal.)
+	 * Two creates, not one: the backend advertises GPU_CAP_MSAA_RESOLVE, so
+	 * every scene shader also gets the multisampled twin the offscreen
+	 * forward pass draws with. Every live entity still draws — twice, once
+	 * per pass — so two entities are four draws. (The create count, not a
+	 * bind, is the observable signal: handles here are opaque.)
 	 */
 	build_world_shaders(1);
 	renderer_null_reset_log();
 	subsystem_manager_tick(&mgr);
-	assert(count_calls(GPU_CALL_PIPELINE_CREATE) == 1); /* just shader/alt */
-	assert(count_draws(NULL) == 2);
+	assert(count_calls(GPU_CALL_PIPELINE_CREATE) == 2); /* alt, x1 and x4 */
+	assert(count_draws(NULL) == 4);
 
 	/* The pipeline is cached by shader id: a later frame compiles nothing. */
 	renderer_null_reset_log();
 	subsystem_manager_tick(&mgr);
 	assert(count_calls(GPU_CALL_PIPELINE_CREATE) == 0);
-	assert(count_draws(NULL) == 2);
+	assert(count_draws(NULL) == 4);
 
 	test_camera_follows_named_entity(&mgr);
 	test_camera_user_navigation(&mgr);
+	/* Last: it reports a viewport, and camera_set_viewport keeps the last
+	 * positive one, so every frame after this can take the post path. */
+	test_bloom_follows_emissive(&mgr);
 
 	subsystem_manager_shutdown(&mgr);
 	mem_shutdown();

@@ -128,14 +128,23 @@ static gpu_buffer_t   g_fs_ebo;
 static gpu_buffer_t   g_outline_ubo; /* std140 { vec2 texel; vec4 color; }       */
 
 /*
- * Bloom post resources (#bloom). The plain forward path renders the scene into
- * an offscreen colour, then extract -> blur H -> blur V -> composite adds a glow
- * around the bright part. The three pipelines share the full-screen quad above;
- * g_blur_ubo carries the separable blur's per-tap step. Null pipelines make the
- * tick fall back to a direct forward-to-backbuffer pass with no bloom, so bloom
- * is a pure add-on that never breaks ordinary rendering.
+ * Bloom post resources (#1022). The forward path renders the scene into an
+ * offscreen colour, then emissive -> blur H -> blur V -> composite adds a glow
+ * around the surfaces authored to emit. g_bloom_emissive_pso is a geometry
+ * pipeline (it re-draws the emitting meshes); the rest are full-screen and
+ * share the quad above, and g_blur_ubo carries the blur's per-tap step. Null
+ * pipelines make the tick fall back to a direct forward-to-backbuffer pass
+ * with no bloom, so bloom is an add-on that never breaks ordinary rendering.
+ *
+ * ON BY DEFAULT, and there is no switch to turn it off. The reasoning is in
+ * declare_bloom() below, next to the code that makes it true: these four
+ * passes are declared only for a frame that actually holds a material driving
+ * `emissive` past 1, so a scene that authors none pays for none of them and
+ * — more to the point — declares the same passes, on the same targets, in the
+ * same sample state as it did before this chain existed. A cost that is zero
+ * unless the content asked for it is not worth a knob.
  */
-static gpu_pipeline_t g_bloom_extract_pso;   /* threshold the bright part       */
+static gpu_pipeline_t g_bloom_emissive_pso;  /* bright pass: emitting meshes  */
 static gpu_pipeline_t g_bloom_blur_pso;      /* separable 9-tap, run H then V    */
 static gpu_pipeline_t g_bloom_composite_pso; /* add blurred bloom onto the scene */
 /*
@@ -154,16 +163,38 @@ static gpu_buffer_t   g_blur_ubo;            /* std140 { vec2 dir }             
 /*
  * Per-frame bloom transients + half-res size the tick publishes for the passes.
  * Three distinct blur targets (not a two-buffer ping-pong) so every hazard is a
- * plain read-after-write — extract->a, blur H a->b, blur V b->c, composite reads
- * c — which is the only ordering the frame graph the outline path uses tracks.
+ * plain read-after-write — emissive->a, blur H a->b, blur V b->c, composite
+ * reads c — the only ordering the frame graph the outline path uses tracks.
  */
 static struct {
 	fg_resource_t scene_color;
-	fg_resource_t bloom_a;    /* extract out / blur-H in  */
+	fg_resource_t bloom_a;    /* bright pass out / blur-H in */
 	fg_resource_t bloom_b;    /* blur-H out / blur-V in   */
 	fg_resource_t bloom_c;    /* blur-V out / composite in */
 	uint32_t      half_w, half_h;
 } g_bloom_frame;
+
+/*
+ * The present pass: a full-screen blit that carries the offscreen scene colour
+ * to the backbuffer.
+ *
+ * It exists because the offscreen scene target is not the bloom chain's, and
+ * must not become the bloom chain's. The forward pass renders offscreen
+ * whenever there is a viewport, and on a backend that can resolve MSAA
+ * (GPU_CAP_MSAA_RESOLVE) that target is multisampled and resolved — that is
+ * where the engine's anti-aliasing comes from, and it has nothing to do with
+ * bloom. What bloom used to supply, purely by being always-on, was the thing
+ * that carried that target across to the backbuffer: its composite was the
+ * terminating pass. Gate bloom on scene content and that terminator goes with
+ * it, and a scene with no emissive material silently loses its MSAA.
+ *
+ * So the carry is its own pass, owned by nobody's post chain. A frame's
+ * terminator is the outline composite when a selection is up, the bloom
+ * composite when the chain runs, and this otherwise — and the offscreen path
+ * and its sample state are the same in all three.
+ */
+static gpu_pipeline_t g_present_pso;
+static fg_resource_t  g_present_src;
 
 /*
  * Sun shadow-map resources (#sun-shadows). Before the forward pass the tick
@@ -285,33 +316,56 @@ static const char *OUTLINE_SHADER_SRC =
 	"      (set frag_color (vec4 col 1.0)))))\n";
 
 /*
- * Bloom is a three-pass LDR post chain over the offscreen scene colour, run in
- * the plain (non-outline) forward path: extract the bright part, blur it
- * separably, then add it back. It operates on the tonemapped scene the material
- * shaders already wrote (each pbr surface tonemaps itself), so this is cheap
- * "display-space" bloom — a glow around bright speculars and emissive, not a
- * physically-correct HDR bloom. All three are full-screen-triangle shaders that
- * reuse the outline path's clip-space quad and UV convention.
+ * Bloom is a four-pass chain hung off the frame graph: a bright pass, two
+ * separable blurs and a composite. The blur and composite are full-screen-
+ * triangle shaders that reuse the outline path's clip-space quad and UV
+ * convention; the bright pass is geometry.
  *
- * Extract: keep only what a luma threshold leaves, weighted so the knee is soft
- * rather than a hard cut. The scene is already [0,1], so the threshold is in
- * display space; 0.75 catches hot highlights and any emissive above mid-grey.
+ * THE BRIGHT PASS IS THE WHOLE DESIGN DECISION, so it is worth stating plainly.
+ * The obvious bright pass is a full-screen luma threshold over the scene
+ * colour, and that is what this chain was. It cannot work here. Every material
+ * shader tonemaps its own surface (see the pbr shader's `tonemap`), so what the
+ * scene target holds is display-space [0, 1] with the "brighter than any light
+ * can make it" information already crushed out of it. A luma threshold over
+ * that cannot tell an emissive line from a white wall — and blooming the wall
+ * violates the one hard rule this pass has, which is that a scene authoring
+ * no emissive material renders exactly what it rendered before bloom existed.
+ *
+ * So the bright pass re-draws the emitting geometry instead of hunting for it
+ * in pixels. It renders each mesh whose material drives `emissive` past 1,
+ * flat, in the amount by which it exceeds 1 — the drive the scene colour
+ * could not carry. `emissive` at or below 1 yields exactly zero and never
+ * reaches the target, which is what makes "an emissive surface at 0 is
+ * unchanged" hold by construction rather than by a tolerance.
+ *
+ * The cost is one extra draw per emitting mesh at half resolution, which is the
+ * downsample: a grid of lines or a crosshair is a handful of draws, and a scene
+ * with none declares no pass at all.
+ *
+ * The known limitation is occlusion: the pass carries no depth attachment, so
+ * an emitting surface behind a wall still contributes its glow. Giving it depth
+ * means either a second full-scene depth pass at half res or a depth-resolve of
+ * the scene's multisampled depth, and neither is worth it for content — a lit
+ * grid on a floor, a HUD sight — that is authored to be in view.
+ *
+ * `excess` rides in at block 1 under the name Material because the backends
+ * assign uniform-block slots by alphabetical block name (Camera -> 0,
+ * Material -> 1); it is the CPU-computed max(emissive - 1, 0), not the
+ * material's own bytes, so this shader is layout-independent of whatever
+ * Material block the surface's real shader declares.
  */
-static const char *BLOOM_EXTRACT_SHADER_SRC =
-	"(shader bloom_extract\n"
-	"  (inputs (a_pos vec2 (location 0)))\n"
-	"  (uniforms (scene sampler2D))\n"
-	"  (varyings (v_uv vec2))\n"
+static const char *BLOOM_EMISSIVE_SHADER_SRC =
+	"(shader bloom_emissive\n"
+	"  (inputs (a_pos vec3 (location 0)))\n"
+	"  (uniforms\n"
+	"    (Camera (block 0) (layout std140)\n"
+	"      (view_proj mat4)\n"
+	"      (model     mat4))\n"
+	"    (Material (block 1) (layout std140)\n"
+	"      (excess vec4)))\n"
 	"  (targets (frag_color vec4 (location 0)))\n"
-	"  (vertex\n"
-	"    (set v_uv (clip->uv a_pos))\n"
-	"    (set position (vec4 a_pos 0.0 1.0)))\n"
-	"  (fragment\n"
-	"    (let* ((c (swizzle (sample scene v_uv) rgb))\n"
-	"           (l (dot c (vec3 0.2126 0.7152 0.0722)))\n"
-	"           (k (max (- l 0.75) 0.0))\n"
-	"           (w (/ k (+ l 0.0001))))\n"
-	"      (set frag_color (vec4 (* c w) 1.0)))))\n";
+	"  (vertex   (set position (* view_proj model (vec4 a_pos 1.0))))\n"
+	"  (fragment (set frag_color (vec4 (swizzle excess rgb) 1.0))))\n";
 
 /*
  * Blur: one separable 9-tap Gaussian, run twice (horizontal then vertical) off
@@ -348,6 +402,11 @@ static const char *BLOOM_BLUR_SHADER_SRC =
  * Composite: add the blurred bloom back onto the full-res scene. Two samplers,
  * bound by the backend's alphabetical unit rule (bloom -> 0, scene -> 1). The
  * add is scaled so the glow reads as a halo, not a wash.
+ *
+ * A plain add, deliberately: it is the only composite whose identity case is
+ * exact. Where the bright pass wrote nothing the bloom texel is 0 and the
+ * result is the scene texel, bit for bit — so even a frame that declares the
+ * chain leaves every non-glowing pixel alone.
  */
 static const char *BLOOM_COMPOSITE_SHADER_SRC =
 	"(shader bloom_composite\n"
@@ -362,6 +421,25 @@ static const char *BLOOM_COMPOSITE_SHADER_SRC =
 	"    (let* ((s (swizzle (sample scene v_uv) rgb))\n"
 	"           (b (swizzle (sample bloom v_uv) rgb)))\n"
 	"      (set frag_color (vec4 (+ s (* b 0.65)) 1.0)))))\n";
+
+/*
+ * Present: one sampler, straight through. The same full-screen triangle and the
+ * same clip->uv convention as the composite above, so the offscreen scene lands
+ * on the backbuffer texel for texel; it is the composite with nothing to add.
+ * Alpha is forced opaque for the same reason every other terminating pass does
+ * it — the canvas is composited against the page.
+ */
+static const char *SCENE_PRESENT_SHADER_SRC =
+	"(shader scene_present\n"
+	"  (inputs (a_pos vec2 (location 0)))\n"
+	"  (uniforms (scene sampler2D))\n"
+	"  (varyings (v_uv vec2))\n"
+	"  (targets (frag_color vec4 (location 0)))\n"
+	"  (vertex\n"
+	"    (set v_uv (clip->uv a_pos))\n"
+	"    (set position (vec4 a_pos 0.0 1.0)))\n"
+	"  (fragment\n"
+	"    (set frag_color (vec4 (swizzle (sample scene v_uv) rgb) 1.0))))\n";
 
 /*
  * The shared Camera uniform block, std140-packed: view_proj[16] + model[16] +
@@ -443,6 +521,15 @@ struct shader_pso {
 	 */
 	gpu_pipeline_t pso_ms;
 	uint32_t       mat_block_size; /* std140 bytes of the shader's Material block */
+	/*
+	 * Byte offset of a Material field literally named `emissive` within
+	 * that block, or -1 for a shader that declares none. Introspected once,
+	 * when the pipeline is compiled, so the bloom bright pass can read a
+	 * material's emissive drive without the renderer knowing any shader's
+	 * schema — a shader that names its emission something else, or has
+	 * none, simply never contributes to bloom.
+	 */
+	int32_t        emissive_off;
 };
 
 #define SCENE_MAX_SHADER_PSOS 8
@@ -1116,18 +1203,41 @@ static struct shader_pso *find_shader_pso(uint32_t shader_ref)
 }
 
 /*
- * The std140 byte size of a shader's Material block, from the same introspection
- * the editor packs against. Cached per shader in the pso entry so the material's
- * UBO/texture-trailer split (see material_texture) costs no per-draw s7 call;
- * 0 for a shader with no Material block or an unparseable source.
+ * Introspect a shader's Material uniform block once, from the same query the
+ * editor packs against, and report the two things the renderer caches per
+ * pipeline: the block's std140 byte size (which drives the material's
+ * UBO/texture-trailer split — see material_texture) and the byte offset of a
+ * field named `emissive` (which drives the bloom bright pass). *OUT_SIZE is 0
+ * and *OUT_EMISSIVE is -1 for a shader with no Material block, an unparseable
+ * source, or no such field. One call, at pipeline-compile time, so neither
+ * consumer costs a per-draw trip through s7.
  */
-static uint32_t shader_material_block_size(const char *src)
-{
-	uint32_t total = 0;
+#define SHADER_MAX_PARAMS 32
 
-	if (src)
-		script_shader_material_params(src, NULL, 0, &total);
-	return total;
+static void shader_introspect_material(const char *src, uint32_t *out_size,
+				       int32_t *out_emissive)
+{
+	struct shader_param params[SHADER_MAX_PARAMS];
+	int                 n, i;
+
+	*out_size     = 0;
+	*out_emissive = -1;
+	if (!src)
+		return;
+	n = script_shader_material_params(src, params, SHADER_MAX_PARAMS,
+					  out_size);
+	for (i = 0; i < n; i++) {
+		/*
+		 * Three components at least: `emissive` is a colour drive, and
+		 * a scalar field that happened to share the name would be read
+		 * as three floats off the end of it.
+		 */
+		if (strcmp(params[i].name, "emissive") == 0 &&
+		    params[i].components >= 3) {
+			*out_emissive = (int32_t)params[i].offset;
+			return;
+		}
+	}
 }
 
 /* The cached Material-block size for a shader asset id, or 0 if not compiled. */
@@ -1266,11 +1376,13 @@ static void build_pipeline(const struct gpu_api *gpu)
 	 */
 	if (g_default_pso && scene_id &&
 	    g_shader_pso_count < SCENE_MAX_SHADER_PSOS) {
-		g_shader_psos[g_shader_pso_count].shader_ref = scene_id;
-		g_shader_psos[g_shader_pso_count].pso        = g_default_pso;
-		g_shader_psos[g_shader_pso_count].pso_ms     = g_default_pso_ms;
-		g_shader_psos[g_shader_pso_count].mat_block_size =
-			shader_material_block_size(src);
+		struct shader_pso *e = &g_shader_psos[g_shader_pso_count];
+
+		e->shader_ref = scene_id;
+		e->pso        = g_default_pso;
+		e->pso_ms     = g_default_pso_ms;
+		shader_introspect_material(src, &e->mat_block_size,
+					   &e->emissive_off);
 		g_shader_pso_count++;
 	}
 }
@@ -1358,22 +1470,26 @@ static void build_outline_resources(const struct gpu_api *gpu)
 }
 
 /*
- * Compile the three bloom pipelines and the blur's uniform buffer, off-frame.
- * All three are full-screen and reuse the quad build_outline_resources made, so
- * this must run after it. Any failed compile leaves a null handle and the tick
- * takes its no-bloom fallback, so bloom never breaks ordinary rendering.
+ * Compile the four bloom pipelines and the blur's uniform buffer, off-frame.
+ * The bright pass is geometry (create_pso — it draws meshes through the scene
+ * vertex layout, into a single-sample half-res colour target with no depth, so
+ * 1 colour / no depth / 1 sample); the rest are full-screen and reuse the quad
+ * build_outline_resources made, so this must run after it. Any failed compile
+ * leaves a null handle and the tick takes its no-bloom fallback, so bloom never
+ * breaks ordinary rendering.
  */
 static void build_bloom_resources(const struct gpu_api *gpu)
 {
 	struct gpu_buffer_desc bd;
 
-	g_bloom_extract_pso   = create_fullscreen_pso(gpu, BLOOM_EXTRACT_SHADER_SRC, 0);
+	g_bloom_emissive_pso  = create_pso(gpu, BLOOM_EMISSIVE_SHADER_SRC,
+					   1, 0, 1);
 	g_bloom_blur_pso      = create_fullscreen_pso(gpu, BLOOM_BLUR_SHADER_SRC, 0);
 	g_bloom_composite_pso = create_fullscreen_pso(gpu, BLOOM_COMPOSITE_SHADER_SRC, 0);
 	g_bloom_composite_bb_pso =
 		create_fullscreen_pso(gpu, BLOOM_COMPOSITE_SHADER_SRC, 1);
-	if (!g_bloom_extract_pso || !g_bloom_blur_pso || !g_bloom_composite_pso ||
-	    !g_bloom_composite_bb_pso)
+	if (!g_bloom_emissive_pso || !g_bloom_blur_pso ||
+	    !g_bloom_composite_pso || !g_bloom_composite_bb_pso)
 		g_log->write(LOG_LEVEL_WARN,
 			     "scene_renderer: bloom pipeline unavailable; "
 			     "bloom disabled");
@@ -1382,6 +1498,28 @@ static void build_bloom_resources(const struct gpu_api *gpu)
 	bd.usage = GPU_BUFFER_USAGE_UNIFORM;
 	bd.size  = BLUR_UBO_FLOATS * sizeof(float);
 	g_blur_ubo = gpu->buffer_create(&bd);
+}
+
+/*
+ * Compile the present pipeline, off-frame. Full-screen, and it always targets
+ * the backbuffer, so it wants depth for the same reason the backbuffer-facing
+ * composite does: the backend emulates GL's default-framebuffer depth there and
+ * WebGPU validates a pipeline against the pass it runs in. It reuses the quad
+ * build_outline_resources made, so this must run after it.
+ *
+ * A failed compile costs the offscreen path its terminator, so the tick falls
+ * back to rendering the forward pass straight at the backbuffer — correct, just
+ * without whatever the offscreen round trip was buying (MSAA, on a backend that
+ * resolves it). Degrading to "no anti-aliasing" rather than "no image" is the
+ * right way round.
+ */
+static void build_present_resources(const struct gpu_api *gpu)
+{
+	g_present_pso = create_fullscreen_pso(gpu, SCENE_PRESENT_SHADER_SRC, 1);
+	if (!g_present_pso)
+		g_log->write(LOG_LEVEL_WARN,
+			     "scene_renderer: present pipeline unavailable; "
+			     "the scene goes direct to the backbuffer");
 }
 
 /*
@@ -1483,11 +1621,15 @@ static void add_shader_pso(const struct gpu_api *gpu, uint32_t shader_ref)
 			 ? create_pso(gpu, src, 1, 1, g_msaa_samples)
 			 : pso;
 
-	g_shader_psos[g_shader_pso_count].shader_ref = shader_ref;
-	g_shader_psos[g_shader_pso_count].pso        = pso;
-	g_shader_psos[g_shader_pso_count].pso_ms     = pso_ms;
-	g_shader_psos[g_shader_pso_count].mat_block_size =
-		shader_material_block_size(src);
+	{
+		struct shader_pso *e = &g_shader_psos[g_shader_pso_count];
+
+		e->shader_ref = shader_ref;
+		e->pso        = pso;
+		e->pso_ms     = pso_ms;
+		shader_introspect_material(src, &e->mat_block_size,
+					   &e->emissive_off);
+	}
 	g_shader_pso_count++;
 }
 
@@ -2324,6 +2466,7 @@ static void scene_renderer_init(void)
 
 	build_outline_resources(gpu);
 	build_bloom_resources(gpu);
+	build_present_resources(gpu);
 	build_shadow_resources(gpu);
 
 	/* A fixed camera framing the unit primitives at the origin. */
@@ -2831,9 +2974,8 @@ static void composite_pass(struct fg_pass_ctx *ctx, void *userdata)
 	gpu->cmd_draw_indexed(cmd, &draw);
 }
 
-/* One full-screen-triangle draw of PSO reading TEX at unit 0. Shared by the
- * bloom extract pass and (with a bound UBO) the blur; the composite binds two
- * textures itself. */
+/* One full-screen-triangle draw of the bound PSO. Used by the blur; the
+ * composite binds its two textures itself and then calls this. */
 static void fullscreen_draw(const struct gpu_api *gpu, gpu_cmd_buf_t cmd)
 {
 	struct gpu_draw_indexed_args draw;
@@ -2846,18 +2988,160 @@ static void fullscreen_draw(const struct gpu_api *gpu, gpu_cmd_buf_t cmd)
 	gpu->cmd_draw_indexed(cmd, &draw);
 }
 
-/* Bloom, pass 1: threshold the offscreen scene into the half-res bright target. */
-static void bloom_extract_pass(struct fg_pass_ctx *ctx, void *userdata)
+/*
+ * The amount by which entity i's material drives `emissive` past 1, per
+ * channel, into OUT. Returns 1 when any channel exceeds 1 — when the surface is
+ * asking to be brighter than any light in the scene can make it, which is the
+ * definition of the thing bloom is for — and 0 otherwise, leaving OUT zeroed.
+ *
+ * The offset comes from the material's own shader, introspected when its
+ * pipeline was compiled, so this reads no schema the renderer invented. A
+ * per-entity material-param override wins over the shared asset's bytes, the
+ * same precedence forward_pass uses, so an entity that overrides its emissive
+ * blooms by the value it actually draws with.
+ */
+#define BLOOM_EMISSIVE_FLOOR 1.0f
+
+static int material_emissive_excess(const struct world *w, uint32_t i,
+				    float out[3])
+{
+	struct shader_pso *e;
+	const uint8_t     *bytes;
+	uint32_t           mat_ref, shader_ref, plen = 0, off;
+	float              em[3];
+	int                k, any = 0;
+
+	out[0] = out[1] = out[2] = 0.0f;
+	mat_ref    = w->material_ref[i];
+	shader_ref = resolve_material_shader(mat_ref);
+	e          = shader_ref ? find_shader_pso(shader_ref) : NULL;
+	if (!e || e->emissive_off < 0)
+		return 0;
+
+	if (w->material_param_len[i] > 0) {
+		bytes = w->material_params[i];
+		plen  = w->material_param_len[i];
+	} else {
+		bytes = material_params(mat_ref, &plen);
+	}
+	off = (uint32_t)e->emissive_off;
+	if (!bytes || plen < off + 3u * sizeof(float))
+		return 0;
+
+	memcpy(em, bytes + off, sizeof(em));
+	for (k = 0; k < 3; k++) {
+		if (em[k] > BLOOM_EMISSIVE_FLOOR) {
+			out[k] = em[k] - BLOOM_EMISSIVE_FLOOR;
+			any    = 1;
+		}
+	}
+	return any;
+}
+
+/*
+ * Does this frame hold anything to bloom? The tick asks before it declares the
+ * chain, and a "no" is what makes the promise in the header comment good: a
+ * scene whose materials are all at emissive 0 (every project but training and
+ * ducks, and every scene that predates the field) declares the same
+ * forward-to-backbuffer graph it declared before this pass existed, so its
+ * frame is not merely close to the old one — it is the same frame.
+ */
+static int frame_has_emissive(const struct world *w)
+{
+	uint32_t i;
+	float    excess[3];
+
+	if (!w)
+		return 0;
+	for (i = 0; i < w->count; i++) {
+		if (!w->alive[i] || !(w->mask[i] & COMPONENT_RENDER) ||
+		    !(w->mask[i] & COMPONENT_MATERIAL))
+			continue;
+		if (material_emissive_excess(w, i, excess))
+			return 1;
+	}
+	return 0;
+}
+
+/*
+ * Bloom, pass 1 — the bright pass: re-draw the emitting meshes flat, in their
+ * emissive drive above 1, into the half-res bright target. Everything else in
+ * the scene is simply not drawn, so the target is black where nothing emits and
+ * the rest of the chain has nothing to spread.
+ */
+static void bloom_emissive_pass(struct fg_pass_ctx *ctx, void *userdata)
 {
 	const struct gpu_api *gpu = fg_ctx_gpu(ctx);
 	gpu_cmd_buf_t         cmd = fg_ctx_cmd(ctx);
+	const struct world   *w;
+	struct mat4           cam_vp;
+	float                 ubo[SCENE_UBO_FLOATS];
+	uint32_t              i;
 
 	(void)userdata;
-	if (!gpu || !g_bloom_extract_pso)
+	if (!gpu || !g_scene || !g_bloom_emissive_pso)
 		return;
-	gpu->cmd_set_pipeline(cmd, g_bloom_extract_pso);
-	gpu->cmd_bind_texture(cmd, 0, fg_ctx_resource(ctx, g_bloom_frame.scene_color));
-	fullscreen_draw(gpu, cmd);
+	w = g_scene->get_world();
+	if (!w)
+		return;
+
+	cam_vp = camera_clip_vp(gpu);
+	memcpy(&ubo[0], cam_vp.m, 16 * sizeof(float));
+	/* The shader reads only the matrices, but the block is uploaded whole —
+	 * fill cam_pos so no uninitialised stack reaches the buffer. */
+	ubo[SCENE_UBO_CAMPOS + 0] = g_cam.eye[0];
+	ubo[SCENE_UBO_CAMPOS + 1] = g_cam.eye[1];
+	ubo[SCENE_UBO_CAMPOS + 2] = g_cam.eye[2];
+	ubo[SCENE_UBO_CAMPOS + 3] = 0.0f;
+
+	gpu->cmd_set_pipeline(cmd, g_bloom_emissive_pso);
+
+	for (i = 0; i < w->count; i++) {
+		struct gpu_draw_indexed_args draw;
+		struct mesh_gpu             *m;
+		struct mat4                  model;
+		const uint8_t               *mp;
+		float                        excess[4];
+		uint32_t                     mplen, slot, uoff, moff;
+
+		if (!w->alive[i] || !(w->mask[i] & COMPONENT_RENDER) ||
+		    !(w->mask[i] & COMPONENT_MATERIAL))
+			continue;
+		if (!material_emissive_excess(w, i, excess))
+			continue;
+		excess[3] = 1.0f;
+
+		mp = entity_mesh_params(w, i, &mplen);
+		m  = find_mesh(w->render_ref[i], mp, mplen);
+		if (!m)
+			continue;
+
+		if (!ring_take_slot(&slot))
+			break; /* overflow: skip the remaining draws */
+		uoff = slot * (uint32_t)UBO_STRIDE;
+		moff = slot * (uint32_t)MATERIAL_STRIDE;
+
+		mat4_from_transform(&model, &w->world_xform[i]);
+		memcpy(&ubo[16], model.m, 16 * sizeof(float));
+		gpu->buffer_update(g_ubo_ring, uoff, ubo,
+				   (uint32_t)sizeof(ubo));
+		gpu->cmd_bind_uniform_buffer(cmd, 0, g_ubo_ring, uoff,
+					     (uint32_t)sizeof(ubo));
+
+		gpu->buffer_update(g_material_ring, moff, excess,
+				   (uint32_t)sizeof(excess));
+		gpu->cmd_bind_uniform_buffer(cmd, 1, g_material_ring, moff,
+					     (uint32_t)sizeof(excess));
+
+		gpu->cmd_bind_vertex_buffer(cmd, 0, m->vbo, 0);
+		gpu->cmd_bind_index_buffer(cmd, m->ebo, 0,
+					   GPU_INDEX_FORMAT_UINT16);
+
+		memset(&draw, 0, sizeof(draw));
+		draw.index_count    = m->index_count;
+		draw.instance_count = 1;
+		gpu->cmd_draw_indexed(cmd, &draw);
+	}
 }
 
 /* One separable blur pass over INPUT with per-tap step (dx, dy). */
@@ -2889,7 +3173,7 @@ static void bloom_blur_h_pass(struct fg_pass_ctx *ctx, void *userdata)
 		   0.0f);
 }
 
-/* Bloom, pass 3: vertical blur back the other way (bloom_b -> bloom_a). */
+/* Bloom, pass 3: vertical blur back the other way (bloom_b -> bloom_c). */
 static void bloom_blur_v_pass(struct fg_pass_ctx *ctx, void *userdata)
 {
 	(void)userdata;
@@ -2914,6 +3198,122 @@ static void bloom_composite_pass(struct fg_pass_ctx *ctx, void *userdata)
 	gpu->cmd_bind_texture(cmd, 0, fg_ctx_resource(ctx, g_bloom_frame.bloom_c));
 	gpu->cmd_bind_texture(cmd, 1, fg_ctx_resource(ctx, g_bloom_frame.scene_color));
 	fullscreen_draw(gpu, cmd);
+}
+
+/*
+ * The present pass: blit the resolved offscreen scene onto the backbuffer. The
+ * terminator for a frame that runs neither post chain — see g_present_pso.
+ */
+static void present_pass(struct fg_pass_ctx *ctx, void *userdata)
+{
+	const struct gpu_api *gpu = fg_ctx_gpu(ctx);
+	gpu_cmd_buf_t         cmd = fg_ctx_cmd(ctx);
+
+	(void)userdata;
+	if (!gpu || !g_present_pso)
+		return;
+	gpu->cmd_set_pipeline(cmd, g_present_pso);
+	gpu->cmd_bind_texture(cmd, 0, fg_ctx_resource(ctx, g_present_src));
+	fullscreen_draw(gpu, cmd);
+}
+
+/* Are the bloom pipelines up and is there a viewport to size the half-res
+ * targets to? A "no" here is a broken or not-yet-started frame, not a scene
+ * without emissive content — frame_has_emissive answers that. */
+static int bloom_available(void)
+{
+	return g_bloom_emissive_pso && g_bloom_blur_pso &&
+	       g_bloom_composite_pso && g_bloom_composite_bb_pso &&
+	       g_view_w > 0.0f && g_view_h > 0.0f;
+}
+
+/*
+ * Declare the bloom chain on the graph: bright pass -> blur H -> blur V ->
+ * composite: four passes reading and writing declared resources like every
+ * other pass here. SCENE is the resolved full-res scene colour, TARGET what
+ * the composite writes (the backbuffer on the plain path, the outline's `lit`
+ * intermediate when a selection is up), and TO_BACKBUFFER picks the composite
+ * pipeline that matches TARGET's attachment state. Returns the composite pass,
+ * or 0 if any declaration was refused — the caller then abandons the frame's
+ * graph rather than executing a half-declared chain.
+ *
+ * ON BY DEFAULT — this is the decision the issue asked for, and this function
+ * is why it is defensible. The caller declares the chain only for a frame that
+ * holds a material driving `emissive` past 1 (frame_has_emissive), so the
+ * answer to "off by default, because it costs something?" is that for a
+ * scene with no emissive material it costs nothing at all: no transients, no
+ * passes, no offscreen scene target, the identical graph. And for a scene that
+ * does have one, the glow is not a preference — it is the look the content was
+ * authored for (training's grid lines and ducks' crosshair are both driven past
+ * 1 precisely so a bloom pass would catch them), and a switch defaulting to off
+ * would just mean those projects ship looking wrong. What it costs when it does
+ * run is one half-res draw per emitting mesh, two half-res full-screen blurs
+ * and one full-res composite: cheap enough to be on.
+ */
+static fg_pass_t declare_bloom(struct fg *fg, fg_resource_t scene,
+			       fg_resource_t target, int to_backbuffer,
+			       uint32_t vw, uint32_t vh)
+{
+	uint32_t      hw = vw > 1 ? vw / 2 : 1;
+	uint32_t      hh = vh > 1 ? vh / 2 : 1;
+	fg_tex_desc   hdesc;
+	fg_resource_t ba, bb, bc;
+	fg_resource_t hr[1], vr[1], cr[2];
+	fg_pass_t     epass, hpass, vpass, cpass;
+
+	if (!fg || !scene || !target)
+		return 0;
+
+	memset(&hdesc, 0, sizeof(hdesc));
+	hdesc.format       = GPU_FORMAT_RGBA8_UNORM;
+	hdesc.width        = hw;
+	hdesc.height       = hh;
+	hdesc.mip_levels   = 1;
+	hdesc.sample_count = 1;
+
+	ba = g_fg_api->declare_transient(fg, "bloom_a", hdesc);
+	bb = g_fg_api->declare_transient(fg, "bloom_b", hdesc);
+	bc = g_fg_api->declare_transient(fg, "bloom_c", hdesc);
+	if (!ba || !bb || !bc)
+		return 0;
+
+	g_bloom_frame.scene_color = scene;
+	g_bloom_frame.bloom_a     = ba;
+	g_bloom_frame.bloom_b     = bb;
+	g_bloom_frame.bloom_c     = bc;
+	g_bloom_frame.half_w      = hw;
+	g_bloom_frame.half_h      = hh;
+	g_bloom_composite_to_bb   = to_backbuffer;
+
+	/* The bright pass reads no graph resource — it re-draws geometry — so
+	 * it is a source, ordered before the blurs only by bloom_a. */
+	epass = g_fg_api->pass_declare(fg, "bloom_emissive", NULL, 0, &ba, 1);
+	hr[0] = ba;
+	hpass = g_fg_api->pass_declare(fg, "bloom_blur_h", hr, 1, &bb, 1);
+	vr[0] = bb;
+	vpass = g_fg_api->pass_declare(fg, "bloom_blur_v", vr, 1, &bc, 1);
+	cr[0] = scene;
+	cr[1] = bc;
+	cpass = g_fg_api->pass_declare(fg, "bloom_composite", cr, 2,
+				       &target, 1);
+	if (!epass || !hpass || !vpass || !cpass)
+		return 0;
+
+	/*
+	 * Clear the bright target to black. Without this the pass inherits
+	 * whatever the transient's storage last held, and "nothing emits here"
+	 * would read as last frame's glow.
+	 */
+	{
+		static const float BLACK[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+
+		g_fg_api->pass_set_color_clear(epass, 0, BLACK);
+	}
+	g_fg_api->pass_set_execute(epass, bloom_emissive_pass, NULL);
+	g_fg_api->pass_set_execute(hpass, bloom_blur_h_pass, NULL);
+	g_fg_api->pass_set_execute(vpass, bloom_blur_v_pass, NULL);
+	g_fg_api->pass_set_execute(cpass, bloom_composite_pass, NULL);
+	return cpass;
 }
 
 /* A live entity's name, or NULL — a self-contained twin of world_entity_name
@@ -2963,6 +3363,8 @@ static void scene_renderer_tick(void)
 	const struct world *w;
 	uint32_t            sel = 0;
 	int                 outline;
+	int                 bloom;
+	int                 offscreen;
 
 	if (!g_ready || !g_fg_api || !g_scene)
 		return;
@@ -3080,166 +3482,90 @@ static void scene_renderer_tick(void)
 	g_shadow_res = shadow;
 
 	/*
-	 * Bloom runs when its pipelines compiled and the UI has reported a
-	 * viewport to size the offscreen targets to — the forward pass renders
-	 * into an offscreen colour, then extract/blur/blur/composite adds a glow
-	 * on the way to the backbuffer. Without either (a headless or pre-report
-	 * frame, or a failed compile) the renderer falls back to the direct
-	 * forward-to-backbuffer pass it has always been, at zero added cost.
+	 * Bloom joins the graph for a frame that actually holds something to
+	 * bloom — a live material driving `emissive` past 1 — and only then.
+	 * The on-by-default reasoning is in declare_bloom, next to the code
+	 * that earns it; what matters here is the other half of the deal.
+	 *
+	 * bloom_available() is the separate question of whether the machinery
+	 * is up at all (pipelines compiled, a viewport reported); a headless or
+	 * pre-report frame runs no chain the same way.
+	 *
+	 * What bloom does NOT decide is whether the scene goes offscreen. That
+	 * is `offscreen`, one line down, and it turns only on there being a
+	 * viewport and something to carry the result back — never on scene
+	 * content. It has to be that way: the offscreen scene target is
+	 * multisampled and resolved on a backend advertising
+	 * GPU_CAP_MSAA_RESOLVE, so tying the offscreen path to bloom would hand
+	 * a scene its anti-aliasing on the strength of whether it happened to
+	 * author an emissive material. Bloom gates the four bloom passes and
+	 * nothing else; a frame with no emissive material declares the same
+	 * passes on the same targets at the same sample count it declared
+	 * before this chain existed, and differs from a glowing one by exactly
+	 * those four passes and their three half-res transients.
+	 *
+	 * Which pass terminates the graph follows from the same rule: the
+	 * outline composite when a selection is up, the bloom composite when
+	 * the chain runs, else the present blit. All three read the resolved
+	 * scene and write the backbuffer.
 	 */
-	if (!outline) {
-		int bloom = g_bloom_extract_pso && g_bloom_blur_pso &&
-			    g_bloom_composite_pso && g_view_w > 0.0f &&
-			    g_view_h > 0.0f;
+	bloom     = bloom_available() && frame_has_emissive(w);
+	offscreen = g_view_w > 0.0f && g_view_h > 0.0f &&
+		    (outline || bloom || g_present_pso);
 
-		if (!bloom) {
-			fg_resource_t freads[1];
-			uint32_t      frn = 0;
+	if (!offscreen) {
+		/*
+		 * Nothing could carry an offscreen scene back this frame — no
+		 * viewport has been reported yet, or the present pipeline never
+		 * compiled — so the forward pass renders straight at the
+		 * backbuffer, which is single-sample. The pre-post path, and
+		 * still the right fallback: no image is worse than no MSAA.
+		 */
+		fg_resource_t freads[1];
+		uint32_t      frn = 0;
 
-			if (spass) { freads[0] = shadow; frn = 1; }
-			pass = g_fg_api->pass_declare(fg, "forward",
-						      frn ? freads : NULL, frn,
-						      &bb, 1);
-			if (pass && (!shadow || spass)) {
-				if (spass) {
-					g_fg_api->pass_set_depth_clear(spass, 1.0f);
-					g_fg_api->pass_set_execute(spass,
-								   shadow_pass, NULL);
-				}
-				g_fg_api->pass_set_color_clear(pass, 0, CLEAR);
-				g_fg_api->pass_set_depth_clear(pass, 1.0f);
-				/* Direct to the single-sample backbuffer: no MSAA. */
-				g_forward_msaa = 0;
-				g_fg_api->pass_set_execute(pass, forward_pass, NULL);
-				g_fg_api->compile(fg);
-				g_fg_api->execute(fg);
-			}
-		} else {
-			uint32_t      vw = (uint32_t)g_view_w, vh = (uint32_t)g_view_h;
-			uint32_t      hw = vw > 1 ? vw / 2 : 1;
-			uint32_t      hh = vh > 1 ? vh / 2 : 1;
-			uint32_t      samples = g_msaa_samples;
-			fg_tex_desc   cdesc, ddesc, hdesc, scdesc, sddesc;
-			fg_resource_t scene_color, scene_depth, scene_resolve, post;
-			fg_resource_t ba, bb2, bc;
-			fg_resource_t fwrites[2], freads[1], xr[1], hr[1], vr[1],
-				      cr[2];
-			uint32_t      frn = 0;
-			fg_pass_t     fpass, xpass, hpass, vpass, cpass;
-
-			memset(&cdesc, 0, sizeof(cdesc));
-			cdesc.format       = GPU_FORMAT_RGBA8_UNORM;
-			cdesc.width        = vw;
-			cdesc.height       = vh;
-			cdesc.mip_levels   = 1;
-			cdesc.sample_count = 1;
-			ddesc              = cdesc;
-			ddesc.format       = GPU_FORMAT_DEPTH32_FLOAT;
-			hdesc              = cdesc;
-			hdesc.width        = hw;
-			hdesc.height       = hh;
-			/*
-			 * The scene colour + depth the forward pass renders into are
-			 * multisampled; the half-res bloom targets and the resolve
-			 * target stay single-sample (cdesc). The post passes sample
-			 * the resolved colour, not the multisampled one — a multisample
-			 * texture is not directly sampleable — so `post` is the resolve
-			 * when MSAA is on and the scene colour itself when it is off.
-			 */
-			scdesc              = cdesc;
-			scdesc.sample_count = samples;
-			sddesc              = ddesc;
-			sddesc.sample_count = samples;
-
-			scene_color = g_fg_api->declare_transient(fg, "scene_color",
-								  scdesc);
-			scene_depth = g_fg_api->declare_transient(fg, "scene_depth",
-								  sddesc);
-			ba  = g_fg_api->declare_transient(fg, "bloom_a", hdesc);
-			bb2 = g_fg_api->declare_transient(fg, "bloom_b", hdesc);
-			bc  = g_fg_api->declare_transient(fg, "bloom_c", hdesc);
-			scene_resolve = 0;
-			post          = scene_color;
-			if (samples > 1) {
-				scene_resolve = g_fg_api->declare_transient(
-					fg, "scene_resolve", cdesc);
-				post = scene_resolve;
-			}
-
-			g_bloom_frame.scene_color = post;
-			g_bloom_frame.bloom_a     = ba;
-			g_bloom_frame.bloom_b     = bb2;
-			g_bloom_frame.bloom_c     = bc;
-			g_bloom_frame.half_w      = hw;
-			g_bloom_frame.half_h      = hh;
-
-			fwrites[0] = scene_color;
-			fwrites[1] = scene_depth;
-			if (spass) { freads[0] = shadow; frn = 1; }
-			fpass = g_fg_api->pass_declare(fg, "forward",
-						       frn ? freads : NULL, frn,
-						       fwrites, 2);
-			if (fpass && samples > 1)
-				g_fg_api->pass_set_resolve(fpass, 0, scene_resolve);
-			xr[0] = post;
-			xpass = g_fg_api->pass_declare(fg, "bloom_extract", xr, 1,
-						       &ba, 1);
-			hr[0] = ba;
-			hpass = g_fg_api->pass_declare(fg, "bloom_blur_h", hr, 1,
-						       &bb2, 1);
-			vr[0] = bb2;
-			vpass = g_fg_api->pass_declare(fg, "bloom_blur_v", vr, 1,
-						       &bc, 1);
-			cr[0] = post;
-			cr[1] = bc;
-			cpass = g_fg_api->pass_declare(fg, "bloom_composite", cr, 2,
-						       &bb, 1);
-			g_bloom_composite_to_bb = 1;
-
-			if (fpass && xpass && hpass && vpass && cpass &&
-			    (!shadow || spass)) {
-				if (spass) {
-					g_fg_api->pass_set_depth_clear(spass, 1.0f);
-					g_fg_api->pass_set_execute(spass,
-								   shadow_pass, NULL);
-				}
-				g_fg_api->pass_set_color_clear(fpass, 0, CLEAR);
-				g_fg_api->pass_set_depth_clear(fpass, 1.0f);
-				g_forward_msaa = samples > 1;
-				g_fg_api->pass_set_execute(fpass, forward_pass, NULL);
-				g_fg_api->pass_set_execute(xpass, bloom_extract_pass,
+		if (spass) { freads[0] = shadow; frn = 1; }
+		pass = g_fg_api->pass_declare(fg, "forward",
+					      frn ? freads : NULL, frn,
+					      &bb, 1);
+		if (pass && (!shadow || spass)) {
+			if (spass) {
+				g_fg_api->pass_set_depth_clear(spass, 1.0f);
+				g_fg_api->pass_set_execute(spass, shadow_pass,
 							   NULL);
-				g_fg_api->pass_set_execute(hpass, bloom_blur_h_pass,
-							   NULL);
-				g_fg_api->pass_set_execute(vpass, bloom_blur_v_pass,
-							   NULL);
-				g_fg_api->pass_set_execute(cpass,
-							   bloom_composite_pass, NULL);
-				g_fg_api->compile(fg);
-				g_fg_api->execute(fg);
 			}
+			g_fg_api->pass_set_color_clear(pass, 0, CLEAR);
+			g_fg_api->pass_set_depth_clear(pass, 1.0f);
+			/* Direct to the single-sample backbuffer: no MSAA. */
+			g_forward_msaa = 0;
+			g_fg_api->pass_set_execute(pass, forward_pass, NULL);
+			g_fg_api->compile(fg);
+			g_fg_api->execute(fg);
 		}
 	} else {
 		/*
-		 * A mesh is outlined this frame. When the bloom pipelines are up
-		 * the two post chains compose (#630/#622): the forward scene is
-		 * bloomed into a full-res intermediate `lit`, then the outline
-		 * edge is drawn over `lit` on the way to the backbuffer, so the
-		 * piece both glows and wears its selection ring. Both stages
-		 * reuse their existing shaders unchanged — bloom_composite just
-		 * targets `lit` instead of the backbuffer, and the outline
-		 * composite reads `lit` as its scene. Without bloom it is the
-		 * plain forward -> mask -> outline path.
+		 * The forward pass renders into an offscreen scene target —
+		 * multisampled and resolved where the backend can — and a
+		 * terminating pass carries the result to the backbuffer.
+		 *
+		 * The two post chains compose (#630/#622): with both, the scene
+		 * is bloomed into a full-res intermediate `lit` and the outline
+		 * edge is drawn over `lit`, so a selected emissive mesh both
+		 * glows and wears its ring. With one, that one terminates. With
+		 * neither, the present blit does, and the frame is the scene
+		 * itself — resolved, and otherwise untouched.
+		 *
+		 * `offscreen` already required a viewport, so vw/vh are live.
 		 */
-		int           bloom = g_bloom_extract_pso && g_bloom_blur_pso &&
-				      g_bloom_composite_pso;
 		uint32_t      vw = (uint32_t)g_view_w, vh = (uint32_t)g_view_h;
 		uint32_t      samples = g_msaa_samples;
 		fg_tex_desc   cdesc, ddesc, scdesc, sddesc;
-		fg_resource_t scene_color, scene_depth, scene_resolve, post, mask;
-		fg_resource_t fwrites[2], creads[2], freads[1];
+		fg_resource_t scene_color, scene_depth, scene_resolve, post;
+		fg_resource_t mask = 0, lit = 0;
+		fg_resource_t fwrites[2], freads[1], creads[2];
 		uint32_t      frn = 0;
-		fg_pass_t     fpass, mpass, cpass;
+		fg_pass_t     fpass, mpass = 0, cpass = 0, bpass = 0, ppass = 0;
+		int           ok;
 
 		memset(&cdesc, 0, sizeof(cdesc));
 		cdesc.format       = GPU_FORMAT_RGBA8_UNORM;
@@ -3252,9 +3578,9 @@ static void scene_renderer_tick(void)
 		/*
 		 * Scene colour + depth are multisampled; the mask, the bloom
 		 * half-res targets and outline_lit stay single-sample (cdesc). The
-		 * post passes (bloom, outline composite) sample the resolved colour
-		 * `post`, which is the resolve target when MSAA is on and the scene
-		 * colour itself when it is off.
+		 * post passes sample the resolved colour `post`, which is the
+		 * resolve target when MSAA is on and the scene colour itself
+		 * when it is off — a multisample texture is not sampleable.
 		 */
 		scdesc              = cdesc;
 		scdesc.sample_count = samples;
@@ -3263,7 +3589,6 @@ static void scene_renderer_tick(void)
 
 		scene_color = g_fg_api->declare_transient(fg, "scene_color", scdesc);
 		scene_depth = g_fg_api->declare_transient(fg, "scene_depth", sddesc);
-		mask        = g_fg_api->declare_transient(fg, "sel_mask", cdesc);
 		scene_resolve = 0;
 		post          = scene_color;
 		if (samples > 1) {
@@ -3272,8 +3597,6 @@ static void scene_renderer_tick(void)
 			post = scene_resolve;
 		}
 
-		g_outline_frame.mask = mask;
-
 		fwrites[0] = scene_color;
 		fwrites[1] = scene_depth;
 		if (spass) { freads[0] = shadow; frn = 1; }
@@ -3281,99 +3604,75 @@ static void scene_renderer_tick(void)
 					       frn, fwrites, 2);
 		if (fpass && samples > 1)
 			g_fg_api->pass_set_resolve(fpass, 0, scene_resolve);
-		mpass = g_fg_api->pass_declare(fg, "sel_mask", NULL, 0, &mask, 1);
+
+		if (outline) {
+			mask  = g_fg_api->declare_transient(fg, "sel_mask",
+							    cdesc);
+			mpass = g_fg_api->pass_declare(fg, "sel_mask", NULL, 0,
+						       &mask, 1);
+		}
 
 		if (bloom) {
-			uint32_t      hw = vw > 1 ? vw / 2 : 1;
-			uint32_t      hh = vh > 1 ? vh / 2 : 1;
-			fg_tex_desc   hdesc = cdesc;
-			fg_resource_t ba, bb2, bc, lit;
-			fg_resource_t xr[1], hr[1], vr[1], lr[2], cr[2];
-			fg_pass_t     xpass, hpass, vpass, lpass;
+			fg_resource_t target = bb;
 
-			hdesc.width  = hw;
-			hdesc.height = hh;
-			ba  = g_fg_api->declare_transient(fg, "bloom_a", hdesc);
-			bb2 = g_fg_api->declare_transient(fg, "bloom_b", hdesc);
-			bc  = g_fg_api->declare_transient(fg, "bloom_c", hdesc);
-			lit = g_fg_api->declare_transient(fg, "outline_lit", cdesc);
-
-			g_bloom_frame.scene_color = post;
-			g_bloom_frame.bloom_a     = ba;
-			g_bloom_frame.bloom_b     = bb2;
-			g_bloom_frame.bloom_c     = bc;
-			g_bloom_frame.half_w      = hw;
-			g_bloom_frame.half_h      = hh;
-			g_outline_frame.scene_color = lit;
-
-			xr[0] = post;
-			xpass = g_fg_api->pass_declare(fg, "bloom_extract", xr, 1,
-						       &ba, 1);
-			hr[0] = ba;
-			hpass = g_fg_api->pass_declare(fg, "bloom_blur_h", hr, 1,
-						       &bb2, 1);
-			vr[0] = bb2;
-			vpass = g_fg_api->pass_declare(fg, "bloom_blur_v", vr, 1,
-						       &bc, 1);
-			lr[0] = post;
-			lr[1] = bc;
-			lpass = g_fg_api->pass_declare(fg, "bloom_composite", lr, 2,
-						       &lit, 1);
-			g_bloom_composite_to_bb = 0;
-			cr[0] = lit;
-			cr[1] = mask;
-			cpass = g_fg_api->pass_declare(fg, "outline", cr, 2, &bb, 1);
-
-			if (fpass && mpass && xpass && hpass && vpass && lpass &&
-			    cpass && (!shadow || spass)) {
-				if (spass) {
-					g_fg_api->pass_set_depth_clear(spass, 1.0f);
-					g_fg_api->pass_set_execute(spass,
-								   shadow_pass, NULL);
-				}
-				g_fg_api->pass_set_color_clear(fpass, 0, CLEAR);
-				g_fg_api->pass_set_depth_clear(fpass, 1.0f);
-				g_forward_msaa = samples > 1;
-				g_fg_api->pass_set_execute(fpass, forward_pass, NULL);
-				g_fg_api->pass_set_color_clear(mpass, 0, MASK_CLEAR);
-				g_fg_api->pass_set_execute(mpass, mask_pass, NULL);
-				g_fg_api->pass_set_execute(xpass, bloom_extract_pass,
-							   NULL);
-				g_fg_api->pass_set_execute(hpass, bloom_blur_h_pass,
-							   NULL);
-				g_fg_api->pass_set_execute(vpass, bloom_blur_v_pass,
-							   NULL);
-				g_fg_api->pass_set_execute(lpass,
-							   bloom_composite_pass, NULL);
-				g_fg_api->pass_set_execute(cpass, composite_pass,
-							   NULL);
-				g_fg_api->compile(fg);
-				g_fg_api->execute(fg);
+			if (outline) {
+				lit = g_fg_api->declare_transient(fg,
+								  "outline_lit",
+								  cdesc);
+				target = lit;
 			}
-		} else {
-			g_outline_frame.scene_color = post;
-			creads[0] = post;
+			bpass = declare_bloom(fg, post, target, !outline,
+					      vw, vh);
+		}
+
+		if (outline) {
+			g_outline_frame.mask        = mask;
+			g_outline_frame.scene_color = bloom ? lit : post;
+			creads[0] = g_outline_frame.scene_color;
 			creads[1] = mask;
 			cpass = g_fg_api->pass_declare(fg, "outline", creads, 2,
 						       &bb, 1);
+		} else if (!bloom) {
+			/* No chain to terminate the graph, so the blit does. */
+			g_present_src = post;
+			ppass = g_fg_api->pass_declare(fg, "present", &post, 1,
+						       &bb, 1);
+		}
 
-			if (fpass && mpass && cpass && (!shadow || spass)) {
-				if (spass) {
-					g_fg_api->pass_set_depth_clear(spass, 1.0f);
-					g_fg_api->pass_set_execute(spass,
-								   shadow_pass, NULL);
-				}
-				g_fg_api->pass_set_color_clear(fpass, 0, CLEAR);
-				g_fg_api->pass_set_depth_clear(fpass, 1.0f);
-				g_forward_msaa = samples > 1;
-				g_fg_api->pass_set_execute(fpass, forward_pass, NULL);
-				g_fg_api->pass_set_color_clear(mpass, 0, MASK_CLEAR);
-				g_fg_api->pass_set_execute(mpass, mask_pass, NULL);
+		/*
+		 * Every declaration this frame asked for has to have landed. A
+		 * refusal (the graph's pass or resource limit) leaves a chain
+		 * with a hole in it, and executing that would put a half-drawn
+		 * frame on screen; dropping the frame is the honest failure.
+		 * Exactly one of outline / bloom / present terminates, and the
+		 * last clause is what makes sure one of them did.
+		 */
+		ok = fpass && (!shadow || spass) && (!bloom || bpass) &&
+		     (!outline || (mpass && cpass)) &&
+		     (outline || bloom || ppass);
+		if (ok) {
+			if (spass) {
+				g_fg_api->pass_set_depth_clear(spass, 1.0f);
+				g_fg_api->pass_set_execute(spass, shadow_pass,
+							   NULL);
+			}
+			g_fg_api->pass_set_color_clear(fpass, 0, CLEAR);
+			g_fg_api->pass_set_depth_clear(fpass, 1.0f);
+			g_forward_msaa = samples > 1;
+			g_fg_api->pass_set_execute(fpass, forward_pass, NULL);
+			if (outline) {
+				g_fg_api->pass_set_color_clear(mpass, 0,
+							       MASK_CLEAR);
+				g_fg_api->pass_set_execute(mpass, mask_pass,
+							   NULL);
 				g_fg_api->pass_set_execute(cpass, composite_pass,
 							   NULL);
-				g_fg_api->compile(fg);
-				g_fg_api->execute(fg);
 			}
+			if (ppass)
+				g_fg_api->pass_set_execute(ppass, present_pass,
+							   NULL);
+			g_fg_api->compile(fg);
+			g_fg_api->execute(fg);
 		}
 	}
 	g_fg_api->destroy(fg);
@@ -3416,14 +3715,16 @@ static void scene_renderer_shutdown(void)
 			gpu->buffer_destroy(g_fs_ebo);
 		if (g_outline_ubo)
 			gpu->buffer_destroy(g_outline_ubo);
-		if (g_bloom_extract_pso)
-			gpu->pipeline_destroy(g_bloom_extract_pso);
+		if (g_bloom_emissive_pso)
+			gpu->pipeline_destroy(g_bloom_emissive_pso);
 		if (g_bloom_blur_pso)
 			gpu->pipeline_destroy(g_bloom_blur_pso);
 		if (g_bloom_composite_pso)
 			gpu->pipeline_destroy(g_bloom_composite_pso);
 		if (g_bloom_composite_bb_pso)
 			gpu->pipeline_destroy(g_bloom_composite_bb_pso);
+		if (g_present_pso)
+			gpu->pipeline_destroy(g_present_pso);
 		if (g_blur_ubo)
 			gpu->buffer_destroy(g_blur_ubo);
 		/*
@@ -3458,10 +3759,11 @@ static void scene_renderer_shutdown(void)
 	g_fs_vbo           = 0;
 	g_fs_ebo           = 0;
 	g_outline_ubo      = 0;
-	g_bloom_extract_pso   = 0;
+	g_bloom_emissive_pso  = 0;
 	g_bloom_blur_pso      = 0;
 	g_bloom_composite_pso = 0;
 	g_bloom_composite_bb_pso = 0;
+	g_present_pso         = 0;
 	g_blur_ubo            = 0;
 	g_shader_pso_count = 0;
 	g_mesh_count       = 0;

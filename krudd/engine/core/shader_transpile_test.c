@@ -159,6 +159,47 @@ int main(void)
 		assert(n == 0 && total == 0);
 	}
 
+	/*
+	 * The bloom bright pass's shader (#1022), on both lowerings. Bloom
+	 * claims both backends, and the only new thing it asks either one
+	 * for is this shader — the rest of the chain reuses pipelines and calls
+	 * that were already crossing both. So this is where that claim is
+	 * checked: the same source has to reach GLSL for WebGL and WGSL for
+	 * WebGPU, with the excess drive read out of its uniform block in each.
+	 */
+	{
+		static const char *BLOOM =
+			"(shader bloom_emissive"
+			"  (inputs (a_pos vec3 (location 0)))"
+			"  (uniforms"
+			"    (Camera (block 0) (layout std140)"
+			"      (view_proj mat4) (model mat4))"
+			"    (Material (block 1) (layout std140)"
+			"      (excess vec4)))"
+			"  (targets (frag_color vec4 (location 0)))"
+			"  (vertex   (set position"
+			"              (* view_proj model (vec4 a_pos 1.0))))"
+			"  (fragment (set frag_color"
+			"              (vec4 (swizzle excess rgb) 1.0))))";
+		const char *gv = script_shader_transpile(BLOOM, "vertex");
+		const char *gf = script_shader_transpile(BLOOM, "fragment");
+		const char *wv = script_shader_transpile_wgsl(BLOOM, "vertex");
+		const char *wf = script_shader_transpile_wgsl(BLOOM,
+								"fragment");
+
+		assert(gv != NULL && gf != NULL);
+		assert(strstr(gv, "gl_Position = (view_proj * model"
+				  " * vec4(a_pos, 1.0));") != NULL);
+		assert(strstr(gf, "frag_color = vec4(excess.rgb, 1.0);")
+		       != NULL);
+
+		assert(wv != NULL && wf != NULL);
+		assert(strstr(wv, "out.position = (u_Camera.view_proj"
+				  " * u_Camera.model"
+				  " * vec4<f32>(in.a_pos, 1.0));") != NULL);
+		assert(strstr(wf, "u_Material.excess.rgb") != NULL);
+	}
+
 	script_shutdown();
 	printf("shader_transpile tests passed\n");
 	return 0;

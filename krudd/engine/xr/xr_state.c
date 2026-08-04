@@ -10,6 +10,23 @@
 
 #ifdef __EMSCRIPTEN__
 #include <core/engine.h>
+
+/*
+ * kruddgui's overlay-suppression switch (#995). kruddgui sits below xr in
+ * kruddmake/manifest.scm's tier order, so xr may reach down to it — but the
+ * function is forward-declared here rather than reached through a header
+ * because kruddgui exports no public surface for it (its build.scm has no
+ * (public ...) clause) and, more to the point, must not gain one shaped like
+ * "for xr": the switch is generic ("some external host has claimed the
+ * backbuffer"), and kruddgui.cpp says why in its own comment. This is the
+ * same cross-module-call shape as scene_renderer_set_view_target below —
+ * both modules are wasm-modules of core's index (engine.c), so the
+ * definition is in the image without a link edge, and a plain declaration is
+ * all a call across that boundary needs. Not called from a native build:
+ * xr_test.c's native run never sets __EMSCRIPTEN__, so it never needs a
+ * stub for this symbol the way it supplies one for the scene_renderer calls.
+ */
+void kruddgui_set_overlay_suppressed(int suppressed);
 #endif
 
 #include <stdint.h>
@@ -207,6 +224,19 @@ void xr_session_begun(void)
 	 */
 #ifdef __EMSCRIPTEN__
 	krudd_suspend_loop();
+
+	/*
+	 * Off (#995). kruddgui's screen-space overlay composites flat, at
+	 * zero depth, over whatever the backbuffer currently is; for the
+	 * length of a session that backbuffer is the layer framebuffer this
+	 * module just took over for stereo (xr_frame_publish,
+	 * webgl_declare_backbuffer above), and the same flat composite over
+	 * that is pasted across both eyes rather than existing anywhere in
+	 * the scene. Paired with the loop takeover for the same reason:
+	 * both are "kruddgui's tick still runs, but not this part of it"
+	 * for as long as the headset owns the frame.
+	 */
+	kruddgui_set_overlay_suppressed(1);
 #endif
 	LOG_INFO("xr: session started; the frame loop is the headset's");
 }
@@ -273,6 +303,16 @@ void xr_session_ended(int32_t reason)
 	scene_renderer_set_view_target(NULL, NULL);
 
 #ifdef __EMSCRIPTEN__
+	/*
+	 * Back on (#995), before the loop hands back: the very next tick
+	 * after this one runs from window rAF again, over the canvas
+	 * backbuffer webgl_clear_backbuffer just restored, and it must find
+	 * kruddgui drawing exactly as it did before the session — every
+	 * entry into a session paired with the exit that undoes it is what
+	 * "repeatedly entering and exiting leaves the flat UI correct every
+	 * time" means in practice.
+	 */
+	kruddgui_set_overlay_suppressed(0);
 	krudd_resume_loop();
 #endif
 	LOG_INFO("xr: %s; the flat page has the frame loop back",

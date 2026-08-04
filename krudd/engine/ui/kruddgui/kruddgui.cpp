@@ -91,6 +91,14 @@ static gpu_buffer_t           s_vbo;
 static gpu_buffer_t           s_view_ubo;
 static bool                   s_gl_ready;
 
+/*
+ * The switch: whether gpu_flush's screen-space composite should run this
+ * tick. False (draw) until something turns it on. kruddgui itself never sets
+ * this to true — see kruddgui_set_overlay_suppressed below, and the call site
+ * in kruddgui_tick, for who does and why.
+ */
+static bool s_overlay_suppressed;
+
 static struct kgui_vertex s_verts[KGUI_MAX_VERTS];
 static struct kgui_batch  s_batch;
 
@@ -352,6 +360,31 @@ static void gpu_init(void)
 		return;
 
 	s_gl_ready = true;
+}
+
+/*
+ * kruddgui's half of the switch described at kruddgui_tick's gpu_flush call
+ * site: a host that owns a frame kruddgui did not draw for — today that is
+ * only the xr module, which calls this from xr_state.c's session-begun and
+ * session-ended, forward-declared there rather than through a header (#995,
+ * and see kruddgui_tick for the rest of the story) — tells kruddgui to stop
+ * compositing its screen-space batch and to start again.
+ *
+ * Deliberately not named or reasoned about in terms of XR: kruddgui sits
+ * below xr in kruddmake/manifest.scm's tier order and must not know it
+ * exists (that direction is xr's whole shape, #987), so this reads as "some
+ * external host has claimed the backbuffer for something kruddgui's overlay
+ * cannot composite into safely" rather than "a session is running". Any
+ * future caller with the same problem — an offscreen capture, a second
+ * external target — is exactly this switch and not a new one.
+ *
+ * extern "C" so a plain C forward declaration (xr_state.c is C) resolves it
+ * without name mangling; no header is added for it on purpose, the same way
+ * plugin_abi's get_device_pixel_ratio reaches this file.
+ */
+extern "C" void kruddgui_set_overlay_suppressed(int suppressed)
+{
+	s_overlay_suppressed = suppressed != 0;
 }
 
 /*
@@ -1623,7 +1656,25 @@ static void kruddgui_tick(void)
 	/* Reconcile the soft keyboard + capture flag with the field focus. */
 	field_sync();
 
-	gpu_flush();
+	/*
+	 * gpu_flush composites a flat, screen-space batch over the backbuffer
+	 * at zero depth. That is the right thing over a 2D canvas and the
+	 * wrong thing over an XRWebGLLayer: in stereo it is the same pixels
+	 * pasted across both eyes' framebuffers rather than a surface that
+	 * exists anywhere in the scene, which reads to a headset as a screen
+	 * door welded to the user's face rather than UI (#995). Suppressing
+	 * just this draw — and nothing above it — is deliberate: the overlay
+	 * loop, the Scheme panel image and field_sync above all still run
+	 * every tick unchanged, which is what lets the flat page pick back up
+	 * exactly where it left off the moment the switch flips back. A
+	 * world-space quad carrying this same batch (same pipelines, same
+	 * font, only the vertex transform and the input mapping differ) is
+	 * the intended replacement and is scoped as its own issue, #1044, so
+	 * that landing a working headset frame here does not wait on a UI
+	 * rewrite.
+	 */
+	if (!s_overlay_suppressed)
+		gpu_flush();
 #endif
 }
 

@@ -109,23 +109,35 @@ export const ENGINE_PROJECT_INDEX = "projects.json";
  * surface it codes to instead of reading the generated loader. Verified against
  * the real build output by scripts/build.mjs.
  *
- * Opening a project is the whole of it. There is no "load this scene" entry
- * point beside it: the page opens a project the build shipped by navigating to
- * ?game=<name>, which the module reads at boot rather than being called about,
- * so the only thing the page calls in for is a source it holds and the module
- * does not.
+ * Opening a project is most of it. There is no "load this scene" entry point
+ * beside _krudd_load_project: the page opens a project the build shipped by
+ * navigating to ?game=<name>, which the module reads at boot rather than being
+ * called about, so the only thing the page calls in for is a source it holds
+ * and the module does not.
  *
  * _malloc and _free are here for one reason and it is worth naming: that path
  * passes a variable-length string INTO the module, and every other JS bridge in
  * the tree passes one out. A buffer for it has to come from the module's own
  * allocator, so the allocator is part of the published surface. The engine's own
  * bridge (project_host.c) is the only intended caller, and it frees what it
- * allocates within the one call. */
+ * allocates within the one call.
+ *
+ * _krudd_suspend_loop / _krudd_resume_loop / _krudd_driven_tick (engine.c,
+ * #991) let a host that embeds this module take the frame loop over: pause the
+ * rAF loop emscripten_set_main_loop installed, drive engine_tick itself one
+ * call at a time, then hand the loop back. No code in this package calls them
+ * — the page here still runs on the plain rAF loop end to end — but a host
+ * with its own frame source, that hands out per-frame data only through its
+ * own callback, needs the loop suspended for as long as it is driving, and
+ * there is no other way to get it. */
 export const ENGINE_EXPORTED_FUNCTIONS = [
 	"_main",
 	"_krudd_load_project",
 	"_malloc",
 	"_free",
+	"_krudd_suspend_loop",
+	"_krudd_resume_loop",
+	"_krudd_driven_tick",
 ];
 
 /* Name of the self-describing index written beside the artifacts. */

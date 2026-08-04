@@ -66,4 +66,16 @@
   (executable "shader_transpile_test"
               (sources "shader_transpile_test.c")
               (link "script"))
-  (test "shader_transpile" "shader_transpile_test")))
+  (test "shader_transpile" "shader_transpile_test")
+
+  ;;! frame_pacing has no public surface — engine.c is its only real caller —
+  ;;! but the resync-across-a-gap rule it encodes (#991) is exactly the kind
+  ;;! of thing worth pinning down natively rather than only by eyeballing the
+  ;;! browser, so it is split out as its own library the way kruddgui splits
+  ;;! kgui_input out for the same reason.
+  (library "frame_pacing"
+    (sources "frame_pacing.c"))
+  (executable "frame_pacing_test"
+              (sources "frame_pacing_test.c")
+              (link "frame_pacing"))
+  (test "frame_pacing" "frame_pacing_test")))

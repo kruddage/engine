@@ -1,17 +1,25 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
 ;;! The whole game is chess.scm — there is no C here any more, so this
-;;! directory declares exactly two things: the source this build ships as its
-;;! staged project, and the test that drives it.
+;;! directory declares three things: that the build ships the game, how the
+;;! source reaches the test, and the test. The contract those declarations are
+;;! drawn from is projects/README.md; what the two shipping declarations mean is
+;;! resolve.scm's note on rz-codegen-kinds.
 ;;!
-;;! What a project may and may not declare is projects/README.md; what the two
-;;! shipping declarations mean is resolve.scm's note on rz-codegen-kinds. The
-;;! only thing left to say here is why CHESS is the one holding the staged slot,
-;;! since exactly one project may and the contract does not care which: it is
-;;! the sibling with a finished game behind it, and the boot path needs a
-;;! project that plays. Nothing about the declaration knows that — it embeds
-;;! under a fixed symbol core/engine.c evaluates without learning which project
-;;! it got (#976), which is what keeps a game's name out of generic C.
-((staged-project "chess.scm")
+;;! Shipped, not staged. Chess held the staged slot while the bare URL had no
+;;! project to open and the boot path wanted one that plays; since #1034 the
+;;! bare URL opens `default` — the scene the renderer used to seed from C — and
+;;! chess is a `?game=` away like every other shipped project, which costs it
+;;! one fetch of this file and buys back the WASM image every visitor downloads.
+;;! Being staged was never what made it reachable: `project-source` is, and any
+;;! number of projects may declare one.
+;;!
+;;! The (embed ...) is for the test alone — CHESS_SCM is included by
+;;! chess_test.c and by nothing else, so the test drives the real source with no
+;;! filesystem under it and the shipped WASM module pays nothing for it. It used
+;;! to read the staged embed instead, which was free while chess was the staged
+;;! one and is not this file's to borrow now.
+((project-source "chess.scm")
+ (embed "chess.scm" "chess_scm.h" "CHESS_SCM")
 
  (native-only
   ;;! The test drives chess.scm the way the engine does: project_host.c is

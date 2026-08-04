@@ -4,9 +4,9 @@
 ;;! source reaches the test, and the test. The contract those declarations are
 ;;! drawn from is projects/README.md.
 ;;!
-;;! Shipped, not staged: chess holds the staged slot, and a half-finished duck
-;;! shoot is not what the site should open on in any case. The (embed ...) is
-;;! for the test alone — DUCKS_SCM is included by ducks_test.c and by nothing
+;;! Shipped, not staged: `default` holds the staged slot, and a half-finished
+;;! duck shoot is not what the site should open on in any case. The (embed ...)
+;;! is for the test alone — DUCKS_SCM is included by ducks_test.c and by nothing
 ;;! else.
 ((project-source "ducks.scm")
  (embed "ducks.scm" "ducks_scm.h" "DUCKS_SCM")

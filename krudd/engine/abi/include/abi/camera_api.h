@@ -36,7 +36,7 @@ struct camera_api {
 	 * The scene camera normally tracks the scripted "Camera" entity: the
 	 * renderer copies that entity's position into the eye every frame. The
 	 * FIRST of these calls DETACHES the camera from that script and holds the
-	 * user's pose, so a drag is not fought back by the demo's orbit; reset()
+	 * user's pose, so a drag is not fought back by a scene's orbit; reset()
 	 * reattaches it. A consumer that never navigates never detaches, so the
 	 * scripted camera behaves exactly as before.
 	 *

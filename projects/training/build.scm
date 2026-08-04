@@ -5,11 +5,11 @@
 ;;! drawn from is projects/README.md.
 ;;!
 ;;! Shipped, not staged, and that is the only choice this file makes: shipped
-;;! and booted-into are different questions and only the second is scarce. Chess
-;;! holds the staged slot. The (embed ...) is for the test alone — TRAINING_SCM
-;;! is included by training_test.c and by nothing else, so the test drives the
-;;! real source with no filesystem under it and the shipped WASM module pays
-;;! nothing for it.
+;;! and booted-into are different questions and only the second is scarce.
+;;! `default` holds the staged slot. The (embed ...) is for the test alone —
+;;! TRAINING_SCM is included by training_test.c and by nothing else, so the test
+;;! drives the real source with no filesystem under it and the shipped WASM
+;;! module pays nothing for it.
 ((project-source "training.scm")
  (embed "training.scm" "training_scm.h" "TRAINING_SCM")
 

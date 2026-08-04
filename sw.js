@@ -18,7 +18,7 @@
 // This file's own name is never hashed, and must not be: the page registers it
 // by literal name. @kruddage/engine records that as `cacheBusting: false` in
 // its artifact contract, which is what stops the staging step renaming it.
-// Its *contents* carry the build hash instead — 57540e79, substituted
+// Its *contents* carry the build hash instead — e04e4e71, substituted
 // by the same configure-file pass that stamps shell.html.in — which is what
 // makes each deploy a byte-different script the browser will actually install,
 // and what names the cache that script takes over.
@@ -32,7 +32,7 @@
 // response under a key nothing would ever read. Every attempt to bust the cache
 // from the URL bar made the cache bigger and changed nothing.
 
-const BUILD = "57540e79";
+const BUILD = "e04e4e71";
 const CACHE_NAME = `krudd-shell-${BUILD}`;
 
 /* One key for the document, whatever URL asked for it.

@@ -31,8 +31,28 @@
 #ifdef __EMSCRIPTEN__
 
 /*
- * Install the glue. Idempotent, and called from every entry point rather than
- * from a boot hook, because nothing in the engine boots this module: no
+ * The glue is installed by four EM_JS bodies rather than one, and the reason
+ * is a limit on the C side, not a seam in the JS: EM_JS stringifies its body
+ * into a string literal, ISO C99 only requires a compiler to support 4095
+ * characters in one, and this module is built with -Wpedantic, which holds it
+ * to that number (-Woverlength-strings, an error under -Werror). One body
+ * carrying the whole glue is past it (#1045). Comments cost nothing — the
+ * preprocessor has dropped them before the stringify — but code does, so keep
+ * these parts near the size they are and give a new one its own body rather
+ * than growing one of these past the limit again.
+ *
+ * The cuts are where the glue already divided: shared state and helpers, the
+ * input staging, the frame callback, the session's lifecycle. Each part hangs
+ * what it defines off window.kruddXrGlue, because an EM_JS body is its own
+ * scope and that object is the only thing that spans them — the same reason
+ * the glue was one installed object in the first place. They are installed in
+ * order by xr_install() below, which stays the single C-side entry point.
+ */
+
+/*
+ * The shared half: the state a session is kept in, and the helpers the other
+ * three parts reach for. Idempotent, and called from every entry point rather
+ * than from a boot hook, because nothing in the engine boots this module: no
  * subsystem registers it and no plugin table names it. The engine does not
  * know a session exists (#987) — the page does, and the page reaches this
  * module through the exports below, so the first of those calls is what
@@ -44,9 +64,9 @@
  * field offsets are repeated as literals inside onFrame because a C macro
  * cannot be expanded inside an EM_JS body.
  */
-EM_JS(void, xr_js_install, (void *stage, int32_t stride, int32_t max_views,
-			    void *in_stage, int32_t in_stride,
-			    int32_t max_inputs), {
+EM_JS(void, xr_js_install_state, (void *stage, int32_t stride,
+				  int32_t max_views, void *in_stage,
+				  int32_t in_stride, int32_t max_inputs), {
 	if (window.kruddXrGlue)
 		return;
 
@@ -166,23 +186,40 @@ EM_JS(void, xr_js_install, (void *stage, int32_t stride, int32_t max_views,
 		st.sel = keep;
 	}
 
-	/*
-	 * This frame's input sources, staged for xr_input_publish (#996).
-	 *
-	 * targetRaySpace, not gripSpace: WebXR defines the target ray as the
-	 * aim a pointing UI is meant to use, and the grip as where the hand
-	 * holding the thing is. Picking with the grip would aim from the fist.
-	 *
-	 * A source with no pose this frame is skipped rather than staged at
-	 * the origin — an untracked controller is not a controller pointing at
-	 * the floor — and the count returned is therefore how many sources
-	 * actually had one, which is the number that reaches the engine.
-	 *
-	 * The press tally is taken and ZEROED here. That is what makes the
-	 * click a one-frame edge: whatever landed between the last frame and
-	 * this one is reported on this frame and on no other.
-	 */
-	function stageInputs(frame) {
+	window.kruddXrGlue = {
+		st:       st,
+		note:     note,
+		context:  context,
+		fbName:   fbName,
+		selOf:    selOf,
+		pruneSel: pruneSel
+	};
+})
+
+/*
+ * This frame's input sources, staged for xr_input_publish (#996).
+ *
+ * targetRaySpace, not gripSpace: WebXR defines the target ray as the aim a
+ * pointing UI is meant to use, and the grip as where the hand holding the
+ * thing is. Picking with the grip would aim from the fist.
+ *
+ * A source with no pose this frame is skipped rather than staged at the
+ * origin — an untracked controller is not a controller pointing at the floor —
+ * and the count returned is therefore how many sources actually had one, which
+ * is the number that reaches the engine.
+ *
+ * The press tally is taken and ZEROED here. That is what makes the click a
+ * one-frame edge: whatever landed between the last frame and this one is
+ * reported on this frame and on no other.
+ */
+EM_JS(void, xr_js_install_input, (void), {
+	var g = window.kruddXrGlue;
+	var st = g.st;
+
+	if (g.stageInputs)
+		return;
+
+	g.stageInputs = function (frame) {
 		var sources = st.session.inputSources || [];
 		var f32 = HEAPF32;
 		var i32 = HEAP32;
@@ -199,7 +236,7 @@ EM_JS(void, xr_js_install, (void *stage, int32_t stride, int32_t max_views,
 				continue;
 
 			var m = pose.transform.matrix;
-			var e = selOf(src);
+			var e = g.selOf(src);
 			var o = st.inBase + n * st.inStride;
 
 			/* Offsets: xr_bridge.h's XR_IN_*. */
@@ -222,31 +259,39 @@ EM_JS(void, xr_js_install, (void *stage, int32_t stride, int32_t max_views,
 			e.n = 0;
 			n++;
 		}
-		pruneSel(sources);
+		g.pruneSel(sources);
 		return n;
-	}
+	};
+})
 
-	/*
-	 * One XR frame. This is the engine's frame loop for as long as a
-	 * session runs: stage the views, publish them, and run exactly one
-	 * tick (#991's krudd_driven_tick, the same engine_tick the browser's
-	 * rAF calls when the flat page is driving).
-	 *
-	 * The re-arm comes first so a throw further down cannot silently stop
-	 * the loop and leave the headset on a frozen frame with the flat
-	 * page's rAF still suspended.
-	 *
-	 * A frame with no viewer pose — tracking lost, or the headset off the
-	 * user's head — publishes zero views and STILL ticks. The engine
-	 * keeps running (audio, scripts, timers); it just has nothing to draw
-	 * for the headset this frame.
-	 */
-	function onFrame(time, frame) {
+/*
+ * One XR frame. This is the engine's frame loop for as long as a session runs:
+ * stage the views, publish them, and run exactly one tick (#991's
+ * krudd_driven_tick, the same engine_tick the browser's rAF calls when the
+ * flat page is driving).
+ *
+ * The re-arm comes first so a throw further down cannot silently stop the loop
+ * and leave the headset on a frozen frame with the flat page's rAF still
+ * suspended.
+ *
+ * A frame with no viewer pose — tracking lost, or the headset off the user's
+ * head — publishes zero views and STILL ticks. The engine keeps running
+ * (audio, scripts, timers); it just has nothing to draw for the headset this
+ * frame.
+ */
+EM_JS(void, xr_js_install_frame, (void), {
+	var g = window.kruddXrGlue;
+	var st = g.st;
+
+	if (g.onFrame)
+		return;
+
+	g.onFrame = function (time, frame) {
 		var s = st.session;
 
 		if (!s)
 			return;
-		s.requestAnimationFrame(onFrame);
+		s.requestAnimationFrame(g.onFrame);
 
 		var layer = s.renderState.baseLayer;
 		var pose  = st.space ? frame.getViewerPose(st.space) : null;
@@ -296,42 +341,52 @@ EM_JS(void, xr_js_install, (void *stage, int32_t stride, int32_t max_views,
 		 * and there is no reason to stop aiming because the head went
 		 * missing for a frame.
 		 */
-		_krudd_xr_frame(fbName(layer && layer.framebuffer),
+		_krudd_xr_frame(g.fbName(layer && layer.framebuffer),
 				layer ? layer.framebufferWidth : 0,
 				layer ? layer.framebufferHeight : 0, n,
-				stageInputs(frame));
+				g.stageInputs(frame));
 		_krudd_driven_tick();
-	}
+	};
+})
 
-	/*
-	 * Everything that has to be true before the first XR frame, in the
-	 * order WebXR requires it:
-	 *
-	 *   makeXRCompatible   the context must be running on the adapter the
-	 *                      headset is on before it may back a layer. See
-	 *                      the comment at the context-creation site in
-	 *                      renderer_webgl.c for why this happens here,
-	 *                      after the context exists, and what it costs.
-	 *   XRWebGLLayer       the target the runtime composites, and the
-	 *                      framebuffer every view's viewport is a rect in.
-	 *   depthNear/depthFar the range the runtime BUILDS each view's
-	 *                      projection from — the engine does not get to
-	 *                      choose a frustum here, only to say what range it
-	 *                      wants one over, so this is the one place the two
-	 *                      sides' near/far are made to agree (#994). Set in
-	 *                      the same updateRenderState as the layer: they
-	 *                      take effect together, before any frame, rather
-	 *                      than a frame apart with one frame drawn against
-	 *                      a range nothing asked for.
-	 *   reference space    what poses are reported relative to.
-	 *
-	 * local-floor puts the origin on the floor, which is the space the
-	 * engine's metre convention is written against (math/camera.h). Not
-	 * every runtime offers it; local is the same space with the origin at
-	 * the head's starting height, so a runtime that refuses the first
-	 * gets the second rather than getting no session.
-	 */
-	function setup(session, gl) {
+/*
+ * The session's lifecycle, and with it the three methods the C side calls:
+ * probe, request, end.
+ *
+ * setup() is everything that has to be true before the first XR frame, in the
+ * order WebXR requires it:
+ *
+ *   makeXRCompatible   the context must be running on the adapter the headset
+ *                      is on before it may back a layer. See the comment at
+ *                      the context-creation site in renderer_webgl.c for why
+ *                      this happens here, after the context exists, and what
+ *                      it costs.
+ *   XRWebGLLayer       the target the runtime composites, and the framebuffer
+ *                      every view's viewport is a rect in.
+ *   depthNear/depthFar the range the runtime BUILDS each view's projection
+ *                      from — the engine does not get to choose a frustum
+ *                      here, only to say what range it wants one over, so this
+ *                      is the one place the two sides' near/far are made to
+ *                      agree (#994). Set in the same updateRenderState as the
+ *                      layer: they take effect together, before any frame,
+ *                      rather than a frame apart with one frame drawn against
+ *                      a range nothing asked for.
+ *   reference space    what poses are reported relative to.
+ *
+ * local-floor puts the origin on the floor, which is the space the engine's
+ * metre convention is written against (math/camera.h). Not every runtime
+ * offers it; local is the same space with the origin at the head's starting
+ * height, so a runtime that refuses the first gets the second rather than
+ * getting no session.
+ */
+EM_JS(void, xr_js_install_session, (void), {
+	var g = window.kruddXrGlue;
+	var st = g.st;
+
+	if (g.probe)
+		return;
+
+	g.setup = function (session, gl) {
 		return gl.makeXRCompatible().then(function () {
 			var layer = new XRWebGLLayer(session, gl);
 
@@ -342,136 +397,127 @@ EM_JS(void, xr_js_install, (void *stage, int32_t stride, int32_t max_views,
 			});
 			return session.requestReferenceSpace('local-floor')
 				.catch(function () {
-					note('no local-floor; using local');
+					g.note('no local-floor; using local');
 					return session.requestReferenceSpace(
 						'local');
 				});
 		}).then(function (space) {
 			st.space = space;
 			_krudd_xr_session_begun();
-			session.requestAnimationFrame(onFrame);
+			session.requestAnimationFrame(g.onFrame);
 		});
-	}
+	};
 
-	window.kruddXrGlue = {
-		/*
-		 * The numbers are enum xr_support (xr.h), reported by value:
-		 * 0 YES, 1 NO_API, 2 NO_DEVICE, 3 PROBE_ERROR. A missing
-		 * navigator.xr is answered without a promise because there is
-		 * nothing to ask; the rejection arm is a page whose
-		 * permissions policy forbids xr-spatial-tracking, which
-		 * throws rather than answering false.
-		 */
-		probe: function () {
-			if (!navigator.xr) {
-				_krudd_xr_report_support(1);
-				return;
-			}
-			try {
-				navigator.xr.isSessionSupported('immersive-vr')
-					.then(function (ok) {
-						_krudd_xr_report_support(
-							ok ? 0 : 2);
-					}, function () {
-						_krudd_xr_report_support(3);
+	/*
+	 * The numbers are enum xr_support (xr.h), reported by value: 0 YES,
+	 * 1 NO_API, 2 NO_DEVICE, 3 PROBE_ERROR. A missing navigator.xr is
+	 * answered without a promise because there is nothing to ask; the
+	 * rejection arm is a page whose permissions policy forbids
+	 * xr-spatial-tracking, which throws rather than answering false.
+	 */
+	g.probe = function () {
+		if (!navigator.xr) {
+			_krudd_xr_report_support(1);
+			return;
+		}
+		try {
+			navigator.xr.isSessionSupported('immersive-vr')
+				.then(function (ok) {
+					_krudd_xr_report_support(ok ? 0 : 2);
+				}, function () {
+					_krudd_xr_report_support(3);
+				});
+		} catch (e) {
+			_krudd_xr_report_support(3);
+		}
+	};
+
+	/*
+	 * Must be called from a user gesture — WebXR refuses an immersive
+	 * session requested from anywhere else, which is a rejection this
+	 * reports like any other.
+	 *
+	 * Every failure path ends at _krudd_xr_session_ended, and the ones that
+	 * already have a session end that session rather than dropping it:
+	 * ending it fires the "end" event, and that event is the single
+	 * teardown path (see the listener below).
+	 */
+	g.request = function (depthNear, depthFar) {
+		var gl = g.context();
+
+		if (st.session)
+			return;
+		if (!navigator.xr || !gl) {
+			_krudd_xr_session_ended(1);
+			return;
+		}
+		st.failed = 0;
+		st.near = depthNear;
+		st.far = depthFar;
+		st.sel = [];
+		navigator.xr.requestSession('immersive-vr')
+			.then(function (session) {
+				st.session = session;
+				/*
+				 * The press, counted where it lands (#996).
+				 * `select` is the WebXR event for a completed
+				 * primary action and fires once per press, on
+				 * the source that made it — so a tally per
+				 * source is all a one-frame click edge needs,
+				 * and the frame callback spends it.
+				 *
+				 * Listened for rather than polled off
+				 * gamepad.buttons[0].pressed: a poll at frame
+				 * rate misses a press that begins and ends
+				 * between two frames, and `select` is the
+				 * mapping-neutral name for "the trigger",
+				 * which a button index is not.
+				 */
+				session.addEventListener('select',
+					function (ev) {
+						g.selOf(ev.inputSource).n++;
 					});
-			} catch (e) {
-				_krudd_xr_report_support(3);
-			}
-		},
-
-		/*
-		 * Must be called from a user gesture — WebXR refuses an
-		 * immersive session requested from anywhere else, which is a
-		 * rejection this reports like any other.
-		 *
-		 * Every failure path ends at _krudd_xr_session_ended, and the
-		 * ones that already have a session end that session rather
-		 * than dropping it: ending it fires the "end" event, and that
-		 * event is the single teardown path (see the listener below).
-		 */
-		request: function (depthNear, depthFar) {
-			var gl = context();
-
-			if (st.session)
-				return;
-			if (!navigator.xr || !gl) {
-				_krudd_xr_session_ended(1);
-				return;
-			}
-			st.failed = 0;
-			st.near = depthNear;
-			st.far = depthFar;
-			st.sel = [];
-			navigator.xr.requestSession('immersive-vr')
-				.then(function (session) {
-					st.session = session;
-					/*
-					 * The press, counted where it lands
-					 * (#996). `select` is the WebXR event
-					 * for a completed primary action and
-					 * fires once per press, on the source
-					 * that made it — so a tally per source
-					 * is all a one-frame click edge needs,
-					 * and the frame callback spends it.
-					 *
-					 * Listened for rather than polled off
-					 * gamepad.buttons[0].pressed: a poll
-					 * at frame rate misses a press that
-					 * begins and ends between two frames,
-					 * and `select` is the mapping-neutral
-					 * name for "the trigger", which a
-					 * button index is not.
-					 */
-					session.addEventListener('select',
-						function (ev) {
-							selOf(ev.inputSource)
-								.n++;
-						});
-					session.addEventListener('end',
-						function () {
-							st.session = null;
-							st.space = null;
-							st.sel = [];
-							_krudd_xr_session_ended(
-								st.failed
-								? 2 : 0);
-						});
-					return setup(session, gl);
-				}).catch(function (e) {
-					var s = st.session;
-
-					note('session failed: ' + e);
-					if (!s) {
-						_krudd_xr_session_ended(1);
-						return;
-					}
-					st.failed = 1;
-					try {
-						s.end();
-					} catch (e2) {
+				session.addEventListener('end',
+					function () {
 						st.session = null;
 						st.space = null;
-						_krudd_xr_session_ended(2);
-					}
-				});
-		},
+						st.sel = [];
+						_krudd_xr_session_ended(
+							st.failed ? 2 : 0);
+					});
+				return g.setup(session, gl);
+			}).catch(function (e) {
+				var s = st.session;
 
-		/*
-		 * Ask the browser to end the session and nothing else. The
-		 * unwinding happens in the "end" listener, which is also
-		 * where a session the user ended from the headset's system
-		 * menu arrives — so the page's exit and the user's are the
-		 * same code path rather than two that have to agree.
-		 */
-		end: function () {
-			if (!st.session)
-				return;
-			try {
-				st.session.end();
-			} catch (e) {
-				note('end failed: ' + e);
-			}
+				g.note('session failed: ' + e);
+				if (!s) {
+					_krudd_xr_session_ended(1);
+					return;
+				}
+				st.failed = 1;
+				try {
+					s.end();
+				} catch (e2) {
+					st.session = null;
+					st.space = null;
+					_krudd_xr_session_ended(2);
+				}
+			});
+	};
+
+	/*
+	 * Ask the browser to end the session and nothing else. The unwinding
+	 * happens in the "end" listener, which is also where a session the user
+	 * ended from the headset's system menu arrives — so the page's exit and
+	 * the user's are the same code path rather than two that have to agree.
+	 */
+	g.end = function () {
+		if (!st.session)
+			return;
+		try {
+			st.session.end();
+		} catch (e) {
+			g.note('end failed: ' + e);
 		}
 	};
 })
@@ -509,10 +555,20 @@ EM_JS(int32_t, xr_js_wants_webgpu, (void), {
 	}
 })
 
+/*
+ * The one install the rest of this file calls. The four bodies above are an
+ * artefact of the EM_JS literal limit (see the note on them) and not four
+ * things a caller has to know about, so they are ordered here once: the state
+ * part builds window.kruddXrGlue, and the other three hang themselves off it.
+ */
 static void xr_install(void)
 {
-	xr_js_install(xr_stage(), XR_STAGE_STRIDE, XR_MAX_VIEWS,
-		      xr_input_stage(), XR_IN_STRIDE, XR_MAX_INPUT_SOURCES);
+	xr_js_install_state(xr_stage(), XR_STAGE_STRIDE, XR_MAX_VIEWS,
+			    xr_input_stage(), XR_IN_STRIDE,
+			    XR_MAX_INPUT_SOURCES);
+	xr_js_install_input();
+	xr_js_install_frame();
+	xr_js_install_session();
 }
 #endif /* __EMSCRIPTEN__ */
 

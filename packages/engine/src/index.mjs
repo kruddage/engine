@@ -52,6 +52,25 @@ export function bakedCacheStem(html) {
 	return match ? match[1] : null;
 }
 
+/**
+ * The commit hash the service worker baked into its BUILD constant.
+ *
+ * sw.js is the one artifact that must not be renamed — the page registers it by
+ * literal name — and is also the one that must differ per build, because a
+ * browser reinstalls a worker only when its bytes change. So it carries the
+ * stem in its contents, and the same stem does two jobs there: it names the
+ * cache (so a deploy does not inherit its predecessor's entries) and it marks
+ * which URLs are immutable (so index.<stem>.wasm can be served cache-first).
+ *
+ * Read back out of the built file for the same reason bakedCacheStem is: it is
+ * the third place one hash has to appear, and two of the three agreeing is
+ * exactly the kind of near-miss that shows up only on a phone, days later.
+ */
+export function workerCacheStem(source) {
+	const match = source.match(/^const BUILD = "([^"]*)";$/m);
+	return match ? match[1] : null;
+}
+
 function manifestPath() {
 	return join(distDir, ENGINE_MANIFEST_FILE);
 }

@@ -33,7 +33,7 @@ import {
 	ENGINE_EXPORTED_FUNCTIONS,
 	ENGINE_MANIFEST_FILE,
 } from "../src/artifacts.mjs";
-import { bakedCacheStem } from "../src/index.mjs";
+import { bakedCacheStem, workerCacheStem } from "../src/index.mjs";
 import { readWasmExports } from "../src/wasm-exports.mjs";
 import { KRUDDMAKE_SH, runKruddmake } from "./kruddmake.mjs";
 
@@ -199,6 +199,30 @@ if (!cacheStem) {
 			"The deploy step renames index.wasm and relies on that hook to resolve\n" +
 			"it; without the hook the deployed page cannot load the module.\n" +
 			"Check the @GIT_COMMIT_HASH@ substitution in shell/web/shell.html.in."
+	);
+}
+
+/* The service worker decides what is cacheable-forever by asking whether a URL
+ * carries this build's stem, and names its cache after it so a deploy does not
+ * inherit the last one's entries. Both of those are wrong in the same direction
+ * if its stem is not the stem the rest of the build used: the worker would keep
+ * serving the previous build's document while the page requested artifacts the
+ * previous build never staged.
+ *
+ * That is the third place one hash appears, so it gets the same treatment as
+ * the second — read back out of the built file and compared, rather than
+ * trusted to have come from the same substitution pass. */
+const worker = readFileSync(join(DIST, "sw.js"), "utf8");
+const workerStem = workerCacheStem(worker);
+
+if (workerStem !== cacheStem) {
+	fail(
+		`sw.js carries cache stem ${workerStem ?? "(none)"}, but index.html ` +
+			`carries ${cacheStem}.\n` +
+			"The service worker names its cache and recognises immutable URLs by\n" +
+			"that stem, so a mismatch pins browsers to the previous build.\n" +
+			"Check the @GIT_COMMIT_HASH@ substitution in shell/web/sw.js.in and\n" +
+			"that shell/web/build.scm still declares its configure-file edge."
 	);
 }
 

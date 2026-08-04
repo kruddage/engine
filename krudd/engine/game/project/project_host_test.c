@@ -6,6 +6,13 @@
  * entity plugin publishes: clear, build, dispatch), then evaluates a project
  * source and checks the four things the host promises.
  *
+ * All of that bring-up is game/project_test's now — one link, one header and
+ * one call, instead of the vtable and the four compiled-in engine sources this
+ * file used to carry and every project copied off it (#1035). The harness is
+ * exercised here first, by the module that owns the host it drives, before any
+ * project is moved onto it. What is left below is what this test is actually
+ * about: the source strings and the claims.
+ *
  *   - a (project ...) form puts an entry on the launcher, and choosing it
  *     clears the world, builds the project's scene and runs its reset hook;
  *   - while it is the loaded project its frame hook runs each tick, and its
@@ -29,12 +36,11 @@
  * which still spawns every entity it declares, so the whole path is checkable
  * headless.
  */
+#include <project_test/project_test.h>
+
 #include <project/project_host.h>
 
 #include <entity/world.h>
-#include <entity/scene_script.h>
-#include <abi/entity_api.h>
-#include <core/subsystem_manager.h>
 #include <host/game.h>
 #include <log/log.h>
 
@@ -42,10 +48,8 @@
 #include <stdio.h>
 #include <string.h>
 
-/* One world instance reused across the checks; too big for the stack. */
-static struct world w;
-
-static struct subsystem_manager mgr;
+/* The harness's world, borrowed for the life of the process. */
+static struct world *w;
 
 /* The launcher slot the project took, and the one a plain C game took. */
 static int32_t g_project;
@@ -55,56 +59,14 @@ static int     g_other;
 static int     g_other_loads;
 
 /*
- * The stand-in "scene" subsystem: the three entity_api entries a project's host
- * actually uses, each binding this test's world exactly as entity_plugin.c
- * binds the live one. There is deliberately no get_selected among them — the
- * host reads the selection from inside the image, through the same
- * (scene-selected) primitive a project would, and never through the vtable.
- */
-static int32_t t_build_scene_scm(const char *src)
-{
-	return scene_script_build(&w, NULL, src);
-}
-
-static int32_t t_dispatch_scm(const char *fn, int32_t arg)
-{
-	return scene_script_call(&w, NULL, fn, arg);
-}
-
-static void t_clear_world(void)
-{
-	world_reset(&w);
-}
-
-static const struct entity_api t_scene_api = {
-	.build_scene_scm = t_build_scene_scm,
-	.dispatch_scm    = t_dispatch_scm,
-	.clear_world     = t_clear_world,
-};
-
-static void t_scene_init(void)
-{
-	world_reset(&w);
-	/* What entity_plugin.c's scene_init does: the scene-* primitives a
-	 * (scene ...) form and a project's load path are written in. */
-	scene_script_init();
-}
-
-static const struct subsystem t_subsystems[] = {
-	{ .name = "scene", .api = &t_scene_api, .init = t_scene_init },
-	{ NULL }
-};
-
-/*
  * A plain C game beside the project — the launcher entry a compiled-in plugin
  * registers, which is what the gate has to tell a project apart from. It builds
  * a scene of its own so that a selection made while it is loaded is a real one.
  */
 static void other_load(void)
 {
-	world_reset(&w);
-	scene_script_build(&w, NULL,
-			   "(scene other (entity (name \"other-pad\")))");
+	world_reset(w);
+	project_test_build("(scene other (entity (name \"other-pad\")))");
 	g_other_loads++;
 }
 
@@ -180,25 +142,14 @@ static const char *DISK_B_SRC =
 /* The launcher entry the two above share — the door's one slot. */
 static int32_t g_door;
 
-/* Read one of the project's counters back out of the image. */
+/*
+ * Read one of the project's counters back out of the image. Every one of these
+ * takes an argument it ignores, which is what the name says: a poll, not a
+ * call.
+ */
 static int32_t poll(const char *fn)
 {
-	return scene_script_call(&w, NULL, fn, 0);
-}
-
-/* The entity id of the named entity, or -1 — the "what was clicked" a real
- * picker would hand the engine. */
-static int32_t id_of(const char *name)
-{
-	uint32_t e;
-
-	for (e = 0; e < w.count; e++) {
-		const char *n = w.alive[e] ? world_entity_name(&w, e) : NULL;
-
-		if (n && strcmp(n, name) == 0)
-			return (int32_t)e;
-	}
-	return -1;
+	return project_test_call(fn, 0);
 }
 
 /* True when a warning mentioning TEXT is on the log. */
@@ -243,9 +194,9 @@ static void test_registers(void)
 
 	/* Registered but not loaded: the world is untouched and, with no active
 	 * game at all, a frame runs none of its hooks. */
-	assert(w.count == 0);
+	assert(w->count == 0);
 	assert(game_active_index() == -1);
-	subsystem_manager_tick(&mgr);
+	project_test_tick();
 	assert(poll("demo-loads") == 0);
 	assert(poll("demo-ticks") == 0);
 }
@@ -255,8 +206,9 @@ static void test_load_builds_scene(void)
 {
 	game_load(g_project);
 	assert(game_active_index() == g_project);
-	assert(w.count == 2);
-	assert(id_of("pad-a") >= 0 && id_of("pad-b") >= 0);
+	assert(w->count == 2);
+	assert(project_test_entity("pad-a") >= 0);
+	assert(project_test_entity("pad-b") >= 0);
 	assert(poll("demo-loads") == 1);
 	/* And it ran AFTER the build: the hook looked the first entity up by
 	 * name from inside itself and found the scene already standing. */
@@ -267,10 +219,10 @@ static void test_load_builds_scene(void)
 /* The frame hook runs once per tick while this is the loaded project. */
 static void test_tick_hook(void)
 {
-	subsystem_manager_tick(&mgr);
+	project_test_tick();
 	assert(poll("demo-ticks") == 1);
-	subsystem_manager_tick(&mgr);
-	subsystem_manager_tick(&mgr);
+	project_test_tick();
+	project_test_tick();
 	assert(poll("demo-ticks") == 3);
 }
 
@@ -281,36 +233,36 @@ static void test_tick_hook(void)
  */
 static void test_selection_edge(void)
 {
-	int32_t a = id_of("pad-a");
-	int32_t b = id_of("pad-b");
+	int32_t a = project_test_entity("pad-a");
+	int32_t b = project_test_entity("pad-b");
 
-	world_set_selected(&w, a);
-	subsystem_manager_tick(&mgr);
+	world_set_selected(w, a);
+	project_test_tick();
 	assert(poll("demo-picks") == 1);
 	assert(poll("demo-last") == a);
 	/* The hook ran with the world bound: it could outline what it was
 	 * handed, which only a bound world can answer for. */
-	assert(world_get_outline(&w) == a);
+	assert(world_get_outline(w) == a);
 
 	/* Held across frames: still one click. */
-	subsystem_manager_tick(&mgr);
-	subsystem_manager_tick(&mgr);
+	project_test_tick();
+	project_test_tick();
 	assert(poll("demo-picks") == 1);
 
 	/* A different entity is a second click. */
-	world_set_selected(&w, b);
-	subsystem_manager_tick(&mgr);
+	world_set_selected(w, b);
+	project_test_tick();
 	assert(poll("demo-picks") == 2);
 	assert(poll("demo-last") == b);
 
 	/* Deselecting fires nothing — it is the release, not another click. */
-	world_set_selected(&w, -1);
-	subsystem_manager_tick(&mgr);
+	world_set_selected(w, -1);
+	project_test_tick();
 	assert(poll("demo-picks") == 2);
 
 	/* And selecting the same entity again is an edge once more. */
-	world_set_selected(&w, b);
-	subsystem_manager_tick(&mgr);
+	world_set_selected(w, b);
+	project_test_tick();
 	assert(poll("demo-picks") == 3);
 }
 
@@ -331,21 +283,21 @@ static void test_hooks_gated_on_active(void)
 	assert(g_other_loads == 1);
 
 	/* Its load emptied the world; a project's hooks are silent throughout. */
-	subsystem_manager_tick(&mgr);
-	subsystem_manager_tick(&mgr);
+	project_test_tick();
+	project_test_tick();
 	assert(poll("demo-ticks") == ticks);
 	assert(poll("demo-picks") == picks);
 
 	/* A click landing in the other game's scene reaches no project. */
-	world_set_selected(&w, 0);
-	subsystem_manager_tick(&mgr);
+	world_set_selected(w, 0);
+	project_test_tick();
 	assert(poll("demo-picks") == picks);
 
 	/* Back to the project: its own load resets the counters, and the first
 	 * frame after it does not report the selection it was away for. */
 	game_load(g_project);
 	assert(poll("demo-loads") == 2);
-	subsystem_manager_tick(&mgr);
+	project_test_tick();
 	assert(poll("demo-picks") == 0);
 	assert(poll("demo-ticks") == 1);
 }
@@ -362,7 +314,7 @@ static void test_reload_keeps_its_slot(void)
 	assert(again == g_project);
 	assert(game_count() == 2);
 	game_load(g_project);
-	assert(w.count == 2);
+	assert(w->count == 2);
 	assert(poll("demo-loads") == 1);   /* the rules were re-evaluated too */
 }
 
@@ -418,13 +370,13 @@ static void test_malformed_is_refused(void)
 		       "empty (on-load ...) clause");
 
 	/* The loaded project came through all of it still running. */
-	subsystem_manager_tick(&mgr);
+	project_test_tick();
 	assert(poll("demo-ticks") >= 1);
 
 	/* And the rules clause that faulted still defined what it got through
 	 * first: the refusal is about registration, not a transaction over the
 	 * image. */
-	assert(scene_script_call(&w, NULL, "demo-x", 0) == 1);
+	assert(poll("demo-x") == 1);
 }
 
 /*
@@ -440,13 +392,13 @@ static void test_partial_project_loads(void)
 	assert(game_count() == 3);
 	game_load(bare);
 	assert(game_active_index() == bare);
-	assert(w.count == 0);
-	subsystem_manager_tick(&mgr);
-	assert(w.count == 0);
+	assert(w->count == 0);
+	project_test_tick();
+	assert(w->count == 0);
 
 	/* And the project it displaced is untouched by any of it. */
 	game_load(g_project);
-	assert(w.count == 2);
+	assert(w->count == 2);
 }
 
 /*
@@ -477,13 +429,13 @@ static void test_large_scene_is_not_elided(void)
 	big = project_host_eval(src);
 	assert(big >= 0);
 	game_load(big);
-	assert(w.count == 40);
-	assert(id_of("pad-0") >= 0);
-	assert(id_of("pad-39") >= 0);
+	assert(w->count == 40);
+	assert(project_test_entity("pad-0") >= 0);
+	assert(project_test_entity("pad-39") >= 0);
 
 	/* And the project it displaced still loads its own scene whole. */
 	game_load(g_project);
-	assert(w.count == 2);
+	assert(w->count == 2);
 }
 
 /*
@@ -502,12 +454,12 @@ static void test_load_opens_it(void)
 	assert(game_active_index() == g_door);
 
 	/* Its scene, and only its scene. */
-	assert(w.count == 1);
-	assert(id_of("a-pad") >= 0);
-	assert(id_of("pad-a") < 0);
+	assert(w->count == 1);
+	assert(project_test_entity("a-pad") >= 0);
+	assert(project_test_entity("pad-a") < 0);
 
 	/* Its hooks run; the project it displaced has stopped. */
-	subsystem_manager_tick(&mgr);
+	project_test_tick();
 	assert(poll("a-ticks") == 1);
 	assert(poll("demo-ticks") == demo_ticks);
 }
@@ -528,11 +480,11 @@ static void test_load_replaces_the_previous(void)
 	assert(game_find("Disk One") == -1);
 	assert(game_find("Disk Two") == g_door);
 
-	assert(w.count == 1);
-	assert(id_of("b-pad") >= 0);
-	assert(id_of("a-pad") < 0);
+	assert(w->count == 1);
+	assert(project_test_entity("b-pad") >= 0);
+	assert(project_test_entity("a-pad") < 0);
 
-	subsystem_manager_tick(&mgr);
+	project_test_tick();
 	assert(poll("b-ticks") == 1);
 	assert(poll("a-ticks") == a_ticks);
 }
@@ -551,7 +503,7 @@ static void test_load_reuses_a_registered_name(void)
 	assert(game_count() == games);
 	assert(game_find("Disk Two") == g_door);
 	assert(game_active_index() == g_project);
-	assert(w.count == 2);
+	assert(w->count == 2);
 	assert(poll("demo-loads") == 1);
 }
 
@@ -573,16 +525,21 @@ static void test_load_of_a_bad_source_changes_nothing(void)
 	assert(game_find("Disk Two") == g_door);
 
 	assert(game_active_index() == g_project);
-	assert(w.count == 2);
-	subsystem_manager_tick(&mgr);
+	assert(w->count == 2);
+	project_test_tick();
 	assert(poll("demo-ticks") == ticks + 1);
 }
 
 int main(void)
 {
-	log_init();
-	subsystem_manager_init(&mgr, t_subsystems);
-	project_host_plugin_entry(&mgr);
+	/*
+	 * The LEAN half of the harness: no asset catalog, because a project's
+	 * mesh and material paths resolving to "unbound" still spawns every
+	 * entity its scene declares, and what is under test here is the host
+	 * rather than what its scenes bind to.
+	 */
+	project_test_init();
+	w = project_test_world();
 
 	test_registers();
 	test_load_builds_scene();

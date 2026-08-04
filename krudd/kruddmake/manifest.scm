@@ -53,7 +53,13 @@
 ;;!   ui/       the editor chrome: immediate-mode gui, viewport, kruddboard.
 ;;!   game/     host/ is the launcher registry and project/ the generic host
 ;;!             that runs a game written as one (project ...) form. No game
-;;!             lives here any more — see projects/ below.
+;;!             lives here any more — see projects/ below. project_test/ is the
+;;!             harness those projects are driven through under test, packaged
+;;!             once instead of assembled by hand in every directory that has a
+;;!             project in it (#1035). It is native-only — a harness must not
+;;!             enter the WASM image — and it is last of the three because it
+;;!             links the world/ libraries the other two do not, which is a
+;;!             tier fact the check below reads rather than takes on trust.
 ;;!   shell/    the host the engine runs inside: web/, the browser page (PWA
 ;;!             manifest, service worker, icons, the emscripten shell
 ;;!             template). Last of the engine tiers on purpose — a shell may
@@ -101,6 +107,7 @@
  "ui/viewport"
  "game/host"
  "game/project"
+ "game/project_test"
  "shell/web"
  "projects/default"
  "projects/chess"

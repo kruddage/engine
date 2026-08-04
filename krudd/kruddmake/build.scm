@@ -24,7 +24,12 @@
 (define manifest
   (map (lambda (dir) (cons dir (load-spec dir))) owned-directories))
 
-(define src-root (string-append krudd-root "/krudd/engine"))
+;;! Read through rz-engine-root rather than spelled out, so the root the
+;;! generator EMITS (ninja's `$srcroot`, and every `(root …)` path hanging off
+;;! it) is the same root it READ the specs from — an SDK build that resolved its
+;;! build.scm files under the prefix and then compiled against `krudd/engine`
+;;! would be two builds wearing one manifest (#1035).
+(define src-root (rz-engine-root krudd-root))
 
 ;;! KRUDD_BUILD_DIR points the generated build.ninja and its objects at a
 ;;! variant-specific directory. run-tests.sh has always honoured it — that is
@@ -39,9 +44,16 @@
         dir
         (string-append krudd-root "/build"))))
 
-(define wasm-build?
+;;! KRUDD_TARGET picks which of ninja.scm's three phony targets this build
+;;! drives: "wasm" for the WASM module, "archives" for the native libraries
+;;! alone (no test binaries — the SDK's linux-x86_64 archives, #1035), and
+;;! anything else (including unset) for "native", the whole native suite,
+;;! unchanged from before this option existed.
+(define ninja-target
   (let ((target (getenv "KRUDD_TARGET")))
-    (and target (string=? target "wasm"))))
+    (cond ((and target (string=? target "wasm")) "wasm")
+          ((and target (string=? target "archives")) "archives")
+          (else "native"))))
 
 (sh (string-append "mkdir -p \"" build-dir "\""))
 
@@ -60,4 +72,4 @@
 
 (if (not (getenv "KRUDD_GENERATE_ONLY"))
     (sh (string-append "ninja -C \"" build-dir "\" -f build.ninja "
-                       (if wasm-build? "wasm" "native"))))
+                       ninja-target)))

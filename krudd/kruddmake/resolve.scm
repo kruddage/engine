@@ -22,35 +22,74 @@
          (car clauses))
         (else (rz-clause head (cdr clauses)))))
 
-;;! TWO SOURCE ROOTS, not one. An engine module's directory is relative to
-;;! `krudd/engine`; a project's is relative to the repository root, because a
-;;! project is not an engine module. #976 made a project a single `.scm` the
-;;! engine loads at runtime, and the last thing still saying otherwise was where
-;;! chess sat on disk — inside the engine tree, in the manifest between `ui/`
-;;! and `shell/`, as though it were a tier. `projects/` at the top level is that
-;;! sentence written into the layout, where it is legible from `ls` rather than
-;;! only from this file.
+;;! THREE SOURCE ROOTS, and exactly two of them live at once. A project's
+;;! directory is relative to the repository root, because a project is not an
+;;! engine module. An engine module's is relative to the ENGINE ROOT, which is
+;;! either the `krudd/engine` tree beside this file or an unpacked SDK prefix,
+;;! never both.
 ;;!
-;;! One prefix distinguishes the two, and it is tested against the RESOLVED PATH
-;;! rather than only against the manifest directory. That is what lets a
-;;! project's own sources take the project root while the `(root …)` paths it
-;;! reaches back into the engine for keep taking the engine's — a project links
-;;! engine libraries and compiles a few engine sources into its test, and those
-;;! are engine-relative exactly as they are from anywhere else. Everything
-;;! downstream — include flags, object paths, codegen inputs, the regen edge —
-;;! derives from this one predicate rather than carrying its own idea of where a
-;;! file lives.
+;;! #976 made a project a single `.scm` the engine loads at runtime, and the
+;;! last thing still saying otherwise was where chess sat on disk — inside the
+;;! engine tree, in the manifest between `ui/` and `shell/`, as though it were a
+;;! tier. `projects/` at the top level is that sentence written into the layout,
+;;! where it is legible from `ls` rather than only from this file.
+;;!
+;;! One prefix decides which of the two roots a path takes, and it is tested
+;;! against the RESOLVED PATH rather than only against the manifest directory.
+;;! That is what lets a project's own sources take the project root while the
+;;! `(root …)` paths it reaches back into the engine for keep taking the
+;;! engine's — a project links engine libraries and compiles a few engine
+;;! sources into its test, and those are engine-relative exactly as they are
+;;! from anywhere else. Everything downstream — include flags, object paths,
+;;! codegen inputs, the regen edge — derives from this one predicate rather than
+;;! carrying its own idea of where a file lives.
 (define rz-project-prefix "projects/")
 
 (define (rz-project-path? p) (rz-prefix? p rz-project-prefix))
+
+;;! WHERE THE ENGINE IS: the question the two roots above never had to ask,
+;;! because until now every consumer of the engine lived in the same checkout as
+;;! the engine and `krudd/engine` was simply true. #1035 ends that — the engine
+;;! is published as a versioned SDK, and a repository holding projects and no
+;;! engine builds against an unpacked prefix with no `krudd/engine/` anywhere in
+;;! it. So engine-relative stops being a constant. The predicate above is
+;;! untouched: which root a path takes is still one question, and where that
+;;! root sits on disk is now a second one.
+;;!
+;;! An environment variable, for the reason KRUDD_DAWN_PREFIX is one (ninja.scm)
+;;! — it names an out-of-tree prefix a build opts into, and the entry point
+;;! already carries the environment, since kruddmake.sh exports KRUDD_ROOT and
+;;! execs the host tool. KRUDD_SDK_PREFIX arrives through that same door with no
+;;! new plumbing to write or to keep in step.
+;;!
+;;! Not an argument threaded down: the engine root is wanted by rz-spec-path, by
+;;! build.scm's `src-root` (which becomes ninja's `$srcroot`) and by the regen
+;;! edge derived from it, so threading would hand three call sites their own
+;;! copy of the answer — the drift rz-spec-path exists to prevent. Not a probe
+;;! for an unpacked prefix either: a stale `sdk/` left lying in a checkout would
+;;! then silently redirect the build of the tree it sits in, and a build must
+;;! not change because of a directory nobody asked it to look at. Read once, so
+;;! one generator run has one answer, and empty is unset the way KRUDD_BUILD_DIR
+;;! reads it, because `KRUDD_SDK_PREFIX=` is a variable someone cleared rather
+;;! than a prefix at the filesystem root.
+(define rz-sdk-prefix
+  (let ((p (getenv "KRUDD_SDK_PREFIX")))
+    (and p (> (string-length p) 0) p)))
+
+;;! Unset — which is this repository, always — the engine root is the sibling
+;;! `krudd/engine` it has always been. The third root costs the tree's own build
+;;! nothing: it is what a consumer opts into, not what anyone here opts out of.
+(define (rz-engine-root krudd-root)
+  (or rz-sdk-prefix (string-append krudd-root "/krudd/engine")))
 
 ;;! The on-disk `build.scm` a manifest entry names. Both entry points into the
 ;;! generator — `kruddmake/build.scm` and `resolve_test.scm` — read their specs
 ;;! through here, so the two cannot come to disagree about where a spec lives
 ;;! the way they would if each spelled the root out for itself.
 (define (rz-spec-path krudd-root dir)
-  (string-append krudd-root
-                 (if (rz-project-path? dir) "" "/krudd/engine")
+  (string-append (if (rz-project-path? dir)
+                     krudd-root
+                     (rz-engine-root krudd-root))
                  "/" dir "/build.scm"))
 
 (define rz-system-libs (list "m"))

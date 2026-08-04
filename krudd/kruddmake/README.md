@@ -44,7 +44,7 @@ wired to it:
 
 | | |
 |---|---|
-| `KRUDD_TARGET` | `wasm` to build the WASM module; anything else builds native |
+| `KRUDD_TARGET` | `wasm` for the WASM module, `archives` for the native libraries alone (no test binaries — see `build-archives.sh` below), anything else (including unset) for the whole native suite |
 | `KRUDD_BUILD_DIR` | where `build.ninja` and its objects land (default `build/`) |
 | `KRUDD_VERSION` | the version stamped into the build (default `version.txt`) |
 | `KRUDD_CC`, `KRUDD_CXX` | the compilers the generated build.ninja invokes |
@@ -62,6 +62,7 @@ wired to it:
 | `kruddmake.sh` | the entry point above |
 | `run-scheme-tests.sh` | the Scheme suite — no toolchain (see below) |
 | `run-tests.sh` | the whole native suite (see below) |
+| `build-archives.sh` | just the native linux-x86_64 archives, harvested into one directory (see below) |
 
 `../krudd.c` — 239 lines, the s7 front door `kruddmake.sh` compiles and execs —
 belongs here too. It stays at `krudd/krudd.c` because it sits beside
@@ -98,3 +99,21 @@ installed builds and tests the engine exactly as before. That the workspace
 can also reach it — `sh tools/workspace/workspace.sh test:native`, which
 forwards to `node packages/engine/scripts/native-test.mjs` — is a second door,
 not the door.
+
+## Archives
+
+```sh
+sh krudd/kruddmake/build-archives.sh
+```
+
+Drives `krudd build` with `KRUDD_TARGET=archives`, the ninja target that is
+every native `(library ...)` — `libscript.a`, `libasset_plugin.a`,
+`libentity_plugin.a`, `libsubsystem_manager.a` and the rest — and nothing
+that links or runs against them. `run-tests.sh` already leaves the same
+archives behind as a byproduct of `ninja native`, but only alongside the
+whole native suite; this is the target and the driver for asking for the
+archives on their own, so an SDK build never has to build or run a test
+binary to get them (#1035). The archives land in their own build directory
+(`build-archives/` by default, `$KRUDD_BUILD_DIR` to move it) and are then
+copied into `$KRUDD_BUILD_DIR/archives/` — a directory with nothing in it but
+`.a` files, for whatever stages them into an SDK tarball next.

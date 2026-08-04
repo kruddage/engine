@@ -21,9 +21,10 @@
 ;;!   aim is real and takes a yaw, so the day the primitive exists the stand-in
 ;;!   is deleted and nothing else moves.
 ;;!
-;;! Distances are METRES: one world unit is one metre, the convention
-;;! projects/training pins down and asserts. A booth you stand at is a
-;;! room-scale object, so it is worth this one being right from the start.
+;;! Distances are METRES: one world unit is one metre, the convention stated
+;;! in krudd/engine/base/math/include/math/camera.h and the one
+;;! projects/training was the first scene built to. A booth you stand at is
+;;! a room-scale object, so it is worth this one being right from the start.
 
 ;;! --- the booth, in metres ---------------------------------------------------
 ;;!

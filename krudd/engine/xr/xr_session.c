@@ -53,7 +53,16 @@ EM_JS(void, xr_js_install, (void *stage, int32_t stride, int32_t max_views), {
 		failed:  0,
 		base:    stage >> 2,
 		stride:  stride,
-		max:     max_views
+		max:     max_views,
+		/*
+		 * The depth range the next session is created with, filled in
+		 * by request() from the engine's own near/far (#994). Held on
+		 * the glue rather than passed through setup()'s promise chain
+		 * because it is a property of the session being requested, and
+		 * the chain already carries the two things that are not.
+		 */
+		near:    0.1,
+		far:     1000.0
 	};
 
 	function note(line) {
@@ -182,6 +191,15 @@ EM_JS(void, xr_js_install, (void *stage, int32_t stride, int32_t max_views), {
 	 *                      after the context exists, and what it costs.
 	 *   XRWebGLLayer       the target the runtime composites, and the
 	 *                      framebuffer every view's viewport is a rect in.
+	 *   depthNear/depthFar the range the runtime BUILDS each view's
+	 *                      projection from — the engine does not get to
+	 *                      choose a frustum here, only to say what range it
+	 *                      wants one over, so this is the one place the two
+	 *                      sides' near/far are made to agree (#994). Set in
+	 *                      the same updateRenderState as the layer: they
+	 *                      take effect together, before any frame, rather
+	 *                      than a frame apart with one frame drawn against
+	 *                      a range nothing asked for.
 	 *   reference space    what poses are reported relative to.
 	 *
 	 * local-floor puts the origin on the floor, which is the space the
@@ -194,7 +212,11 @@ EM_JS(void, xr_js_install, (void *stage, int32_t stride, int32_t max_views), {
 		return gl.makeXRCompatible().then(function () {
 			var layer = new XRWebGLLayer(session, gl);
 
-			session.updateRenderState({ baseLayer: layer });
+			session.updateRenderState({
+				baseLayer: layer,
+				depthNear: st.near,
+				depthFar:  st.far
+			});
 			return session.requestReferenceSpace('local-floor')
 				.catch(function () {
 					note('no local-floor; using local');
@@ -245,7 +267,7 @@ EM_JS(void, xr_js_install, (void *stage, int32_t stride, int32_t max_views), {
 		 * than dropping it: ending it fires the "end" event, and that
 		 * event is the single teardown path (see the listener below).
 		 */
-		request: function () {
+		request: function (depthNear, depthFar) {
 			var gl = context();
 
 			if (st.session)
@@ -255,6 +277,8 @@ EM_JS(void, xr_js_install, (void *stage, int32_t stride, int32_t max_views), {
 				return;
 			}
 			st.failed = 0;
+			st.near = depthNear;
+			st.far = depthFar;
 			navigator.xr.requestSession('immersive-vr')
 				.then(function (session) {
 					st.session = session;
@@ -309,8 +333,8 @@ EM_JS(void, xr_js_probe, (void), {
 	window.kruddXrGlue.probe();
 })
 
-EM_JS(void, xr_js_request_session, (void), {
-	window.kruddXrGlue.request();
+EM_JS(void, xr_js_request_session, (float depth_near, float depth_far), {
+	window.kruddXrGlue.request(depth_near, depth_far);
 })
 
 EM_JS(void, xr_js_end_session, (void), {
@@ -366,6 +390,9 @@ void xr_probe(void)
 void xr_request_session(void)
 {
 	enum xr_support s = xr_supported();
+#ifdef __EMSCRIPTEN__
+	float near, far;
+#endif
 
 	if (xr_session_active())
 		return;
@@ -387,8 +414,18 @@ void xr_request_session(void)
 			 "here is WebGL-only; reload with ?renderer=webgl");
 		return;
 	}
+	/*
+	 * The engine's depth range, read at request time and applied with the
+	 * layer (#994). Read here rather than per frame because depthNear /
+	 * depthFar are session render state, not frame state: the runtime builds
+	 * every view's projection from them, and changing them mid-session
+	 * changes the frustum under a viewer's eyes. The renderer's range is a
+	 * constant of the authored camera, so once is exactly as often as it
+	 * needs asking.
+	 */
+	xr_depth_range(&near, &far);
 	xr_install();
-	xr_js_request_session();
+	xr_js_request_session(near, far);
 #else
 	LOG_WARN("xr: no browser to request a session from; ignored");
 #endif

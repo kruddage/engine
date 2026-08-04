@@ -112,13 +112,33 @@ void xr_session_ended(int32_t reason);
  * between frames — and publishes an empty list with nothing declared, rather
  * than a rect with no area on a framebuffer that is not there.
  *
- * The declaration made here covers the WHOLE layer framebuffer, not a view's
- * rect. This PR draws no view list — the flat frame lands, stretched, across
- * whatever the layer's framebuffer is — and #994 replaces this with a
- * per-view declaration as it draws each eye, which is what the per-view rects
- * in the list are for.
+ * The declaration made here covers the WHOLE layer framebuffer, which is where
+ * a frame starts and ends rather than where its eyes are drawn: each eye
+ * narrows it to that eye's own rect as the renderer reaches it, and the end of
+ * the view list puts it back (see xr_view_target in xr_state.c, and the
+ * per-view callback in scene_renderer/scene_view.h). Anything in the frame that
+ * is not one of the views — the UI compositing over the scene, today — thus
+ * lands across the whole layer rather than inside whichever eye happened to be
+ * drawn last.
  */
 void xr_frame_publish(uint32_t fbo, uint32_t fb_width, uint32_t fb_height,
 		      int32_t count);
+
+/*
+ * The depth range a session should be created with: the scene's own near and
+ * far, or WebXR's defaults when there is no renderer to ask (#994).
+ *
+ * This runs the other way to everything else in this header — the glue calls
+ * OUT to it rather than in — and it is here anyway because the policy is the
+ * testable part and the updateRenderState call is not. WebXR owns depthNear /
+ * depthFar and BUILDS each view's projection from them, so they are the one
+ * number the engine and the runtime have to agree on: left at the runtime's
+ * default, a scene framed to 100 metres would be drawn against a 1000-metre
+ * frustum, spending its depth precision on ten times the range it uses.
+ *
+ * Never returns a range a session would reject: 0 < near < far, whatever the
+ * renderer says.
+ */
+void xr_depth_range(float *near, float *far);
 
 #endif /* XR_BRIDGE_H */

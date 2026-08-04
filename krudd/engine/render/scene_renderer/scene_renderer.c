@@ -274,6 +274,15 @@ static struct scene_view g_view;
 static struct scene_view g_supplied_views[SCENE_MAX_VIEWS];
 static uint32_t          g_supplied_view_count;
 
+/*
+ * The host's per-view target callback, or NULL for "nobody is composing this
+ * frame into a target of theirs" — the state at boot and the only state the
+ * flat page is ever in. See scene_view.h for the contract, including the
+ * end-of-frame NULL call the loop below makes.
+ */
+static scene_view_target_fn g_view_target_fn;
+static void                *g_view_target_user;
+
 /* The transients the composite pass samples, published per view by
  * draw_view. */
 static struct {
@@ -641,6 +650,42 @@ static struct camera g_cam;
  * switching games tombstones the old camera and restarts entity ids from zero,
  * so a stale id would point at some other scene's entity (a board cell down at
  * floor level, say, hiding the board it was meant to frame).
+ *
+ * WHEN SOMETHING ELSE OWNS THE EYE (#994). A host supplying a view list owns
+ * the pose it draws from; a headset's runtime owns it absolutely, because the
+ * pose is measured off the user's skull and no software may edit it without
+ * putting the world out of step with the inner ear. So the copy above does not
+ * stop and is not made conditional: g_cam keeps tracking the scripted camera
+ * every frame, and the supplied views are drawn instead of it, not from it.
+ *
+ * What the scripted camera becomes for such a host is the STAGE — the point in
+ * the world its tracking volume is pinned to — and that composition is the host
+ * doing it, through scene_renderer_scene_camera(), not this file doing it for
+ * them. It is what makes an authored scene viewable at all: a headset reports
+ * poses about the user's own floor, so consumed raw they stand a viewer at the
+ * world origin regardless of where the scene framed itself, which for chess is
+ * in the middle of the board.
+ *
+ * The composition #994 settled on is a TRANSLATION and nothing else, and this
+ * is where the reasoning belongs because it is a statement about what the
+ * entity above means:
+ *
+ *   - all three axes of the eye, not the ground plane under it. A scene's
+ *     camera height is part of its framing (chess sits its eye on an 8.5-unit
+ *     boom), and dropping it would silently re-frame every scene that already
+ *     exists. Scenes MEANT to be occupied author the eye at standing height and
+ *     get the right thing without a rule; see the metre convention in
+ *     math/camera.h, which is the agreement that lets the pose be consumed
+ *     unscaled in the first place.
+ *   - no rotation. target/up are an authored LOOK, and a look carries pitch and
+ *     roll — chess looks down at the board — so composing it would tilt the
+ *     horizon under a user who is standing up straight, which is the single
+ *     most reliable way to make someone ill in a headset. Taking only its yaw
+ *     would mean decomposing a look-at into an axis no scene ever stated. A
+ *     viewer turns their head instead, which costs them nothing and costs the
+ *     engine no policy. A scene that genuinely wants to face an arriving viewer
+ *     somewhere should say so as a yaw of its own, and nothing here forecloses
+ *     that.
  */
 static int32_t g_camera_entity_id = -1;
 
@@ -702,6 +747,25 @@ static void camera_get_view_proj(struct mat4 *out)
  * projection arrives intact. It is therefore also the reason a supplied
  * projection must be handed in GL-convention: this adapts from that convention,
  * and a pre-adapted matrix would be adapted a second time.
+ *
+ * A WEBXR PROJECTION ON A WEBGL LAYER THEREFORE PASSES STRAIGHT THROUGH, AND
+ * THAT WAS CHECKED RATHER THAN ASSUMED (#994). XRView.projectionMatrix is
+ * specified for the GL clip volume (NDC z in [-1, 1]) because a WebGL layer is
+ * what it is drawn into; renderer_webgl's caps are GPU_CAP_DRAW_DIRECT |
+ * GPU_CAP_DRAW_INDEXED and nothing else, so GPU_CAP_CLIP_Z_ZERO_TO_ONE is
+ * false, so the branch below does not run and the matrix reaches the shader
+ * byte for byte as the runtime built it. Both halves have to hold: the only
+ * backend that sets that cap is renderer_webgpu, and #987 makes a session
+ * WebGL-only (XRGPUBinding is not broadly shipped), so the pairing "WebXR
+ * projection + a backend that would adapt it" cannot arise in this build.
+ *
+ * Worth spelling out because of how the mistake would present. A double
+ * adaptation is not a build failure and not a log line: it halves the depth
+ * range twice, and what a reviewer sees is a headset frame that mostly looks
+ * right with its depth ordering wrong — near geometry punched through by far
+ * geometry — which reads as a depth-buffer bug anywhere but here. The check is
+ * a cap bit, so it is cheap; it is written down so the next person does not
+ * have to rediscover which two facts it rests on.
  */
 static struct mat4 camera_clip_vp(const struct gpu_api *gpu)
 {
@@ -3528,6 +3592,27 @@ void scene_renderer_clear_views(void)
 	g_supplied_view_count = 0;
 }
 
+void scene_renderer_set_view_target(scene_view_target_fn fn, void *user)
+{
+	g_view_target_fn   = fn;
+	g_view_target_user = user;
+}
+
+int32_t scene_renderer_scene_camera(struct camera *out)
+{
+	if (!out || !g_ready)
+		return 0;
+	/*
+	 * Reported as the tick last left it. camera_update runs once per tick
+	 * ahead of the views, after the scripted-camera copy, so a caller that
+	 * reads this between ticks — which is every caller, since the callers
+	 * for this are hosts preparing a frame — gets a consistent camera and
+	 * not one being rebuilt underneath them.
+	 */
+	*out = g_cam;
+	return 1;
+}
+
 /*
  * Draw one view: build its frame graph, execute it, destroy it (#989).
  *
@@ -3577,6 +3662,17 @@ static void draw_view(const struct scene_view *view, const struct world *w,
 	/* Publish the view every pass callback below draws with: its pair, the
 	 * eye that pair was built about, and the size of what it draws into. */
 	g_view = *view;
+
+	/*
+	 * Tell the host which view is about to be drawn, BEFORE the graph is
+	 * built (scene_view.h). Anything the host does here — narrowing its
+	 * backbuffer to this view's rect, say — has to be in effect by the time
+	 * the graph executes, and building it first would only make the ordering
+	 * harder to see. Cheap either way: the passes below read the backend's
+	 * target when they execute, not when they are declared.
+	 */
+	if (g_view_target_fn)
+		g_view_target_fn(view, g_view_target_user);
 
 	/*
 	 * The outline path adds two passes around the forward pass, so it only
@@ -3965,6 +4061,16 @@ static void scene_renderer_tick(void)
 	count = frame_views(views);
 	for (v = 0; v < count; v++)
 		draw_view(&views[v], w, has_emissive);
+
+	/*
+	 * The frame's views are done. A host that narrowed its target to each of
+	 * them in turn is still pointed at the last one, and the frame is not
+	 * over — the UI composites after this — so the end of the loop is said
+	 * out loud rather than left to be inferred from the next tick's first
+	 * per-view call (scene_view.h).
+	 */
+	if (g_view_target_fn)
+		g_view_target_fn(NULL, g_view_target_user);
 }
 
 static void scene_renderer_shutdown(void)

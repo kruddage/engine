@@ -1135,6 +1135,144 @@ static void test_view_list_overflow_refused(struct subsystem_manager *mgr)
 	scene_renderer_clear_views();
 }
 
+/* ------------------------------------------------------------------ */
+/* The per-view target callback (#994): what the renderer tells a host  */
+/* that is composing the frame into a target of its own.                */
+/* ------------------------------------------------------------------ */
+
+#define MAX_TARGET_CALLS 16
+
+static struct {
+	int      view;      /* 0 for the end-of-frame NULL call */
+	int32_t  x, y;
+	uint32_t w, h;
+} g_target_calls[MAX_TARGET_CALLS];
+static uint32_t g_target_call_count;
+static void    *g_target_user_seen;
+
+static void record_target(const struct scene_view *view, void *user)
+{
+	uint32_t i;
+
+	assert(g_target_call_count < MAX_TARGET_CALLS);
+	g_target_user_seen = user;
+	i = g_target_call_count++;
+	g_target_calls[i].view = view != NULL;
+	if (!view)
+		return;
+	g_target_calls[i].x = view->target_x;
+	g_target_calls[i].y = view->target_y;
+	g_target_calls[i].w = view->width;
+	g_target_calls[i].h = view->height;
+}
+
+/*
+ * A host is told which view is about to be drawn, and told when the frame's
+ * views are over (#994).
+ *
+ * The renderer has no backend-neutral way to say "draw into this rect of that
+ * framebuffer" — fg_import_backbuffer names a whole target and takes no rect —
+ * so a view's offset within a target the renderer did not create is carried
+ * through the list and handed straight back out here. What has to hold is the
+ * ORDER: one call per view, in list order, before that view's graph runs, and
+ * exactly one NULL after the last of them. The NULL is what stops a narrowed
+ * target outliving the view it was narrowed for, which would put whatever draws
+ * after the scene inside the last view's rect.
+ */
+static void test_per_view_target_callback(struct subsystem_manager *mgr)
+{
+	const struct camera_api *cam = subsystem_manager_get_api(mgr, "camera");
+	struct scene_view        views[2];
+	struct mat4              sym;
+	int                      marker = 0;
+
+	assert(cam && cam->set_viewport);
+	build_world_material(1, 11u);
+	cam->set_viewport(64.0f, 48.0f);
+	mat4_perspective(&sym, 0.8f, 64.0f / 48.0f, 0.1f, 100.0f);
+	make_view(&views[0], &sym, 64, 48);
+	make_view(&views[1], &sym, 64, 48);
+	views[0].target_x = 0;
+	views[0].target_y = 0;
+	views[1].target_x = 64;
+	views[1].target_y = 0;
+
+	scene_renderer_set_views(views, 2);
+	scene_renderer_set_view_target(record_target, &marker);
+	g_target_call_count = 0;
+	subsystem_manager_tick(mgr);
+
+	assert(g_target_call_count == 3);
+	assert(g_target_user_seen == &marker);
+	assert(g_target_calls[0].view);
+	assert(g_target_calls[0].x == 0 && g_target_calls[0].y == 0);
+	assert(g_target_calls[0].w == 64 && g_target_calls[0].h == 48);
+	assert(g_target_calls[1].view);
+	assert(g_target_calls[1].x == 64 && g_target_calls[1].y == 0);
+	assert(!g_target_calls[2].view);
+
+	/*
+	 * The derived view gets the same treatment: a host holding the callback
+	 * is told about every view the frame draws, including the one the
+	 * renderer makes up when no list was supplied, because a host that only
+	 * heard about supplied views would be left pointing at the last eye
+	 * through a frame it never heard begin.
+	 */
+	scene_renderer_clear_views();
+	g_target_call_count = 0;
+	subsystem_manager_tick(mgr);
+	assert(g_target_call_count == 2);
+	assert(g_target_calls[0].view);
+	assert(!g_target_calls[1].view);
+
+	/* And removing it puts the renderer back where it was: nothing is
+	 * called, and the frame is the frame it always drew. */
+	scene_renderer_set_view_target(NULL, NULL);
+	g_target_call_count = 0;
+	subsystem_manager_tick(mgr);
+	assert(g_target_call_count == 0);
+}
+
+/*
+ * The scene's own camera, readable from outside (#994). A host supplying views
+ * draws with poses of its own, and this keeps answering what the SCENE said —
+ * where it framed itself, and over what depth range — which is the only thing
+ * such a host has to place its viewers relative to.
+ */
+static void test_scene_camera_readback(struct subsystem_manager *mgr)
+{
+	const struct camera_api *cam = subsystem_manager_get_api(mgr, "camera");
+	struct scene_view        one;
+	struct camera            authored, during;
+	struct mat4              sym;
+
+	assert(cam && cam->set_viewport);
+	build_world(1);
+	scene_renderer_clear_views();
+	subsystem_manager_tick(mgr);
+	assert(scene_renderer_scene_camera(&authored) != 0);
+
+	/* The pose the frame derives its view from, and the range every
+	 * authored projection in this build is constructed over. */
+	assert(authored.near > 0.0f && authored.far > authored.near);
+	assert(memcmp(authored.position, authored.eye,
+		      sizeof(authored.eye)) == 0);
+
+	/*
+	 * And supplying a list does not disturb it. The renderer draws the
+	 * supplied views; the scene camera goes on being the scene's, which is
+	 * what makes it usable as a stage a host composes onto.
+	 */
+	mat4_perspective(&sym, 0.8f, 64.0f / 48.0f, 0.1f, 100.0f);
+	make_view(&one, &sym, 64, 48);
+	scene_renderer_set_views(&one, 1);
+	subsystem_manager_tick(mgr);
+	assert(scene_renderer_scene_camera(&during) != 0);
+	assert(memcmp(&during, &authored, sizeof(authored)) == 0);
+
+	scene_renderer_clear_views();
+}
+
 int main(void)
 {
 	static const struct subsystem static_table[] = {
@@ -1207,6 +1345,8 @@ int main(void)
 	test_two_views(&mgr);
 	test_post_chains_per_view(&mgr);
 	test_view_list_overflow_refused(&mgr);
+	test_per_view_target_callback(&mgr);
+	test_scene_camera_readback(&mgr);
 
 	subsystem_manager_shutdown(&mgr);
 	mem_shutdown();

@@ -60,6 +60,25 @@
 ;;!             enter the WASM image — and it is last of the three because it
 ;;!             links the world/ libraries the other two do not, which is a
 ;;!             tier fact the check below reads rather than takes on trust.
+;;!   xr/       the WebXR session: entering one, leaving one, and the view
+;;!             list a frame inside one produces (#993). It reaches DOWN into
+;;!             render/ for the backbuffer its layer framebuffer is declared
+;;!             as, and base/ for the matrices a view is made of, and up into
+;;!             nothing at all — no engine module links it, because none of
+;;!             them knows a session exists. That is the initiative's rule
+;;!             rather than an accident (#987): what the engine gained was a
+;;!             camera that takes a supplied view+proj pair, a backbuffer the
+;;!             host names, and a loop an outside host can drive, none of
+;;!             which mention a headset. This module is the one host that uses
+;;!             all three at once.
+;;!             Reaching everything and being reached by nothing is the shape
+;;!             of a shell, and this is deliberately not one: a shell is the
+;;!             host the engine runs INSIDE, and this is engine code the host
+;;!             calls into — it links into the same WASM module every other
+;;!             tier does. So it sits directly below shell/, above every tier
+;;!             it consumes and below the page that drives it, which is also
+;;!             the only order that lets the check above have an opinion about
+;;!             its links.
 ;;!   shell/    the host the engine runs inside: web/, the browser page (PWA
 ;;!             manifest, service worker, icons, the emscripten shell
 ;;!             template). Last of the engine tiers on purpose — a shell may
@@ -108,6 +127,7 @@
  "game/host"
  "game/project"
  "game/project_test"
+ "xr"
  "shell/web"
  "projects/default"
  "projects/chess"

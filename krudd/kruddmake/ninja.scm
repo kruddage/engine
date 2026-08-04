@@ -284,20 +284,45 @@
      ;;! the only caller, and it frees what it allocates in the same call.
      ;;!
      ;;! _krudd_suspend_loop/_krudd_resume_loop/_krudd_driven_tick (engine.c,
-     ;;! #991) are the same kind of export: nothing in this build calls them —
-     ;;! emscripten_set_main_loop still drives every frame on the page this
-     ;;! repo ships — they exist so a host embedding the module can pause the
-     ;;! rAF loop, run engine_tick itself for as long as it needs to, and hand
-     ;;! the loop back. The motivating host owns a frame source of its own and
-     ;;! hands out per-frame data only through its own callback, so it must be
-     ;;! the one driving while it runs — but the export itself is a generic
-     ;;! takeover of a loop this module already runs, not a new one.
+     ;;! #991) are the loop handover: a host that owns a frame source of its
+     ;;! own, and hands out per-frame data only through its own callback, has
+     ;;! to be the one driving while it runs. The XR session module (#993) is
+     ;;! the first such host and reaches them two different ways — suspend and
+     ;;! resume in C, where the flag that pairs them lives, and
+     ;;! _krudd_driven_tick from inside its XR animation-frame callback, where
+     ;;! the frame actually is. All three stay exported anyway: the takeover
+     ;;! is a generic capability of a loop this module already runs, which is
+     ;;! what #991 published it as, and an embedder gets it on the same terms.
+     ;;!
+     ;;! _krudd_xr_* (krudd/engine/xr, #993) is the WebXR session module's
+     ;;! bridge, and the reason its object is in the module at all: nothing
+     ;;! links it, because no engine module knows a session exists (#987), so
+     ;;! these exports are what pull its archive member in — and what fails
+     ;;! the link loudly rather than quietly if that ever stops being true.
+     ;;! They point two ways. probe/supported/request_session/end_session/
+     ;;! session_active are what a PAGE calls in: an Enter VR affordance
+     ;;! (#997), and a console until that exists. report_support/
+     ;;! session_begun/session_ended/frame are what the module's own EM_JS
+     ;;! glue calls back — internal to that module, but they cross the wasm
+     ;;! boundary like any other export and are listed like one.
+     ;;!
+     ;;! They are deliberately not in @kruddage/engine's mirror yet: that list
+     ;;! is the surface an EMBEDDER of the package codes to, and until the
+     ;;! page grows the control that enters a session there is nothing there
+     ;;! to code to. The check that reads the two is one-directional on
+     ;;! purpose — every name the package declares must exist in the module,
+     ;;! not the other way about — so a bridge the package does not publish is
+     ;;! not the drift that check exists to catch.
      (string-append "mainflags = -sENVIRONMENT=web -sALLOW_MEMORY_GROWTH=1 "
                     "-sGROWABLE_ARRAYBUFFERS=0 -sMALLOC=mimalloc "
                     "-sFETCH=1 -sMAX_WEBGL_VERSION=2 --use-port=emdawnwebgpu "
                     "-sEXPORTED_FUNCTIONS=_main,_krudd_load_project,"
                     "_malloc,_free,_krudd_suspend_loop,_krudd_resume_loop,"
-                    "_krudd_driven_tick")
+                    "_krudd_driven_tick,_krudd_xr_probe,_krudd_xr_supported,"
+                    "_krudd_xr_request_session,_krudd_xr_end_session,"
+                    "_krudd_xr_session_active,_krudd_xr_report_support,"
+                    "_krudd_xr_session_begun,_krudd_xr_session_ended,"
+                    "_krudd_xr_frame")
      ""
      "rule cc"
      "  command = $cc $cflags $extracflags $includes -MMD -MF $out.d -c $in -o $out"

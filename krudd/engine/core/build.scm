@@ -31,10 +31,19 @@
              ;;! STAGED_PROJECT_SCM embed a directory under projects/ declares.
              ;;! Exactly one may, which resolve-check-staged enforces and
              ;;! argues (#1019) — engine.c includes that header unconditionally.
+             ;;!
+             ;;! xr is the one name below that is not a plugin. There is no
+             ;;! xr_plugin_entry and engine.c calls nothing in it: the engine
+             ;;! does not know a WebXR session exists, and the initiative's
+             ;;! rule is that it never learns (#987, #993). It is listed
+             ;;! because the PAGE reaches it — its krudd_xr_* entry points are
+             ;;! in EXPORTED_FUNCTIONS (kruddmake/ninja.scm), and an exported
+             ;;! symbol is both what pulls its archive member into the module
+             ;;! and what fails the link loudly if this line is ever dropped.
              (wasm-modules "asset_plugin" "edit_plugin" "entity_plugin"
                            "renderer_webgl" "renderer_webgpu" "frame_graph" "scene_renderer"
                            "viewport" "kruddgui" "audio_scriptnode"
-                           "project_host"))
+                           "project_host" "xr"))
 
  (native-only
   ;;! The offscreen WebGPU harness. Needs native Dawn, so it is skipped

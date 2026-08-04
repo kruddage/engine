@@ -1066,13 +1066,42 @@ static void renderer_webgl_init(void)
 	attrs.minorVersion = 0;
 	attrs.depth        = EM_TRUE; /* backbuffer depth for 3D passes */
 	/*
-	 * A future host session that shares this canvas's context with its
-	 * own external compositor (the session lifecycle work, #993) has to
-	 * request that up front, as a flag on attrs here, before the context
-	 * exists — not this change's concern. This change only teaches a
-	 * backbuffer pass to draw into whatever such a session later declares
-	 * (webgl_declare_backbuffer); making the context eligible to run one
-	 * is #993's.
+	 * A host session that shares this context with an external compositor
+	 * (WebXR, #993) needs the context marked compatible with the device it
+	 * composites for. #990 deferred the question of whether that can be
+	 * asked for HERE, at creation, to #993, because getting it wrong costs
+	 * a context. The answer, and why nothing was added to attrs:
+	 *
+	 * It cannot be asked for here. EmscriptenWebGLContextAttributes has no
+	 * field for it — emscripten builds the JS context-attributes object
+	 * from this struct's known members, so there is no spelling of
+	 * `{ xrCompatible: true }` this call can produce. The one creation-time
+	 * route emscripten does offer is -sGL_PREINITIALIZED_CONTEXT, where the
+	 * PAGE calls getContext() with that attribute and hands the context in.
+	 * That was rejected: it moves context creation out of the backend that
+	 * owns it and into the shell, for every page load, flat or not — and on
+	 * a machine with more than one GPU it commits every visitor to
+	 * whichever adapter a headset would want, to buy a case almost none
+	 * of them are in.
+	 *
+	 * So the session asks afterwards instead: xr_session.c calls
+	 * makeXRCompatible() on this live context and waits for it before it
+	 * builds an XRWebGLLayer. Per the WebXR spec that call MAY lose and
+	 * restore the context — it only does so when the context is not
+	 * already on the XR device's adapter. On a standalone headset (the
+	 * Quest browser, which is what this targets) there is one adapter and
+	 * no loss is expected; on a PC-tethered headset with a discrete GPU it
+	 * is a real possibility.
+	 *
+	 * And this backend would not survive one. Nothing in this file, or
+	 * anywhere in the tree, listens for webglcontextlost or
+	 * webglcontextrestored, or recreates a pipeline, buffer or texture —
+	 * so a loss would leave every GL name this module holds naming
+	 * nothing. That is NOT specific to XR (a driver reset or a GPU-starved
+	 * tab loses contexts too), it is a gap this backend has always had,
+	 * and #993 deliberately does not absorb it: it is opened as #1043,
+	 * resource recreation after a context loss, and this comment is the
+	 * pointer to it.
 	 */
 	g_ctx = emscripten_webgl_create_context("#canvas", &attrs);
 	emscripten_webgl_make_context_current(g_ctx);

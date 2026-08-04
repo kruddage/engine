@@ -57,6 +57,18 @@ static void null_frame_end(void)
 	});
 }
 
+/*
+ * Pipeline handles come from a slot pool, for the same reason texture handles
+ * do (see g_tex_slots): every consumer reads a NULL handle as "this shader
+ * failed to compile" and stands the feature down — the sun-shadow pass, the
+ * selection outline and the bloom chain all do. A backend that returned NULL
+ * therefore recorded the compile and then guaranteed the path under it was
+ * never exercised, which is the opposite of what a recording backend is for.
+ * Destroy is a no-op and the pool wraps; nothing dereferences the handle.
+ */
+static char     g_pso_slots[64];
+static uint32_t g_pso_next;
+
 static gpu_pipeline_t
 null_pipeline_create(const struct gpu_pipeline_desc *desc)
 {
@@ -72,7 +84,7 @@ null_pipeline_create(const struct gpu_pipeline_desc *desc)
 			},
 		},
 	});
-	return NULL;
+	return (gpu_pipeline_t)&g_pso_slots[g_pso_next++ % sizeof(g_pso_slots)];
 }
 
 static void null_pipeline_destroy(gpu_pipeline_t pipeline)
@@ -315,6 +327,7 @@ null_texture_create(const struct gpu_texture_desc *desc)
 				.mip_levels        = desc->mip_levels,
 				.has_initial_data  = desc->initial_data != NULL,
 				.generate_mips     = desc->generate_mips,
+				.sample_count      = desc->sample_count,
 			},
 		},
 	});
@@ -359,8 +372,19 @@ static void null_cmd_bind_texture_handle(gpu_cmd_buf_t cmd, uint32_t unit,
 		     unit, handle);
 }
 
+/*
+ * GPU_CAP_MSAA_RESOLVE is advertised for the same reason the handles above are
+ * distinct: a recording backend that declines a cap records nothing about the
+ * path behind it. The multisampled offscreen scene target and its resolve are
+ * where the engine's anti-aliasing lives, and they are declared only when a
+ * backend claims this — so without it no test could see, let alone pin, the
+ * sample state a frame's targets were declared with. Resolving is free here:
+ * the frame graph emits the resolve target as color[0].resolve_target and this
+ * backend records it (see cmd_begin_render_pass) rather than blitting anything.
+ */
 static const struct gpu_api null_api = {
-	.caps                   = GPU_CAP_DRAW_INDEXED | GPU_CAP_COMPUTE,
+	.caps                   = GPU_CAP_DRAW_INDEXED | GPU_CAP_COMPUTE |
+				  GPU_CAP_MSAA_RESOLVE,
 	.cmd_buf_begin          = null_cmd_buf_begin,
 	.cmd_buf_submit         = null_cmd_buf_submit,
 	.frame_end              = null_frame_end,

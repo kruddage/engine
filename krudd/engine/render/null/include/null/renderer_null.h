@@ -80,6 +80,14 @@ struct gpu_call_record {
 			uint32_t mip_levels;
 			int      has_initial_data; /* 1 if desc->initial_data != NULL */
 			uint32_t generate_mips;
+			/*
+			 * Recorded, not honoured — this backend allocates no
+			 * storage. It is here so a test can assert the sample
+			 * state a path declared its targets with, which is the
+			 * only way the multisampled offscreen scene target is
+			 * observable from outside the renderer.
+			 */
+			uint32_t sample_count;
 		} texture_create;
 		struct { uint32_t unit; } cmd_bind_texture;
 	} args;

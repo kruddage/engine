@@ -26,11 +26,15 @@ the frame loop for as long as the session runs. **This path is WebGL only.** `XR
 (WebGPU-in-XR) is not broadly shipped yet, so an immersive session never runs on the WebGPU
 backend this page defaults to everywhere but Firefox; on a headset that booted WebGPU, the control
 instead offers a one-tap reload onto the WebGL backend rather than trying to enter and failing.
-Stereo rendering, headset-safe UI and controller-ray picking are the initiative's next steps —
-what a session gets you today is tracked, but monoscopic. See
-[#987](https://github.com/kruddage/engine/issues/987) for the full initiative and its PR-by-PR
-breakdown, and [#997](https://github.com/kruddage/engine/issues/997) for the page-side control
-itself.
+A session renders in stereo, head-tracked, with the scripted scene camera acting as the stage
+the head pose composes onto; the flat 2D overlay is suppressed rather than pasted across both
+eyes; and controller rays reach the same pick a mouse click does, so chess is played by
+pointing at a piece and pressing select. Not yet: a world-space panel to replace the
+suppressed overlay ([#1044](https://github.com/kruddage/engine/issues/1044)), recovery from a
+GPU context loss ([#1043](https://github.com/kruddage/engine/issues/1043)), and any of the
+frame-cost work — a session draws the whole graph once per eye, and nobody has measured that
+on a device yet. See [#987](https://github.com/kruddage/engine/issues/987) for the full
+initiative and its PR-by-PR breakdown.
 
 ## Roadmap: Scheme as the build system and the game
 

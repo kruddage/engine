@@ -282,11 +282,22 @@
      ;;! (every other JS bridge in the tree passes out), and a buffer for it has
      ;;! to come from somewhere the module owns; project_host.c's EM_JS bridge is
      ;;! the only caller, and it frees what it allocates in the same call.
+     ;;!
+     ;;! _krudd_suspend_loop/_krudd_resume_loop/_krudd_driven_tick (engine.c,
+     ;;! #991) are the same kind of export: nothing in this build calls them —
+     ;;! emscripten_set_main_loop still drives every frame on the page this
+     ;;! repo ships — they exist so a host embedding the module can pause the
+     ;;! rAF loop, run engine_tick itself for as long as it needs to, and hand
+     ;;! the loop back. The motivating host owns a frame source of its own and
+     ;;! hands out per-frame data only through its own callback, so it must be
+     ;;! the one driving while it runs — but the export itself is a generic
+     ;;! takeover of a loop this module already runs, not a new one.
      (string-append "mainflags = -sENVIRONMENT=web -sALLOW_MEMORY_GROWTH=1 "
                     "-sGROWABLE_ARRAYBUFFERS=0 -sMALLOC=mimalloc "
                     "-sFETCH=1 -sMAX_WEBGL_VERSION=2 --use-port=emdawnwebgpu "
                     "-sEXPORTED_FUNCTIONS=_main,_krudd_load_project,"
-                    "_malloc,_free")
+                    "_malloc,_free,_krudd_suspend_loop,_krudd_resume_loop,"
+                    "_krudd_driven_tick")
      ""
      "rule cc"
      "  command = $cc $cflags $extracflags $includes -MMD -MF $out.d -c $in -o $out"
@@ -408,7 +419,11 @@
 
 (define (ninja-emit-main-module table libmap)
   (let* ((dir "core")
-         (srcs (list "engine.c" "plugin_abi.c"))
+         ;;! frame_pacing.c rides in beside engine.c/plugin_abi.c rather than
+         ;;! through a (wasm-modules ...) library: it is a private helper of
+         ;;! this one translation unit (#991), not a plugin with its own
+         ;;! registration, so it has no business in the plugin list below.
+         (srcs (list "engine.c" "plugin_abi.c" "frame_pacing.c"))
          (includes (ninja-wasm-include-flags
                     (resolve-includes table "index")))
          (objs (map (lambda (s)

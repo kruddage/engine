@@ -31,6 +31,7 @@
  * hands back rather than by any name.
  */
 #include "staged_project_scm.h"
+#include "frame_pacing.h"
 #endif
 
 /*
@@ -137,7 +138,13 @@ static int g_ready_signalled;
 #endif
 
 #ifdef __EMSCRIPTEN__
-static double s_last_ms;
+/*
+ * Owns the resync rule stats_update relies on: dt is only meaningful between
+ * two ticks the loop was actually asked to run, so the tick right after
+ * krudd_suspend_loop() reports no delta at all rather than however long the
+ * suspension lasted. See frame_pacing.h.
+ */
+static struct frame_pacing s_pacing;
 static float  s_frame_times[60];
 static int    s_ft_head;
 static double s_boot_ms;	/* emscripten_get_now() at engine_init entry */
@@ -161,18 +168,17 @@ static void stats_record_phase(const char *name, double start)
 static void stats_update(void)
 {
 	double now;
+	double dt_ms;
 	float  dt;
 	float  sum;
 	int    i;
 
-	now = emscripten_get_now();
-	if (s_last_ms == 0.0) {
-		s_last_ms = now;
+	now   = emscripten_get_now();
+	dt_ms = frame_pacing_tick(&s_pacing, now);
+	if (dt_ms == FRAME_PACING_RESYNC)
 		return;
-	}
 
-	dt        = (float)(now - s_last_ms);
-	s_last_ms = now;
+	dt = (float)dt_ms;
 
 	s_frame_times[s_ft_head] = dt;
 	s_ft_head = (s_ft_head + 1) % 60;
@@ -361,6 +367,8 @@ void engine_init(void)
 	frame_count = 0;
 	LOG_INFO("engine: init " ENGINE_VERSION_STRING);
 #ifdef __EMSCRIPTEN__
+	frame_pacing_init(&s_pacing);
+
 	/*
 	 * Boot the Scheme interpreter first: script_init loads the shader
 	 * transpiler into the image, and the renderer plugins lower their
@@ -511,6 +519,72 @@ void engine_tick(void)
 #endif
 }
 
+#ifdef __EMSCRIPTEN__
+/* True between a krudd_suspend_loop() and the krudd_resume_loop() that ends
+ * it — i.e. while an external host, not emscripten_set_main_loop's rAF
+ * callback, is expected to be the one calling krudd_driven_tick(). */
+static int g_loop_suspended;
+
+/*
+ * Pause the rAF loop main() installed, so an external host can drive
+ * engine_tick itself (see krudd_driven_tick below) for as long as it needs
+ * to — the motivating host owns a frame source of its own and hands out
+ * per-frame data (head and controller poses) only through its own callback,
+ * so nothing else may be driving frames while one is running.
+ * emscripten_pause_main_loop() stops the recurring rAF callback in place; it
+ * does not touch main() or unwind anything, so this is safe to call from
+ * wherever the host's takeover begins.
+ *
+ * frame_pacing_suspend() marks the gap this opens: whatever ticks next,
+ * driven or rAF, must not report the wall-clock time this leaves open as
+ * that tick's frame duration (see frame_pacing.h).
+ */
+EMSCRIPTEN_KEEPALIVE void krudd_suspend_loop(void)
+{
+	if (g_loop_suspended)
+		return;
+	g_loop_suspended = 1;
+	frame_pacing_suspend(&s_pacing);
+	emscripten_pause_main_loop();
+}
+
+/*
+ * Hand the loop back to the browser: the counterpart to krudd_suspend_loop().
+ * The rAF callback resumes on its own schedule; the frame_pacing resync it
+ * left behind is consumed by whichever tick lands first; either an already
+ * queued krudd_driven_tick() the host is still finishing, or the next rAF
+ * callback.
+ */
+EMSCRIPTEN_KEEPALIVE void krudd_resume_loop(void)
+{
+	if (!g_loop_suspended)
+		return;
+	g_loop_suspended = 0;
+	emscripten_resume_main_loop();
+}
+
+/*
+ * Run exactly one engine_tick() on an external host's behalf, while the rAF
+ * loop is suspended. This is the same engine_tick the browser calls on its
+ * own schedule — the WebGPU boot finish, the first-frame timing capture, the
+ * script host and subsystem ticks, frame_end, the launcher arm — none of it
+ * is aware, or needs to be, of whether a rAF callback or this export is what
+ * called it.
+ *
+ * Calling this while the loop is not suspended double-ticks that rAF frame,
+ * which is never what a caller wants, so it is logged. It still runs the
+ * tick rather than refusing it: a call here means the host wants a frame
+ * drawn, and refusing would only leave it undrawn on top of the misuse.
+ */
+EMSCRIPTEN_KEEPALIVE void krudd_driven_tick(void)
+{
+	if (!g_loop_suspended)
+		LOG_WARN("engine: krudd_driven_tick called while the rAF loop "
+			 "is not suspended");
+	engine_tick();
+}
+#endif
+
 void engine_shutdown(void)
 {
 	LOG_INFO("engine: shutdown");
@@ -524,6 +598,22 @@ int main(void)
 {
 	engine_init();
 #ifdef __EMSCRIPTEN__
+	/*
+	 * simulate_infinite_loop (the trailing 1) stays set: it governs only
+	 * this one call — whether it unwinds the C stack to simulate main()
+	 * never returning, or returns normally the way the native `#else`
+	 * below does — and says nothing about whether the rAF callback it
+	 * installs keeps running. That is a separate, already-dynamic
+	 * property: emscripten_pause_main_loop()/emscripten_resume_main_loop()
+	 * (krudd_suspend_loop/krudd_resume_loop above) stop and restart the
+	 * installed callback without needing this call re-issued, so a host
+	 * taking the loop over is not a reason to change it here. Clearing it
+	 * would only buy engine_shutdown() a way to run in the browser, which
+	 * is a real gap (#991 leaves it, deliberately) but a different one:
+	 * nothing today ever asks the page to tear down, and unconditionally
+	 * letting main() return would change what every existing build does
+	 * before anything exists to call engine_shutdown() for a reason.
+	 */
 	emscripten_set_main_loop(engine_tick, 0, 1);
 #else
 	/* Native main loop not yet implemented; seam for future loop. */

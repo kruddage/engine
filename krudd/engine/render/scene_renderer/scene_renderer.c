@@ -655,6 +655,14 @@ static void camera_get_view_proj(struct mat4 *out)
  * mutating g_cam.view_proj itself, so camera_get_view_proj keeps returning
  * the GL-convention matrix editor overlays and picking unproject against —
  * those run on the CPU and never touch a backend's clip volume.
+ *
+ * A projection the engine did NOT build (camera_set_view_proj) rides the same
+ * seam and nothing else: this is the ONLY thing done to it on the way to the
+ * shader. mat4_clip_z01 rescales the z row alone, leaving x, y and w — every
+ * term an off-axis frustum encodes its asymmetry in — untouched, so a supplied
+ * projection arrives intact. It is therefore also the reason a supplied
+ * projection must be handed in GL-convention: this adapts from that convention,
+ * and a pre-adapted matrix would be adapted a second time.
  */
 static struct mat4 camera_clip_vp(const struct gpu_api *gpu)
 {
@@ -665,23 +673,56 @@ static struct mat4 camera_clip_vp(const struct gpu_api *gpu)
 	return vp;
 }
 
+/*
+ * The eye that goes with the matrix camera_get_view_proj hands out — g_cam's
+ * position, which the authored path copies from the eye and a supplied pair
+ * carries explicitly. Reading eye directly would report the scene's authored
+ * pose while the renderer drew from somewhere else entirely.
+ */
 static void camera_get_eye(float out[3])
 {
 	if (!out)
 		return;
-	out[0] = g_cam.eye[0];
-	out[1] = g_cam.eye[1];
-	out[2] = g_cam.eye[2];
+	out[0] = g_cam.position[0];
+	out[1] = g_cam.position[1];
+	out[2] = g_cam.position[2];
 }
 
 static void camera_set_viewport(float width, float height)
 {
 	if (width > 0.0f && height > 0.0f) {
+		/* Only the authored producer reads aspect; a supplied
+		 * projection already carries whatever aspect its author
+		 * meant, so this records the size without reshaping it. */
 		g_cam.aspect = width / height;
 		/* Kept for sizing the outline pass's offscreen targets to the canvas. */
 		g_view_w = width;
 		g_view_h = height;
 	}
+}
+
+/*
+ * The set side (#988): draw with a view and a projection the caller built, not
+ * with one derived from the scene's eye/target/fov. camera_update stops
+ * rebuilding the pair, so the per-frame tick and the scripted-camera copy leave
+ * it alone until clear_view_proj hands the camera back.
+ */
+static void camera_api_set_view_proj(const struct mat4 *view,
+				     const struct mat4 *proj,
+				     const float eye[3])
+{
+	if (!view || !proj || !eye)
+		return;
+	camera_set_view_proj(&g_cam, view, proj, eye);
+}
+
+static void camera_api_clear_view_proj(void)
+{
+	camera_clear_view_proj(&g_cam);
+	/* Rebuild from the authored parameters now, so a get_eye or a picking
+	 * unproject between here and the next tick sees the restored camera
+	 * rather than the pair that was just dropped. */
+	camera_update(&g_cam);
 }
 
 /*
@@ -879,6 +920,8 @@ static const struct camera_api g_camera_api = {
 	camera_pan,
 	camera_dolly,
 	camera_reset_view,
+	camera_api_set_view_proj,
+	camera_api_clear_view_proj,
 };
 
 /*
@@ -2212,7 +2255,10 @@ static uint32_t scene_preview_render_mesh(uint32_t mesh_ref,
 		add_shader_pso(gpu, shader_ref);
 	pso = pso_for_shader(shader_ref);
 
-	/* Frame the mesh's bounds from a fixed three-quarter view. */
+	/* Frame the mesh's bounds from a fixed three-quarter view. Zeroed first
+	 * so this stack camera starts on the derived path — camera_update only
+	 * builds the pair for a camera holding no supplied one. */
+	memset(&cam, 0, sizeof(cam));
 	cam.fov_y  = 0.6f;
 	cam.aspect = 1.0f;
 	cam.near   = 0.05f;
@@ -2259,9 +2305,9 @@ static uint32_t scene_preview_render_mesh(uint32_t mesh_ref,
 		memcpy(&ubo[0], preview_vp.m, 16 * sizeof(float));
 	}
 	memcpy(&ubo[16], model.m,         16 * sizeof(float));
-	ubo[SCENE_UBO_CAMPOS + 0] = cam.eye[0];
-	ubo[SCENE_UBO_CAMPOS + 1] = cam.eye[1];
-	ubo[SCENE_UBO_CAMPOS + 2] = cam.eye[2];
+	ubo[SCENE_UBO_CAMPOS + 0] = cam.position[0];
+	ubo[SCENE_UBO_CAMPOS + 1] = cam.position[1];
+	ubo[SCENE_UBO_CAMPOS + 2] = cam.position[2];
 	ubo[SCENE_UBO_CAMPOS + 3] = 0.0f; /* std140 vec3 tail pad */
 
 	/* Material params: the shader's Material block, or a white tint fallback. */
@@ -2477,6 +2523,10 @@ static void scene_renderer_init(void)
 	g_cam.aspect    = 1.6f;
 	g_cam.near      = 0.1f;
 	g_cam.far       = 100.0f;
+	/* Derive the pair up front: a consumer that reads the camera before the
+	 * first tick (an overlay sizing handles by eye distance) must see the
+	 * framing above, not a zeroed matrix. */
+	camera_update(&g_cam);
 
 	/* Snapshot the authored framing so camera_reset_view() (#697) can return
 	 * to it after an interactive pan moved target/up. */
@@ -2661,10 +2711,12 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 
 	cam_vp = camera_clip_vp(gpu);
 	memcpy(&ubo[0], cam_vp.m, 16 * sizeof(float));
-	/* cam_pos is constant across the frame; only model changes per draw. */
-	ubo[SCENE_UBO_CAMPOS + 0] = g_cam.eye[0];
-	ubo[SCENE_UBO_CAMPOS + 1] = g_cam.eye[1];
-	ubo[SCENE_UBO_CAMPOS + 2] = g_cam.eye[2];
+	/* cam_pos is constant across the frame; only model changes per draw. It
+	 * is the camera's position, not its authored eye — those differ once a
+	 * caller has supplied a view matrix of its own. */
+	ubo[SCENE_UBO_CAMPOS + 0] = g_cam.position[0];
+	ubo[SCENE_UBO_CAMPOS + 1] = g_cam.position[1];
+	ubo[SCENE_UBO_CAMPOS + 2] = g_cam.position[2];
 	ubo[SCENE_UBO_CAMPOS + 3] = 0.0f; /* std140 vec3 tail pad */
 
 	/* The directional light is constant across the pass — bind it once. */
@@ -2900,9 +2952,9 @@ static void mask_pass(struct fg_pass_ctx *ctx, void *userdata)
 	memcpy(&ubo[16], model.m, 16 * sizeof(float));
 	/* The mask shader reads only the matrices, but the block is uploaded
 	 * whole — fill cam_pos so no uninitialised stack reaches the buffer. */
-	ubo[SCENE_UBO_CAMPOS + 0] = g_cam.eye[0];
-	ubo[SCENE_UBO_CAMPOS + 1] = g_cam.eye[1];
-	ubo[SCENE_UBO_CAMPOS + 2] = g_cam.eye[2];
+	ubo[SCENE_UBO_CAMPOS + 0] = g_cam.position[0];
+	ubo[SCENE_UBO_CAMPOS + 1] = g_cam.position[1];
+	ubo[SCENE_UBO_CAMPOS + 2] = g_cam.position[2];
 	ubo[SCENE_UBO_CAMPOS + 3] = 0.0f;
 
 	if (!ring_take_slot(&slot))
@@ -3088,10 +3140,15 @@ static void bloom_emissive_pass(struct fg_pass_ctx *ctx, void *userdata)
 	cam_vp = camera_clip_vp(gpu);
 	memcpy(&ubo[0], cam_vp.m, 16 * sizeof(float));
 	/* The shader reads only the matrices, but the block is uploaded whole —
-	 * fill cam_pos so no uninitialised stack reaches the buffer. */
-	ubo[SCENE_UBO_CAMPOS + 0] = g_cam.eye[0];
-	ubo[SCENE_UBO_CAMPOS + 1] = g_cam.eye[1];
-	ubo[SCENE_UBO_CAMPOS + 2] = g_cam.eye[2];
+	 * fill cam_pos so no uninitialised stack reaches the buffer. Reads
+	 * position, not eye, for the same reason every other cam_pos write
+	 * does: it is the eye the pair was built about, which a supplied pair
+	 * sets and the authored path copies from eye. Nothing observes the
+	 * difference today, and nothing has to notice if this shader ever
+	 * starts reading it. */
+	ubo[SCENE_UBO_CAMPOS + 0] = g_cam.position[0];
+	ubo[SCENE_UBO_CAMPOS + 1] = g_cam.position[1];
+	ubo[SCENE_UBO_CAMPOS + 2] = g_cam.position[2];
 	ubo[SCENE_UBO_CAMPOS + 3] = 0.0f;
 
 	gpu->cmd_set_pipeline(cmd, g_bloom_emissive_pso);

@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "renderer.h"
+#include <webgl/renderer_webgl.h>
 #include <core/subsystem.h>
 #include <core/subsystem_manager.h>
 #include <abi/log_api.h>
@@ -65,15 +66,48 @@ static struct gpu_pipeline            *g_cur_pipeline; /* bound by set_pipeline 
  * One reusable framebuffer object for every offscreen render pass. A pass whose
  * color attachment is a real texture (not the imported backbuffer, whose handle
  * is NULL) binds this FBO and points its attachments at the pass's textures; the
- * backbuffer path leaves it untouched and draws to framebuffer 0 as before. Zero
- * until the first offscreen pass creates it; reused across passes and selections
- * (each begin re-attaches), so there is nothing to free until context teardown.
+ * backbuffer path leaves it untouched. Zero until the first offscreen pass
+ * creates it; reused across passes and selections (each begin re-attaches), so
+ * there is nothing to free until context teardown.
  */
 static unsigned int                    g_offscreen_fbo;
 #else
 static const struct log_api    *g_log = &native_log;
 static const struct memory_api *g_mem = &native_mem;
 #endif
+
+/*
+ * The host's declared backbuffer for the current and every following frame
+ * — see webgl_declare_backbuffer in renderer_webgl.h for what this means and
+ * who sets it. Kept outside the __EMSCRIPTEN__ split above (unlike every
+ * other piece of GL-adjacent state here) so a native build can exercise the
+ * bookkeeping — record a declaration, clear it, read it back — without a GL
+ * context. Zero-initialized, so declared starts false: no host has said
+ * anything, and every backbuffer pass falls back to FBO 0 at the full
+ * drawing-buffer size until one does.
+ */
+static struct webgl_backbuffer_decl g_backbuffer;
+
+void webgl_declare_backbuffer(uint32_t fbo, int32_t x, int32_t y,
+			       uint32_t width, uint32_t height)
+{
+	g_backbuffer.declared = 1;
+	g_backbuffer.fbo      = fbo;
+	g_backbuffer.x        = x;
+	g_backbuffer.y        = y;
+	g_backbuffer.width    = width;
+	g_backbuffer.height   = height;
+}
+
+void webgl_clear_backbuffer(void)
+{
+	g_backbuffer = (struct webgl_backbuffer_decl){ 0 };
+}
+
+struct webgl_backbuffer_decl webgl_backbuffer_declared(void)
+{
+	return g_backbuffer;
+}
 
 /* Single static sentinel — WebGL 2 is immediate-mode; no real cmd buf. */
 static struct gpu_cmd_buf g_cmd_buf;
@@ -554,7 +588,8 @@ webgl_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 	(void)cmd;
 #ifdef __EMSCRIPTEN__
 	GLbitfield          clear_mask = 0;
-	int                 vw = 0, vh = 0;
+	int                 vx = 0, vy = 0, vw = 0, vh = 0;
+	int                 is_backbuffer = 0;
 	struct gpu_texture *color0 =
 		desc->color_count > 0
 			? (struct gpu_texture *)desc->color[0].texture
@@ -592,6 +627,13 @@ webgl_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 		 * its own) and restores COLOR_ATTACHMENT0 as the draw buffer,
 		 * since the FBO is shared and a prior depth-only pass may have
 		 * left it at NONE.
+		 *
+		 * g_offscreen_fbo is this backend's own object, so probing it
+		 * with glCheckFramebufferStatus below is safe. A host-declared
+		 * backbuffer (webgl_declare_backbuffer) is never this branch's
+		 * FBO — that guard is structural, not a runtime check — because
+		 * an externally-owned, opaque target must not be probed this
+		 * way at all.
 		 */
 		if (!g_offscreen_fbo)
 			glGenFramebuffers(1, &g_offscreen_fbo);
@@ -618,15 +660,39 @@ webgl_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 			g_log->write(LOG_LEVEL_ERROR,
 				     "renderer_webgl: offscreen framebuffer "
 				     "incomplete; skipping pass");
-			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+			/*
+			 * Leave GL where a backbuffer pass expects to find it:
+			 * the host's declared backbuffer if it has declared
+			 * one, FBO 0 otherwise — not literally 0, which would
+			 * be wrong once a host has declared something else.
+			 */
+			glBindFramebuffer(GL_FRAMEBUFFER,
+					   g_backbuffer.declared
+						   ? (GLuint)g_backbuffer.fbo
+						   : 0);
 			return;
 		}
 		vw = (int)(color0 ? color0->width  : dtex->width);
 		vh = (int)(color0 ? color0->height : dtex->height);
 	} else {
-		/* Backbuffer pass: the canvas's default framebuffer. */
-		glBindFramebuffer(GL_FRAMEBUFFER, 0);
-		emscripten_webgl_get_drawing_buffer_size(g_ctx, &vw, &vh);
+		/*
+		 * Backbuffer pass: whatever framebuffer + rect the host has
+		 * declared as this frame's backbuffer (webgl_declare_backbuffer),
+		 * or — absent any declaration — the canvas's own default
+		 * framebuffer at the full drawing-buffer size, exactly as this
+		 * backend behaved before a host could declare anything.
+		 */
+		is_backbuffer = 1;
+		if (g_backbuffer.declared) {
+			glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)g_backbuffer.fbo);
+			vx = g_backbuffer.x;
+			vy = g_backbuffer.y;
+			vw = (int)g_backbuffer.width;
+			vh = (int)g_backbuffer.height;
+		} else {
+			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+			emscripten_webgl_get_drawing_buffer_size(g_ctx, &vw, &vh);
+		}
 	}
 
 	/*
@@ -635,8 +701,13 @@ webgl_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 	 * GL_SCISSOR_TEST and GL_BLEND enabled with a stale scissor box, which
 	 * otherwise clips the clear and the draw to a corner of the target.
 	 * glDepthMask must be enabled for the depth clear below to take effect.
+	 *
+	 * The viewport is (vx, vy, vw, vh) rather than always (0, 0, vw, vh):
+	 * a declared backbuffer's rect may sit away from the target's origin
+	 * and cover only part of it — two declarations sharing one fbo (two
+	 * views distinguished only by their rects) is exactly that case.
 	 */
-	glViewport(0, 0, vw, vh);
+	glViewport(vx, vy, vw, vh);
 	glDisable(GL_SCISSOR_TEST);
 	glDisable(GL_BLEND);
 	glDisable(GL_CULL_FACE);
@@ -666,8 +737,26 @@ webgl_cmd_begin_render_pass(gpu_cmd_buf_t cmd,
 			      ? desc->clear_depth : 1.0f);
 		clear_mask |= GL_DEPTH_BUFFER_BIT;
 	}
-	if (clear_mask)
+	if (clear_mask) {
+		/*
+		 * Scissor a backbuffer pass's clear to its own (vx, vy, vw, vh):
+		 * a no-op when the backbuffer is undeclared (the rect is already
+		 * the whole target, so scissoring to it changes nothing), but
+		 * required once two declarations share one fbo — glViewport
+		 * clips draws to a pass's rect already, but does not clip
+		 * glClear, so without this a second view's clear would wipe the
+		 * first view's already-drawn half of the shared target.
+		 * Re-disabled immediately after, restoring the "a pass leaves
+		 * scissor disabled" contract cmd_set_scissor documents.
+		 */
+		if (is_backbuffer) {
+			glEnable(GL_SCISSOR_TEST);
+			glScissor(vx, vy, vw, vh);
+		}
 		glClear(clear_mask);
+		if (is_backbuffer)
+			glDisable(GL_SCISSOR_TEST);
+	}
 #else
 	(void)desc;
 #endif
@@ -678,12 +767,16 @@ static void webgl_cmd_end_render_pass(gpu_cmd_buf_t cmd)
 	(void)cmd;
 #ifdef __EMSCRIPTEN__
 	/*
-	 * Return to the default framebuffer so whatever renders next (a later
+	 * Return to the backbuffer — the host's declared one if it has
+	 * declared one, FBO 0 otherwise — so whatever renders next (a later
 	 * backbuffer pass, or kruddgui compositing an offscreen result through
-	 * kgui-image) draws to the canvas and never to a stale FBO. A backbuffer
-	 * pass was already bound to 0, so this is a no-op for it.
+	 * kgui-image) draws there and never to a stale FBO. Not literally 0:
+	 * once a host has declared an external framebuffer, 0 is a target
+	 * nothing is meant to land on any more. A backbuffer pass was already
+	 * bound to this same fbo, so this is a no-op for it.
 	 */
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glBindFramebuffer(GL_FRAMEBUFFER,
+			   g_backbuffer.declared ? (GLuint)g_backbuffer.fbo : 0);
 #endif
 }
 
@@ -956,6 +1049,15 @@ EM_JS(void, krudd_report_renderer, (void), {
 
 static void renderer_webgl_init(void)
 {
+	/*
+	 * Start with no host declaration, even across a second init in the
+	 * same process (a context recreated after the first was destroyed):
+	 * a declaration from a torn-down context names a framebuffer that no
+	 * longer exists, and this backend has no way to tell that happened
+	 * on its own — the host has to declare again into the new context,
+	 * exactly as it does the first time.
+	 */
+	g_backbuffer = (struct webgl_backbuffer_decl){ 0 };
 #ifdef __EMSCRIPTEN__
 	EmscriptenWebGLContextAttributes attrs;
 
@@ -963,6 +1065,15 @@ static void renderer_webgl_init(void)
 	attrs.majorVersion = 2;
 	attrs.minorVersion = 0;
 	attrs.depth        = EM_TRUE; /* backbuffer depth for 3D passes */
+	/*
+	 * A future host session that shares this canvas's context with its
+	 * own external compositor (the session lifecycle work, #993) has to
+	 * request that up front, as a flag on attrs here, before the context
+	 * exists — not this change's concern. This change only teaches a
+	 * backbuffer pass to draw into whatever such a session later declares
+	 * (webgl_declare_backbuffer); making the context eligible to run one
+	 * is #993's.
+	 */
 	g_ctx = emscripten_webgl_create_context("#canvas", &attrs);
 	emscripten_webgl_make_context_current(g_ctx);
 	krudd_report_renderer();
@@ -984,6 +1095,12 @@ static void renderer_webgl_shutdown(void)
 		glDeleteFramebuffers(1, &g_offscreen_fbo);
 		g_offscreen_fbo = 0;
 	}
+	/*
+	 * A host-declared backbuffer (g_backbuffer.fbo) is deliberately not
+	 * deleted here, or anywhere else in this file: this module was only
+	 * ever told its name, never given ownership of it. Whoever declared
+	 * it owns tearing it down.
+	 */
 	emscripten_webgl_destroy_context(g_ctx);
 #endif
 }

@@ -91,9 +91,10 @@
 ;;! alongside ambient and the analytic lobe — so a value above 1 makes a surface
 ;;! brighter than any light in the scene can make it, which is what a glowing
 ;;! line is. Cyan, and driven well past 1 so the lines stay the brightest thing
-;;! in frame and would bloom if a bloom pass is ever hung off the frame graph.
-;;! base_color is near-black under it: the line does not want to also be a lit
-;;! surface, it wants to be a light.
+;;! in frame — and past 1 is also what the renderer's bloom pass looks for
+;;! (#1022), so these lines are what it spreads a glow around. base_color is
+;;! near-black under it: the line does not want to also be a lit surface, it
+;;! wants to be a light.
 (define training-line-material
   (string-append "(material training-line\n"
                  "  (shader \"builtin://shader/pbr\")\n"

@@ -1,5 +1,29 @@
 # Changelog
 
+## [22.0.0](https://github.com/kruddage/engine/compare/v21.0.0...v22.0.0) (2026-08-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* the scene the page opens on is a project, not a renderer seed ([#1034](https://github.com/kruddage/engine/issues/1034)) (#1036)
+
+### Features
+
+* **render:** bloom keyed to emissive, so a surface driven past 1 glows ([#1040](https://github.com/kruddage/engine/issues/1040)) ([e04e4e7](https://github.com/kruddage/engine/commit/e04e4e7143a18efa85fac0c6b28a1e344303feda)), closes [#1022](https://github.com/kruddage/engine/issues/1022)
+* **sdk:** the harness library, the SDK prefix, and the native archives ([#1041](https://github.com/kruddage/engine/issues/1041)) ([fc5736e](https://github.com/kruddage/engine/commit/fc5736ed3cf182360649cdaf6827797a92b51465))
+* the scene the page opens on is a project, not a renderer seed ([#1034](https://github.com/kruddage/engine/issues/1034)) ([#1036](https://github.com/kruddage/engine/issues/1036)) ([455ff33](https://github.com/kruddage/engine/commit/455ff330a0c568d461e7d7b35e961be545a35ba7))
+* the three WebXR seams — a view pair, a named backbuffer, a driveable loop ([#1042](https://github.com/kruddage/engine/issues/1042))u ([f60d3a5](https://github.com/kruddage/engine/commit/f60d3a5756eab4ba89cedb261a97faf38c85189e))
+
+
+### Bug Fixes
+
+* **shell:** the service worker is per-build, and the document is not cache-first ([#1038](https://github.com/kruddage/engine/issues/1038)) ([6121e63](https://github.com/kruddage/engine/commit/6121e635652c4ef6e2b03fc409a05558c90355ca))
+
+
+### Documentation
+
+* **math:** one world unit is one metre, stated where the WebXR work will read it ([#1039](https://github.com/kruddage/engine/issues/1039)) ([57540e7](https://github.com/kruddage/engine/commit/57540e798461804f86eb2ad094e7d0c67039644d))
+
 ## [21.0.0](https://github.com/kruddage/engine/compare/v20.0.0...v21.0.0) (2026-08-03)
 
 

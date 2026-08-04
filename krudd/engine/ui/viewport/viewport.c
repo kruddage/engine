@@ -33,6 +33,12 @@
  * hit-box matches the box that was drawn.
  *
  * wasm-only: native builds host no games, no canvas, and no kruddgui pointer.
+ *
+ * The plugin entry also stands up a second subsystem, "pointer3d"
+ * (viewport_pointer3d.c): the same bridge for a pointer that is already a ray
+ * in the world rather than a pixel on the canvas (#996). It shares the raycast
+ * and nothing else — no canvas, no kruddgui, no overlay — which is why it is a
+ * subsystem beside this one instead of a third job inside it.
  */
 
 #include <core/subsystem.h>
@@ -50,7 +56,8 @@ static const struct subsystem_manager *g_mgr;
 #include <abi/asset_api.h>
 #include <abi/memory_api.h>
 #include <math/math_types.h>
-#include "viewport_pick.h"
+#include <viewport/viewport_pick.h>
+#include "viewport_pointer3d.h"
 #include <entity/world.h>
 
 #include <stdint.h>
@@ -171,4 +178,14 @@ void viewport_plugin_entry(struct subsystem_manager *mgr)
 	g_mem    = subsystem_manager_get_api(mgr, "memory");
 #endif
 	subsystem_manager_register(mgr, &desc);
+#ifdef __EMSCRIPTEN__
+	/*
+	 * And the same bridge for a pointer that is already a ray — an XR
+	 * controller is one — which shares this module's raycast and nothing
+	 * else (#996). A second subsystem rather than a second job inside this
+	 * one: it does not touch the canvas, so it has no business running
+	 * inside a kruddgui overlay.
+	 */
+	viewport_pointer3d_register(mgr);
+#endif
 }

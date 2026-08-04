@@ -62,6 +62,78 @@ union xr_stage_slot {
 union xr_stage_slot *xr_stage(void);
 
 /*
+ * How many XRInputSources a frame's list can hold (#996). Two is a pair of
+ * controllers, which is what this targets and what a player has hands for; a
+ * runtime that reports more — a tracked object, a gaze source, a transient
+ * screen tap — gets its first two read and the rest ignored, because the
+ * consumer this feeds is a two-slot spatial pointer and not an input registry.
+ */
+#define XR_MAX_INPUT_SOURCES 2
+
+/*
+ * A second staging buffer, laid out and used exactly like the view one above:
+ * the glue writes an input source's frame through the emscripten heap views
+ * and then calls xr_input_publish() to say how many it wrote.
+ *
+ * origin/dir are the targetRaySpace pose, in the session's reference space —
+ * the aim ray WebXR defines for a controller, which is not the same as the
+ * grip pose and is the one a pointing UI is meant to use. dir is the ray
+ * space's -Z axis (the third column of the pose matrix, negated), which is
+ * where "forward" is by the convention every WebXR pose is reported in.
+ *
+ * select counts how many `select` events have fired for this source SINCE THE
+ * LAST FRAME, not whether a button is down. That is what makes the one-frame
+ * click edge exactly-once: the glue accumulates presses as they arrive and
+ * hands the tally over once per frame, zeroing it as it does, so a press is
+ * reported on exactly one frame however the events happen to fall between two
+ * of them — and a press that arrives twice in one frame's gap cannot be lost
+ * by a flag that was already set.
+ *
+ * THESE OFFSETS ARE MIRRORED IN JS, for the same reason the view ones are, and
+ * xr_test.c pins the two sets together.
+ */
+#define XR_IN_ORIGIN 0    /* 3 floats, reference-space ray origin */
+#define XR_IN_DIR    3    /* 3 floats, reference-space ray forward */
+#define XR_IN_HAND   6    /* int32, enum pointer3d_hand by value */
+#define XR_IN_SELECT 7    /* int32, select events since the last frame */
+#define XR_IN_STRIDE 8    /* slots per input source */
+
+/* The input staging buffer's base: XR_MAX_INPUT_SOURCES * XR_IN_STRIDE. */
+union xr_stage_slot *xr_input_stage(void);
+
+/*
+ * Publish the staged input sources as this frame's world-space pointers.
+ *
+ * Composed onto the stage the same way a view is (xr_stage_offset below), and
+ * then handed DOWN to ui/viewport's pointer3d, which raycasts a click through
+ * the same pick a canvas click already used. count is the runtime's number and
+ * is clamped rather than trusted, exactly as the view count is.
+ *
+ * A no-op outside a session: there is nothing pointing at anything, and the
+ * flat page's pointer belongs to kruddgui.
+ */
+void xr_input_publish(int32_t count);
+
+/*
+ * Forget every input source and tell the consumer so. Called on both edges of
+ * a session, because a controller ray drawn from a pose nobody is holding is
+ * exactly as wrong as an eye drawn from one.
+ */
+void xr_input_reset(void);
+
+/*
+ * Where the scene put the viewer: the translation every WebXR pose is composed
+ * onto before the engine sees it (#994).
+ *
+ * Shared rather than recomputed because a controller ray and an eye MUST be
+ * composed identically — a ray built in room space while the eyes are built in
+ * scene space points somewhere the user is demonstrably not looking, and the
+ * error is invisible at the origin and grows with the scene. Zeroed when there
+ * is no renderer to ask, which is the same answer a scene at the origin gives.
+ */
+void xr_stage_offset(float out[3]);
+
+/*
  * Record the probe's answer and log the one line the page gets out of this
  * module when there is no session to be had. Reported by number from JS, so
  * the enum's values are a contract (xr.h).

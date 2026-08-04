@@ -39,11 +39,14 @@
  * installs the glue.
  *
  * stage/stride/max_views describe the buffer a frame's views are written
- * into; see xr_bridge.h for the layout, whose field offsets are repeated as
- * literals inside onFrame because a C macro cannot be expanded inside an
- * EM_JS body.
+ * into, and in_stage/in_stride/max_inputs the second buffer a frame's input
+ * sources are written into (#996); see xr_bridge.h for both layouts, whose
+ * field offsets are repeated as literals inside onFrame because a C macro
+ * cannot be expanded inside an EM_JS body.
  */
-EM_JS(void, xr_js_install, (void *stage, int32_t stride, int32_t max_views), {
+EM_JS(void, xr_js_install, (void *stage, int32_t stride, int32_t max_views,
+			    void *in_stage, int32_t in_stride,
+			    int32_t max_inputs), {
 	if (window.kruddXrGlue)
 		return;
 
@@ -54,6 +57,20 @@ EM_JS(void, xr_js_install, (void *stage, int32_t stride, int32_t max_views), {
 		base:    stage >> 2,
 		stride:  stride,
 		max:     max_views,
+		inBase:   in_stage >> 2,
+		inStride: in_stride,
+		inMax:    max_inputs,
+		/*
+		 * Presses that have landed and not yet been reported, one
+		 * entry per XRInputSource: { src, n }. An ARRAY keyed by the
+		 * source OBJECT rather than by index, because an index is not
+		 * an identity — session.inputSources is rebuilt whenever a
+		 * controller connects or disconnects, and a left hand that was
+		 * slot 1 becomes slot 0 the moment the right one is put down.
+		 * Attributing a press to whoever is standing in that slot next
+		 * frame would fire a click from the wrong hand.
+		 */
+		sel: [],
 		/*
 		 * The depth range the next session is created with, filled in
 		 * by request() from the engine's own near/far (#994). Held on
@@ -111,6 +128,102 @@ EM_JS(void, xr_js_install, (void *stage, int32_t stride, int32_t max_views), {
 			GL.framebuffers[fb.name] = fb;
 		}
 		return fb.name;
+	}
+
+	/*
+	 * This source's pending-press tally, created on first sight. Linear
+	 * search over at most a handful of entries, once per press and once
+	 * per source per frame — a Map would key the same way and cost an
+	 * allocation per session for nothing.
+	 */
+	function selOf(src) {
+		for (var i = 0; i < st.sel.length; i++) {
+			if (st.sel[i].src === src)
+				return st.sel[i];
+		}
+		st.sel.push({ src: src, n: 0 });
+		return st.sel[st.sel.length - 1];
+	}
+
+	/*
+	 * Drop tallies for sources the session no longer lists. A controller
+	 * that is switched off mid-session leaves whatever it had pending, and
+	 * without this the array would grow for the life of the session and a
+	 * press could be delivered to a hand that had already gone.
+	 */
+	function pruneSel(sources) {
+		var keep = [];
+		var i, j;
+
+		for (i = 0; i < st.sel.length; i++) {
+			for (j = 0; j < sources.length; j++) {
+				if (sources[j] === st.sel[i].src) {
+					keep.push(st.sel[i]);
+					break;
+				}
+			}
+		}
+		st.sel = keep;
+	}
+
+	/*
+	 * This frame's input sources, staged for xr_input_publish (#996).
+	 *
+	 * targetRaySpace, not gripSpace: WebXR defines the target ray as the
+	 * aim a pointing UI is meant to use, and the grip as where the hand
+	 * holding the thing is. Picking with the grip would aim from the fist.
+	 *
+	 * A source with no pose this frame is skipped rather than staged at
+	 * the origin — an untracked controller is not a controller pointing at
+	 * the floor — and the count returned is therefore how many sources
+	 * actually had one, which is the number that reaches the engine.
+	 *
+	 * The press tally is taken and ZEROED here. That is what makes the
+	 * click a one-frame edge: whatever landed between the last frame and
+	 * this one is reported on this frame and on no other.
+	 */
+	function stageInputs(frame) {
+		var sources = st.session.inputSources || [];
+		var f32 = HEAPF32;
+		var i32 = HEAP32;
+		var n = 0;
+		var i;
+
+		for (i = 0; i < sources.length && n < st.inMax; i++) {
+			var src = sources[i];
+			var pose = (st.space && src.targetRaySpace)
+				? frame.getPose(src.targetRaySpace, st.space)
+				: null;
+
+			if (!pose)
+				continue;
+
+			var m = pose.transform.matrix;
+			var e = selOf(src);
+			var o = st.inBase + n * st.inStride;
+
+			/* Offsets: xr_bridge.h's XR_IN_*. */
+			f32[o + 0] = pose.transform.position.x;
+			f32[o + 1] = pose.transform.position.y;
+			f32[o + 2] = pose.transform.position.z;
+			/*
+			 * Forward is the ray space's -Z, which is the third
+			 * column of its pose matrix negated. Read off the
+			 * matrix rather than rotated out of the orientation
+			 * quaternion by hand: the matrix is the same rotation
+			 * already expanded, and WebXR hands it over for free.
+			 */
+			f32[o + 3] = -m[8];
+			f32[o + 4] = -m[9];
+			f32[o + 5] = -m[10];
+			i32[o + 6] = src.handedness === 'left' ? 1 :
+				     src.handedness === 'right' ? 2 : 0;
+			i32[o + 7] = e.n;
+			e.n = 0;
+			n++;
+		}
+		pruneSel(sources);
+		return n;
 	}
 
 	/*
@@ -174,9 +287,19 @@ EM_JS(void, xr_js_install, (void *stage, int32_t stride, int32_t max_views), {
 			}
 		}
 
+		/*
+		 * The controllers ride along with the views, staged every
+		 * frame — including the frames with none, which is how a
+		 * controller that was put down stops pointing (#996). Staged
+		 * outside the pose branch above deliberately: a frame that
+		 * lost the VIEWER's pose has not necessarily lost the hands',
+		 * and there is no reason to stop aiming because the head went
+		 * missing for a frame.
+		 */
 		_krudd_xr_frame(fbName(layer && layer.framebuffer),
 				layer ? layer.framebufferWidth : 0,
-				layer ? layer.framebufferHeight : 0, n);
+				layer ? layer.framebufferHeight : 0, n,
+				stageInputs(frame));
 		_krudd_driven_tick();
 	}
 
@@ -279,13 +402,37 @@ EM_JS(void, xr_js_install, (void *stage, int32_t stride, int32_t max_views), {
 			st.failed = 0;
 			st.near = depthNear;
 			st.far = depthFar;
+			st.sel = [];
 			navigator.xr.requestSession('immersive-vr')
 				.then(function (session) {
 					st.session = session;
+					/*
+					 * The press, counted where it lands
+					 * (#996). `select` is the WebXR event
+					 * for a completed primary action and
+					 * fires once per press, on the source
+					 * that made it — so a tally per source
+					 * is all a one-frame click edge needs,
+					 * and the frame callback spends it.
+					 *
+					 * Listened for rather than polled off
+					 * gamepad.buttons[0].pressed: a poll
+					 * at frame rate misses a press that
+					 * begins and ends between two frames,
+					 * and `select` is the mapping-neutral
+					 * name for "the trigger", which a
+					 * button index is not.
+					 */
+					session.addEventListener('select',
+						function (ev) {
+							selOf(ev.inputSource)
+								.n++;
+						});
 					session.addEventListener('end',
 						function () {
 							st.session = null;
 							st.space = null;
+							st.sel = [];
 							_krudd_xr_session_ended(
 								st.failed
 								? 2 : 0);
@@ -364,7 +511,8 @@ EM_JS(int32_t, xr_js_wants_webgpu, (void), {
 
 static void xr_install(void)
 {
-	xr_js_install(xr_stage(), XR_STAGE_STRIDE, XR_MAX_VIEWS);
+	xr_js_install(xr_stage(), XR_STAGE_STRIDE, XR_MAX_VIEWS,
+		      xr_input_stage(), XR_IN_STRIDE, XR_MAX_INPUT_SOURCES);
 }
 #endif /* __EMSCRIPTEN__ */
 
@@ -464,7 +612,8 @@ void xr_end_session(void)
  * they report that something already happened.
  *
  * Thin on purpose. Everything they do is one call into the module's own C, so
- * that the browser boundary is a boundary and not a place logic hides.
+ * that the browser boundary is a boundary and not a place logic hides. The one
+ * that is two calls is krudd_xr_frame, and the note on it says why.
  */
 EMSCRIPTEN_KEEPALIVE void krudd_xr_probe(void)
 {
@@ -506,9 +655,26 @@ EMSCRIPTEN_KEEPALIVE void krudd_xr_session_ended(int32_t reason)
 	xr_session_ended(reason);
 }
 
+/*
+ * The one exception to "one call into the module's own C": a frame carries the
+ * views AND the input sources, and they arrive through this single export
+ * rather than through one each (#996).
+ *
+ * Not for tidiness — because the module's exported names are a list the page's
+ * build repeats (EXPORTED_FUNCTIONS in kruddmake/ninja.scm, and
+ * ENGINE_EXPORTED_FUNCTIONS beside it), and a second name would have to be
+ * added in both places to buy nothing a fifth argument does not. The C behind
+ * it stays two functions, which is what the native test drives.
+ *
+ * Input first, so the pointers are published before the views they were aimed
+ * with land — and unconditionally, because a frame that cannot report a view
+ * (no layer yet) can still report a hand.
+ */
 EMSCRIPTEN_KEEPALIVE void krudd_xr_frame(uint32_t fbo, uint32_t fb_width,
-					 uint32_t fb_height, int32_t count)
+					 uint32_t fb_height, int32_t count,
+					 int32_t inputs)
 {
+	xr_input_publish(inputs);
 	xr_frame_publish(fbo, fb_width, fb_height, count);
 }
 #endif /* __EMSCRIPTEN__ */

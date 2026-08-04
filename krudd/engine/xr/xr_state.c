@@ -196,6 +196,7 @@ void xr_session_begun(void)
 
 	g_active = 1;
 	g_list.count = 0;
+	xr_input_reset();
 
 	/*
 	 * Take the per-view target callback for as long as the session runs
@@ -282,6 +283,13 @@ void xr_session_ended(int32_t reason)
 	g_drawing_views = 0;
 
 	/*
+	 * The controllers go with the eyes (#996). A pointer left published
+	 * after the session would leave a debug ray hanging in the flat page's
+	 * scene, aimed from a hand that is no longer in the room.
+	 */
+	xr_input_reset();
+
+	/*
 	 * Hand the canvas back. The declaration named a framebuffer that
 	 * belonged to the session's layer and stops existing with it, so
 	 * leaving it in place would point every backbuffer pass on the flat
@@ -317,6 +325,19 @@ void xr_session_ended(int32_t reason)
 #endif
 	LOG_INFO("xr: %s; the flat page has the frame loop back",
 		 end_line(reason));
+}
+
+void xr_stage_offset(float out[3])
+{
+	struct camera scene_cam;
+	int32_t       i;
+
+	for (i = 0; i < 3; i++)
+		out[i] = 0.0f;
+	if (!scene_renderer_scene_camera(&scene_cam))
+		return;
+	for (i = 0; i < 3; i++)
+		out[i] = scene_cam.position[i];
 }
 
 static void unpack_view(struct xr_view *out, const union xr_stage_slot *s)
@@ -476,8 +497,7 @@ static void compose_view(struct scene_view *out, const struct xr_view *v,
 static int32_t publish_scene_views(void)
 {
 	struct scene_view views[SCENE_MAX_VIEWS];
-	struct camera     scene_cam;
-	float             stage[3] = { 0.0f, 0.0f, 0.0f };
+	float             stage[3];
 	float             near, far;
 	int32_t           i, n = 0;
 
@@ -493,12 +513,13 @@ static int32_t publish_scene_views(void)
 	 * itself is in motion, and the only way to close it would be to move
 	 * the composition inside the renderer's own tick — which would put
 	 * "there is a stage" into a module that must not learn it (#987).
+	 *
+	 * Read through xr_stage_offset so that the controller rays published
+	 * this same frame (#996) compose onto the identical translation. Two
+	 * copies of "where the scene put the viewer" that could disagree is a
+	 * ray that points somewhere the user is not looking.
 	 */
-	if (scene_renderer_scene_camera(&scene_cam)) {
-		stage[0] = scene_cam.position[0];
-		stage[1] = scene_cam.position[1];
-		stage[2] = scene_cam.position[2];
-	}
+	xr_stage_offset(stage);
 
 	for (i = 0; i < g_list.count && n < SCENE_MAX_VIEWS; i++) {
 		if (g_list.views[i].width <= 0 || g_list.views[i].height <= 0)

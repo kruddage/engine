@@ -8,8 +8,15 @@
  * the centre pixel must strike the box; the guard paths (NULL args, a ray off
  * the box, a tombstoned entity) must all return "no hit". This pins the raycast
  * the wasm overlay ships, without a browser or a GPU.
+ *
+ * Both entry points, since #996 split them: viewport_pick_ray takes the ray as
+ * a ray (an XR controller's aim is one already), and viewport_pick_entity is
+ * that call with an unprojection in front of it. The screen-space cases below
+ * are unchanged from before the split — same rays, same hits — and the
+ * equivalence case pins the two paths to each other for the same click, which
+ * is the whole claim the refactor makes.
  */
-#include "viewport_pick.h"
+#include <viewport/viewport_pick.h>
 
 #include <entity/world.h>
 #include <abi/asset_api.h>
@@ -118,6 +125,120 @@ int main(void)
 	set_render_entity(0, BOX_REF, 100.0f, 0.0f, 0.0f);
 	assert(viewport_pick_entity(&g_world, &vp, VW * 0.5f, VH * 0.5f,
 				    VW, VH, &g_asset, &g_mem) == -1);
+
+	/*
+	 * The world-space entry point (#996): the same box, struck by a ray a
+	 * caller built itself rather than by one unprojected from a pixel. This
+	 * is the shape an XR controller arrives in — a point in the world and a
+	 * direction — with no camera anywhere in the call.
+	 */
+	{
+		const float FROM[3]    = { 0.0f, 0.0f, 3.0f };
+		const float TOWARD[3]  = { 0.0f, 0.0f, -1.0f };
+		const float ASIDE[3]   = { 0.0f, 1.0f, 0.0f };
+		const float AWAY[3]    = { 0.0f, 0.0f, 1.0f };
+		const float ZERO[3]    = { 0.0f, 0.0f, 0.0f };
+		const float LONG[3]    = { 0.0f, 0.0f, -7.0f };
+		int32_t     ignore_it[1];
+		int32_t     ignore_other[1];
+
+		memset(&g_world, 0, sizeof(g_world));
+		g_world.count = 1;
+		set_render_entity(0, BOX_REF, 0.0f, 0.0f, 0.0f);
+
+		assert(viewport_pick_ray(&g_world, FROM, TOWARD, NULL, 0,
+					 &g_asset, &g_mem) == 0);
+
+		/* Aimed past it, and aimed the other way: both miss. The
+		 * second is the "behind the origin" rule ray_tri_intersect
+		 * already had, reached through the new door. */
+		assert(viewport_pick_ray(&g_world, FROM, ASIDE, NULL, 0,
+					 &g_asset, &g_mem) == -1);
+		assert(viewport_pick_ray(&g_world, FROM, AWAY, NULL, 0,
+					 &g_asset, &g_mem) == -1);
+
+		/* dir need not be unit length — ray_tri_intersect scales t
+		 * with it, so the nearest hit is the nearest hit either way. */
+		assert(viewport_pick_ray(&g_world, FROM, LONG, NULL, 0,
+					 &g_asset, &g_mem) == 0);
+
+		/* A direction that is not a direction is refused rather than
+		 * divided by. */
+		assert(viewport_pick_ray(&g_world, FROM, ZERO, NULL, 0,
+					 &g_asset, &g_mem) == -1);
+
+		/* NULL arguments never crash and never claim a hit. */
+		assert(viewport_pick_ray(NULL, FROM, TOWARD, NULL, 0,
+					 &g_asset, &g_mem) == -1);
+		assert(viewport_pick_ray(&g_world, NULL, TOWARD, NULL, 0,
+					 &g_asset, &g_mem) == -1);
+		assert(viewport_pick_ray(&g_world, FROM, NULL, NULL, 0,
+					 &g_asset, &g_mem) == -1);
+		assert(viewport_pick_ray(&g_world, FROM, TOWARD, NULL, 0,
+					 NULL, &g_mem) == -1);
+		assert(viewport_pick_ray(&g_world, FROM, TOWARD, NULL, 0,
+					 &g_asset, NULL) == -1);
+
+		/*
+		 * The ignore list, which exists because a pointer drawn in the
+		 * world lies along its own ray and would win every pick. The
+		 * entity named is not a candidate; one that is not named still
+		 * is, and a NULL list with a nonzero count is not read.
+		 */
+		ignore_it[0]    = 0;
+		ignore_other[0] = 41;
+		assert(viewport_pick_ray(&g_world, FROM, TOWARD, ignore_it, 1,
+					 &g_asset, &g_mem) == -1);
+		assert(viewport_pick_ray(&g_world, FROM, TOWARD, ignore_other,
+					 1, &g_asset, &g_mem) == 0);
+		assert(viewport_pick_ray(&g_world, FROM, TOWARD, NULL, 4,
+					 &g_asset, &g_mem) == 0);
+
+		/* A tombstoned entity is not a candidate here either. */
+		g_world.alive[0] = 0;
+		assert(viewport_pick_ray(&g_world, FROM, TOWARD, NULL, 0,
+					 &g_asset, &g_mem) == -1);
+		g_world.alive[0] = 1;
+	}
+
+	/*
+	 * And the claim the split rests on: the screen-space path is the
+	 * world-space one with an unprojection in front of it, so for the same
+	 * click they agree — entity for entity, over a grid of pixels that
+	 * covers hits and misses alike. Two boxes, so "they agree" means more
+	 * than "both said -1".
+	 */
+	{
+		const float STEP = VW / 16.0f;
+		float       sx, sy;
+		int32_t     seen[3] = { 0, 0, 0 };
+
+		memset(&g_world, 0, sizeof(g_world));
+		g_world.count = 2;
+		set_render_entity(0, BOX_REF, -0.6f, 0.0f, 0.0f);
+		set_render_entity(1, BOX_REF,  0.7f, 0.3f, 1.0f);
+
+		for (sy = 0.0f; sy < VH; sy += STEP) {
+			for (sx = 0.0f; sx < VW; sx += STEP) {
+				float   o[3], d[3];
+				int32_t via_screen, via_ray;
+
+				via_screen = viewport_pick_entity(
+					&g_world, &vp, sx, sy, VW, VH,
+					&g_asset, &g_mem);
+				assert(ray_from_screen(&vp, sx, sy, VW, VH,
+						       o, d) == 0);
+				via_ray = viewport_pick_ray(&g_world, o, d,
+							    NULL, 0, &g_asset,
+							    &g_mem);
+				assert(via_screen == via_ray);
+				seen[via_screen + 1] = 1;
+			}
+		}
+		/* The grid covered a miss and both boxes, so "they agree" is
+		 * an agreement about three answers and not about -1. */
+		assert(seen[0] && seen[1] && seen[2]);
+	}
 
 	printf("viewport_pick tests passed\n");
 	return 0;

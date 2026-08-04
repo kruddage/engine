@@ -34,6 +34,16 @@
  * Every pose and every length here is in metres, which is also the engine's
  * world unit — see the convention stated in math/camera.h. That agreement is
  * what lets a headset pose be consumed unscaled.
+ *
+ * A session also reports the CONTROLLERS each frame (#996), and there is
+ * nothing about that in this header on purpose. A controller's aim is a
+ * world-space ray with a click edge, which is not an XR concept and does not
+ * want an XR-shaped api: it is composed onto the same stage the eyes are and
+ * handed DOWN to ui/viewport's "pointer3d" subsystem, which is where a game
+ * reads it (viewport/pointer3d.h) and where it meets the same raycast a canvas
+ * click already went through. Nothing below ui/ learns the word XR by it, and
+ * this module gains no second public surface for a thing that is not about
+ * sessions. The reading itself is xr_input.c and the private xr_bridge.h.
  */
 
 /*

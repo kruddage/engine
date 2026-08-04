@@ -10,7 +10,10 @@
 ;;! it at all, so it builds and is tested natively — no browser, no headset,
 ;;! no GL context — the way renderer_webgl_test tests the declare-backbuffer
 ;;! bookkeeping the same way. xr_session.c is the half that only exists in a
-;;! browser, kept as small as the WebXR API allows.
+;;! browser, kept as small as the WebXR API allows. xr_input.c is on the
+;;! native side of that same split (#996): what a controller's pose and press
+;;! MEAN — the stage composition, the one-frame click edge — is plain C, and
+;;! only the XRInputSource reading itself needs a browser.
 ;;!
 ;;! The link on renderer_webgl is the #990 seam: a session names its layer's
 ;;! framebuffer as the backbuffer, which is a call into that backend's own
@@ -29,15 +32,25 @@
 ;;! the seam: what this module hands the renderer each frame is then something
 ;;! a native run can read back and hold to account, rather than something only
 ;;! a headset can see.
+;;!
+;;! ui/viewport/include arrives the same way and for the same reason (#996):
+;;! the controller rays go DOWN into ui/viewport's world-space pointer, which
+;;! is a wasm-only library with no native archive either. It is an include
+;;! path and not a link, so no tier edge exists to invert — and none could,
+;;! since ui/ sits below xr/ in kruddmake/manifest.scm. The direction is the
+;;! whole design: ui/ never mentions xr, and xr_test stands in for the pointer
+;;! exactly as it stands in for the renderer.
 ((library "xr"
-   (sources "xr_state.c" "xr_session.c")
+   (sources "xr_state.c" "xr_input.c" "xr_session.c")
    (public "include")
    (private (root "core/include")
-            (root "render/scene_renderer/include"))
+            (root "render/scene_renderer/include")
+            (root "ui/viewport/include"))
    (link "log" "math" "renderer_webgl"))
  (native-only
   (executable "xr_test"
               (sources "xr_test.c")
-              (private "." (root "render/scene_renderer/include"))
+              (private "." (root "render/scene_renderer/include")
+                       (root "ui/viewport/include"))
               (link "xr"))
   (test "xr" "xr_test")))

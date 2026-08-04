@@ -9,11 +9,20 @@
  * viewport_pick_test drives the same entry point with no window and no GPU,
  * against one copy rather than two that drift.
  *
+ * Split in two at the ray (#996). viewport_pick_ray is the whole of the
+ * raycast and takes the ray as a ray; viewport_pick_entity is that call with an
+ * unprojection in front of it. The split is not a refactor for its own sake: a
+ * screen pointer HAS no ray until a camera makes one, and an XR controller IS
+ * one already — pose plus forward axis — so the second caller wants in one step
+ * later. Nothing about ray_tri_intersect or the mesh walk changed with the
+ * split; the screen-space path runs the identical loop over the identical ray
+ * it built before, which is what viewport_pick_test's equivalence case pins.
+ *
  * The math it picks with (ray_from_screen / ray_tri_intersect / mat4_*) and
  * mesh_script_generate resolve against the single copies the renderer and the
  * mesh_script library already provide, at the final wasm module link.
  */
-#include "viewport_pick.h"
+#include <viewport/viewport_pick.h>
 
 #include <entity/world.h>
 #include <abi/asset_api.h>
@@ -24,21 +33,39 @@
 
 #include <float.h>
 
-int32_t viewport_pick_entity(const struct world *w,
-			     const struct mat4 *view_proj,
-			     float sx, float sy, float vw, float vh,
-			     const struct asset_api *asset,
-			     const struct memory_api *mem)
+/* Whether e is one of the ids the caller took out of the running. */
+static int32_t is_ignored(int32_t e, const int32_t *ignore, int32_t count)
 {
-	float    origin[3];
-	float    dir[3];
+	int32_t i;
+
+	for (i = 0; i < count; i++) {
+		if (ignore[i] == e)
+			return 1;
+	}
+	return 0;
+}
+
+int32_t viewport_pick_ray(const struct world *w,
+			  const float origin[3], const float dir[3],
+			  const int32_t *ignore, int32_t ignore_count,
+			  const struct asset_api *asset,
+			  const struct memory_api *mem)
+{
 	int32_t  best   = -1;
 	float    best_t = FLT_MAX;
 	uint32_t e;
 
-	if (!w || !view_proj || !asset || !mem)
+	if (!w || !origin || !dir || !asset || !mem)
 		return -1;
-	if (ray_from_screen(view_proj, sx, sy, vw, vh, origin, dir) != 0)
+	if (!ignore)
+		ignore_count = 0;
+	/*
+	 * A zero direction is not a ray. ray_tri_intersect would divide the
+	 * barycentric terms by a zero determinant on every triangle, so this is
+	 * refused here rather than left to produce whichever NaN comparison
+	 * happens to pass.
+	 */
+	if (dir[0] == 0.0f && dir[1] == 0.0f && dir[2] == 0.0f)
 		return -1;
 
 	for (e = 0; e < w->count; e++) {
@@ -52,6 +79,8 @@ int32_t viewport_pick_entity(const struct world *w,
 		uint32_t                  i;
 
 		if (!w->alive[e] || !(w->mask[e] & COMPONENT_RENDER))
+			continue;
+		if (is_ignored((int32_t)e, ignore, ignore_count))
 			continue;
 		src = (const char *)asset->get_data(w->render_ref[e], NULL);
 		if (!src)
@@ -81,4 +110,20 @@ int32_t viewport_pick_entity(const struct world *w,
 		mem->free(blob);
 	}
 	return best;
+}
+
+int32_t viewport_pick_entity(const struct world *w,
+			     const struct mat4 *view_proj,
+			     float sx, float sy, float vw, float vh,
+			     const struct asset_api *asset,
+			     const struct memory_api *mem)
+{
+	float origin[3];
+	float dir[3];
+
+	if (!view_proj)
+		return -1;
+	if (ray_from_screen(view_proj, sx, sy, vw, vh, origin, dir) != 0)
+		return -1;
+	return viewport_pick_ray(w, origin, dir, NULL, 0, asset, mem);
 }

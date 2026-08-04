@@ -6,6 +6,7 @@
 #include <math/camera.h>
 #include <math/math_types.h>
 #include <scene_renderer/scene_view.h>
+#include <viewport/pointer3d.h>
 #include <webgl/renderer_webgl.h>
 
 #include <assert.h>
@@ -81,6 +82,38 @@ int32_t scene_renderer_scene_camera(struct camera *out)
 		return 0;
 	*out = g_scene_cam;
 	return 1;
+}
+
+/*
+ * The world-space pointer, as far as this module can tell (#996).
+ *
+ * Same trick, same reason: ui/viewport is a wasm-only library with no native
+ * archive, and in the browser both modules are objects in the one WASM image,
+ * so the definitions here stand in for the real ones and the call the XR module
+ * makes DOWNWARD every frame becomes the place a controller's ray can be read
+ * back and checked — with no browser, no headset and no hand.
+ *
+ * A count of -1 means "cleared", which is a different observation from
+ * "published zero pointers" and the tests below have to be able to tell them
+ * apart.
+ */
+static struct pointer3d_ray g_pointers[POINTER3D_MAX];
+static int32_t              g_pointer_count = -1;
+
+void viewport_pointer3d_publish(const struct pointer3d_ray *rays, int32_t count)
+{
+	int32_t i;
+
+	assert(count >= 0 && count <= POINTER3D_MAX);
+	assert(rays || count == 0);
+	for (i = 0; i < count; i++)
+		g_pointers[i] = rays[i];
+	g_pointer_count = count;
+}
+
+void viewport_pointer3d_clear(void)
+{
+	g_pointer_count = -1;
 }
 
 /* The scene's camera, as a scene that has initialised would report it. */
@@ -250,6 +283,32 @@ static void assert_flat_page(void)
 	 */
 	assert(g_drawn_count == 0);
 	assert(g_target_fn == NULL);
+
+	/*
+	 * And nothing is still pointing. A ray left published after a session
+	 * would hang in the flat page's scene, aimed from a hand that left the
+	 * room with the headset (#996).
+	 */
+	assert(g_pointer_count == -1);
+}
+
+/*
+ * An input source in the staging buffer, exactly as the glue writes one: the
+ * targetRaySpace origin and its forward, the handedness, and how many presses
+ * landed since the last frame.
+ */
+static void stage_input(int32_t index, const float origin[3],
+			const float dir[3], int32_t hand, int32_t selects)
+{
+	union xr_stage_slot *s = xr_input_stage() + index * XR_IN_STRIDE;
+	int32_t              i;
+
+	for (i = 0; i < 3; i++) {
+		s[XR_IN_ORIGIN + i].f = origin[i];
+		s[XR_IN_DIR + i].f    = dir[i];
+	}
+	s[XR_IN_HAND].i   = hand;
+	s[XR_IN_SELECT].i = selects;
 }
 
 /*
@@ -827,6 +886,306 @@ static void test_the_depth_range_is_the_scene_camera_s(void)
 	set_scene_camera(0.0f, 1.0f, 0.0f, 0.1f, 100.0f);
 }
 
+/*
+ * The staging layout for input, written twice for the same reason the view one
+ * is — as XR_IN_* here, as literals inside xr_session.c's stageInputs — and
+ * pinned together here so a change that misses the JS fails a build rather than
+ * shipping a headset whose controllers point at nothing.
+ */
+static void test_input_stage_layout_matches_the_glue(void)
+{
+	assert(XR_IN_ORIGIN == 0);
+	assert(XR_IN_DIR == 3);
+	assert(XR_IN_HAND == 6);
+	assert(XR_IN_SELECT == 7);
+	assert(XR_IN_STRIDE == 8);
+	assert(XR_MAX_INPUT_SOURCES == 2);
+
+	/* And the two caps the module folds together really do fold: what a
+	 * runtime may report has to fit what the pointer holds. */
+	assert(XR_MAX_INPUT_SOURCES <= POINTER3D_MAX);
+}
+
+/*
+ * Two controllers, reaching the world-space pointer (#996). Each one arrives as
+ * an aim ray and a hand, and the pair comes out in the order the runtime
+ * reported them — a left hand that is published as the right one aims from the
+ * wrong shoulder, which no amount of correct maths downstream can recover.
+ */
+static void test_two_controllers_reach_the_pointer(void)
+{
+	static const float LEFT_AT[3]  = { -0.2f, 1.1f, -0.3f };
+	static const float RIGHT_AT[3] = {  0.2f, 1.1f, -0.3f };
+	static const float FWD[3]      = {  0.0f, 0.0f, -1.0f };
+	int32_t i;
+
+	set_scene_camera(0.0f, 0.0f, 0.0f, 0.1f, 100.0f);
+	xr_session_begun();
+
+	stage_input(0, LEFT_AT, FWD, POINTER3D_HAND_LEFT, 0);
+	stage_input(1, RIGHT_AT, FWD, POINTER3D_HAND_RIGHT, 0);
+	xr_input_publish(2);
+
+	assert(g_pointer_count == 2);
+	for (i = 0; i < 3; i++) {
+		assert(close_enough(g_pointers[0].origin[i], LEFT_AT[i]));
+		assert(close_enough(g_pointers[1].origin[i], RIGHT_AT[i]));
+		assert(close_enough(g_pointers[0].dir[i], FWD[i]));
+	}
+	assert(g_pointers[0].hand == POINTER3D_HAND_LEFT);
+	assert(g_pointers[1].hand == POINTER3D_HAND_RIGHT);
+	assert(g_pointers[0].click == 0 && g_pointers[1].click == 0);
+
+	xr_session_ended(XR_END_NORMAL);
+	assert_flat_page();
+}
+
+/*
+ * The stage, applied to a controller exactly as it is applied to an eye (#994).
+ *
+ * This is the one that decides whether a headset is playable. The eyes are
+ * composed onto wherever the scene put its camera; a ray composed any other way
+ * — or not at all — points at a world the user is demonstrably not looking at,
+ * and the error is invisible at the origin and grows with the scene, which is
+ * the worst way for a bug like this to present.
+ *
+ * A translation moves points and leaves directions alone, so both halves are
+ * asserted: the origin picks the stage up, the aim does not turn by a
+ * millimetre.
+ */
+static void test_a_controller_ray_composes_onto_the_same_stage(void)
+{
+	static const float AT[3]    = { 0.10f, 1.20f, -0.35f };
+	static const float DIR[3]   = { 0.0f, -0.6f, -0.8f };
+	static const float STAGE[3] = { 5.5f, 8.5f, 10.5f };
+	int32_t i;
+
+	set_scene_camera(STAGE[0], STAGE[1], STAGE[2], 0.1f, 100.0f);
+	xr_session_begun();
+
+	stage_input(0, AT, DIR, POINTER3D_HAND_RIGHT, 0);
+	xr_input_publish(1);
+
+	assert(g_pointer_count == 1);
+	for (i = 0; i < 3; i++) {
+		assert(close_enough(g_pointers[0].origin[i],
+				    AT[i] + STAGE[i]));
+		assert(close_enough(g_pointers[0].dir[i], DIR[i]));
+	}
+
+	/*
+	 * And the eyes drawn on the same frame agree about where that stage is,
+	 * which is the property the shared xr_stage_offset exists to guarantee:
+	 * an eye standing at the pose the runtime reported plus the stage.
+	 */
+	{
+		static const float EYE[3] = { 0.0f, 1.6f, 0.0f };
+		static const float LOOK[3] = { 0.0f, 1.6f, -1.0f };
+		struct mat4 view, proj;
+
+		head_pose(&view, EYE, LOOK);
+		off_axis_proj(&proj, -0.09f, 0.11f, -0.10f, 0.10f, 0.1f,
+			      100.0f);
+		stage_pose(0, &view, &proj, EYE, XR_EYE_LEFT, 0, 0, 960, 1080);
+		xr_frame_publish(7, 1920, 1080, 1);
+
+		assert(g_drawn_count == 1);
+		for (i = 0; i < 3; i++)
+			assert(close_enough(g_drawn[0].cam.position[i],
+					    EYE[i] + STAGE[i]));
+	}
+
+	xr_session_ended(XR_END_NORMAL);
+}
+
+/* A direction that is not unit length is normalised, because the pointer's
+ * consumers are promised one and a runtime's matrix column is only ever
+ * "should be". */
+static void test_a_controller_ray_is_unit_length(void)
+{
+	static const float AT[3]  = { 0.0f, 1.0f, 0.0f };
+	static const float DIR[3] = { 0.0f, 0.0f, -4.0f };
+
+	no_scene_camera();
+	xr_session_begun();
+
+	stage_input(0, AT, DIR, POINTER3D_HAND_NONE, 0);
+	xr_input_publish(1);
+
+	assert(g_pointer_count == 1);
+	assert(close_enough(g_pointers[0].dir[0], 0.0f));
+	assert(close_enough(g_pointers[0].dir[1], 0.0f));
+	assert(close_enough(g_pointers[0].dir[2], -1.0f));
+
+	xr_session_ended(XR_END_NORMAL);
+	set_scene_camera(0.0f, 1.0f, 0.0f, 0.1f, 100.0f);
+}
+
+/*
+ * The click edge, consumed EXACTLY ONCE per press.
+ *
+ * The existing consumers read an edge and not a level — kruddgui clears its
+ * pointer edge right after the overlays run, and a game's rules fire on the
+ * change — so a press that stays true for the whole time a trigger is held
+ * would move a chess piece sixty times, and a press dropped between two frames
+ * would not move it at all.
+ *
+ * The glue's side of that contract is a TALLY, spent when it is read: this
+ * drives it the way a real press does, one frame with a count and every frame
+ * after it with zero, and asserts the click lives on exactly the first.
+ */
+static void test_the_click_edge_lasts_exactly_one_frame(void)
+{
+	static const float AT[3]  = { 0.0f, 1.0f, 0.0f };
+	static const float FWD[3] = { 0.0f, 0.0f, -1.0f };
+
+	xr_session_begun();
+
+	/* Idle: no press, no edge. */
+	stage_input(0, AT, FWD, POINTER3D_HAND_RIGHT, 0);
+	xr_input_publish(1);
+	assert(g_pointer_count == 1 && g_pointers[0].click == 0);
+
+	/* The trigger goes down: one frame with the edge. */
+	stage_input(0, AT, FWD, POINTER3D_HAND_RIGHT, 1);
+	xr_input_publish(1);
+	assert(g_pointers[0].click == 1);
+
+	/*
+	 * Still held. The glue spent the tally on the frame above, so every
+	 * frame from here reports zero however long the finger stays down —
+	 * which is what makes this an edge and not a level.
+	 */
+	stage_input(0, AT, FWD, POINTER3D_HAND_RIGHT, 0);
+	xr_input_publish(1);
+	assert(g_pointers[0].click == 0);
+	xr_input_publish(1);
+	assert(g_pointers[0].click == 0);
+
+	/* And two presses inside one frame's gap are still one click frame
+	 * rather than a lost press — a count cannot be set twice the way a
+	 * flag can. */
+	stage_input(0, AT, FWD, POINTER3D_HAND_RIGHT, 2);
+	xr_input_publish(1);
+	assert(g_pointers[0].click == 1);
+
+	xr_session_ended(XR_END_NORMAL);
+}
+
+/*
+ * Zero, one and two controllers, and the transitions between them. A Quest
+ * user putting a controller down is normal, not exceptional: the published set
+ * REPLACES the last one, so a disconnect is a smaller count and needs no
+ * message of its own — and the pointer that remains is still whichever one the
+ * runtime still lists, with its own hand.
+ */
+static void test_controllers_come_and_go_mid_session(void)
+{
+	static const float LEFT_AT[3]  = { -0.2f, 1.0f, 0.0f };
+	static const float RIGHT_AT[3] = {  0.2f, 1.0f, 0.0f };
+	static const float FWD[3]      = {  0.0f, 0.0f, -1.0f };
+
+	no_scene_camera();
+	xr_session_begun();
+
+	/* Nothing tracked yet: a real answer, not an error. */
+	xr_input_publish(0);
+	assert(g_pointer_count == 0);
+
+	/* One controller wakes up. */
+	stage_input(0, RIGHT_AT, FWD, POINTER3D_HAND_RIGHT, 0);
+	xr_input_publish(1);
+	assert(g_pointer_count == 1);
+	assert(g_pointers[0].hand == POINTER3D_HAND_RIGHT);
+
+	/* The second joins, and the runtime lists it first. */
+	stage_input(0, LEFT_AT, FWD, POINTER3D_HAND_LEFT, 0);
+	stage_input(1, RIGHT_AT, FWD, POINTER3D_HAND_RIGHT, 0);
+	xr_input_publish(2);
+	assert(g_pointer_count == 2);
+	assert(g_pointers[0].hand == POINTER3D_HAND_LEFT);
+
+	/* The left is put down. What is left is the right one, at slot 0,
+	 * still saying which hand it is. */
+	stage_input(0, RIGHT_AT, FWD, POINTER3D_HAND_RIGHT, 0);
+	xr_input_publish(1);
+	assert(g_pointer_count == 1);
+	assert(g_pointers[0].hand == POINTER3D_HAND_RIGHT);
+	assert(close_enough(g_pointers[0].origin[0], RIGHT_AT[0]));
+
+	/* And both go quiet. */
+	xr_input_publish(0);
+	assert(g_pointer_count == 0);
+
+	xr_session_ended(XR_END_NORMAL);
+	assert_flat_page();
+	set_scene_camera(0.0f, 1.0f, 0.0f, 0.1f, 100.0f);
+}
+
+/*
+ * The runtime's number is clamped, not trusted — a hand-tracking runtime lists
+ * far more input sources than a pair of controllers — and a source with no
+ * direction is dropped rather than published as a ray that points nowhere,
+ * which the pick would refuse and the debug rod could not be oriented from.
+ */
+static void test_input_clamps_and_drops_what_it_cannot_use(void)
+{
+	static const float AT[3]   = { 0.0f, 1.0f, 0.0f };
+	static const float FWD[3]  = { 0.0f, 0.0f, -1.0f };
+	static const float ZERO[3] = { 0.0f, 0.0f, 0.0f };
+
+	xr_session_begun();
+
+	stage_input(0, AT, FWD, POINTER3D_HAND_LEFT, 0);
+	stage_input(1, AT, FWD, POINTER3D_HAND_RIGHT, 0);
+	xr_input_publish(XR_MAX_INPUT_SOURCES + 5);
+	assert(g_pointer_count == XR_MAX_INPUT_SOURCES);
+
+	xr_input_publish(-3);
+	assert(g_pointer_count == 0);
+
+	/* A tracked source with no aim is not a pointer: the one beside it
+	 * still is, and moves down into its place. */
+	stage_input(0, AT, ZERO, POINTER3D_HAND_LEFT, 0);
+	stage_input(1, AT, FWD, POINTER3D_HAND_RIGHT, 0);
+	xr_input_publish(2);
+	assert(g_pointer_count == 1);
+	assert(g_pointers[0].hand == POINTER3D_HAND_RIGHT);
+
+	/* An unrecognised handedness is "none" rather than whatever number the
+	 * runtime happened to send. */
+	stage_input(0, AT, FWD, 77, 0);
+	xr_input_publish(1);
+	assert(g_pointers[0].hand == POINTER3D_HAND_NONE);
+
+	xr_session_ended(XR_END_NORMAL);
+}
+
+/*
+ * Outside a session nothing points at anything. The glue is not the only caller
+ * this export could ever have, and a pointer published with no session behind
+ * it would leave a rod in the flat page's scene with nothing moving it.
+ */
+static void test_no_session_means_no_pointer(void)
+{
+	static const float AT[3]  = { 0.0f, 1.0f, 0.0f };
+	static const float FWD[3] = { 0.0f, 0.0f, -1.0f };
+
+	assert(xr_session_active() == 0);
+	stage_input(0, AT, FWD, POINTER3D_HAND_RIGHT, 1);
+	xr_input_publish(1);
+	assert(g_pointer_count == 0);
+
+	/*
+	 * Entering a session clears whatever the last one left, so the first
+	 * frame of a session never opens on a stale hand.
+	 */
+	xr_session_begun();
+	assert(g_pointer_count == -1);
+	xr_session_ended(XR_END_NORMAL);
+	assert_flat_page();
+}
+
 int main(void)
 {
 	log_init();
@@ -853,6 +1212,15 @@ int main(void)
 	RUN(a_poseless_frame_leaves_the_layer_whole);
 	RUN(a_view_with_no_viewport_is_not_drawn);
 	RUN(the_depth_range_is_the_scene_camera_s);
+
+	RUN(input_stage_layout_matches_the_glue);
+	RUN(no_session_means_no_pointer);
+	RUN(two_controllers_reach_the_pointer);
+	RUN(a_controller_ray_composes_onto_the_same_stage);
+	RUN(a_controller_ray_is_unit_length);
+	RUN(the_click_edge_lasts_exactly_one_frame);
+	RUN(controllers_come_and_go_mid_session);
+	RUN(input_clamps_and_drops_what_it_cannot_use);
 
 	printf("%d/%d tests passed\n", tests_passed, tests_run);
 	return tests_passed == tests_run ? 0 : 1;

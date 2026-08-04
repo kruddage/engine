@@ -5,9 +5,15 @@
 #include <math/math_types.h>
 
 /*
- * The "camera" subsystem api — read the live scene camera and keep its
- * projection aspect in sync with the actual viewport.  Published by
+ * The "camera" subsystem api — read the live scene camera, drive it, and keep
+ * its projection aspect in sync with the actual viewport.  Published by
  * scene_renderer, which owns the single camera it draws the world with.
+ *
+ * That camera is a (view, projection) pair — NOT necessarily a look-at.  The
+ * scene's authored eye/target/up plus a vertical fov is one producer of the
+ * pair, and the one every shipped scene uses; set_view_proj hands the renderer
+ * a pair built some other way (a rigid pose and an off-axis frustum, say),
+ * which it then draws with verbatim.
  *
  * Editor overlays resolve this to project world-space points to screen space
  * with the same view·projection the renderer uses, so their geometry lands on
@@ -58,6 +64,35 @@ struct camera_api {
 	/* Reattach to the scripted scene camera, dropping the user's pose. Called
 	 * after loading a new scene so its authored camera takes over. */
 	void (*reset_view)(void);
+
+	/*
+	 * The set side of the pair — for a caller that already HAS a view and a
+	 * projection and must have them consumed verbatim, rather than an
+	 * eye/target/fov the renderer re-derives a symmetric projection from.
+	 * Both are no-ops on a NULL/older api, so guard the pointer.
+	 */
+	/*
+	 * Draw with exactly this view and projection.  proj may be asymmetric
+	 * (off-axis): the renderer never rebuilds it, so whatever a caller
+	 * encodes in it — a lens offset, a canted panel — reaches the vertex
+	 * shader intact, apart from the clip-convention adaptation a
+	 * [0, 1]-clip backend needs.  Hand proj in the GL convention (NDC z in
+	 * [-1, 1]), which is what that adaptation converts from and what
+	 * CPU-side picking unprojects against.
+	 *
+	 * eye is the world-space camera position that goes with view: a
+	 * supplied view matrix does not imply the scene's authored eye, and the
+	 * pbr shader reads a camera position (cam_pos) for its view direction,
+	 * so it is passed rather than inferred.  The pair holds — set_viewport
+	 * and the per-frame update leave it alone — until clear_view_proj.
+	 */
+	void (*set_view_proj)(const struct mat4 *view, const struct mat4 *proj,
+			      const float eye[3]);
+	/*
+	 * Hand the camera back to the scene's authored eye/target/up + fov, the
+	 * producer it drew from before any set_view_proj.
+	 */
+	void (*clear_view_proj)(void);
 };
 
 #endif /* CAMERA_API_H */

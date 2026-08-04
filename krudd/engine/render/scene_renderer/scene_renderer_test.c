@@ -5,6 +5,7 @@
 #include <abi/entity_api.h>
 #include <abi/camera_api.h>
 #include <abi/asset_api.h>
+#include <math/math_types.h>
 #include <asset/mesh.h>
 #include <asset/builtin_mesh_scripts.h>
 #include <core/subsystem_manager.h>
@@ -697,6 +698,94 @@ static void test_bloom_follows_emissive(struct subsystem_manager *mgr)
 	assert(count_draws(NULL) == 8);
 }
 
+/*
+ * An off-axis (asymmetric) frustum, the glFrustum form: the left/right bounds
+ * differ, so column 2 carries an x shear no symmetric mat4_perspective can
+ * produce. Stands in for a projection the engine did not build.
+ */
+static void off_axis_proj(struct mat4 *out, float l, float r, float b, float t,
+			  float n, float f)
+{
+	memset(out->m, 0, sizeof(out->m));
+	out->m[0]  = 2.0f * n / (r - l);
+	out->m[5]  = 2.0f * n / (t - b);
+	out->m[8]  = (r + l) / (r - l);
+	out->m[9]  = (t + b) / (t - b);
+	out->m[10] = -(f + n) / (f - n);
+	out->m[11] = -1.0f;
+	out->m[14] = -2.0f * f * n / (f - n);
+}
+
+/*
+ * The set side (#988): a caller hands the renderer a view, a projection and an
+ * eye, and the renderer draws with exactly those — no re-derivation from
+ * eye/target/fov. The scene still names a "Camera" entity and the viewport
+ * still resizes, both of which drive the authored producer; neither may reach
+ * the supplied pair. clear_view_proj hands the camera back.
+ *
+ * The projection here is off-axis, which the authored path cannot express at
+ * all: if anything rebuilt it, the x shear would be gone. (The null backend
+ * reports GL clip, so camera_clip_vp is the identity and the matrix the api
+ * returns is the one the pass uploads.)
+ */
+static void test_camera_supplied_view_proj(struct subsystem_manager *mgr)
+{
+	const struct camera_api *cam = subsystem_manager_get_api(mgr, "camera");
+	const float target[3] = { 0.0f, 0.0f, 0.0f };
+	const float up[3]     = { 0.0f, 1.0f, 0.0f };
+	const float eye[3]    = { 0.032f, 1.6f, -0.5f };
+	struct mat4 view, proj, want, got;
+	float       got_eye[3];
+
+	assert(cam && cam->set_view_proj && cam->clear_view_proj);
+
+	/* A scripted camera the tick copies into the eye every frame, plus a
+	 * mesh to draw, so a leaking seam has something to leak. */
+	memset(&g_world, 0, sizeof(g_world));
+	g_world.count = 2;
+	set_named_entity(0, "Camera", 9.0f, 9.0f, 9.0f);
+	g_world.alive[1]        = 1;
+	g_world.mask[1]         = COMPONENT_RENDER | COMPONENT_MATERIAL;
+	g_world.render_ref[1]   = 1u;
+	g_world.material_ref[1] = 6u;
+	set_identity_xform(&g_world.world_xform[1], 0.0f, 0.0f, 0.0f);
+	renderer_null_reset_log();
+	subsystem_manager_tick(mgr);
+
+	mat4_look_at(&view, eye, target, up);
+	off_axis_proj(&proj, -0.09f, 0.11f, -0.10f, 0.10f, 0.1f, 100.0f);
+	mat4_mul(&want, &proj, &view);
+
+	cam->set_view_proj(&view, &proj, eye);
+	cam->get_view_proj(&got);
+	assert(memcmp(got.m, want.m, sizeof(want.m)) == 0);
+	cam->get_eye(got_eye);
+	assert(got_eye[0] == eye[0] && got_eye[1] == eye[1] &&
+	       got_eye[2] == eye[2]);
+
+	/* A frame (whose tick calls camera_update) and an aspect change both
+	 * leave the pair exactly as supplied, and the frame still draws. */
+	cam->set_viewport(1920.0f, 1080.0f);
+	renderer_null_reset_log();
+	subsystem_manager_tick(mgr);
+	assert(count_draws(NULL) == 1);
+	cam->get_view_proj(&got);
+	assert(memcmp(got.m, want.m, sizeof(want.m)) == 0);
+	cam->get_eye(got_eye);
+	assert(got_eye[0] == eye[0] && got_eye[1] == eye[1] &&
+	       got_eye[2] == eye[2]);
+
+	/* Handing it back returns the camera to the scripted eye and a
+	 * projection the authored parameters produce. */
+	cam->clear_view_proj();
+	renderer_null_reset_log();
+	subsystem_manager_tick(mgr);
+	cam->get_eye(got_eye);
+	assert(got_eye[0] == 9.0f && got_eye[1] == 9.0f && got_eye[2] == 9.0f);
+	cam->get_view_proj(&got);
+	assert(memcmp(got.m, want.m, sizeof(want.m)) != 0);
+}
+
 int main(void)
 {
 	static const struct subsystem static_table[] = {
@@ -761,6 +850,7 @@ int main(void)
 
 	test_camera_follows_named_entity(&mgr);
 	test_camera_user_navigation(&mgr);
+	test_camera_supplied_view_proj(&mgr);
 	/* Last: it reports a viewport, and camera_set_viewport keeps the last
 	 * positive one, so every frame after this can take the post path. */
 	test_bloom_follows_emissive(&mgr);

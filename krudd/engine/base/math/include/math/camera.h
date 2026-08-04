@@ -40,11 +40,25 @@
  */
 
 /*
- * Fixed camera that produces a view_proj matrix each frame.
- * Interactive control is out of scope for v1; callers set eye/target/up
- * directly.  Call camera_update() after any change to recompute view_proj.
+ * A camera is a (view, proj) pair and the world-space point view was built
+ * about.  view_proj is their product, and that pair — not eye/target/fov — is
+ * what the renderer draws with.
+ *
+ * eye/target/up + fov_y/aspect/near/far are ONE producer of that pair: the
+ * authored look-at with a symmetric perspective, which camera_update() derives.
+ * A caller that already holds a view and a projection (a rigid head pose and an
+ * off-axis frustum encoding an interpupillary offset, say) sets them with
+ * camera_set_view_proj() instead; those are consumed verbatim, and
+ * camera_update() then leaves the camera alone until camera_clear_view_proj()
+ * hands it back to the authored parameters.
+ *
+ * proj is in the GL convention (NDC z in [-1, 1]), the one mat4_perspective
+ * produces — a supplied projection must be handed in that way, because it is
+ * what mat4_clip_z01 adapts from and what CPU-side picking unprojects against.
  */
 struct camera {
+	/* The authored producer.  Inputs to camera_update(); nothing reads
+	 * them once a pair has been supplied. */
 	float       eye[3];
 	float       target[3];
 	float       up[3];
@@ -52,10 +66,35 @@ struct camera {
 	float       aspect;   /* viewport width / height */
 	float       near;
 	float       far;
-	struct mat4 view_proj; /* updated by camera_update() */
+
+	/* The pair the renderer draws with, and the eye that goes with it. */
+	struct mat4 view;
+	struct mat4 proj;
+	struct mat4 view_proj;   /* proj * view */
+	float       position[3]; /* world eye of view; a shader's cam_pos */
+	int         supplied;    /* nonzero while view/proj were set directly */
 };
 
-/* Recompute view_proj from the camera's current parameters. */
+/*
+ * Derive view, proj, view_proj and position from the camera's authored
+ * parameters.  A no-op on a camera holding a supplied pair, so a per-frame
+ * update never silently overwrites one.
+ */
 void camera_update(struct camera *cam);
+
+/*
+ * Draw with exactly this view and projection.  eye is the world-space position
+ * view was built about — a supplied view matrix no longer implies cam->eye, and
+ * shaders still need a camera position — so it is carried explicitly rather
+ * than inferred.  Pins the pair against camera_update().
+ */
+void camera_set_view_proj(struct camera *cam, const struct mat4 *view,
+			  const struct mat4 *proj, const float eye[3]);
+
+/*
+ * Hand the camera back to its authored parameters.  The pair survives until the
+ * next camera_update(), which then rebuilds it from eye/target/up + fov.
+ */
+void camera_clear_view_proj(struct camera *cam);
 
 #endif /* CAMERA_H */

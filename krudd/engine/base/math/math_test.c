@@ -188,6 +188,7 @@ static void test_camera_view_proj(void)
 	struct camera cam;
 	float         near = 0.1f, far = 100.0f;
 
+	memset(&cam, 0, sizeof(cam));
 	cam.eye[0] = 0.0f; cam.eye[1] = 0.0f; cam.eye[2] = 5.0f;
 	cam.target[0] = 0.0f; cam.target[1] = 0.0f; cam.target[2] = 0.0f;
 	cam.up[0] = 0.0f; cam.up[1] = 1.0f; cam.up[2] = 0.0f;
@@ -204,6 +205,143 @@ static void test_camera_view_proj(void)
 	assert(feq(cam.view_proj.m[11], -1.0f));
 	/* w-component of the translation column: -z_eye = 5 */
 	assert(feq(cam.view_proj.m[15], 5.0f));
+}
+
+/* A camera framed the authored way, for the two tests below to compare. */
+static void authored_camera(struct camera *cam)
+{
+	memset(cam, 0, sizeof(*cam));
+	cam->eye[0] = 2.5f; cam->eye[1] = 2.0f; cam->eye[2] = 4.0f;
+	cam->target[0] = 0.0f; cam->target[1] = 0.0f; cam->target[2] = 0.0f;
+	cam->up[0] = 0.0f; cam->up[1] = 1.0f; cam->up[2] = 0.0f;
+	cam->fov_y  = 0.8f;
+	cam->aspect = 1.6f;
+	cam->near   = 0.1f;
+	cam->far    = 100.0f;
+}
+
+/*
+ * The authored path is still exactly mat4_perspective * mat4_look_at, bit for
+ * bit — the pair the camera now carries is that same derivation stored, not a
+ * re-expression of it. This is the regression guard on every scene that frames
+ * itself with eye/target/up and a vertical fov: none of them may shift by a
+ * single ulp because a set side exists.
+ */
+static void test_camera_derived_is_unchanged(void)
+{
+	struct camera cam;
+	struct mat4   view, proj, want;
+
+	authored_camera(&cam);
+	camera_update(&cam);
+
+	mat4_look_at(&view, cam.eye, cam.target, cam.up);
+	mat4_perspective(&proj, cam.fov_y, cam.aspect, cam.near, cam.far);
+	mat4_mul(&want, &proj, &view);
+
+	assert(memcmp(cam.view_proj.m, want.m, sizeof(want.m)) == 0);
+	assert(memcmp(cam.view.m, view.m, sizeof(view.m)) == 0);
+	assert(memcmp(cam.proj.m, proj.m, sizeof(proj.m)) == 0);
+	/* The derived path's position is the authored eye. */
+	assert(cam.position[0] == cam.eye[0]);
+	assert(cam.position[1] == cam.eye[1]);
+	assert(cam.position[2] == cam.eye[2]);
+}
+
+/*
+ * An off-axis (asymmetric) frustum, the glFrustum form: the l/r asymmetry lands
+ * in column 2's x term, which no symmetric mat4_perspective can produce. Used
+ * below as a projection the engine could not have derived.
+ */
+static void off_axis_proj(struct mat4 *out, float l, float r, float b, float t,
+			  float n, float f)
+{
+	memset(out->m, 0, sizeof(out->m));
+	out->m[0]  = 2.0f * n / (r - l);
+	out->m[5]  = 2.0f * n / (t - b);
+	out->m[8]  = (r + l) / (r - l);
+	out->m[9]  = (t + b) / (t - b);
+	out->m[10] = -(f + n) / (f - n);
+	out->m[11] = -1.0f;
+	out->m[14] = -2.0f * f * n / (f - n);
+}
+
+/*
+ * The set side: a view and a projection handed in are consumed verbatim, their
+ * product is view_proj, and the eye rides along because a supplied view matrix
+ * no longer implies cam.eye. A later camera_update must NOT quietly rebuild the
+ * pair from the authored parameters — that is the whole point of the seam — and
+ * camera_clear_view_proj is the one thing that hands the camera back.
+ */
+static void test_camera_supplied_view_proj(void)
+{
+	struct camera cam;
+	struct mat4   view, proj, want, derived;
+	const float   eye[3] = { 0.032f, 1.6f, -0.5f };
+
+	authored_camera(&cam);
+	camera_update(&cam);
+	derived = cam.view_proj;
+
+	/* A pose that is not a look-at at the authored eye, and a frustum whose
+	 * left and right bounds differ — a lens offset, as a headset's eye
+	 * projection carries. */
+	mat4_look_at(&view, eye, cam.target, cam.up);
+	off_axis_proj(&proj, -0.09f, 0.11f, -0.10f, 0.10f, 0.1f, 100.0f);
+	assert(!feq(proj.m[8], 0.0f)); /* genuinely off-axis */
+
+	camera_set_view_proj(&cam, &view, &proj, eye);
+	mat4_mul(&want, &proj, &view);
+
+	assert(memcmp(cam.view.m, view.m, sizeof(view.m)) == 0);
+	assert(memcmp(cam.proj.m, proj.m, sizeof(proj.m)) == 0);
+	assert(memcmp(cam.view_proj.m, want.m, sizeof(want.m)) == 0);
+	assert(cam.position[0] == eye[0]);
+	assert(cam.position[1] == eye[1]);
+	assert(cam.position[2] == eye[2]);
+
+	/* The per-frame update leaves a supplied pair alone. */
+	camera_update(&cam);
+	assert(memcmp(cam.view_proj.m, want.m, sizeof(want.m)) == 0);
+	assert(cam.position[0] == eye[0]);
+
+	/* Handing it back restores the authored derivation exactly. */
+	camera_clear_view_proj(&cam);
+	camera_update(&cam);
+	assert(memcmp(cam.view_proj.m, derived.m, sizeof(derived.m)) == 0);
+	assert(cam.position[0] == cam.eye[0]);
+	assert(cam.position[1] == cam.eye[1]);
+	assert(cam.position[2] == cam.eye[2]);
+}
+
+/*
+ * The clip-convention seam is the ONE thing done to a supplied projection on
+ * the way to a shader (scene_renderer's camera_clip_vp). It rescales the z row
+ * alone, so every term an off-axis frustum encodes its asymmetry in — the x and
+ * y shear in column 2, the w row — survives untouched.
+ */
+static void test_clip_z01_preserves_off_axis(void)
+{
+	const float near = 0.1f, far = 100.0f;
+	/* An eye-space point, off the axis in both x and y. */
+	float       p[4] = { 0.3f, -0.2f, -1.0f, 1.0f };
+	float       c[4], z[4];
+	struct mat4 proj, adapted;
+
+	off_axis_proj(&proj, -0.09f, 0.11f, -0.10f, 0.10f, near, far);
+	adapted = proj;
+	mat4_clip_z01(&adapted);
+
+	mul4(c, &proj,    p);
+	mul4(z, &adapted, p);
+
+	assert(feq(z[0], c[0]));   /* x, carrying the lens offset, untouched */
+	assert(feq(z[1], c[1]));
+	assert(feq(z[3], c[3]));   /* w untouched */
+	/* And the off-axis terms themselves: only the z row moves. */
+	assert(feq(adapted.m[8], proj.m[8]));
+	assert(feq(adapted.m[9], proj.m[9]));
+	assert(!feq(adapted.m[10], proj.m[10]));
 }
 
 /* M * inverse(M) == identity for a non-trivial TRS matrix. */
@@ -300,6 +438,7 @@ static void test_ray_from_screen(void)
 	struct camera cam;
 	float         o[3], d[3];
 
+	memset(&cam, 0, sizeof(cam));
 	cam.eye[0] = 0.0f; cam.eye[1] = 0.0f; cam.eye[2] = 5.0f;
 	cam.target[0] = 0.0f; cam.target[1] = 0.0f; cam.target[2] = 0.0f;
 	cam.up[0] = 0.0f; cam.up[1] = 1.0f; cam.up[2] = 0.0f;
@@ -364,6 +503,9 @@ int main(void)
 	test_from_transform_identity();
 	test_from_transform_rot_z90();
 	test_camera_view_proj();
+	test_camera_derived_is_unchanged();
+	test_camera_supplied_view_proj();
+	test_clip_z01_preserves_off_axis();
 	test_inverse_roundtrip();
 	test_inverse_singular();
 	test_transform_point();

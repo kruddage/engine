@@ -4,6 +4,7 @@
 #include <abi/entity_api.h>
 #include <entity/world.h>
 #include <math/camera.h>
+#include <scene_renderer/scene_view.h>
 #include <abi/camera_api.h>
 #include <abi/preview_api.h>
 #include <math/math_types.h>
@@ -236,10 +237,45 @@ static const char *SHADOW_SHADER_SRC =
 	"  (vertex   (set position (* view_proj model (vec4 a_pos 1.0))))\n"
 	"  (fragment (set frag_color (vec4 1.0 1.0 1.0 1.0))))\n";
 
-/* Last viewport pixel size the UI reported (0 = unknown -> no outline pass). */
+/*
+ * Last viewport pixel size the UI reported (0 = unknown -> no outline pass).
+ *
+ * This is the SOURCE the frame's derived view is sized from (see frame_views),
+ * and nothing else: no pass and no part of a graph build reads it, because a
+ * frame draws a list of views and each of them carries its own size (#989). A
+ * read of it below the view list would be a global leaking back into a
+ * per-view decision — the second view would be sized from whatever the canvas
+ * happened to be.
+ */
 static float g_view_w, g_view_h;
 
-/* The transients the composite pass samples, published per-frame by the tick. */
+/*
+ * The view the passes now being declared and executed belong to (#989).
+ *
+ * Held by value, and in a global rather than in a pass userdata, because that
+ * is how every other per-view publish here reaches a pass callback (see
+ * g_bloom_frame and g_outline_frame): fg_pass_set_execute's userdata is one
+ * pointer per pass and this is read by six of them. A value, not a pointer,
+ * so a stray read before the first tick sees a zeroed view — no matrices and
+ * no size, which every reader already handles — rather than dereferencing
+ * nothing.
+ *
+ * draw_view publishes it and the views are drawn strictly one after another
+ * (build, compile, execute, destroy, then the next), so it names exactly one
+ * view for as long as any pass can observe it.
+ */
+static struct scene_view g_view;
+
+/*
+ * The view list a caller supplied for this frame, or count 0 for "derive one
+ * from the camera" — the state at boot and the only state the flat page is
+ * ever in. See scene_view.h; scene_renderer_set_views writes these.
+ */
+static struct scene_view g_supplied_views[SCENE_MAX_VIEWS];
+static uint32_t          g_supplied_view_count;
+
+/* The transients the composite pass samples, published per view by
+ * draw_view. */
 static struct {
 	fg_resource_t scene_color;
 	fg_resource_t mask;
@@ -643,12 +679,15 @@ static void camera_get_view_proj(struct mat4 *out)
 }
 
 /*
- * Adapt the camera's view_proj for the active backend's clip-space convention
- * before it reaches a vertex shader's output position. g_cam.view_proj is
- * GL-convention (NDC z in [-1, 1]); on a [0, 1]-clip backend (WebGPU) that
- * puts the near part of the frustum at clip z < 0, which the backend clips
- * away outright rather than just shading wrong (the same failure #608 fixed
- * for the shadow write). mat4_clip_z01 lifts it into [0, 1].
+ * Adapt the drawing view's view_proj for the active backend's clip-space
+ * convention before it reaches a vertex shader's output position. The matrix
+ * is g_view's, not g_cam's: a pass draws the view the frame is currently on
+ * (#989), which is derived from g_cam only when nothing supplied a list.
+ *
+ * A view_proj is GL-convention (NDC z in [-1, 1]); on a [0, 1]-clip backend
+ * (WebGPU) that puts the near part of the frustum at clip z < 0, which the
+ * backend clips away outright rather than just shading wrong (the same failure
+ * #608 fixed for the shadow write). mat4_clip_z01 lifts it into [0, 1].
  *
  * Every draw path that outputs camera-space clip position (forward_pass,
  * mask_pass, draw_particles) calls this at its write site rather than
@@ -666,7 +705,7 @@ static void camera_get_view_proj(struct mat4 *out)
  */
 static struct mat4 camera_clip_vp(const struct gpu_api *gpu)
 {
-	struct mat4 vp = g_cam.view_proj;
+	struct mat4 vp = g_view.cam.view_proj;
 
 	if (gpu->caps & GPU_CAP_CLIP_Z_ZERO_TO_ONE)
 		mat4_clip_z01(&vp);
@@ -2648,19 +2687,34 @@ static void shadow_pass(struct fg_pass_ctx *ctx, void *userdata)
  * system the world-space camera right/up (derived from the eye→target view and
  * the camera up) plus the view·projection; particles_render is a no-op when the
  * pool is empty, so an ordinary frame pays nothing here.
+ *
+ * The basis comes from the view's AUTHORED eye/target/up, not from its view
+ * matrix — the one place the renderer still reads the producer rather than the
+ * pair (#989). Two reasons, and the first is the binding one: mat4_look_at
+ * normalizes the forward vector before crossing it with up and this does not,
+ * so the two right/up bases agree mathematically but not bit for bit, and
+ * reading the matrix instead would change every particle quad in every
+ * existing scene for no gain. The second is that a stereo pair wants ONE
+ * billboard basis anyway — orienting each eye's quads to its own eye is how a
+ * flat sprite ends up at different depths in the two images — so the head's
+ * authored basis is the right answer for both, not an approximation of two.
+ * The cost is that a view supplying a pair with eye/target/up left zeroed
+ * gets a degenerate basis and draws no particles; scene_view.h says so at the
+ * field.
  */
 static void draw_particles(const struct gpu_api *gpu, gpu_cmd_buf_t cmd)
 {
-	float fwd[3], right[3], up[3], len;
+	const struct camera *cam = &g_view.cam;
+	float                fwd[3], right[3], up[3], len;
 
-	fwd[0] = g_cam.target[0] - g_cam.eye[0];
-	fwd[1] = g_cam.target[1] - g_cam.eye[1];
-	fwd[2] = g_cam.target[2] - g_cam.eye[2];
+	fwd[0] = cam->target[0] - cam->eye[0];
+	fwd[1] = cam->target[1] - cam->eye[1];
+	fwd[2] = cam->target[2] - cam->eye[2];
 
 	/* right = normalize(fwd × up_world) */
-	right[0] = fwd[1] * g_cam.up[2] - fwd[2] * g_cam.up[1];
-	right[1] = fwd[2] * g_cam.up[0] - fwd[0] * g_cam.up[2];
-	right[2] = fwd[0] * g_cam.up[1] - fwd[1] * g_cam.up[0];
+	right[0] = fwd[1] * cam->up[2] - fwd[2] * cam->up[1];
+	right[1] = fwd[2] * cam->up[0] - fwd[0] * cam->up[2];
+	right[2] = fwd[0] * cam->up[1] - fwd[1] * cam->up[0];
 	len = sqrtf(right[0] * right[0] + right[1] * right[1] +
 		    right[2] * right[2]);
 	if (len < 1e-6f)
@@ -2711,12 +2765,14 @@ static void forward_pass(struct fg_pass_ctx *ctx, void *userdata)
 
 	cam_vp = camera_clip_vp(gpu);
 	memcpy(&ubo[0], cam_vp.m, 16 * sizeof(float));
-	/* cam_pos is constant across the frame; only model changes per draw. It
-	 * is the camera's position, not its authored eye — those differ once a
-	 * caller has supplied a view matrix of its own. */
-	ubo[SCENE_UBO_CAMPOS + 0] = g_cam.position[0];
-	ubo[SCENE_UBO_CAMPOS + 1] = g_cam.position[1];
-	ubo[SCENE_UBO_CAMPOS + 2] = g_cam.position[2];
+	/* cam_pos is constant across the pass; only model changes per draw. It
+	 * is the drawing view's position, not its authored eye — those differ
+	 * once a caller has supplied a view matrix of its own — and it is the
+	 * view's, not the scene camera's, so a second view shades from where it
+	 * actually sits. */
+	ubo[SCENE_UBO_CAMPOS + 0] = g_view.cam.position[0];
+	ubo[SCENE_UBO_CAMPOS + 1] = g_view.cam.position[1];
+	ubo[SCENE_UBO_CAMPOS + 2] = g_view.cam.position[2];
 	ubo[SCENE_UBO_CAMPOS + 3] = 0.0f; /* std140 vec3 tail pad */
 
 	/* The directional light is constant across the pass — bind it once. */
@@ -2952,9 +3008,9 @@ static void mask_pass(struct fg_pass_ctx *ctx, void *userdata)
 	memcpy(&ubo[16], model.m, 16 * sizeof(float));
 	/* The mask shader reads only the matrices, but the block is uploaded
 	 * whole — fill cam_pos so no uninitialised stack reaches the buffer. */
-	ubo[SCENE_UBO_CAMPOS + 0] = g_cam.position[0];
-	ubo[SCENE_UBO_CAMPOS + 1] = g_cam.position[1];
-	ubo[SCENE_UBO_CAMPOS + 2] = g_cam.position[2];
+	ubo[SCENE_UBO_CAMPOS + 0] = g_view.cam.position[0];
+	ubo[SCENE_UBO_CAMPOS + 1] = g_view.cam.position[1];
+	ubo[SCENE_UBO_CAMPOS + 2] = g_view.cam.position[2];
 	ubo[SCENE_UBO_CAMPOS + 3] = 0.0f;
 
 	if (!ring_take_slot(&slot))
@@ -2979,6 +3035,12 @@ static void mask_pass(struct fg_pass_ctx *ctx, void *userdata)
  * the silhouette mask and writes the backbuffer, tinting red along the mask's
  * outer edge. texel carries the per-tap offset (thickness / viewport), so the
  * border width is resolution-independent.
+ *
+ * The viewport it divides by is THIS VIEW's (#989), not a global one: the tap
+ * offset is in the uv space of the mask the pass is sampling, and that mask
+ * was declared at the view's own width and height. Two views at different
+ * sizes would otherwise share one texel size and one of them would get a
+ * border the wrong number of pixels wide.
  */
 static void composite_pass(struct fg_pass_ctx *ctx, void *userdata)
 {
@@ -2987,6 +3049,11 @@ static void composite_pass(struct fg_pass_ctx *ctx, void *userdata)
 	gpu_texture_t                 scene_tex, mask_tex;
 	float                        ubo[OUTLINE_UBO_FLOATS];
 	struct gpu_draw_indexed_args draw;
+	/* The mask's own dimensions, so the tap offset is divided by the
+	 * integer the target was created at rather than by an unrounded canvas
+	 * size that could be a fraction off it. */
+	float                        vw = (float)g_view.width;
+	float                        vh = (float)g_view.height;
 
 	(void)userdata;
 	if (!gpu || !g_outline_pso)
@@ -2995,8 +3062,8 @@ static void composite_pass(struct fg_pass_ctx *ctx, void *userdata)
 	mask_tex  = fg_ctx_resource(ctx, g_outline_frame.mask);
 
 	memset(ubo, 0, sizeof(ubo));
-	ubo[0] = g_view_w > 0.0f ? OUTLINE_THICKNESS / g_view_w : 0.0f; /* texel.x */
-	ubo[1] = g_view_h > 0.0f ? OUTLINE_THICKNESS / g_view_h : 0.0f; /* texel.y */
+	ubo[0] = vw > 0.0f ? OUTLINE_THICKNESS / vw : 0.0f; /* texel.x */
+	ubo[1] = vh > 0.0f ? OUTLINE_THICKNESS / vh : 0.0f; /* texel.y */
 	/*
 	 * A scene selection outlines red; an in-game outline (a piece the player
 	 * picked up) uses a warm gold that reads on both a pale and a dark set,
@@ -3146,9 +3213,9 @@ static void bloom_emissive_pass(struct fg_pass_ctx *ctx, void *userdata)
 	 * sets and the authored path copies from eye. Nothing observes the
 	 * difference today, and nothing has to notice if this shader ever
 	 * starts reading it. */
-	ubo[SCENE_UBO_CAMPOS + 0] = g_cam.position[0];
-	ubo[SCENE_UBO_CAMPOS + 1] = g_cam.position[1];
-	ubo[SCENE_UBO_CAMPOS + 2] = g_cam.position[2];
+	ubo[SCENE_UBO_CAMPOS + 0] = g_view.cam.position[0];
+	ubo[SCENE_UBO_CAMPOS + 1] = g_view.cam.position[1];
+	ubo[SCENE_UBO_CAMPOS + 2] = g_view.cam.position[2];
 	ubo[SCENE_UBO_CAMPOS + 3] = 0.0f;
 
 	gpu->cmd_set_pipeline(cmd, g_bloom_emissive_pso);
@@ -3274,14 +3341,15 @@ static void present_pass(struct fg_pass_ctx *ctx, void *userdata)
 	fullscreen_draw(gpu, cmd);
 }
 
-/* Are the bloom pipelines up and is there a viewport to size the half-res
- * targets to? A "no" here is a broken or not-yet-started frame, not a scene
- * without emissive content — frame_has_emissive answers that. */
-static int bloom_available(void)
+/* Are the bloom pipelines up and does VIEW have a size to halve for the
+ * half-res targets? A "no" here is a broken or not-yet-started frame, not a
+ * scene without emissive content — frame_has_emissive answers that. Asked per
+ * view, because the size is the view's. */
+static int bloom_available(const struct scene_view *view)
 {
 	return g_bloom_emissive_pso && g_bloom_blur_pso &&
 	       g_bloom_composite_pso && g_bloom_composite_bb_pso &&
-	       g_view_w > 0.0f && g_view_h > 0.0f;
+	       view->width > 0 && view->height > 0;
 }
 
 /*
@@ -3408,7 +3476,91 @@ static int32_t resolve_camera_entity(const struct world *w)
 	return -1;
 }
 
-static void scene_renderer_tick(void)
+/*
+ * This frame's view list, into OUT, returning how many views it holds (#989).
+ *
+ * A caller-supplied list wins when there is one. Otherwise the frame derives
+ * the single view the flat page has always drawn: the scene camera, sized to
+ * the last viewport the UI reported. That derivation is the ONLY place g_cam,
+ * g_view_w and g_view_h reach the drawing side, which is what makes "one view,
+ * and the same frame as before" true by construction rather than by
+ * inspection — every reader below this line reads a view.
+ */
+static uint32_t frame_views(struct scene_view *out)
+{
+	uint32_t i;
+
+	if (g_supplied_view_count) {
+		for (i = 0; i < g_supplied_view_count; i++)
+			out[i] = g_supplied_views[i];
+		return g_supplied_view_count;
+	}
+
+	memset(&out[0], 0, sizeof(out[0]));
+	out[0].cam    = g_cam;
+	out[0].width  = (uint32_t)g_view_w;
+	out[0].height = (uint32_t)g_view_h;
+	return 1;
+}
+
+void scene_renderer_set_views(const struct scene_view *views, uint32_t count)
+{
+	uint32_t i;
+
+	if (!views || count == 0) {
+		scene_renderer_clear_views();
+		return;
+	}
+	if (count > SCENE_MAX_VIEWS) {
+		/* Refused, not truncated — the reasoning is in scene_view.h. */
+		g_log->write(LOG_LEVEL_ERROR,
+			     "scene_renderer: view list longer than "
+			     "SCENE_MAX_VIEWS; keeping the previous list");
+		return;
+	}
+	for (i = 0; i < count; i++)
+		g_supplied_views[i] = views[i];
+	g_supplied_view_count = count;
+}
+
+void scene_renderer_clear_views(void)
+{
+	g_supplied_view_count = 0;
+}
+
+/*
+ * Draw one view: build its frame graph, execute it, destroy it (#989).
+ *
+ * This is the whole of what the tick used to be, minus the once-per-frame work
+ * the tick still does ahead of the loop. The graph was already constructed
+ * from scratch every tick and destroyed at the tail, so a second view is a
+ * second trip through here rather than any new graph machinery.
+ *
+ * That sequencing is also what keeps the per-view publish slots this reaches
+ * the pass callbacks through — g_view, g_shadow_res, g_outline_frame,
+ * g_bloom_frame, g_present_src, g_forward_msaa, g_bloom_composite_to_bb —
+ * honest as single-valued globals: a view is declared, compiled, executed and
+ * torn down before the next one is started, so no two views' declarations are
+ * ever live at the same time.
+ *
+ * HAS_EMISSIVE is the frame's answer to "is there anything to bloom", passed
+ * in rather than asked here because it is a walk of the whole world and the
+ * world does not change between views.
+ *
+ * THE SUN-SHADOW PASS IS RE-DECLARED AND RE-RUN PER VIEW, AND THAT IS WASTE.
+ * It renders the scene's depth from the light (see shadow_pass), which has
+ * nothing to do with which view is looking, so N views redraw one identical
+ * depth map N times. It stays per-view anyway because the shadow map is a
+ * graph transient: the graph owns its storage and reclaims it at destroy, so
+ * hoisting the pass means either a resource that outlives the graph which
+ * declared it or a graph that outlives the view — a lifetime change whose
+ * failure mode is a pass sampling a texture the graph has already taken back.
+ * Correctness first; #987 tracks the optimisation, and the shape that makes it
+ * trivial is one graph spanning all the views rather than one graph each,
+ * which is a larger change than "draw the list".
+ */
+static void draw_view(const struct scene_view *view, const struct world *w,
+		      int has_emissive)
 {
 	static const float  CLEAR[4]      = { 0.10f, 0.11f, 0.13f, 1.0f };
 	static const float  MASK_CLEAR[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
@@ -3417,101 +3569,31 @@ static void scene_renderer_tick(void)
 	fg_pass_t           pass;
 	fg_resource_t       shadow;
 	fg_pass_t           spass;
-	const struct world *w;
 	uint32_t            sel = 0;
 	int                 outline;
 	int                 bloom;
 	int                 offscreen;
 
-	if (!g_ready || !g_fg_api || !g_scene)
-		return;
-
-	/* Warm pipelines and mesh buffers for the live world, off-frame, so the
-	 * forward pass never creates or destroys a GPU resource mid-pass. */
-	ensure_shader_pipelines();
-	ensure_textures();
-	ensure_meshes();
-
-	w = g_scene->get_world();
-
-	if (w) {
-		g_camera_entity_id = resolve_camera_entity(w);
-		/* Skip the scripted-camera copy while the user is driving the view
-		 * (#697): an interactive orbit/pan/dolly owns g_cam until reset. */
-		if (g_camera_entity_id >= 0 && !g_cam_user_controlled) {
-			const struct transform *x =
-				&w->world_xform[g_camera_entity_id];
-
-			g_cam.eye[0] = x->position[0];
-			g_cam.eye[1] = x->position[1];
-			g_cam.eye[2] = x->position[2];
-		}
-	}
-
-	/*
-	 * Steer the directional light from the scene's first live light entity:
-	 * its world rotation turns the default sun vector, so rotating the entity
-	 * (gizmo or script) moves the light. With no light entity the default sun
-	 * stays, so a scene without one looks exactly as it did before. Radiance
-	 * is left at its constant white — per-light colour/intensity is the next
-	 * increment, when a per-entity light-data column earns its keep.
-	 */
-	{
-		static const float BASE_DIR[3] = { 0.5f, 0.8f, 0.4f };
-		uint32_t j;
-
-		g_light.dir[0] = BASE_DIR[0];
-		g_light.dir[1] = BASE_DIR[1];
-		g_light.dir[2] = BASE_DIR[2];
-		if (w) {
-			for (j = 0; j < w->count; j++) {
-				if (!w->alive[j] ||
-				    !(w->mask[j] & COMPONENT_LIGHT))
-					continue;
-				light_quat_rotate(w->world_xform[j].rotation,
-						  BASE_DIR, g_light.dir);
-				break;
-			}
-		}
-	}
-
-	camera_update(&g_cam);
-	update_light_view_proj(w);
-
-	/*
-	 * Advance the cosmetic particles once per frame, before the pass that
-	 * draws them. A fixed timestep (not the frame's real delta) — the pool is
-	 * purely visual, so a steady rate reads fine and keeps a dropped frame
-	 * from teleporting a burst; matching the ~60 Hz loop is close enough.
-	 */
-	particles_update(1.0f / 60.0f);
+	/* Publish the view every pass callback below draws with: its pair, the
+	 * eye that pair was built about, and the size of what it draws into. */
+	g_view = *view;
 
 	/*
 	 * The outline path adds two passes around the forward pass, so it only
 	 * runs when there is actually a selected mesh to outline, its pipelines
-	 * compiled, and the UI has reported a viewport to size the offscreen
-	 * targets to. Otherwise (every shipped game, and any frame with nothing
-	 * selected) the renderer stays the single forward-to-backbuffer pass it
-	 * has always been, at zero added cost.
+	 * compiled, and this view has a size to build the offscreen targets at.
+	 * Otherwise (every shipped game, and any frame with nothing selected)
+	 * the renderer stays the single forward-to-backbuffer pass it has
+	 * always been, at zero added cost.
 	 */
 	outline = w && g_mask_pso && g_outline_pso &&
-		  g_view_w > 0.0f && g_view_h > 0.0f &&
+		  view->width > 0 && view->height > 0 &&
 		  outline_selected_entity(w, &sel);
 
 	fg = g_fg_api->create();
 	if (!fg)
 		return;
 	bb = g_fg_api->import_backbuffer(fg);
-
-	/*
-	 * Rewind the uniform rings for the frame. This runs once, ahead of every
-	 * pass, and deliberately NOT between passes: shadow and forward are
-	 * separate command buffers within one frame and must share the ring.
-	 * The backend's frame_end would also read correct, but scene_renderer
-	 * does not own that hook, so the reset lives where the frame's passes
-	 * are declared.
-	 */
-	g_ring_cursor = 0;
 
 	/*
 	 * The sun-shadow pass runs first when its depth pipeline compiled: it
@@ -3545,7 +3627,7 @@ static void scene_renderer_tick(void)
 	 * that earns it; what matters here is the other half of the deal.
 	 *
 	 * bloom_available() is the separate question of whether the machinery
-	 * is up at all (pipelines compiled, a viewport reported); a headless or
+	 * is up at all (pipelines compiled, this view sized); a headless or
 	 * pre-report frame runs no chain the same way.
 	 *
 	 * What bloom does NOT decide is whether the scene goes offscreen. That
@@ -3566,8 +3648,8 @@ static void scene_renderer_tick(void)
 	 * the chain runs, else the present blit. All three read the resolved
 	 * scene and write the backbuffer.
 	 */
-	bloom     = bloom_available() && frame_has_emissive(w);
-	offscreen = g_view_w > 0.0f && g_view_h > 0.0f &&
+	bloom     = bloom_available(view) && has_emissive;
+	offscreen = view->width > 0 && view->height > 0 &&
 		    (outline || bloom || g_present_pso);
 
 	if (!offscreen) {
@@ -3612,9 +3694,14 @@ static void scene_renderer_tick(void)
 		 * neither, the present blit does, and the frame is the scene
 		 * itself — resolved, and otherwise untouched.
 		 *
-		 * `offscreen` already required a viewport, so vw/vh are live.
+		 * `offscreen` already required this view to have a size, so
+		 * vw/vh are live. They are the VIEW's, so every transient
+		 * declared below — scene colour and depth, the MSAA resolve,
+		 * the outline mask and `lit`, and the bloom chain's half-res
+		 * targets — is sized to the view that draws into it, not to
+		 * whatever the canvas last reported.
 		 */
-		uint32_t      vw = (uint32_t)g_view_w, vh = (uint32_t)g_view_h;
+		uint32_t      vw = view->width, vh = view->height;
 		uint32_t      samples = g_msaa_samples;
 		fg_tex_desc   cdesc, ddesc, scdesc, sddesc;
 		fg_resource_t scene_color, scene_depth, scene_resolve, post;
@@ -3736,6 +3823,150 @@ static void scene_renderer_tick(void)
 	g_shadow_res = 0;
 }
 
+/*
+ * One frame: the state every view of it shares, then the views themselves.
+ *
+ * The split is the whole of #989. Everything above the loop is a property of
+ * the frame — the world, the camera the scene authored, the sun, the particle
+ * pool — and would be either wasted work or an outright bug if it ran once per
+ * view; everything below it is a property of a view and now reads one.
+ */
+static void scene_renderer_tick(void)
+{
+	struct scene_view   views[SCENE_MAX_VIEWS];
+	const struct world *w;
+	uint32_t            count, v;
+	int                 has_emissive;
+
+	if (!g_ready || !g_fg_api || !g_scene)
+		return;
+
+	/*
+	 * Warm pipelines and mesh buffers for the live world, off-frame, so the
+	 * forward pass never creates or destroys a GPU resource mid-pass.
+	 *
+	 * Shared by every view of the frame, and safe to share because not one
+	 * of these caches is keyed on a camera: a mesh is uploaded per (asset,
+	 * mesh params), a texture per (asset, size, gen params) and a pipeline
+	 * per shader. A second view draws the same geometry with the same
+	 * materials through the same pipelines and differs only in its
+	 * matrices, so re-running the sweeps per view would upload nothing new
+	 * — and would run ensure_meshes' mark-and-sweep eviction a second time
+	 * inside one frame, which is not merely wasteful but the kind of thing
+	 * that starts freeing buffers a graph already built on.
+	 */
+	ensure_shader_pipelines();
+	ensure_textures();
+	ensure_meshes();
+
+	w = g_scene->get_world();
+
+	if (w) {
+		g_camera_entity_id = resolve_camera_entity(w);
+		/* Skip the scripted-camera copy while the user is driving the view
+		 * (#697): an interactive orbit/pan/dolly owns g_cam until reset. */
+		if (g_camera_entity_id >= 0 && !g_cam_user_controlled) {
+			const struct transform *x =
+				&w->world_xform[g_camera_entity_id];
+
+			g_cam.eye[0] = x->position[0];
+			g_cam.eye[1] = x->position[1];
+			g_cam.eye[2] = x->position[2];
+		}
+	}
+
+	/*
+	 * Steer the directional light from the scene's first live light entity:
+	 * its world rotation turns the default sun vector, so rotating the entity
+	 * (gizmo or script) moves the light. With no light entity the default sun
+	 * stays, so a scene without one looks exactly as it did before. Radiance
+	 * is left at its constant white — per-light colour/intensity is the next
+	 * increment, when a per-entity light-data column earns its keep.
+	 */
+	{
+		static const float BASE_DIR[3] = { 0.5f, 0.8f, 0.4f };
+		uint32_t j;
+
+		g_light.dir[0] = BASE_DIR[0];
+		g_light.dir[1] = BASE_DIR[1];
+		g_light.dir[2] = BASE_DIR[2];
+		if (w) {
+			for (j = 0; j < w->count; j++) {
+				if (!w->alive[j] ||
+				    !(w->mask[j] & COMPONENT_LIGHT))
+					continue;
+				light_quat_rotate(w->world_xform[j].rotation,
+						  BASE_DIR, g_light.dir);
+				break;
+			}
+		}
+	}
+
+	/*
+	 * The scene camera and the sun's matrix, both once per frame. The
+	 * camera because it is the scene's own pose — the thing picking and
+	 * editor overlays unproject against, and the producer the derived view
+	 * is built from — not one of the views; the light because its view_proj
+	 * is framed on the world's bounds and the sun's direction, with no
+	 * camera anywhere in it (see update_light_view_proj), so every view
+	 * shades against the same sun.
+	 */
+	camera_update(&g_cam);
+	update_light_view_proj(w);
+
+	/*
+	 * Advance the cosmetic particles once per frame, before the passes that
+	 * draw them. A fixed timestep (not the frame's real delta) — the pool is
+	 * purely visual, so a steady rate reads fine and keeps a dropped frame
+	 * from teleporting a burst; matching the ~60 Hz loop is close enough.
+	 *
+	 * Once per FRAME, not once per view: stepping the pool between the eyes
+	 * would run the simulation at N times the rate and, worse, would put
+	 * the two eyes' particles in different places — a burst that fails to
+	 * fuse into one object.
+	 */
+	particles_update(1.0f / 60.0f);
+
+	/*
+	 * Is there anything to bloom? A walk of the world's materials, and the
+	 * world does not change between the views of one frame, so it is asked
+	 * once and handed to each of them.
+	 */
+	has_emissive = frame_has_emissive(w);
+
+	/*
+	 * Rewind the uniform rings for the frame — ONCE, ahead of every view
+	 * and deliberately NOT between them.
+	 *
+	 * Within one view this was already the rule: shadow and forward are
+	 * separate command buffers inside one frame, they share the queue
+	 * timeline, and so they must share the ring. Views are the same
+	 * situation one level out. A reset per view would hand view 1's draws
+	 * the very slots view 0's already-recorded draws are going to read, and
+	 * on WebGPU — where buffer_update is a queue-timeline write, not an
+	 * in-order GL command — view 1's uploads would land in them before view
+	 * 0's commands ran. The result is not a crash but the failure this ring
+	 * exists to kill: every eye drawn with the last eye's transforms, no
+	 * error logged, a plausible wrong picture.
+	 *
+	 * The cost of getting it right is that SCENE_MAX_DRAWS is a per-FRAME
+	 * budget shared by the views, so N views draw at most SCENE_MAX_DRAWS
+	 * between them and overflow (which skips draws, loudly, rather than
+	 * wrapping) arrives N times sooner. That is the correct place for the
+	 * limit to bite: the ring must cover every draw the frame's command
+	 * buffers can still read.
+	 *
+	 * The backend's frame_end would also read correct, but scene_renderer
+	 * does not own that hook, so the reset lives where the frame's views
+	 * are drawn.
+	 */
+	g_ring_cursor = 0;
+
+	count = frame_views(views);
+	for (v = 0; v < count; v++)
+		draw_view(&views[v], w, has_emissive);
+}
+
 static void scene_renderer_shutdown(void)
 {
 	const struct gpu_api *gpu;
@@ -3825,6 +4056,10 @@ static void scene_renderer_shutdown(void)
 	g_shader_pso_count = 0;
 	g_mesh_count       = 0;
 	g_texture_count    = 0;
+	/* Drop any supplied view list with the rest of the frame state: a
+	 * restarted renderer derives its view from the camera again, rather
+	 * than from a list whose supplier is also gone. */
+	g_supplied_view_count = 0;
 	g_ready            = 0;
 	g_log->write(LOG_LEVEL_INFO, "scene_renderer: shutdown");
 }

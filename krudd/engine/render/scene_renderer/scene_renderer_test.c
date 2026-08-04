@@ -4,6 +4,7 @@
 #include <frame_graph/fg.h>
 #include <abi/entity_api.h>
 #include <abi/camera_api.h>
+#include <scene_renderer/scene_view.h>
 #include <abi/asset_api.h>
 #include <math/math_types.h>
 #include <asset/mesh.h>
@@ -214,8 +215,18 @@ static const struct asset_api FAKE_ASSET = {
 static struct world       g_world;
 static const struct world *fake_get_world(void) { return &g_world; }
 
+/*
+ * The scene selection, which is what the outline pass follows on the native
+ * harness (OUTLINE_FOLLOWS_SELECTION). -1 — nothing selected — for every test
+ * but the one that wants the outline chain declared, so the graphs every other
+ * assertion here counts are unaffected by this existing at all.
+ */
+static int32_t g_selected = -1;
+static int32_t fake_get_selected(void) { return g_selected; }
+
 static const struct entity_api FAKE_SCENE = {
-	.get_world = fake_get_world,
+	.get_world    = fake_get_world,
+	.get_selected = fake_get_selected,
 };
 
 static void set_identity_xform(struct transform *t, float x, float y, float z)
@@ -801,6 +812,329 @@ static void test_camera_supplied_view_proj(struct subsystem_manager *mgr)
 	assert(memcmp(got.m, want.m, sizeof(want.m)) != 0);
 }
 
+/*
+ * Every uniform-ring offset the frame's Camera-block binds named, in order.
+ *
+ * A draw takes its own slot in the shared ring and binds the Camera block at
+ * that slot's byte offset, so this is the frame's ring allocation seen from
+ * outside the renderer — the only place it is observable at all. Filtered by
+ * the block's size, which is what tells a Camera bind apart from the outline's
+ * and the blur's own one-slot UBOs (32 and 16 bytes) that also sit at slot 0.
+ */
+#define CAMERA_BLOCK_BYTES ((uint32_t)(36u * sizeof(float)))
+#define MAX_RING_OFFSETS   64
+
+static uint32_t camera_ring_offsets(uint32_t *out, uint32_t cap)
+{
+	const struct gpu_call_record *log;
+	uint32_t count, i, n = 0;
+
+	log = renderer_null_get_log(&count);
+	for (i = 0; i < count && n < cap; i++) {
+		if (log[i].type == GPU_CALL_CMD_BIND_UNIFORM_BUFFER &&
+		    log[i].args.cmd_bind_uniform_buffer.slot == 0 &&
+		    log[i].args.cmd_bind_uniform_buffer.size ==
+			    CAMERA_BLOCK_BYTES)
+			out[n++] = log[i].args.cmd_bind_uniform_buffer.offset;
+	}
+	return n;
+}
+
+/* Is every offset in OFF[0..N) distinct? Two draws sharing one ring slot is
+ * exactly the clobber the ring exists to prevent. */
+static int offsets_all_distinct(const uint32_t *off, uint32_t n)
+{
+	uint32_t i, j;
+
+	for (i = 0; i < n; i++)
+		for (j = i + 1; j < n; j++)
+			if (off[i] == off[j])
+				return 0;
+	return 1;
+}
+
+/* Is B exactly A repeated COPIES times — same passes and same transients, in
+ * the same order, COPIES times over? That is what "N views each drew the graph
+ * one view draws" means in the terms capture_graph_shape records. */
+static int graph_shape_repeats(const struct graph_shape *a,
+			       const struct graph_shape *b, uint32_t copies)
+{
+	uint32_t c, i;
+
+	if (b->pass_count != a->pass_count * copies ||
+	    b->tex_count != a->tex_count * copies)
+		return 0;
+	for (c = 0; c < copies; c++) {
+		for (i = 0; i < a->pass_count; i++)
+			if (memcmp(&b->pass[c * a->pass_count + i], &a->pass[i],
+				   sizeof(a->pass[0])) != 0)
+				return 0;
+		for (i = 0; i < a->tex_count; i++)
+			if (memcmp(&b->tex[c * a->tex_count + i], &a->tex[i],
+				   sizeof(a->tex[0])) != 0)
+				return 0;
+	}
+	return 1;
+}
+
+/* A view drawing at W x H through PROJ, from a fixed eye looking at the
+ * origin. The eye is shared by the views below on purpose: a stereo pair
+ * differs in its projection, and this test wants nothing else to. */
+static void make_view(struct scene_view *v, const struct mat4 *proj,
+		      uint32_t w, uint32_t h)
+{
+	static const float eye[3]    = { 0.0f, 0.0f, 4.0f };
+	static const float target[3] = { 0.0f, 0.0f, 0.0f };
+	static const float up[3]     = { 0.0f, 1.0f, 0.0f };
+	struct mat4        view;
+
+	memset(v, 0, sizeof(*v));
+	mat4_look_at(&view, eye, target, up);
+	camera_set_view_proj(&v->cam, &view, proj, eye);
+	/* The billboard basis draw_particles reads is the authored one, so an
+	 * explicitly-built view fills it too — see scene_view.h. */
+	memcpy(v->cam.eye, eye, sizeof(eye));
+	memcpy(v->cam.target, target, sizeof(target));
+	memcpy(v->cam.up, up, sizeof(up));
+	v->width  = w;
+	v->height = h;
+}
+
+/*
+ * One view draws the graph the renderer drew before there was a list (#989).
+ *
+ * The claim the whole change rests on is that a list of length one changes
+ * nothing, and this asserts it from both ends. First literally: the frame's
+ * passes and transients are counted against the numbers this path has always
+ * produced — a shadow pass, a forward pass and the present blit, over the
+ * shadow map, the multisampled scene colour, its depth and the resolve target,
+ * with exactly one pass resolving. Then structurally: supplying a
+ * one-entry list produces a graph identical to the one the frame derives when
+ * no list is supplied, so the list machinery itself adds nothing, and clearing
+ * the list puts the frame back on the derived path.
+ */
+static void test_one_view_graph_unchanged(struct subsystem_manager *mgr)
+{
+	const struct camera_api *cam = subsystem_manager_get_api(mgr, "camera");
+	struct graph_shape       derived, supplied, cleared;
+	struct scene_view        one;
+	struct mat4              proj;
+	uint32_t                 derived_draws;
+
+	assert(cam && cam->set_viewport);
+	build_world_material(1, 11u);   /* one box, nothing emissive */
+	cam->set_viewport(64.0f, 48.0f);
+	scene_renderer_clear_views();
+
+	renderer_null_reset_log();
+	subsystem_manager_tick(mgr);
+	capture_graph_shape(&derived);
+	derived_draws = count_draws(NULL);
+
+	/* Shadow, forward, present — over the shadow map, the scene colour,
+	 * its depth and the resolve target. */
+	assert(derived.pass_count == 3);
+	assert(derived.tex_count == 4);
+	assert(color_target_samples(&derived, 64, 48) > 1);
+	assert(count_resolving_passes(&derived) == 1);
+	assert(derived_draws == 3);        /* shadow + forward + the blit */
+
+	/* The same frame with the view stated rather than derived. The matrices
+	 * differ from the scene camera's and are allowed to: what is asserted
+	 * is the graph, a function of the view's size and not of its pose. */
+	mat4_perspective(&proj, 0.8f, 64.0f / 48.0f, 0.1f, 100.0f);
+	make_view(&one, &proj, 64, 48);
+	scene_renderer_set_views(&one, 1);
+	renderer_null_reset_log();
+	subsystem_manager_tick(mgr);
+	capture_graph_shape(&supplied);
+	assert(memcmp(&supplied, &derived, sizeof(derived)) == 0);
+	assert(count_draws(NULL) == derived_draws);
+
+	/* And handing the list back returns the frame to the derived view. */
+	scene_renderer_clear_views();
+	renderer_null_reset_log();
+	subsystem_manager_tick(mgr);
+	capture_graph_shape(&cleared);
+	assert(memcmp(&cleared, &derived, sizeof(derived)) == 0);
+}
+
+/*
+ * Two views, drawn one after the other in one frame (#989).
+ *
+ * They differ only in projection — one symmetric, one off-axis — which is the
+ * stereo case exactly: the same head, the same instant, two frustums. What has
+ * to hold is that each of them draws the graph a single view draws, and that
+ * the second corrupts nothing the first left behind.
+ *
+ * THE UNIFORM RING IS THE ONE WORTH ASSERTING. Every draw takes its own slot
+ * from a ring rewound once per frame, and a second view's draws must take
+ * slots of their own rather than reusing the first's — on WebGPU a
+ * buffer_update is a queue-timeline write, so re-using view 0's slots would
+ * overwrite the uniforms view 0's already-recorded commands are still going to
+ * read, and both eyes would come out drawn with the last eye's transforms with
+ * nothing logged. Distinct bind offsets across the whole frame is that
+ * property, in the only form the call log can show it.
+ */
+static void test_two_views(struct subsystem_manager *mgr)
+{
+	const struct camera_api *cam = subsystem_manager_get_api(mgr, "camera");
+	struct scene_view        views[2];
+	struct graph_shape       one, two;
+	struct mat4              sym, off_axis;
+	uint32_t                 off[MAX_RING_OFFSETS];
+	uint32_t                 one_draws, one_offsets, n;
+
+	assert(cam && cam->set_viewport);
+	build_world_material(1, 11u);   /* one box, nothing emissive */
+	cam->set_viewport(64.0f, 48.0f);
+
+	mat4_perspective(&sym, 0.8f, 64.0f / 48.0f, 0.1f, 100.0f);
+	off_axis_proj(&off_axis, -0.09f, 0.11f, -0.10f, 0.10f, 0.1f, 100.0f);
+	make_view(&views[0], &sym, 64, 48);
+	make_view(&views[1], &off_axis, 64, 48);
+
+	/* The one-view frame this pair has to reproduce twice. */
+	scene_renderer_set_views(views, 1);
+	renderer_null_reset_log();
+	subsystem_manager_tick(mgr);
+	capture_graph_shape(&one);
+	one_draws   = count_draws(NULL);
+	one_offsets = camera_ring_offsets(off, MAX_RING_OFFSETS);
+	assert(one_offsets > 0);
+
+	scene_renderer_set_views(views, 2);
+	renderer_null_reset_log();
+	subsystem_manager_tick(mgr);
+	capture_graph_shape(&two);
+
+	/* Both drew, and each drew the same graph one view draws. */
+	assert(count_draws(NULL) == 2 * one_draws);
+	assert(graph_shape_repeats(&one, &two, 2));
+	assert(count_resolving_passes(&two) == 2);
+
+	/* And the second did not take the first's ring slots. */
+	n = camera_ring_offsets(off, MAX_RING_OFFSETS);
+	assert(n == 2 * one_offsets);
+	assert(offsets_all_distinct(off, n));
+
+	/*
+	 * Per-view dimensions, not a global one: halving the second view's size
+	 * gives it its own transients at its own size, and leaves the first
+	 * view's alone. Three targets each — the multisampled scene colour, its
+	 * depth and the resolve — since the shadow map is square and fixed.
+	 */
+	views[1].width  = 32;
+	views[1].height = 24;
+	scene_renderer_set_views(views, 2);
+	renderer_null_reset_log();
+	subsystem_manager_tick(mgr);
+	assert(count_texture_creates(64, 48) == 3);
+	assert(count_texture_creates(32, 24) == 3);
+
+	scene_renderer_clear_views();
+}
+
+/*
+ * The two post chains, per view (#989). Both hang off the view's own size, so
+ * both had to stop reading a global one; each is asserted by the passes and
+ * transients it adds, doubled.
+ */
+static void test_post_chains_per_view(struct subsystem_manager *mgr)
+{
+	const struct camera_api *cam = subsystem_manager_get_api(mgr, "camera");
+	struct scene_view        views[2];
+	struct graph_shape       one, two;
+	struct mat4              sym, off_axis;
+
+	assert(cam && cam->set_viewport);
+	cam->set_viewport(64.0f, 48.0f);
+	mat4_perspective(&sym, 0.8f, 64.0f / 48.0f, 0.1f, 100.0f);
+	off_axis_proj(&off_axis, -0.09f, 0.11f, -0.10f, 0.10f, 0.1f, 100.0f);
+	make_view(&views[0], &sym, 64, 48);
+	make_view(&views[1], &off_axis, 64, 48);
+
+	/*
+	 * Bloom: an emissive material, so each view declares the bright pass,
+	 * two blurs and the composite over three half-res transients of its
+	 * own. Six 32x24 targets across the pair is the whole claim — one chain
+	 * per view, sized from that view.
+	 */
+	build_world_material(1, 10u);
+	scene_renderer_set_views(views, 1);
+	renderer_null_reset_log();
+	subsystem_manager_tick(mgr);
+	capture_graph_shape(&one);
+	/* Shadow, forward, bright pass, blur H, blur V, composite. */
+	assert(one.pass_count == 6);
+	assert(count_texture_creates(32, 24) == 3);
+
+	scene_renderer_set_views(views, 2);
+	renderer_null_reset_log();
+	subsystem_manager_tick(mgr);
+	capture_graph_shape(&two);
+	assert(graph_shape_repeats(&one, &two, 2));
+	assert(count_texture_creates(32, 24) == 6);
+
+	/*
+	 * Outline: a selected mesh, so each view declares the mask pass and the
+	 * composite that terminates it over a mask target of its own. Back to a
+	 * non-emissive material so the two chains are counted separately.
+	 */
+	build_world_material(1, 11u);
+	g_selected = 0;
+	scene_renderer_set_views(views, 1);
+	renderer_null_reset_log();
+	subsystem_manager_tick(mgr);
+	capture_graph_shape(&one);
+	assert(one.pass_count == 4);   /* shadow, forward, mask, outline */
+	assert(one.tex_count == 5);    /* + the silhouette mask */
+
+	scene_renderer_set_views(views, 2);
+	renderer_null_reset_log();
+	subsystem_manager_tick(mgr);
+	capture_graph_shape(&two);
+	assert(graph_shape_repeats(&one, &two, 2));
+
+	g_selected = -1;
+	scene_renderer_clear_views();
+}
+
+/*
+ * A list longer than the renderer can hold is refused whole, not truncated:
+ * the frame keeps drawing the list it had. Truncating would silently draw
+ * fewer eyes than the caller asked for, which is a wrong frame with nothing to
+ * notice it by.
+ */
+static void test_view_list_overflow_refused(struct subsystem_manager *mgr)
+{
+	const struct camera_api *cam = subsystem_manager_get_api(mgr, "camera");
+	struct scene_view        views[SCENE_MAX_VIEWS + 1];
+	struct graph_shape       before, after;
+	struct mat4              sym;
+	uint32_t                 i;
+
+	assert(cam && cam->set_viewport);
+	build_world_material(1, 11u);
+	cam->set_viewport(64.0f, 48.0f);
+	mat4_perspective(&sym, 0.8f, 64.0f / 48.0f, 0.1f, 100.0f);
+	for (i = 0; i < SCENE_MAX_VIEWS + 1; i++)
+		make_view(&views[i], &sym, 64, 48);
+
+	scene_renderer_set_views(views, 1);
+	renderer_null_reset_log();
+	subsystem_manager_tick(mgr);
+	capture_graph_shape(&before);
+
+	scene_renderer_set_views(views, SCENE_MAX_VIEWS + 1);
+	renderer_null_reset_log();
+	subsystem_manager_tick(mgr);
+	capture_graph_shape(&after);
+	assert(memcmp(&after, &before, sizeof(before)) == 0);
+
+	scene_renderer_clear_views();
+}
+
 int main(void)
 {
 	static const struct subsystem static_table[] = {
@@ -866,9 +1200,13 @@ int main(void)
 	test_camera_follows_named_entity(&mgr);
 	test_camera_user_navigation(&mgr);
 	test_camera_supplied_view_proj(&mgr);
-	/* Last: it reports a viewport, and camera_set_viewport keeps the last
-	 * positive one, so every frame after this can take the post path. */
+	/* From here on a viewport has been reported, and camera_set_viewport
+	 * keeps the last positive one, so every frame takes the post path. */
 	test_bloom_follows_emissive(&mgr);
+	test_one_view_graph_unchanged(&mgr);
+	test_two_views(&mgr);
+	test_post_chains_per_view(&mgr);
+	test_view_list_overflow_refused(&mgr);
 
 	subsystem_manager_shutdown(&mgr);
 	mem_shutdown();

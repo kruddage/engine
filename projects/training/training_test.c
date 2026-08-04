@@ -12,10 +12,11 @@
  *
  * What it checks: the room is 6 m x 6 m under a 3 m ceiling with its floor at
  * y = 0; the walls stand at x = ±3 and z = ±3; the glowing grid is ruled at one
- * metre intervals; the flatscreen camera sits at standing eye height; and the
- * human reference really is 1.75 m tall with its feet on the floor — which,
- * because a capsule is two units tall rather than one, is the check that would
- * have caught the room being built at half scale.
+ * metre intervals; the flatscreen camera sits at standing eye height; the human
+ * reference really is 1.75 m tall with its feet on the floor — which, because a
+ * capsule is two units tall rather than one, is the check that would have caught
+ * the room being built at half scale; and the four props really are a table, a
+ * chair, a doorway and a step, at the heights those words mean.
  *
  * No GPU and no asset catalog: the room's two materials resolve to "unbound",
  * which still spawns every entity the scene declares. Geometry is what this is
@@ -85,12 +86,22 @@ static const struct subsystem t_subsystems[] = {
 };
 
 /*
- * Total entities the room spawns: a camera, floor and ceiling, four walls,
- * seven floor lines each way, two ruled lines around each of the four walls,
- * and the human reference. Its fingerprint — it moves only when the (scene ...)
- * clause of training.scm gains or loses an entity.
+ * Total entities the room spawns, and what the number is made of:
+ *
+ *    1  the camera
+ *    2  floor and ceiling
+ *    4  walls
+ *   14  floor lines, seven each way
+ *    8  ruled wall lines, two around each of the four walls
+ *    1  the human reference
+ *    4  the props — table, chair, doorway, step
+ *   --
+ *   34
+ *
+ * Its fingerprint — it moves only when the (scene ...) clause of training.scm
+ * gains or loses an entity, and then the sum above says which line changed.
  */
-#define TRAINING_ENTITY_COUNT 30
+#define TRAINING_ENTITY_COUNT 34
 
 /* The room, in metres. The same numbers training.scm is written in. */
 #define ROOM_SIZE      6.0f
@@ -100,6 +111,35 @@ static const struct subsystem t_subsystems[] = {
 #define HUMAN_HEIGHT   1.75f
 #define GRID_STEP      1.0f
 #define LINE_WIDTH     0.02f
+
+/*
+ * The props, in the dimensions the words mean — a table you sit at, a chair you
+ * sit on, a door you walk through, a step you step onto. Nobody has to be told
+ * these; that is the whole reason the room is furnished.
+ */
+#define TABLE_HEIGHT   0.75f
+#define CHAIR_HEIGHT   0.45f
+#define DOORWAY_HEIGHT 2.0f
+#define STEP_HEIGHT    0.3f
+
+/*
+ * And what their meshes were AUTHORED to, which is a different set of numbers
+ * and has to be: every prop silhouette is written a unit across at its widest
+ * (the convention the built-ins already follow), so a prop's scale is its width
+ * in metres and its height is that scale times the crown its silhouette
+ * reaches. These crowns are the only values here transcribed from training.scm;
+ * every metre below is derived through one of them.
+ *
+ * The doorway's crown is the top of its lintel, so the opening a person walks
+ * through is the crown less the lintel — the frame is 2.1 m of woodwork around
+ * 2.0 m of gap, and 2.0 m is what a doorway means.
+ */
+#define PROP_MESH_HALF      0.5f
+#define TABLE_MESH_CROWN    0.625f
+#define CHAIR_MESH_CROWN    1.125f
+#define DOORWAY_MESH_CROWN  2.1f
+#define DOORWAY_MESH_LINTEL 0.1f
+#define STEP_MESH_CROWN     0.25f
 
 /*
  * A millimetre. Every dimension here is authored as a decimal literal in Scheme
@@ -145,6 +185,26 @@ static const float *pos_of(const char *name)
 static const float *scale_of(const char *name)
 {
 	return w.local[id_named(name)].scale;
+}
+
+/*
+ * A prop's height in metres: its Y scale times the crown its silhouette was
+ * authored to — the same scale * authored-extent derivation the human reference
+ * gets, and for the same reason. The number in the scene clause is the prop's
+ * WIDTH; a prop whose author typed its height there instead, or bound it to a
+ * built-in whose extent is not the crown, comes out the wrong height here
+ * rather than looking plausible in a screenshot.
+ */
+static float prop_height(const char *name, float crown)
+{
+	return scale_of(name)[1] * crown;
+}
+
+/* How far a prop reaches from its own centre, in metres: half a unit of
+ * authored width, scaled. What a rim has to land on to be read off the grid. */
+static float prop_rim(const char *name)
+{
+	return scale_of(name)[0] * PROP_MESH_HALF;
 }
 
 /* The room builds, whole, and builds the same twice — the host clears before it
@@ -265,6 +325,91 @@ static void test_human_reference_is_human_sized(void)
 }
 
 /*
+ * THE CHECK THE FURNITURE IS FOR. A grid says the room is 6 m; it does not say
+ * whether a thing just authored is the right size, because nobody has an
+ * intuition for "0.34 units". A table does. So each prop's height is derived
+ * back out of the built world — scale times authored crown — and checked
+ * against the dimension its name promises, which is the check that catches a
+ * prop turned from the wrong silhouette instead of leaving it to be eyeballed.
+ *
+ * Then the placement, because a prop nobody can measure against the floor is
+ * only half a reference: each stands with a rim or a jamb exactly on one of the
+ * metre lines the grid already draws.
+ */
+static void test_props_are_furniture_sized(void)
+{
+	static const char *props[] = {
+		"prop-table", "prop-chair", "prop-doorway", "prop-step",
+	};
+	const float *p, *s;
+	int i;
+
+	assert(open_training() == TRAINING_ENTITY_COUNT);
+
+	/* Each is the height its name means. */
+	assert(near(prop_height("prop-table", TABLE_MESH_CROWN),
+		    TABLE_HEIGHT));
+	assert(near(prop_height("prop-chair", CHAIR_MESH_CROWN),
+		    CHAIR_HEIGHT));
+	assert(near(prop_height("prop-step", STEP_MESH_CROWN),
+		    STEP_HEIGHT));
+	assert(near(prop_height("prop-doorway",
+				DOORWAY_MESH_CROWN - DOORWAY_MESH_LINTEL),
+		    DOORWAY_HEIGHT));
+
+	/* The frame around that opening still fits under the ceiling. */
+	assert(prop_height("prop-doorway", DOORWAY_MESH_CROWN) < ROOM_HEIGHT);
+
+	/* And the figure walks through the door it shares a room with — the
+	 * one relation between two references that has to hold for either of
+	 * them to be worth anything, and both sides of it are derived. */
+	assert(scale_of("human-reference")[1] * 2.0f <
+	       prop_height("prop-doorway",
+			   DOORWAY_MESH_CROWN - DOORWAY_MESH_LINTEL));
+
+	for (i = 0; i < 4; i++) {
+		p = pos_of(props[i]);
+		s = scale_of(props[i]);
+
+		/* Authored base-at-origin, so a prop stands on the floor at
+		 * y = 0 with no offset — the capsule's 0.875 is the exception,
+		 * not the rule. */
+		assert(near(p[1], 0.0f));
+
+		/* Uniform, so a turning keeps the proportions it was drawn
+		 * with and its width really is one number. */
+		assert(near(s[0], s[1]) && near(s[1], s[2]));
+
+		/* Standing in the room, not through a wall. */
+		assert(p[0] - prop_rim(props[i]) > -ROOM_HALF);
+		assert(p[0] + prop_rim(props[i]) < ROOM_HALF);
+		assert(p[2] > -ROOM_HALF && p[2] < ROOM_HALF);
+	}
+
+	/* Read against the ruler: the table's rim on x = -1 and z = +1, the
+	 * chair's on both centre lines, the step's on x = +1 and z = +1. */
+	assert(near(pos_of("prop-table")[0] + prop_rim("prop-table"),
+		    -GRID_STEP));
+	assert(near(pos_of("prop-table")[2] - prop_rim("prop-table"),
+		    GRID_STEP));
+	assert(near(pos_of("prop-chair")[0] + prop_rim("prop-chair"), 0.0f));
+	assert(near(pos_of("prop-chair")[2] - prop_rim("prop-chair"), 0.0f));
+	assert(near(pos_of("prop-step")[0] - prop_rim("prop-step"),
+		    GRID_STEP));
+	assert(near(pos_of("prop-step")[2] - prop_rim("prop-step"),
+		    GRID_STEP));
+
+	/* The doorway is the one exactly a metre wide, so BOTH jambs land on a
+	 * line and it fills one grid square: x = 1 to x = 2, on z = -1. */
+	assert(near(pos_of("prop-doorway")[0] - prop_rim("prop-doorway"),
+		    GRID_STEP));
+	assert(near(pos_of("prop-doorway")[0] + prop_rim("prop-doorway"),
+		    2.0f * GRID_STEP));
+	assert(near(pos_of("prop-doorway")[2], -GRID_STEP));
+	assert(near(2.0f * prop_rim("prop-doorway"), GRID_STEP));
+}
+
+/*
  * The flatscreen camera parks at the eye height a headset assumes before it has
  * measured anyone, so what a monitor shows today is what standing in the room
  * would show later. It stands inside the room, not outside looking in — this is
@@ -309,6 +454,7 @@ int main(void)
 	test_room_is_six_by_six_by_three();
 	test_grid_is_ruled_in_metres();
 	test_human_reference_is_human_sized();
+	test_props_are_furniture_sized();
 	test_camera_stands_at_eye_height();
 	test_one_unit_is_one_metre();
 

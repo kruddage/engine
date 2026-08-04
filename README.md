@@ -64,7 +64,9 @@ krudd/
     introspect.scm Codegen — reads a module's .scm spec, emits its .h/.c
   engine/        The engine — one folder per module, Scheme spec + C together
     abi/         The plugin vtables, and nothing else
-    base/        No engine concepts — log/, memory/, math/ (incl. the spatial types)
+    base/        No engine concepts — log/, memory/, math/ (incl. the spatial types
+                 and, in math/include/math/camera.h, the one-unit-is-one-metre
+                 convention every renderer-adjacent module measures against)
     core/        Engine heartbeat — init/tick/shutdown, subsystem manager, script host
     world/       The scene and its data model — entity/, asset/, edit/
     render/      Backends and the passes that drive them — webgl/, webgpu/,

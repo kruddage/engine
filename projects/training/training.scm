@@ -1,8 +1,9 @@
 ; SPDX-License-Identifier: GPL-2.0-or-later
 
-;;! training — a room-scale training space: a dark shell ruled by glowing lines,
-;;! the whole thing built at human scale so a headset dropped into it later
-;;! stands in a room rather than a doll's house or a cathedral.
+;;! training — a room-scale training space: a dark shell ruled by glowing lines
+;;! and furnished with a few objects at sizes everyone already knows, the whole
+;;! thing built at human scale so a headset dropped into it later stands in a
+;;! room rather than a doll's house or a cathedral.
 ;;!
 ;;! THE POINT OF THIS PROJECT IS THE SCALE. There is no game here and there is
 ;;! deliberately none yet — what it exists to pin down is that one world unit is
@@ -109,6 +110,179 @@
 ;;! room's look is not what that test is about.
 (material-define! "project://material/training-shell" training-shell-material)
 (material-define! "project://material/training-line" training-line-material)
+
+;;! --- the props this room brings with it ------------------------------------
+;;!
+;;! A grid tells you the room is 6 m. It does not tell you whether the thing you
+;;! just authored is the right size, because nobody has an intuition for "0.34
+;;! units" — but everybody has one for a table they can sit at. So the room is
+;;! furnished with four objects at dimensions a reader can check against the
+;;! room they are sitting in, and a mesh authored later is stood next to one and
+;;! judged before anyone reaches for a number.
+;;!
+;;! They are turned and framed the way chess turns its pieces — mesh-define! and
+;;! a silhouette swept by mesh-lathe — rather than scaled spheres, because a
+;;! sphere 0.75 m tall tells you nothing about whether 0.75 m is table height
+;;! and a table tells you immediately.
+;;!
+;;! All four are authored A UNIT ACROSS at their widest, which is the convention
+;;! every built-in already follows (cylinder, sphere and capsule are all radius
+;;! 0.5 — see krudd/engine/base/math/include/math/camera.h), and base-at-origin,
+;;! so a scene stands one on the floor at y = 0 with no offset to work out. What
+;;! that buys is the useful part: a prop's (scale ...) is its WIDTH in metres,
+;;! uniform so the turning keeps its proportions, and its HEIGHT is that scale
+;;! times the crown its silhouette reaches. The crowns are the ratios below, and
+;;! each is written out as the division that produced it for the reason
+;;! training-human-scale is: the number in the mesh does not look like the
+;;! number it is a claim about, and that gap is exactly how a prop ends up half
+;;! the size its comment says it is.
+
+;;! The table: 0.75 m to the top — desk height, dining height, and the height of
+;;! every work surface that is not a kitchen counter. 1.2 m across, a round
+;;! table four people eat at.
+(define training-table-height 0.75)
+(define training-table-width 1.2)
+(define training-table-crown (/ training-table-height training-table-width))
+
+;;! The chair: 0.45 m to the seat. Every chair seat in the world is within a
+;;! centimetre or two of this, which is what makes it the one furniture
+;;! dimension worth knowing by heart. 0.4 m across, and a stool rather than a
+;;! chair — a back is not a surface of revolution, and the seat height is the
+;;! number being claimed.
+(define training-chair-height 0.45)
+(define training-chair-width 0.4)
+(define training-chair-crown (/ training-chair-height training-chair-width))
+
+;;! The doorway: 2.0 m of clear opening — the height you walk through without
+;;! thinking about it and notice the instant you cannot. The frame is 1 m wide
+;;! overall around an 0.8 m opening, with a 0.1 m lintel across the top, so its
+;;! crown is the opening PLUS the lintel and the 2.0 m being claimed is the gap
+;;! rather than the woodwork.
+(define training-doorway-height 2.0)
+(define training-doorway-width 1.0)
+(define training-doorway-lintel 0.1)
+(define training-doorway-crown
+  (/ (+ training-doorway-height training-doorway-lintel)
+     training-doorway-width))
+
+;;! The step: 0.3 m of rise — twice a stair riser, mid-shin, about the tallest
+;;! thing a person steps onto rather than climbs. 1.2 m across, so it is a round
+;;! dais rather than a stair: a lathe cannot cut a rectangular tread, and the
+;;! rise is the dimension a step is judged by anyway.
+(define training-step-height 0.3)
+(define training-step-width 1.2)
+(define training-step-crown (/ training-step-height training-step-width))
+
+;;! table — a pedestal turning: a flared foot, a slim column, and a round top
+;;! that flares out under its rim. Four legs are not a surface of revolution, so
+;;! the lathe gives this table one, and the doorway below is where the other
+;;! path gets shown. Crown 0.625 = 0.75 / 1.2. 11 silhouette points, 24 sectors:
+;;! 275 verts / 1440 indices.
+(define training-table-mesh
+  (string-append "(mesh training-table\n"
+                 "  (generate ()\n"
+                 "    (mesh-lathe\n"
+                 "      (list\n"
+                 "        (list 0 0) (list 0.3 0) (list 0.31 0.02)\n"
+                 "        (list 0.12 0.05) (list 0.075 0.08) (list 0.075 0.55)\n"
+                 "        (list 0.2 0.575) (list 0.48 0.6) (list 0.5 0.615)\n"
+                 "        (list 0.5 0.625) (list 0 0.625)\n"
+                 "      )\n"
+                 "      24)))\n"))
+
+;;! chair — the table's turning drawn narrow: a foot wide enough for something
+;;! sat down on hard, a thin column, and a seat 26 mm thick, which is a seat you
+;;! could believe in rather than a disc. Crown 1.125 = 0.45 / 0.4, the one prop
+;;! taller than it is wide. 11 points: 275 verts / 1440 indices.
+(define training-chair-mesh
+  (string-append "(mesh training-chair\n"
+                 "  (generate ()\n"
+                 "    (mesh-lathe\n"
+                 "      (list\n"
+                 "        (list 0 0) (list 0.45 0) (list 0.46 0.05)\n"
+                 "        (list 0.2 0.1) (list 0.12 0.14) (list 0.12 0.95)\n"
+                 "        (list 0.28 1) (list 0.48 1.045) (list 0.5 1.06)\n"
+                 "        (list 0.5 1.125) (list 0 1.125)\n"
+                 "      )\n"
+                 "      24)))\n"))
+
+;;! doorway — the composite, and the one prop a lathe cannot express at all: a
+;;! frame is two jambs and a lintel, three boxes welded index-offset by
+;;! door-fuse the way chess-knight welds its pedestal to its head. door-box is
+;;! chess-box, an axis-aligned box from the six quad faces at half-extents;
+;;! door-at only translates, since nothing here is tilted. The jambs run y = 0
+;;! to 2 at x = ±0.45, the lintel bridges them from 2 to 2.1, and the frame is
+;;! exactly a unit across at x = ±0.5. 3 boxes: 72 verts / 108 indices.
+(define training-doorway-mesh
+  (string-append "(mesh training-doorway\n"
+                 "  (generate ()\n"
+                 "    (define (door-box hx hy hz)\n"
+                 "      (let ((faces (list\n"
+                 "              (list (list  1.0 0.0 0.0) (list 0.0 0.0 1.0) (list 0.0 1.0 0.0))\n"
+                 "              (list (list -1.0 0.0 0.0) (list 0.0 0.0 1.0) (list 0.0 1.0 0.0))\n"
+                 "              (list (list 0.0  1.0 0.0) (list 1.0 0.0 0.0) (list 0.0 0.0 1.0))\n"
+                 "              (list (list 0.0 -1.0 0.0) (list 1.0 0.0 0.0) (list 0.0 0.0 1.0))\n"
+                 "              (list (list 0.0 0.0  1.0) (list 1.0 0.0 0.0) (list 0.0 1.0 0.0))\n"
+                 "              (list (list 0.0 0.0 -1.0) (list 1.0 0.0 0.0) (list 0.0 1.0 0.0)))))\n"
+                 "        (let loop ((f 0) (verts '()) (indices '()))\n"
+                 "          (if (= f 6)\n"
+                 "              (cons (map (lambda (vx)\n"
+                 "                           (list (* (list-ref vx 0) (* 2.0 hx))\n"
+                 "                                 (* (list-ref vx 1) (* 2.0 hy))\n"
+                 "                                 (* (list-ref vx 2) (* 2.0 hz))\n"
+                 "                                 (list-ref vx 3) (list-ref vx 4) (list-ref vx 5)\n"
+                 "                                 (list-ref vx 6) (list-ref vx 7)))\n"
+                 "                         verts)\n"
+                 "                    indices)\n"
+                 "              (let ((fc (list-ref faces f)))\n"
+                 "                (loop (+ f 1)\n"
+                 "                      (append verts (mesh-quad-verts (car fc) (cadr fc) (caddr fc) 0.5))\n"
+                 "                      (append indices (mesh-quad-indices (* f 4)))))))))\n"
+                 "    (define (door-at blob tx ty tz)\n"
+                 "      (cons (map (lambda (vx)\n"
+                 "                   (list (+ (list-ref vx 0) tx)\n"
+                 "                         (+ (list-ref vx 1) ty)\n"
+                 "                         (+ (list-ref vx 2) tz)\n"
+                 "                         (list-ref vx 3) (list-ref vx 4) (list-ref vx 5)\n"
+                 "                         (list-ref vx 6) (list-ref vx 7)))\n"
+                 "                 (car blob))\n"
+                 "            (cdr blob)))\n"
+                 "    (define (door-fuse a b)\n"
+                 "      (let ((na (length (car a))))\n"
+                 "        (cons (append (car a) (car b))\n"
+                 "              (append (cdr a) (map (lambda (i) (+ i na)) (cdr b))))))\n"
+                 "    (let ((west (door-at (door-box 0.05 1.0 0.06) -0.45 1.0 0.0))\n"
+                 "          (east (door-at (door-box 0.05 1.0 0.06) 0.45 1.0 0.0))\n"
+                 "          (lintel (door-at (door-box 0.5 0.05 0.06) 0.0 2.05 0.0)))\n"
+                 "      (door-fuse (door-fuse west east) lintel))))\n"))
+
+;;! step — the shallowest turning of the four: a straight riser, a rounded
+;;! nosing where a foot lands, and a flat top inset from the rim. Crown 0.25 =
+;;! 0.3 / 1.2, which makes it the prop whose scale and height look least alike —
+;;! the one most worth having a test read back. 7 points: 175 verts / 864
+;;! indices.
+(define training-step-mesh
+  (string-append "(mesh training-step\n"
+                 "  (generate ()\n"
+                 "    (mesh-lathe\n"
+                 "      (list\n"
+                 "        (list 0 0) (list 0.5 0) (list 0.5 0.19)\n"
+                 "        (list 0.48 0.22) (list 0.47 0.24) (list 0.47 0.25)\n"
+                 "        (list 0 0.25)\n"
+                 "      )\n"
+                 "      24)))\n"))
+
+;;! Registered while this source is evaluated, for chess's reason: the scene
+;;! clause's (mesh ...) paths have to resolve when the launcher opens the room,
+;;! and a reload re-runs these and replaces each source in place (mesh-define!
+;;! keeps the id), so a prop already bound keeps its geometry rather than losing
+;;! it to a stale id. All four return 0 in the headless test, which boots no
+;;! asset catalog; an unbound mesh still spawns its entity, and the entity's
+;;! transform is what that test is about.
+(mesh-define! "project://mesh/training-table" training-table-mesh)
+(mesh-define! "project://mesh/training-chair" training-chair-mesh)
+(mesh-define! "project://mesh/training-doorway" training-doorway-mesh)
+(mesh-define! "project://mesh/training-step" training-step-mesh)
 
 ;;! --- the project -----------------------------------------------------------
 ;;!
@@ -249,6 +423,54 @@
                 (entity (name "human-reference")
                         (mesh     "builtin://mesh/capsule")
                         (material "project://material/training-line")
-                        (at 0 0.875 -1) (scale 0.45 0.875 0.45)))
+                        (at 0 0.875 -1) (scale 0.45 0.875 0.45))
+
+                ;;! The props. Every one stands at y = 0 — a silhouette
+                ;;! authored base-at-origin needs no offset to touch the
+                ;;! floor, and the capsule above, sunk to its centre at
+                ;;! 0.875, is the exception that makes the rule worth
+                ;;! stating. Every scale is uniform and is the prop's WIDTH
+                ;;! in metres; the height is that times the crown, which is
+                ;;! why none of these numbers is the number in the comment.
+                ;;! They glow like the figure and the lines because the room
+                ;;! holds no lights, and a fixture you cannot see is not one.
+
+                ;;! Table, 0.75 m to the top. Its rim reaches x = -1 and
+                ;;! z = +1, so you read its 1.2 m width off the floor by
+                ;;! counting from the line it touches.
+                (entity (name "prop-table")
+                        (mesh     "project://mesh/training-table")
+                        (material "project://material/training-line")
+                        (at -1.6 0 1.6) (scale 1.2 1.2 1.2))
+
+                ;;! Chair, 0.45 m to the seat, out in the middle of the room
+                ;;! where its rim touches both centre lines — x = 0 and
+                ;;! z = 0 — which are the two lines a person standing in the
+                ;;! room is most likely to be straddling.
+                (entity (name "prop-chair")
+                        (mesh     "project://mesh/training-chair")
+                        (material "project://material/training-line")
+                        (at -0.2 0 0.2) (scale 0.4 0.4 0.4))
+
+                ;;! Doorway, 2.0 m of opening under a 0.1 m lintel. It is the
+                ;;! only prop a whole metre wide, so it is placed to fill one
+                ;;! grid square exactly: the jambs stand on x = 1 and x = 2,
+                ;;! and the frame is centred on z = -1. A square of floor and
+                ;;! a door you can walk through are the same width, which is
+                ;;! the fastest thing in the room to check.
+                (entity (name "prop-doorway")
+                        (mesh     "project://mesh/training-doorway")
+                        (material "project://material/training-line")
+                        (at 1.5 0 -1) (scale 1 1 1))
+
+                ;;! Step, 0.3 m of rise, its rim on x = +1 and z = +1. It is
+                ;;! the table's mirror across the room's centre line and
+                ;;! shares the z = +1 line with it, so the two sit at the
+                ;;! same depth and their heights can be compared by eye
+                ;;! against one ruled line rather than two.
+                (entity (name "prop-step")
+                        (mesh     "project://mesh/training-step")
+                        (material "project://material/training-line")
+                        (at 1.6 0 1.6) (scale 1.2 1.2 1.2)))
 
          (on-load training-reset))

@@ -69,11 +69,19 @@
 (define ninja-lines '())
 (define ninja-native '())
 (define ninja-wasm '())
+;;! Every native `(library ...)` archive, gathered alongside — not instead of —
+;;! ninja-native. `native` stays exactly what it always was: libraries, test
+;;! binaries and their run_test stamps, and any opted-in `(dawn)` executable.
+;;! `archives` is the libraries alone, so asking for it never links a test
+;;! binary or runs one — the SDK wants the .a files on disk, not a green test
+;;! suite (#1035).
+(define ninja-archives '())
 
 (define (ninja-emit line) (set! ninja-lines (cons line ninja-lines)))
 (define (ninja-emit* lines) (for-each ninja-emit lines))
 (define (ninja-native! out) (set! ninja-native (cons out ninja-native)))
 (define (ninja-wasm! out) (set! ninja-wasm (cons out ninja-wasm)))
+(define (ninja-archives! out) (set! ninja-archives (cons out ninja-archives)))
 
 (define (ninja-obj-clean p)
   (krudd-replace p "${generated}" "generated"))
@@ -126,7 +134,8 @@
           (ninja-emit (string-append "build " lib ": ar "
                                      (ninja-join " " objs)))
           (ninja-emit "")
-          (ninja-native! lib)))))
+          (ninja-native! lib)
+          (ninja-archives! lib)))))
 
 (define (ninja-emit-executable table dir form)
   (let* ((name (cadr form))
@@ -576,6 +585,7 @@
     (set! ninja-lines '())
     (set! ninja-native '())
     (set! ninja-wasm '())
+    (set! ninja-archives '())
     (let ((table (rz-target-table manifest))
           (libmap (ninja-build-libmap manifest)))
       (resolve-check-all table)
@@ -604,6 +614,14 @@
                                  (ninja-join " " (reverse ninja-native))))
       (ninja-emit (string-append "build wasm: phony "
                                  (ninja-join " " (reverse ninja-wasm))))
+      ;;! Requesting `archives` pulls in only the `build lib*.a: ar ...` edges —
+      ;;! ninja walks the dependency graph from the request, and no test binary
+      ;;! or run_test stamp depends on a library, only the other way round — so
+      ;;! `ninja archives` never touches a compiler flag or a linker step that
+      ;;! `native` doesn't already exercise, it just stops short of the tests.
+      ;;! build-archives.sh is the harvesting front door onto this edge (#1035).
+      (ninja-emit (string-append "build archives: phony "
+                                 (ninja-join " " (reverse ninja-archives))))
       (ninja-emit "default native")
       (ninja-emit "")
       (ninja-join "\n" (reverse ninja-lines)))))

@@ -558,6 +558,21 @@
           ((char=? (string-ref path i) #\/) (substring path 0 i))
           (else (loop (- i 1))))))
 
+;;! The single line of TEXT that starts with PREFIX, or "" if none does — used
+;;! below to check what one ninja phony edge lists without also matching
+;;! PREFIX's target name where it appears as some other edge's dependency.
+(define (line-starting-with text prefix)
+  (let* ((tlen (string-length text)) (plen (string-length prefix)))
+    (let scan ((start 0))
+      (cond ((> (+ start plen) tlen) "")
+            ((string=? (substring text start (+ start plen)) prefix)
+             (let find-end ((i start))
+               (cond ((>= i tlen) (substring text start i))
+                     ((char=? (string-ref text i) #\newline)
+                      (substring text start i))
+                     (else (find-end (+ i 1))))))
+            (else (scan (+ start 1)))))))
+
 (define ninja-out (getenv "KRUDD_NINJA_OUT"))
 
 ;;! When the harness gives us an s7 interpreter path, wire the generator edge to
@@ -646,6 +661,13 @@
             (contains? ninja-text " assets/chess.scm")
             (contains? ninja-text " assets/training.scm")
             (contains? ninja-text " assets/ducks.scm")))
+;;! The property #1035 asks for: `archives` is the libraries, and it is never
+;;! the test binaries or their run_test stamps that also ride in `native`.
+(check "archives target carries the native libraries, and only them"
+       (let ((line (line-starting-with ninja-text "build archives: phony ")))
+         (and (contains? line "liblog.a")
+              (not (contains? line "bin/"))
+              (not (contains? line "test/")))))
 (check "compile rules track headers via gcc depfiles"
        (and (contains? ninja-text "deps = gcc")
             (contains? ninja-text "depfile = $out.d")))

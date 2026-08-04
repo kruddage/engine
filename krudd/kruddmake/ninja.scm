@@ -300,19 +300,26 @@
      ;;! these exports are what pull its archive member in — and what fails
      ;;! the link loudly rather than quietly if that ever stops being true.
      ;;! They point two ways. probe/supported/request_session/end_session/
-     ;;! session_active are what a PAGE calls in: an Enter VR affordance
-     ;;! (#997), and a console until that exists. report_support/
-     ;;! session_begun/session_ended/frame are what the module's own EM_JS
-     ;;! glue calls back — internal to that module, but they cross the wasm
-     ;;! boundary like any other export and are listed like one.
+     ;;! session_active are what a PAGE calls in: the shell's Enter VR
+     ;;! control (#997, shell.html.in). report_support/session_begun/
+     ;;! session_ended/frame are what the module's own EM_JS glue calls
+     ;;! back — internal to that module, but they cross the wasm boundary
+     ;;! like any other export and are listed like one.
      ;;!
-     ;;! They are deliberately not in @kruddage/engine's mirror yet: that list
-     ;;! is the surface an EMBEDDER of the package codes to, and until the
-     ;;! page grows the control that enters a session there is nothing there
-     ;;! to code to. The check that reads the two is one-directional on
-     ;;! purpose — every name the package declares must exist in the module,
-     ;;! not the other way about — so a bridge the package does not publish is
-     ;;! not the drift that check exists to catch.
+     ;;! Only the first five are in @kruddage/engine's mirror
+     ;;! (ENGINE_EXPORTED_FUNCTIONS, packages/engine/src/artifacts.mjs): that
+     ;;! list is the surface an EMBEDDER of the package codes to, and #997 is
+     ;;! what gave it something to code to — the shipped page now calls
+     ;;! exactly those five itself. The other four stay out on purpose
+     ;;! rather than by omission: they are not a smaller version of the same
+     ;;! surface, they are not a surface at all — nothing outside
+     ;;! xr_session.c's own EM_JS glue is a legitimate caller of them, so
+     ;;! publishing them would hand an embedder four ways to corrupt a
+     ;;! session's state machine out from under it. The check that reads the
+     ;;! two lists is one-directional on purpose — every name the package
+     ;;! declares must exist in the module, not the other way about — so a
+     ;;! bridge the package does not publish is not the drift that check
+     ;;! exists to catch.
      (string-append "mainflags = -sENVIRONMENT=web -sALLOW_MEMORY_GROWTH=1 "
                     "-sGROWABLE_ARRAYBUFFERS=0 -sMALLOC=mimalloc "
                     "-sFETCH=1 -sMAX_WEBGL_VERSION=2 --use-port=emdawnwebgpu "

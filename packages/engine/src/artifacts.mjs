@@ -129,7 +129,28 @@ export const ENGINE_PROJECT_INDEX = "projects.json";
  * — the page here still runs on the plain rAF loop end to end — but a host
  * with its own frame source, that hands out per-frame data only through its
  * own callback, needs the loop suspended for as long as it is driving, and
- * there is no other way to get it. */
+ * there is no other way to get it.
+ *
+ * _krudd_xr_probe / _krudd_xr_supported / _krudd_xr_request_session /
+ * _krudd_xr_end_session / _krudd_xr_session_active (krudd/engine/xr, #993)
+ * are the WebXR session module's page-facing half: ask whether immersive-vr
+ * is supported, read the answer, ask to enter or leave a session, and check
+ * whether one is live. The shell's Enter VR control (#997) is what calls
+ * them now, so they belong in this mirror the way #991's loop handover does
+ * — an embedder building its own XR affordance codes to exactly this
+ * surface, the same five entry points the shipped page uses and nothing
+ * more.
+ *
+ * Deliberately absent: report_support / session_begun / session_ended /
+ * frame, the other four names behind the same _krudd_xr_ prefix. Those are
+ * not a second surface this package chose to leave out — they are not a
+ * surface at all. xr_session.c's own header comment draws the line: those
+ * four are what the module's EM_JS glue calls BACK, inward, from inside the
+ * browser callbacks it owns; nothing outside that glue is a legitimate
+ * caller, so publishing them here would hand an embedder four ways to
+ * corrupt a session's state machine out from under it rather than a control
+ * surface to build on. The five above are the only ones a caller on this
+ * side of the WASM boundary was ever meant to reach for. */
 export const ENGINE_EXPORTED_FUNCTIONS = [
 	"_main",
 	"_krudd_load_project",
@@ -138,6 +159,11 @@ export const ENGINE_EXPORTED_FUNCTIONS = [
 	"_krudd_suspend_loop",
 	"_krudd_resume_loop",
 	"_krudd_driven_tick",
+	"_krudd_xr_probe",
+	"_krudd_xr_supported",
+	"_krudd_xr_request_session",
+	"_krudd_xr_end_session",
+	"_krudd_xr_session_active",
 ];
 
 /* Name of the self-describing index written beside the artifacts. */

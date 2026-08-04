@@ -279,6 +279,119 @@ canvas {
 	color: #ddd;
 }
 
+/*
+ * ── Enter VR (#997) ──
+ *
+ * A persistent corner control, the same shape as .launcher-open and for the
+ * same reason: the moment a player wants VR is not necessarily the moment
+ * the picker happens to be up, so the control cannot live inside it. It sits
+ * in the opposite corner (top-right) so the two never contend for the same
+ * spot, and is dim-until-hover for the same reason .launcher-open is — a
+ * corner of a running game should not spend its contrast on chrome.
+ *
+ * kruddXrRender (below, in the script) is the only thing that ever shows it:
+ * hidden is the resting state, and it is lifted only once there is something
+ * honest to offer — see the three visible states next to that function.
+ * Nothing here guesses; xr-control[hidden] is plain HTML `hidden`, so a
+ * browser with no script running at all (JS disabled) never shows a button
+ * that cannot do anything.
+ */
+.xr-control {
+	position: fixed;
+	top: 10px;
+	right: 10px;
+	z-index: 5200;
+	background: rgba(20, 20, 20, 0.72);
+	border: 1px solid #2a2a2a;
+	border-left: 3px solid #2d6a2d;
+	color: #777;
+	font-family: inherit;
+	font-size: 11px;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	padding: 5px 10px;
+	cursor: pointer;
+	opacity: 0.55;
+	transition: opacity 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.xr-control[hidden] { display: none; }
+
+.xr-control:hover {
+	opacity: 1;
+	border-color: #555;
+	border-left-color: #4a9a4a;
+	color: #ddd;
+}
+
+/*
+ * The "exit vr" state reads differently from "enter"/"reload" on purpose —
+ * the accent goes toward the error palette's red rather than the launcher's
+ * green, so the control's meaning changes with its label instead of only
+ * its text. It is still calm (not .error-box's saturated red): ending a
+ * session on purpose is the ordinary case, not a fault.
+ */
+.xr-control.active {
+	border-left-color: #8a3a3a;
+}
+
+.xr-control.active:hover {
+	border-left-color: #c0392b;
+}
+
+/*
+ * ── "you're back" note ──
+ *
+ * Where a session that ended without the page's own button asking for it
+ * gets explained (#997's exit-path requirement): the system menu and an
+ * in-session failure both surface here, because from the page's side they
+ * are the same observation — xr_session_active() went from 1 to 0 without
+ * kruddXrClick()'s "exit" branch having set kruddXrEndedByUs first (see the
+ * script). It cannot say WHY beyond that — the specific reason is on the
+ * console, same as it always was (xr_state.c's end_line) — so it says that
+ * plainly rather than guessing.
+ *
+ * Deliberately not the modal .error-backdrop: most of what lands here is a
+ * player choosing to take the headset off, not a fault, and the error
+ * overlay's red "!" would call that a bug it is not. A quiet corner note
+ * that names where the real detail lives is the honest version of both
+ * cases at once.
+ */
+.xr-note {
+	position: fixed;
+	left: 50%;
+	bottom: 24px;
+	transform: translateX(-50%);
+	z-index: 5300;
+	max-width: 420px;
+	background: rgba(15, 15, 15, 0.92);
+	border: 1px solid #333;
+	border-top: 3px solid #2d6a2d;
+	color: #ccc;
+	font-family: inherit;
+	font-size: 12px;
+	line-height: 1.5;
+	padding: 12px 16px;
+	display: flex;
+	align-items: center;
+	gap: 14px;
+}
+
+.xr-note[hidden] { display: none; }
+
+.xr-note-dismiss {
+	background: none;
+	border: 1px solid #333;
+	color: #777;
+	font-family: inherit;
+	font-size: 11px;
+	padding: 3px 9px;
+	cursor: pointer;
+	flex-shrink: 0;
+}
+
+.xr-note-dismiss:hover { border-color: #555; color: #ccc; }
+
 /* ── Error overlay ── */
 
 .error-backdrop {
@@ -480,6 +593,15 @@ canvas {
 </div>
 
 <button class="launcher-open" id="launcher-open">load project</button>
+
+<!-- Hidden until kruddXrRender (script below) has an honest state for it —
+     see the .xr-control rule for why plain `hidden` is the resting state. -->
+<button class="xr-control" id="xr-control" hidden></button>
+
+<div class="xr-note" id="xr-note" hidden>
+	<span id="xr-note-text"></span>
+	<button class="xr-note-dismiss" id="xr-note-dismiss">dismiss</button>
+</div>
 
 <div class="error-backdrop" id="error-backdrop">
 	<div class="error-box">
@@ -829,9 +951,27 @@ canvas {
 
 	window.kruddWantsWebGPU = function () {
 		try {
+			var q = new URLSearchParams(location.search);
+
 			if (isFirefox())
 				return false;
-			return new URLSearchParams(location.search).get('renderer') !== 'webgl';
+			if (q.get('renderer') === 'webgl')
+				return false;
+			/*
+			 * ?xr=1 is "I intend to enter VR" (#997's Enter VR control
+			 * writes it into the reload it offers when XR is supported
+			 * but this page booted WebGPU). WebXR here is WebGL-only —
+			 * xr_js_wants_webgpu in xr_session.c refuses a session on a
+			 * WebGPU page and says so in its log line — so wanting XR
+			 * implies wanting GL the same way ?renderer=webgl does,
+			 * without a link having to spell out both. Checked here
+			 * rather than by asking the caller to set ?renderer=webgl
+			 * itself so that ?xr=1 stays the one flag meaning "get me to
+			 * a page VR can actually run on."
+			 */
+			if (q.get('xr') === '1')
+				return false;
+			return true;
 		} catch (e) {
 			return true;
 		}
@@ -868,13 +1008,21 @@ canvas {
 	 * only reaches the diagnostic channels: the console always, and the
 	 * ?webgpulog=1 panel — which is the one that survives on a phone, where
 	 * there is no console to open.
+	 *
+	 * Also the one place the page learns which backend actually booted,
+	 * which kruddXrRender (#997) reads through window.kruddRendererName —
+	 * kruddWantsWebGPU is what the page ASKED for, this is what it GOT, and
+	 * an Enter VR control has to gate on the latter.
 	 */
 	window.kruddSetRenderer = function (name) {
 		var line = 'renderer: ' + name;
 
+		window.kruddRendererName = name;
 		if (typeof console !== 'undefined')
 			console.log('[krudd] ' + line);
 		window.kruddWebGPULog(line);
+		if (typeof window.kruddXrRender === 'function')
+			window.kruddXrRender();
 	};
 
 	/*
@@ -922,6 +1070,299 @@ canvas {
 		box.appendChild(line);
 		box.scrollTop = box.scrollHeight;
 	};
+
+	/*
+	 * ── Enter VR (#997) ──
+	 *
+	 * The xr module (#993) exports five entry points a page calls in —
+	 * probe, supported, request_session, end_session, session_active — and
+	 * says in its own header that they exist for exactly this control.
+	 * Everything below is the state machine that decides what the corner
+	 * button (.xr-control) says and does, built entirely from those five
+	 * calls plus the two facts the rest of this page already tracks:
+	 * kruddWantsWebGPU (what backend the page asked for) and
+	 * kruddRendererName (what actually went live, set in kruddSetRenderer
+	 * above).
+	 *
+	 * The exported C functions take no arguments and return void or a plain
+	 * int32, so they are called directly as Module._krudd_xr_* — the raw
+	 * binding -sEXPORTED_FUNCTIONS produces — rather than through
+	 * ccall/cwrap, which exist for marshalling strings and pointers this
+	 * traffic never has.
+	 */
+
+	/* enum xr_support (xr.h), cached here once the probe answers so the
+	 * poll below can stop re-deciding what it already knows. -1 is
+	 * XR_SUPPORT_UNKNOWN — the probe has not answered yet, or was never
+	 * asked (see kruddXrBoot). */
+	var kruddXrSupport = -1;
+	var kruddXrSessionActive = false;
+
+	/* Set immediately before this page's own exit click, so the poll below
+	 * can tell "we asked for this" apart from a session that ended some
+	 * other way — the system menu, or a failure mid-session — which is the
+	 * distinction the exit-note decides on (see kruddXrPoll). */
+	var kruddXrEndedByUs = false;
+
+	/* Armed by a click on "enter vr", cleared the moment the session
+	 * actually goes active. If it is still set once kruddXrRequestTimeout
+	 * passes, the request never became a session — refused, or the setup
+	 * promise chain rejected — and xr_session.c has already logged which;
+	 * this is the page's half, telling the user rather than only the
+	 * console (the "session failure is reported somewhere the user will
+	 * actually see it" criterion, for the failure case that happens before
+	 * the flat page ever goes away). */
+	var kruddXrRequestPending = false;
+	var kruddXrRequestDeadline = 0;
+
+	/* Generous on purpose: requestSession -> makeXRCompatible ->
+	 * XRWebGLLayer -> requestReferenceSpace is four awaited steps
+	 * (xr_session.c's setup()), and a slow GPU driver swap inside
+	 * makeXRCompatible is exactly the case #993's own note flags as a real
+	 * possibility. Firing this early would misreport a session that was
+	 * only ever slow to start. */
+	var kruddXrRequestTimeoutMs = 8000;
+
+	var kruddXrNoteTimer = null;
+
+	/* Whether ?xr=1 asked to land already focused on the control (the
+	 * round trip kruddXrReloadHref below sends the user on). Read once and
+	 * cleared after the first successful focus so a later render pass —
+	 * the control flipping between enter/exit as a session starts and ends
+	 * — does not keep stealing focus back to itself. */
+	var kruddXrWantsFocus =
+		new URLSearchParams(location.search).get('xr') === '1';
+
+	/* A Module._krudd_xr_* binding, or null before the runtime has produced
+	 * it. Every caller below goes through this rather than touching Module
+	 * directly, so "the module is not up yet" is one check written once. */
+	function kruddXrFn(name) {
+		return (window.Module && typeof Module['_' + name] === 'function')
+			? Module['_' + name] : null;
+	}
+
+	/* Show a message that explains an exit the page's own button did not
+	 * ask for (see kruddXrEndedByUs). Auto-hides so it does not become
+	 * another permanent fixture the way .webgpu-log deliberately can; it
+	 * has said what it has to say once read. */
+	function kruddXrNote(text) {
+		var box  = document.getElementById('xr-note');
+		var body = document.getElementById('xr-note-text');
+
+		if (!box || !body)
+			return;
+		body.textContent = text;
+		box.hidden = false;
+		if (kruddXrNoteTimer)
+			clearTimeout(kruddXrNoteTimer);
+		kruddXrNoteTimer = setTimeout(function () {
+			box.hidden = true;
+		}, 12000);
+	}
+
+	document.getElementById('xr-note-dismiss')
+		.addEventListener('click', function () {
+			var box = document.getElementById('xr-note');
+			if (kruddXrNoteTimer)
+				clearTimeout(kruddXrNoteTimer);
+			if (box)
+				box.hidden = true;
+		});
+
+	/*
+	 * ?renderer=webgl plus ?xr=1, set rather than replaced — the same
+	 * reason kruddPickProject sets 'game' instead of overwriting
+	 * location.search: losing ?webgpulog=1 or a project already chosen
+	 * would make tapping "reload for vr" a way to fall off a diagnostic or
+	 * a running project the user did not ask to leave.
+	 */
+	function kruddXrReloadHref() {
+		var q = new URLSearchParams(location.search);
+
+		q.set('renderer', 'webgl');
+		q.set('xr', '1');
+		return location.pathname + '?' + q.toString() + location.hash;
+	}
+
+	/*
+	 * The three honest states, and nothing this control can do outside
+	 * them — which is the acceptance criterion "the user should never be
+	 * able to reach a broken state by tapping the obvious button" made
+	 * literal: there is no fourth state where the button exists and does
+	 * something that cannot work.
+	 *
+	 *   reload  immersive-vr is supported but this page booted WebGPU.
+	 *           XRGPUBinding is not broadly shipped (#987), and
+	 *           xr_js_wants_webgpu already refuses a session here in C —
+	 *           this is what makes that refusal unreachable from the UI,
+	 *           by offering the honest route (a reload into the GL
+	 *           backend) ahead of the dead end.
+	 *   enter   immersive-vr is supported and the GL backend is live.
+	 *           Nothing is running yet.
+	 *   exit    a session is running. Same control, opposite verb — see
+	 *           the .xr-control.active rule for why it looks different too.
+	 *
+	 * Anything else (support unknown or refused) is not a state this
+	 * control has an opinion about: it is hidden, and that is the whole of
+	 * "non-XR browsers see no new UI."
+	 */
+	function kruddXrRender() {
+		var el = document.getElementById('xr-control');
+		var isGL = window.kruddRendererName === 'webgl';
+		var state;
+
+		if (!el || kruddXrSupport !== 0 /* XR_SUPPORT_YES */) {
+			if (el)
+				el.hidden = true;
+			return;
+		}
+
+		state = kruddXrSessionActive ? 'exit' : (isGL ? 'enter' : 'reload');
+		el.hidden = false;
+		el.dataset.state = state;
+		el.classList.toggle('active', state === 'exit');
+		el.textContent = state === 'reload' ? 'reload for vr'
+			: state === 'exit' ? 'exit vr' : 'enter vr';
+		el.title = state === 'reload'
+			? 'This device supports VR; reload on the WebGL backend to use it.'
+			: state === 'exit' ? 'End the VR session.' : 'Enter VR.';
+
+		if (state === 'enter' && kruddXrWantsFocus) {
+			kruddXrWantsFocus = false;
+			el.focus();
+		}
+	}
+
+	function kruddXrClick() {
+		var el = document.getElementById('xr-control');
+		var state = el && el.dataset.state;
+
+		if (state === 'reload') {
+			location.href = kruddXrReloadHref();
+			return;
+		}
+		if (state === 'enter') {
+			var req = kruddXrFn('krudd_xr_request_session');
+			if (!req)
+				return;
+			kruddXrRequestPending = true;
+			kruddXrRequestDeadline = Date.now() + kruddXrRequestTimeoutMs;
+			req();
+			return;
+		}
+		if (state === 'exit') {
+			var end = kruddXrFn('krudd_xr_end_session');
+			if (!end)
+				return;
+			kruddXrEndedByUs = true;
+			end();
+		}
+	}
+
+	document.getElementById('xr-control').addEventListener('click', kruddXrClick);
+
+	/*
+	 * Runs every 500ms for the life of the page — two int32 calls into the
+	 * module, cheap enough to leave running rather than tearing the poll
+	 * down and back up around a session's lifetime. Two things only a poll
+	 * can catch, because neither has a page-side event to listen for:
+	 *
+	 *   the probe's answer arriving (xr_supported() moving off UNKNOWN —
+	 *   isSessionSupported() is a promise this page never awaited itself)
+	 *
+	 *   a session ending from OUTSIDE this page's own exit button — the
+	 *   headset's system menu, or a failure mid-session — both of which
+	 *   the browser only ever tells xr_session.c's "end" listener about,
+	 *   never this page directly (xr.h's own note on why teardown has
+	 *   exactly one path).
+	 */
+	function kruddXrPoll() {
+		var supportedFn = kruddXrFn('krudd_xr_supported');
+		var activeFn    = kruddXrFn('krudd_xr_session_active');
+		var wasActive   = kruddXrSessionActive;
+
+		if (!supportedFn || !activeFn)
+			return;
+
+		if (kruddXrSupport === -1) {
+			kruddXrSupport = supportedFn();
+			if (kruddXrSupport !== -1)
+				kruddXrRender();
+		}
+
+		kruddXrSessionActive = !!activeFn();
+		if (kruddXrSessionActive !== wasActive) {
+			if (kruddXrSessionActive) {
+				/* A session that just went live retires whatever an
+				 * earlier click was trying to do: a pending request
+				 * has its answer, and a stale "we asked for this
+				 * exit" from a click whose end() never actually
+				 * landed (session already gone, the call a no-op)
+				 * must not suppress the note on THIS session's exit. */
+				kruddXrRequestPending = false;
+				kruddXrEndedByUs = false;
+			}
+			kruddXrRender();
+		}
+
+		if (wasActive && !kruddXrSessionActive) {
+			if (!kruddXrEndedByUs)
+				kruddXrNote('Left VR — back on the flat page. If ' +
+					'that was not you (a dropped session, not the ' +
+					'system menu), the reason is on the browser ' +
+					'console, next to "xr:".');
+			kruddXrEndedByUs = false;
+		}
+
+		if (kruddXrRequestPending && !kruddXrSessionActive &&
+				Date.now() > kruddXrRequestDeadline) {
+			kruddXrRequestPending = false;
+			window.kruddShowError('VR session did not start',
+				'The request did not turn into a session in time. ' +
+				'The reason — refused, or the setup could not ' +
+				'complete — is on the browser console, next to "xr:".');
+		}
+	}
+
+	/*
+	 * xr_probe() is "cheap and safe to call on any page" by its own
+	 * contract (xr.h) — it still costs the one console line every page
+	 * gets once support is known, and that line is only worth paying for
+	 * on a browser that could plausibly answer yes. navigator.xr existing
+	 * is that check: it is synchronous, needs no promise, and is false for
+	 * the overwhelming majority of browsers this page ever loads in. Those
+	 * never call into the module for this at all, which is the literal
+	 * reading of "non-XR browsers see no console noise" — not "the module
+	 * is quiet," but "this page never asks it to speak."
+	 *
+	 * Waits for Module._krudd_xr_probe to exist rather than assuming it:
+	 * this script runs before {{{ SCRIPT }}} (the emcc loader) has
+	 * necessarily produced any exports. Gives up silently after 30s — a
+	 * module that never finishes loading has already said so through
+	 * kruddSetRendererFailed or the error overlay; this has nothing to add.
+	 */
+	function kruddXrBoot() {
+		var tries = 0;
+
+		if (!(window.navigator && navigator.xr))
+			return;
+
+		var wait = setInterval(function () {
+			var probe = kruddXrFn('krudd_xr_probe');
+
+			tries++;
+			if (!probe) {
+				if (tries > 60)
+					clearInterval(wait);
+				return;
+			}
+			clearInterval(wait);
+			probe();
+			setInterval(kruddXrPoll, 500);
+		}, 500);
+	}
+
+	kruddXrBoot();
 
 	if ('serviceWorker' in navigator) {
 		window.addEventListener('load', function () {

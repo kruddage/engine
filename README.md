@@ -4,7 +4,8 @@
 [![CI](https://github.com/kruddage/engine/actions/workflows/ci.yml/badge.svg)](https://github.com/kruddage/engine/actions/workflows/ci.yml)
 [![Live](https://img.shields.io/website?url=https%3A%2F%2Fkruddage.github.io%2Fengine&label=live)](https://kruddage.github.io/engine)
 
-A game engine written in C, compiled to WebAssembly via Emscripten and served as a static site.
+A game engine written in C, compiled to WebAssembly via Emscripten and served as a static site —
+runs in a browser tab, and, over WebXR, in a headset.
 
 **[Live demo →](https://kruddage.github.io/engine)**
 
@@ -18,6 +19,18 @@ Current state: entity/scene runtime, asset pipeline with local IndexedDB persist
 and WebGL/WebGPU rendering with a frame graph. The page opens on a project picker over the
 default scene, and `?game=<name>` boots straight into any project the build ships; the
 in-browser authoring surface is being reworked and is not wired up.
+
+The engine also enters a headset over [WebXR](https://immersiveweb.dev/): an Enter VR control
+appears on any page where the browser reports `immersive-vr` support, and tapping it takes over
+the frame loop for as long as the session runs. **This path is WebGL only.** `XRGPUBinding`
+(WebGPU-in-XR) is not broadly shipped yet, so an immersive session never runs on the WebGPU
+backend this page defaults to everywhere but Firefox; on a headset that booted WebGPU, the control
+instead offers a one-tap reload onto the WebGL backend rather than trying to enter and failing.
+Stereo rendering, headset-safe UI and controller-ray picking are the initiative's next steps —
+what a session gets you today is tracked, but monoscopic. See
+[#987](https://github.com/kruddage/engine/issues/987) for the full initiative and its PR-by-PR
+breakdown, and [#997](https://github.com/kruddage/engine/issues/997) for the page-side control
+itself.
 
 ## Roadmap: Scheme as the build system and the game
 

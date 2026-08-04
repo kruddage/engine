@@ -506,9 +506,9 @@ static struct camera g_cam;
 
 /*
  * The world entity that owns the camera's eye, or -1 when none is bound. The
- * camera is whatever live entity a scene names "Camera": the boot demo seeds
- * one bound to orbit-camera, and each launcher scene authors its own — a fixed
- * eye for tic-tac-toe, an orbit for the demo. scene_renderer_tick copies its
+ * camera is whatever live entity a scene names "Camera", and every scene is a
+ * project's now (#1034): each authors its own — a fixed eye for chess, an
+ * orbit-camera script for the default scene. scene_renderer_tick copies its
  * world_xform position into g_cam.eye each frame, after the scene subsystem has
  * ticked scripts (see the "scene" before "scene_renderer" registration order in
  * engine.c). target/up/fov stay fixed; only eye moves.
@@ -2229,150 +2229,6 @@ static const struct preview_api g_preview_api = {
 };
 
 /*
- * Seed a small demo scene so the page shows content on load and exercises
- * depth-correct multi-entity rendering (#172 acceptance). Only runs when the
- * world holds no renderable entity yet, so it never clobbers a loaded scene.
- * Temporary — remove once scenes are authored/loaded routinely.
- */
-static void seed_demo_scene(void)
-{
-	static const struct {
-		const char *path;
-		float       pos[3];
-		float       scale[3];
-		const char *script;   /* behavior script to bind, or NULL      */
-		const char *material; /* material asset to wear                 */
-		const char *name;     /* shown in the entity list              */
-	} DEMO[] = {
-		{ "builtin://mesh/plane",   { 0.0f, -0.5f,  0.0f }, { 6.0f, 1.0f, 6.0f }, NULL,                       "builtin://material/checker",     "Floor"   },
-		{ "builtin://mesh/box",     { -1.5f, 0.0f,  0.0f }, { 1.0f, 1.0f, 1.0f }, "builtin://script/spinner", "builtin://material/pbr-plastic", "Box"     },
-		{ "builtin://mesh/sphere",  {  0.0f, 0.0f, -1.0f }, { 1.0f, 1.0f, 1.0f }, "builtin://script/bounce",  "builtin://material/pbr-metal",   "Sphere"  },
-		{ "builtin://mesh/pyramid", {  1.5f, 0.0f,  0.5f }, { 1.0f, 1.0f, 1.0f }, "builtin://script/wobble",  "builtin://material/checker",     "Pyramid" },
-		{ "builtin://mesh/sdf-rook",{  0.0f, 0.0f,  1.4f }, { 1.0f, 1.0f, 1.0f }, "builtin://script/spinner", "builtin://material/pbr-metal",   "Rook"    },
-	};
-	/* The floor bakes the checker at a denser scale than the built-in
-	 * default so it reads as a checkerboard rather than one giant tile. */
-	static const float  FLOOR_TEX_SCALE = 12.0f;
-	const struct world *w;
-	uint32_t            i;
-	uint32_t            checker;
-
-	if (!g_scene || !g_scene->create_entity)
-		return;
-	w = g_scene->get_world();
-	if (!w)
-		return;
-	for (i = 0; i < w->count; i++) {
-		if (w->alive[i] && (w->mask[i] & COMPONENT_RENDER))
-			return; /* scene already has renderables */
-	}
-
-	/*
-	 * Every seeded entity wears a real, inspectable material, so the world
-	 * scene never rests in the "no material" state (forward_pass skips any
-	 * entity with no COMPONENT_MATERIAL — how an entity keeps its mesh for
-	 * picking/collision but stops drawing). The mix shows off both scene
-	 * shaders side by side: the sphere, box, and rook wear the physically based
-	 * metal/plastic materials, while the floor and pyramid wear the textured
-	 * checker so the procedural-texture path stays exercised too. The rook is
-	 * the marching-cubes/SDF mesh — its gradient normals catch the pbr key
-	 * light — so the demo now covers all three mesh shape engines (lathe,
-	 * parametric grid, implicit surface). A material that fails to resolve
-	 * falls back to the checker rather than going undrawn.
-	 */
-	checker = asset_id_by_path("builtin://material/checker");
-
-	for (i = 0; i < (uint32_t)(sizeof(DEMO) / sizeof(DEMO[0])); i++) {
-		struct transform t;
-		int32_t          id;
-		uint32_t         ref = asset_id_by_path(DEMO[i].path);
-		uint32_t         mat = asset_id_by_path(DEMO[i].material);
-
-		if (!ref)
-			continue;
-		if (!mat)
-			mat = checker;
-		memset(&t, 0, sizeof(t));
-		t.position[0] = DEMO[i].pos[0];
-		t.position[1] = DEMO[i].pos[1];
-		t.position[2] = DEMO[i].pos[2];
-		t.rotation[3] = 1.0f;
-		t.scale[0] = DEMO[i].scale[0];
-		t.scale[1] = DEMO[i].scale[1];
-		t.scale[2] = DEMO[i].scale[2];
-		id = g_scene->create_entity(WORLD_NO_PARENT, &t, 0u, ref);
-		if (id >= 0 && mat && g_scene->set_material_ref)
-			g_scene->set_material_ref(id, mat);
-		if (id >= 0 && g_scene->set_name)
-			g_scene->set_name(id, DEMO[i].name);
-
-		if (id >= 0 && strcmp(DEMO[i].path, "builtin://mesh/plane") == 0 &&
-		    g_scene->set_texture_params)
-			g_scene->set_texture_params(id,
-						    (const uint8_t *)&FLOOR_TEX_SCALE,
-						    sizeof(FLOOR_TEX_SCALE));
-
-		/*
-		 * Bind a behavior script so the demo scene animates on load — the
-		 * box spins, the sphere bounces, the pyramid wobbles. Each is a
-		 * built-in ASSET_TYPE_SCRIPT; skipped cleanly on an engine build
-		 * without the script assets or the set_script_ref entry.
-		 */
-		if (id >= 0 && DEMO[i].script && g_scene->set_script_ref) {
-			uint32_t script = asset_id_by_path(DEMO[i].script);
-
-			if (script)
-				g_scene->set_script_ref(id, script);
-		}
-	}
-
-	/*
-	 * The camera entity (proof of life): no mesh, no material, just a
-	 * COMPONENT_SCRIPT entity bound to orbit-camera. scene_renderer_tick
-	 * reads its world_xform position into g_cam.eye every frame.
-	 */
-	if (g_scene->set_script_ref) {
-		uint32_t orbit_script = asset_id_by_path("builtin://script/orbit-camera");
-
-		if (orbit_script) {
-			struct transform ct;
-			int32_t          cam_id;
-
-			memset(&ct, 0, sizeof(ct));
-			ct.rotation[3] = 1.0f;
-			ct.scale[0] = ct.scale[1] = ct.scale[2] = 1.0f;
-			cam_id = g_scene->create_entity(WORLD_NO_PARENT, &ct, 0u, 0u);
-			if (cam_id >= 0) {
-				g_scene->set_script_ref(cam_id, orbit_script);
-				if (g_scene->set_name)
-					g_scene->set_name(cam_id, "Camera");
-			}
-			g_camera_entity_id = cam_id;
-		}
-	}
-
-	/*
-	 * A light entity (proof of the light component): no mesh or material, just
-	 * COMPONENT_LIGHT. The tick reads its world rotation to steer the pbr
-	 * shader's key light; at identity rotation that reproduces the default sun,
-	 * so the scene looks the same as before but the light is now a real,
-	 * selectable entity you can rotate (bind a spinner to it to sweep the sun).
-	 */
-	{
-		struct transform lt;
-		int32_t          light_id;
-
-		memset(&lt, 0, sizeof(lt));
-		lt.rotation[3] = 1.0f;
-		lt.scale[0] = lt.scale[1] = lt.scale[2] = 1.0f;
-		light_id = g_scene->create_entity(WORLD_NO_PARENT, &lt,
-						  COMPONENT_LIGHT, 0u);
-		if (light_id >= 0 && g_scene->set_name)
-			g_scene->set_name(light_id, "Sun");
-	}
-}
-
-/*
  * (particle-burst! x y z r g b count): spawn COUNT cosmetic particles at world
  * (x,y,z) tinted (r,g,b). The render layer owns this primitive — not the entity
  * layer's scene-* set — because particles are an effect on top of the scene, not
@@ -2488,7 +2344,16 @@ static void scene_renderer_init(void)
 	g_cam_home_up[1]     = g_cam.up[1];
 	g_cam_home_up[2]     = g_cam.up[2];
 
-	seed_demo_scene();
+	/*
+	 * Nothing is spawned here. This used to end with seed_demo_scene(): five
+	 * props, a camera and a light, built from a C table the moment the
+	 * renderer came up — before the boot had read the URL, so a project that
+	 * arrives by fetch had that scene on screen underneath it until its
+	 * source landed (#1034). The scene itself was worth keeping and is kept,
+	 * as projects/default; what is gone is a renderer that authors content.
+	 * An empty world renders the clear colour, which is the honest picture of
+	 * "no project is open yet".
+	 */
 
 	g_ready = 1;
 	g_log->write(LOG_LEVEL_INFO,

@@ -9,6 +9,11 @@ tier note, three `build.scm` headers and the README tree, which between them sta
 it and agreed on all of it, but left "what may a project do" with no single answer. Those
 places now point here instead of restating it.
 
+One of the four is not a game: `default` is the scene the page opens on — a checkered floor
+and four animated props — which the renderer used to seed from C into every boot regardless
+of what the URL had asked for (#1034). It is a project like the others and holds the staged
+slot; nothing about being the default makes it a different kind of thing.
+
 ## What a project is
 
 ```
@@ -39,10 +44,12 @@ manifest entry beginning `projects/` resolves against the repository root rather
   wrote down is the only way it learns what exists.
 - **Claim the staged slot** with `(staged-project "<name>.scm")` — ship, plus embed into the
   WASM image under the fixed symbol `core/engine.c` evaluates at boot, so the page opens on a
-  playable scene with no network round trip. **Exactly one project may**, and that is a
-  decision rather than a technicality; the argument is at `resolve-check-staged` in
-  `resolve.scm`. Chess holds it. `staged-project` implies `project-source`, so a directory
-  declares one or the other, never both.
+  scene with no network round trip. The staged project is what a bare URL opens, by launcher
+  slot rather than by name, so the boot path picks it up without learning which project it
+  is (#1034). **Exactly one project may**, and that is a decision rather than a technicality;
+  the argument is at `resolve-check-staged` in `resolve.scm`. `default` holds it — it is the
+  project that exists to be the thing the page opens on. `staged-project` implies
+  `project-source`, so a directory declares one or the other, never both.
 - **Declare an `(embed …)` for its own test**, so the test drives the real source with no
   filesystem under it. The embedded symbol belongs to that test and nothing else.
 - **Declare an `(executable …)` and a `(test …)`.** All three projects do; it is why all

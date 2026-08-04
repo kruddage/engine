@@ -4,8 +4,9 @@
 
 /*
  * Built-in entity scripts, seeded as read-only ASSET_TYPE_SCRIPT assets (see
- * asset_plugin.c) and bound to the demo scene (see scene_renderer.c). Each is a
- * single (script NAME ...) form in the same S7 Scheme the shader DSL uses —
+ * asset_plugin.c) and bound by whatever scene wants them — the default project
+ * binds four of the five (projects/default/default.scm). Each is a single
+ * (script NAME ...) form in the same S7 Scheme the shader DSL uses —
  * the runtime image's (script ...) macro registers it and the entity-script
  * driver calls its clauses each frame.
  *

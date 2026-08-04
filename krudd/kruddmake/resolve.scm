@@ -157,9 +157,11 @@
 ;;!
 ;;! `staged-project` is that plus one thing: the source is also embedded into the
 ;;! image under the fixed symbol below, which core/engine.c evaluates at boot so
-;;! the page opens on a playable scene with no network round trip. It implies
-;;! project-source — a project the image boots into is self-evidently one the
-;;! build ships — so a directory declares one or the other, never both.
+;;! the page opens on a scene with no network round trip. It is also the project
+;;! a bare URL opens — by the launcher slot the eval answers with, never by name,
+;;! so the boot path still learns nothing about which project it got (#1034). It
+;;! implies project-source — a project the image boots into is self-evidently one
+;;! the build ships — so a directory declares one or the other, never both.
 ;;!
 ;;! Exactly one directory may be the staged one. Nothing limits how many are
 ;;! shipped, and the asymmetry is a decision rather than a leftover — see the

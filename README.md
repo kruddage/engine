@@ -15,7 +15,8 @@ fixed-timestep loop; subsystems (logging, memory, rendering) attach as plugins t
 WASM ABI.
 
 Current state: entity/scene runtime, asset pipeline with local IndexedDB persistence,
-and WebGL/WebGPU rendering with a frame graph. The page boots straight into a game; the
+and WebGL/WebGPU rendering with a frame graph. The page opens on a project picker over the
+default scene, and `?game=<name>` boots straight into any project the build ships; the
 in-browser authoring surface is being reworked and is not wired up.
 
 ## Roadmap: Scheme as the build system and the game
@@ -74,7 +75,7 @@ krudd/
     game/        host/ is the launcher registry, project/ the generic host that
                  runs a game written as one (project ...) form
     shell/       The host the engine runs inside — web/
-projects/        The games — chess/, training/, ducks/. One .scm each, and a sibling
+projects/        The games — default/, chess/, training/, ducks/. One .scm each, a sibling
                  of krudd/ rather than a module inside it: a project is content the
                  engine loads at runtime, not something it links. What a project
                  may and may not do is projects/README.md

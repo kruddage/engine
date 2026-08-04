@@ -23,11 +23,12 @@
 #include "runtime_scm.h"
 /*
  * The project this build ships staged: one (project ...) source baked in the
- * same way, so the page opens on a playable scene with no network round trip.
- * Which project that is, is a build fact — a directory under game/ declares
- * the embed under this generic name, and nothing here learns which one did.
- * Everything below treats it as an opaque source handed to the project host.
- * #984 layers loading one off disk on top, with this as the fallback.
+ * same way, so the page opens on a scene with no network round trip — and it is
+ * what a bare URL boots into (#1034). Which project that is, is a build fact —
+ * a directory under projects/ declares the embed under this generic name, and
+ * nothing here learns which one did. Everything below treats it as an opaque
+ * source handed to the project host, and opens it by the launcher slot the host
+ * hands back rather than by any name.
  */
 #include "staged_project_scm.h"
 #endif
@@ -229,11 +230,14 @@ EM_JS(int, krudd_wants_webgpu, (void), {
  * (krudd_wants_webgpu): the overlay and the auto-load can never disagree about
  * what boots.
  *
- * There is no DEFAULT, and that is the point: a page opened with no ?game= is a
- * project picker, not a game that happens to have a menu in front of it, so the
- * empty string means "open nothing" rather than "open whatever this build
- * staged". Picking one there navigates to ?game=<name>, which arrives back here
- * as a name — so opening a project is always the same act whether the URL
+ * The empty string means "the URL named no project", and what happens then is
+ * decided below rather than here: the staged project opens, whatever it is (see
+ * finish_plugin_boot). The page still does not name a game — it answers with
+ * what the query held and nothing else — which is the pin #976 pulled out of
+ * this file and what keeps it out of the HTML too.
+ *
+ * Picking a project in the page navigates to ?game=<name>, which arrives back
+ * here as a name — so opening a project is always the same act whether the URL
  * carried it or a click put it there, and the address bar always says what is
  * running. Truncation past CAP is fine: an over-long name simply won't match.
  */
@@ -276,6 +280,7 @@ static void finish_plugin_boot(int webgpu)
 	size_t  i;
 	double  phase;
 	char    boot_game[32];
+	int32_t staged;
 
 	/* The frame graph is about to own the backbuffer; the probe must stop
 	 * clearing it. Before the loop, so no tick can land in between. */
@@ -303,30 +308,42 @@ static void finish_plugin_boot(int webgpu)
 	 * asset catalog and the scene api those brought up, and after the runtime
 	 * image so a project may lean on anything in the prelude.
 	 *
-	 * Registering is not opening: nothing is on screen until a ?game= asks
-	 * for one. What being embedded buys the staged project is that its ?game=
-	 * resolves right here, with no round trip — every other project the build
-	 * ships is a file the page fetches.
+	 * Registering is not opening — the launcher slot it answers with is what
+	 * opening it later goes through. What being embedded buys the staged
+	 * project is that both ways in resolve right here with no round trip: its
+	 * ?game=, and the bare URL below. Every other project the build ships is a
+	 * file the page fetches.
 	 */
 	phase = emscripten_get_now();
-	project_host_eval(STAGED_PROJECT_SCM);
+	staged = project_host_eval(STAGED_PROJECT_SCM);
 	stats_record_phase("staged_project", phase);
 
 	/*
 	 * Open the scene the URL asked for, now that everything embedded has
-	 * registered and the scene api is live. The boot clears the demo scene
-	 * seeded in scene_renderer_init, builds the named one in its place, and
-	 * takes the picker down over it.
+	 * registered and the scene api is live. The boot clears whatever was
+	 * showing, builds the named project in its place, and takes the picker
+	 * down over it.
 	 *
-	 * No ?game= opens nothing: the page is a picker until something is picked,
-	 * and picking is a navigation back into this same line with a name in it.
+	 * No ?game= opens the staged project, which is the one the build embedded
+	 * for exactly this (#1034). Not by name: game_load takes the slot
+	 * project_host_eval just answered with, so this line boots whichever
+	 * project claimed the staged slot without ever learning which one that was
+	 * — the same reason the embed is under a generic symbol (#976). The picker
+	 * stays up over it, because a bare URL is still the picker: the scene
+	 * behind it is what the × reveals, not something the page is passing
+	 * through. That scene used to be seeded from C by the renderer, whatever
+	 * the URL had asked for; now it is a project like any other, and it opens
+	 * only when it is the one being opened.
+	 *
 	 * A name nothing registered under is not a dead end either — it goes back
 	 * to the page, which knows about the projects that shipped as files (see
 	 * krudd_boot_unresolved).
 	 */
 	boot_game[0] = '\0';
 	krudd_boot_game(boot_game, (int)sizeof(boot_game));
-	if (boot_game[0] != '\0' && game_boot_default(boot_game) < 0)
+	if (boot_game[0] == '\0')
+		game_load((int)staged);
+	else if (game_boot_default(boot_game) < 0)
 		krudd_boot_unresolved(boot_game);
 
 	g_stats_api.init_ms = (float)(emscripten_get_now() - s_boot_ms);

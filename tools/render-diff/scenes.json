@@ -6,10 +6,11 @@
 	"//timing": "capture_frames = rendered frames past first render to settle for",
 	"//timing2": "under the deterministic clock (#603); settle_ms = wall-clock",
 	"//timing3": "ceiling on reaching that frame, not a fixed wait.",
-	"//game": "Every query names a project: a bare URL opens the picker and",
-	"//game2": "loads nothing, so a scene that wants a board on screen has to",
-	"//game3": "ask for one. chess is the project this build embeds, so it",
-	"//game4": "opens at boot with no fetch in the way of the capture.",
+	"//game": "Every query names a project: a bare URL opens the picker over",
+	"//game2": "the default scene, so a scene that wants a board on screen has",
+	"//game3": "to ask for one. chess is fetched rather than embedded since",
+	"//game4": "#1034 -- default holds the staged slot now -- so the capture",
+	"//game5": "waits on one round trip, which settle_ms already covers.",
 	"canvas": "#canvas",
 
 	"scenes": [

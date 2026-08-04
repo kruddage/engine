@@ -60,7 +60,9 @@
 ;;!             reach for anything, and nothing may reach for a shell. web/
 ;;!             builds no targets — its assets are copied by the generator —
 ;;!             but it is listed, for the shell template it configures.
-;;!   projects/ the games. NOT an engine tier and not under krudd/engine at
+;;!   projects/ the games, plus `default` — the scene the page opens on, which
+;;!             is a project rather than something the renderer seeds (#1034).
+;;!             NOT an engine tier and not under krudd/engine at
 ;;!             all: these entries resolve against the repository root, which
 ;;!             is what the `projects/` prefix means to rz-spec-path. A project
 ;;!             is a single .scm the engine loads at runtime (#976), so it is
@@ -100,6 +102,7 @@
  "game/host"
  "game/project"
  "shell/web"
+ "projects/default"
  "projects/chess"
  "projects/training"
  "projects/ducks")

@@ -36,7 +36,7 @@
 #include <memory/memory.h>
 #include <project/project_host.h>
 
-#include "staged_project_scm.h"
+#include "chess_scm.h"
 
 #include <assert.h>
 #include <math.h>
@@ -717,7 +717,7 @@ static void test_reload_keeps_piece_bindings(void)
 	/* A reload: the whole project source evaluated again, which is how a
 	 * project reloads. It keeps its launcher slot rather than stacking a
 	 * second "Chess" beside the first. */
-	assert(project_host_eval(STAGED_PROJECT_SCM) == g_chess);
+	assert(project_host_eval(CHESS_SCM) == g_chess);
 
 	for (i = 0; i < 6; i++) {
 		assert(asset_id_at(PATHS[i]) == before[i]);
@@ -862,7 +862,7 @@ static void test_reload_keeps_army_bindings(void)
 
 	/* A reload: the whole project source evaluated again, which is how a
 	 * project reloads. */
-	assert(project_host_eval(STAGED_PROJECT_SCM) == g_chess);
+	assert(project_host_eval(CHESS_SCM) == g_chess);
 
 	assert(asset_id_at("project://material/chess-ivory") == ivory);
 	assert(asset_id_at("project://material/chess-ebony") == ebony);
@@ -892,7 +892,7 @@ int main(void)
 	 */
 	subsystem_manager_init(&mgr, t_subsystems);
 	project_host_plugin_entry(&mgr);
-	g_chess = project_host_eval(STAGED_PROJECT_SCM);
+	g_chess = project_host_eval(CHESS_SCM);
 	assert(g_chess >= 0);
 	assert(game_count() == 1);
 	assert(game_find("Chess") == g_chess);

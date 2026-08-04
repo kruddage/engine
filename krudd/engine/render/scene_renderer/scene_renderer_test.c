@@ -736,6 +736,7 @@ static void test_camera_supplied_view_proj(struct subsystem_manager *mgr)
 	const float eye[3]    = { 0.032f, 1.6f, -0.5f };
 	struct mat4 view, proj, want, got;
 	float       got_eye[3];
+	uint32_t    authored_draws;
 
 	assert(cam && cam->set_view_proj && cam->clear_view_proj);
 
@@ -749,8 +750,20 @@ static void test_camera_supplied_view_proj(struct subsystem_manager *mgr)
 	g_world.render_ref[1]   = 1u;
 	g_world.material_ref[1] = 6u;
 	set_identity_xform(&g_world.world_xform[1], 0.0f, 0.0f, 0.0f);
+	/* Establish the viewport BEFORE the baseline frame. A positive viewport
+	 * is what puts the graph on the post path, so a set_viewport between
+	 * the two frames below would change the pass list under the comparison
+	 * and the counts would differ for a reason that has nothing to do with
+	 * the camera. */
+	cam->set_viewport(1920.0f, 1080.0f);
 	renderer_null_reset_log();
 	subsystem_manager_tick(mgr);
+	/* What the authored path draws for this world, whatever the graph's
+	 * pass list happens to be — the supplied path below has to match it,
+	 * and asserting a literal count here would instead be asserting how
+	 * many passes draw the world, which is not this test's business. */
+	authored_draws = count_draws(NULL);
+	assert(authored_draws > 0);
 
 	mat4_look_at(&view, eye, target, up);
 	off_axis_proj(&proj, -0.09f, 0.11f, -0.10f, 0.10f, 0.1f, 100.0f);
@@ -764,11 +777,13 @@ static void test_camera_supplied_view_proj(struct subsystem_manager *mgr)
 	       got_eye[2] == eye[2]);
 
 	/* A frame (whose tick calls camera_update) and an aspect change both
-	 * leave the pair exactly as supplied, and the frame still draws. */
-	cam->set_viewport(1920.0f, 1080.0f);
+	 * leave the pair exactly as supplied, and the frame draws exactly what
+	 * the authored one did. A different aspect from the baseline's, so the
+	 * change is real — but still positive, so the pass list is the same. */
+	cam->set_viewport(1280.0f, 720.0f);
 	renderer_null_reset_log();
 	subsystem_manager_tick(mgr);
-	assert(count_draws(NULL) == 1);
+	assert(count_draws(NULL) == authored_draws);
 	cam->get_view_proj(&got);
 	assert(memcmp(got.m, want.m, sizeof(want.m)) == 0);
 	cam->get_eye(got_eye);

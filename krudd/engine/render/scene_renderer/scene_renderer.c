@@ -3140,10 +3140,15 @@ static void bloom_emissive_pass(struct fg_pass_ctx *ctx, void *userdata)
 	cam_vp = camera_clip_vp(gpu);
 	memcpy(&ubo[0], cam_vp.m, 16 * sizeof(float));
 	/* The shader reads only the matrices, but the block is uploaded whole —
-	 * fill cam_pos so no uninitialised stack reaches the buffer. */
-	ubo[SCENE_UBO_CAMPOS + 0] = g_cam.eye[0];
-	ubo[SCENE_UBO_CAMPOS + 1] = g_cam.eye[1];
-	ubo[SCENE_UBO_CAMPOS + 2] = g_cam.eye[2];
+	 * fill cam_pos so no uninitialised stack reaches the buffer. Reads
+	 * position, not eye, for the same reason every other cam_pos write
+	 * does: it is the eye the pair was built about, which a supplied pair
+	 * sets and the authored path copies from eye. Nothing observes the
+	 * difference today, and nothing has to notice if this shader ever
+	 * starts reading it. */
+	ubo[SCENE_UBO_CAMPOS + 0] = g_cam.position[0];
+	ubo[SCENE_UBO_CAMPOS + 1] = g_cam.position[1];
+	ubo[SCENE_UBO_CAMPOS + 2] = g_cam.position[2];
 	ubo[SCENE_UBO_CAMPOS + 3] = 0.0f;
 
 	gpu->cmd_set_pipeline(cmd, g_bloom_emissive_pso);

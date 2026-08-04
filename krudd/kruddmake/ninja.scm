@@ -21,9 +21,10 @@
           (else (loop (+ i 1))))))
 
 ;;! Which root a path hangs off, as the ninja variable to prefix it with. The
-;;! two are `$srcroot` (the engine tree) and `$reporoot` (the repository root,
-;;! where `projects/` lives) — see rz-project-path? for why there are two. A
-;;! project path keeps its `projects/` segment rather than having it stripped
+;;! two are `$srcroot` (the engine root — the `krudd/engine` tree, or an
+;;! unpacked SDK prefix; see rz-engine-root) and `$reporoot` (the repository
+;;! root, where `projects/` lives) — see rz-project-path? for why there are two.
+;;! A project path keeps its `projects/` segment rather than having it stripped
 ;;! into the variable, so the emitted `$reporoot/projects/ducks/ducks.scm` reads
 ;;! as the path it actually is on disk.
 (define (ninja-root-var path)
@@ -208,9 +209,12 @@
      "# Regenerate: see krudd/kruddmake/run-tests.sh"
      ""
      "ninja_required_version = 1.10"
-     ;;! The repository root, and the engine tree inside it. Both are here
-     ;;! because the build reads from two roots: engine modules from $srcroot,
-     ;;! projects from $reporoot/projects (rz-project-path?).
+     ;;! The repository root, and the engine root. Both are here because the
+     ;;! build reads from two roots: engine modules from $srcroot, projects from
+     ;;! $reporoot/projects (rz-project-path?). They are separate variables
+     ;;! rather than one plus a suffix because the engine root need not be
+     ;;! inside the repository at all — under an SDK it is the unpacked prefix
+     ;;! (rz-engine-root), and only $reporoot still names the checkout.
      (string-append "reporoot = " (krudd-repo-root))
      (string-append "srcroot = " srcroot)
      (string-append "cc = " native-cc)

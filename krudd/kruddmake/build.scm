@@ -24,7 +24,12 @@
 (define manifest
   (map (lambda (dir) (cons dir (load-spec dir))) owned-directories))
 
-(define src-root (string-append krudd-root "/krudd/engine"))
+;;! Read through rz-engine-root rather than spelled out, so the root the
+;;! generator EMITS (ninja's `$srcroot`, and every `(root …)` path hanging off
+;;! it) is the same root it READ the specs from — an SDK build that resolved its
+;;! build.scm files under the prefix and then compiled against `krudd/engine`
+;;! would be two builds wearing one manifest (#1035).
+(define src-root (rz-engine-root krudd-root))
 
 ;;! KRUDD_BUILD_DIR points the generated build.ninja and its objects at a
 ;;! variant-specific directory. run-tests.sh has always honoured it — that is

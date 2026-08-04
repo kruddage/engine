@@ -260,15 +260,15 @@
        (equal? (rz-codegen-args (decl-for "core/runtime.scm"))
                '("runtime_scm.h" "RUNTIME_SCM")))
 
-;;! --- the two source roots ------------------------------------------------
+;;! --- the three source roots ----------------------------------------------
 ;;!
 ;;! A project's directory resolves against the repository root, an engine
-;;! module's against krudd/engine. The prefix is the whole of the rule, so what
-;;! is checked here is that the prefix is read off the RESOLVED PATH and not
-;;! just the manifest entry — that is what lets a project's own sources take the
-;;! project root while the `(root …)` engine sources it compiles in keep taking
-;;! the engine's, and it is the case that would break silently by emitting
-;;! `$reporoot/world/entity/entity.c`.
+;;! module's against the engine root. The prefix is the whole of that rule, so
+;;! what is checked here is that the prefix is read off the RESOLVED PATH and
+;;! not just the manifest entry — that is what lets a project's own sources take
+;;! the project root while the `(root …)` engine sources it compiles in keep
+;;! taking the engine's, and it is the case that would break silently by
+;;! emitting `$reporoot/world/entity/entity.c`.
 
 (check "a project directory is a project path"
        (and (rz-project-path? "projects/chess")
@@ -298,6 +298,62 @@
                       "$srcroot/world/entity/entity.c")
             ;;! A `${generated}` path belongs to neither root.
             (string=? (ninja-ref "${generated}") "generated")))
+
+;;! The third root, and the half of it that matters most here: it is INERT. This
+;;! repository never sets KRUDD_SDK_PREFIX, so the suite runs — and the tree
+;;! builds — with the two roots it has always had, which is what makes the SDK
+;;! prefix something a consumer opts into rather than something this build has
+;;! to opt out of (#1035).
+(check "with no SDK prefix set the engine root is the sibling engine tree"
+       (and (not rz-sdk-prefix)
+            (string=? (rz-engine-root "/r") "/r/krudd/engine")))
+
+;;! Set, it displaces the engine root and nothing else. A consuming repository
+;;! has no `krudd/engine/` for an engine-relative path to land in, so an engine
+;;! module's spec comes out of the unpacked prefix — while a project's still
+;;! comes out of the checkout, because the SDK answers where the ENGINE is and
+;;! says nothing about where a project is. `set!` rather than the environment
+;;! because s7 has no setenv: the variable is read once at load, which is the
+;;! same property the generator relies on.
+(define (with-sdk-prefix prefix thunk)
+  (let ((saved rz-sdk-prefix))
+    (set! rz-sdk-prefix prefix)
+    (let ((result (thunk)))
+      (set! rz-sdk-prefix saved)
+      result)))
+
+(check "an SDK prefix moves the engine root out of the checkout entirely"
+       (with-sdk-prefix "/opt/krudd-sdk"
+                        (lambda ()
+                          (string=? (rz-engine-root "/r") "/opt/krudd-sdk"))))
+
+(check "under an SDK prefix an engine spec comes from the prefix"
+       (with-sdk-prefix "/opt/krudd-sdk"
+                        (lambda ()
+                          (string=? (rz-spec-path "/r" "game/project")
+                                    "/opt/krudd-sdk/game/project/build.scm"))))
+
+;;! The one that would break silently: a consuming repository is projects and
+;;! nothing else, so if the SDK prefix reached them too its whole manifest would
+;;! resolve into the unpacked engine and read no spec it actually owns.
+(check "under an SDK prefix a project spec still comes from the repository"
+       (with-sdk-prefix "/opt/krudd-sdk"
+                        (lambda ()
+                          (string=? (rz-spec-path "/r" "projects/chess")
+                                    "/r/projects/chess/build.scm"))))
+
+(check "the project predicate is no business of the SDK prefix"
+       (with-sdk-prefix "/opt/krudd-sdk"
+                        (lambda ()
+                          (and (rz-project-path? "projects/chess/chess.scm")
+                               (not (rz-project-path? "world/entity/entity.c"))
+                               (string=? (ninja-root-var "world/entity/entity.c")
+                                         "$srcroot/")))))
+
+(check "with-sdk-prefix leaves the suite's own root where it found it"
+       (and (not rz-sdk-prefix)
+            (string=? (rz-spec-path "/r" "game/project")
+                      "/r/krudd/engine/game/project/build.scm")))
 
 (check "a declaration's input resolves against its own module"
        (string=? (rz-codegen-source (decl-for "world/asset/mesh_script.scm"))
@@ -380,8 +436,7 @@
               (null? (rz-field target 'links)))))
 
 (check "abi emits no build edge"
-       (not (contains? (ninja-synthesize
-                        manifest (string-append krudd-root "/krudd/engine"))
+       (not (contains? (ninja-synthesize manifest (rz-engine-root krudd-root))
                        "libabi.a")))
 
 ;;! Two modules, `hi` listed above `lo`, and a library in `hi` linking down.
@@ -520,14 +575,18 @@
                      "/krudd/kruddmake/resolve_test.scm")
       #f))
 
+;;! The engine root comes from rz-engine-root here for the same reason
+;;! kruddmake/build.scm's `src-root` does: this is the second entry point into
+;;! the generator, and an entry point that spelled the root out for itself is
+;;! one that can come to disagree with the other about which engine it is
+;;! building (#1035).
 (define ninja-text
   (if (and ninja-out (> (string-length ninja-out) 0))
       (ninja-synthesize manifest
-                        (string-append krudd-root "/krudd/engine")
+                        (rz-engine-root krudd-root)
                         (dirname ninja-out)
                         regen-cmd)
-      (ninja-synthesize manifest
-                        (string-append krudd-root "/krudd/engine"))))
+      (ninja-synthesize manifest (rz-engine-root krudd-root))))
 
 (check "header present"
        (contains? ninja-text "Generated by krudd"))
@@ -609,7 +668,7 @@
                                  (string-append
                                   " "
                                   (ninja-source-path
-                                   (string-append krudd-root "/krudd/engine")
+                                   (rz-engine-root krudd-root)
                                    (rz-codegen-source (car l)))
                                   " "))
                       (loop (cdr l)))

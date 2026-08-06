@@ -77,7 +77,7 @@ krudd/
     game/        host/ is the launcher registry, project/ the generic host that
                  runs a game written as one (project ...) form
     shell/       The host the engine runs inside — web/
-projects/        The games — default/, chess/, training/. One .scm each, a sibling
+projects/        The games — default/, chess/. One .scm each, a sibling
                  of krudd/ rather than a module inside it: a project is content the
                  engine loads at runtime, not something it links. What a project
                  may and may not do is projects/README.md

@@ -3093,10 +3093,10 @@ static int material_emissive_excess(const struct world *w, uint32_t i,
 /*
  * Does this frame hold anything to bloom? The tick asks before it declares the
  * chain, and a "no" is what makes the promise in the header comment good: a
- * scene whose materials are all at emissive 0 (every project but training and
- * ducks, and every scene that predates the field) declares the same
- * forward-to-backbuffer graph it declared before this pass existed, so its
- * frame is not merely close to the old one — it is the same frame.
+ * scene whose materials are all at emissive 0 — every shipped project today —
+ * declares the same forward-to-backbuffer graph it declared before this pass
+ * existed, so its frame is not merely close to the old one — it is the same
+ * frame.
  */
 static int frame_has_emissive(const struct world *w)
 {
@@ -3301,9 +3301,8 @@ static int bloom_available(void)
  * scene with no emissive material it costs nothing at all: no transients, no
  * passes, no offscreen scene target, the identical graph. And for a scene that
  * does have one, the glow is not a preference — it is the look the content was
- * authored for (training's grid lines and ducks' crosshair are both driven past
- * 1 precisely so a bloom pass would catch them), and a switch defaulting to off
- * would just mean those projects ship looking wrong. What it costs when it does
+ * authored for, and a switch defaulting to off would just mean that project
+ * ships looking wrong. What it costs when it does
  * run is one half-res draw per emitting mesh, two half-res full-screen blurs
  * and one full-res composite: cheap enough to be on.
  */

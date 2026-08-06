@@ -111,9 +111,9 @@ static const char *const SHADER_EMISSIVE_SRC =
 	"  (fragment (set frag_color (vec4 1.0 1.0 1.0 1.0))))\n";
 
 /*
- * Two materials on that shader, differing only in emissive: glow is driven past
- * 1 the way training's grid lines and ducks' crosshair are, dark leaves it
- * at 0. block[] is the std140 Material block laid out as above, so
+ * Two materials on that shader, differing only in emissive: glow is driven
+ * past 1, dark leaves it at 0. block[] is the std140 Material block laid out
+ * as above, so
  * block[8..10] is the emissive vec3 at byte 32.
  */
 #define EMISSIVE_BLOCK_FLOATS 12

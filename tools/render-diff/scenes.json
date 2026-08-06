@@ -35,16 +35,6 @@
 			"note": "The parity meter: the whole engine under both backends, WebGL as the reference. This is the scene the 'diff' mode was built for, and it was blocked until scene_renderer ran on the WebGPU path (#595). Capture is now deterministic (#603): the injected clock advances one step per rendered frame and both backends are shot at frame 180 past first render, so the number is reproducible across runs and across backends rather than sampling a random animation phase. EXPECTED TO FAIL until the port finishes -- the number is the point, not the verdict. It should shrink as gaps close: today's diff is dominated by the missing mip chain (#605) and the depth-range convention (#606). render-diff is not run in CI, so a failing scene here costs no one a build; read it as a progress meter you run by hand."
 		},
 		{
-			"id": "bloom",
-			"query": "?renderer=webgpu&game=training",
-			"webgl_query": "?renderer=webgl&game=training",
-			"mode": "diff",
-			"tolerance": 0.002,
-			"capture_frames": 180,
-			"settle_ms": 15000,
-			"note": "The bloom pass (#1022), on the one shipped scene authored for it: training's grid lines drive emissive to (0.15 1.7 2.1), well past 1, so the bright pass has something to find and the room is mostly the glow. Mode is 'diff' because bloom claims both backends -- the whole chain has to agree across them, and a comparison needs no committed artifact to be meaningful the first time it is run. Read it against the 'parity' scene: a bloom-specific divergence shows up as this number moving while parity's holds. Same deterministic capture as parity, and the same caveat -- the port's standing gaps land in this number too, so what to watch is the delta a bloom change makes, not the absolute."
-		},
-		{
 			"id": "bloom-off",
 			"query": "?renderer=webgpu&game=chess",
 			"webgl_query": "?renderer=webgl&game=chess",

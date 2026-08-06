@@ -110,5 +110,4 @@
  "game/project_test"
  "shell/web"
  "projects/default"
- "projects/chess"
- "projects/training")
+ "projects/chess")

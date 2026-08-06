@@ -138,7 +138,6 @@
                 "game/project/project.scm"
                 "projects/default/default.scm"
                 "projects/chess/chess.scm"
-                "projects/training/training.scm"
                 "ui/kruddgui/kruddgui.scm"
                 "ui/kruddboard/md_parse.scm"
                 "base/math/math.scm"
@@ -251,8 +250,7 @@
 (check "resolve-shipped-projects finds every project, staged or not"
        (equal? (map rz-codegen-source (resolve-shipped-projects manifest))
                '("projects/default/default.scm"
-                 "projects/chess/chess.scm"
-                 "projects/training/training.scm")))
+                 "projects/chess/chess.scm")))
 
 (check "an embed's C symbol rides along as an argument, not an output"
        (equal? (rz-codegen-args (decl-for "core/runtime.scm"))
@@ -649,12 +647,8 @@
             (contains? ninja-text
                        (string-append "build assets/chess.scm: copy "
                                       "$reporoot/projects/chess/chess.scm"))
-            (contains? ninja-text
-                       (string-append "build assets/training.scm: copy "
-                                      "$reporoot/projects/training/training.scm"))
             (contains? ninja-text " assets/default.scm")
-            (contains? ninja-text " assets/chess.scm")
-            (contains? ninja-text " assets/training.scm")))
+            (contains? ninja-text " assets/chess.scm")))
 ;;! The property #1035 asks for: `archives` is the libraries, and it is never
 ;;! the test binaries or their run_test stamps that also ride in `native`.
 (check "archives target carries the native libraries, and only them"
@@ -704,8 +698,7 @@
     (check "assets/projects.json names every shipped project"
            (string=? (krudd-slurp (string-append (dirname ninja-out)
                                                  "/assets/projects.json"))
-                     (string-append "[\"default.scm\",\"chess.scm\","
-                                    "\"training.scm\"]\n"))))
+                     (string-append "[\"default.scm\",\"chess.scm\"]\n"))))
 
 (if (and ninja-out (> (string-length ninja-out) 0))
     (begin

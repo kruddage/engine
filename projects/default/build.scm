@@ -24,7 +24,7 @@
 ((staged-project "default.scm")
 
  (native-only
-  ;;! The FAT harness — the one chess and ducks use rather than training's lean
+  ;;! The FAT harness — the one chess uses rather than training's lean
   ;;! one — and here it is the point rather than a cost. Every mesh, material
   ;;! and script this project names is a BUILT-IN: it defines none of its own,
   ;;! so what is worth testing is precisely that those catalog paths still

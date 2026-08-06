@@ -111,5 +111,4 @@
  "shell/web"
  "projects/default"
  "projects/chess"
- "projects/training"
  "projects/ducks")

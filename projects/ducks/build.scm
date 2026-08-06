@@ -12,8 +12,8 @@
  (embed "ducks.scm" "ducks_scm.h" "DUCKS_SCM")
 
  (native-only
-  ;;! The FAT harness, the one chess uses rather than the lean one training
-  ;;! does, and for the reason chess needs it: this game's conveyor, gun pivot
+  ;;! The FAT harness, the one chess uses, and for the reason chess needs it:
+  ;;! this game's conveyor, gun pivot
   ;;! and crosshair are ENTITY SCRIPTS, and an entity script only runs if the
   ;;! catalog script-define! registered it into is really there. So the real
   ;;! asset catalog is compiled in (asset_plugin — also where material-define!

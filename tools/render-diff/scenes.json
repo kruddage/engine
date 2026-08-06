@@ -36,13 +36,13 @@
 		},
 		{
 			"id": "bloom",
-			"query": "?renderer=webgpu&game=training",
-			"webgl_query": "?renderer=webgl&game=training",
+			"query": "?renderer=webgpu&game=ducks",
+			"webgl_query": "?renderer=webgl&game=ducks",
 			"mode": "diff",
 			"tolerance": 0.002,
 			"capture_frames": 180,
 			"settle_ms": 15000,
-			"note": "The bloom pass (#1022), on the one shipped scene authored for it: training's grid lines drive emissive to (0.15 1.7 2.1), well past 1, so the bright pass has something to find and the room is mostly the glow. Mode is 'diff' because bloom claims both backends -- the whole chain has to agree across them, and a comparison needs no committed artifact to be meaningful the first time it is run. Read it against the 'parity' scene: a bloom-specific divergence shows up as this number moving while parity's holds. Same deterministic capture as parity, and the same caveat -- the port's standing gaps land in this number too, so what to watch is the delta a bloom change makes, not the absolute."
+			"note": "The bloom pass (#1022), on a shipped scene authored for it: ducks' crosshair material drives emissive to (2.4 0.12 0.1), well past 1, so the bright pass has something to find. Mode is 'diff' because bloom claims both backends -- the whole chain has to agree across them, and a comparison needs no committed artifact to be meaningful the first time it is run. Read it against the 'parity' scene: a bloom-specific divergence shows up as this number moving while parity's holds. Same deterministic capture as parity, and the same caveat -- the port's standing gaps land in this number too, so what to watch is the delta a bloom change makes, not the absolute."
 		},
 		{
 			"id": "bloom-off",

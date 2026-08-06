@@ -66,8 +66,8 @@ lands:
 Two scenes cover the bloom pass (#1022), and they are a pair on purpose —
 the feature has two claims and neither one alone is the point.
 
-- **`bloom`** — training, mode `diff`. Training's grid lines drive `emissive`
-  past 1, so this is the shipped scene the pass was written for. `diff` because
+- **`bloom`** — ducks, mode `diff`. Ducks' crosshair material drives `emissive`
+  past 1, so this is a shipped scene the pass was written for. `diff` because
   bloom ships on both backends: the chain has to agree across them, and a
   cross-backend comparison is meaningful on its first run with nothing
   committed. Watch the delta a bloom change makes to this number, not its

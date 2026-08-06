@@ -140,6 +140,7 @@
                 "projects/chess/chess.scm"
                 "projects/training/training.scm"
                 "projects/ducks/ducks.scm"
+                "projects/modelgen/modelgen.scm"
                 "ui/kruddgui/kruddgui.scm"
                 "ui/kruddboard/md_parse.scm"
                 "base/math/math.scm"
@@ -254,7 +255,8 @@
                '("projects/default/default.scm"
                  "projects/chess/chess.scm"
                  "projects/training/training.scm"
-                 "projects/ducks/ducks.scm")))
+                 "projects/ducks/ducks.scm"
+                 "projects/modelgen/modelgen.scm")))
 
 (check "an embed's C symbol rides along as an argument, not an output"
        (equal? (rz-codegen-args (decl-for "core/runtime.scm"))
@@ -701,7 +703,7 @@
 ;;! writes down what it copied. Generated beside the copies during the
 ;;! synthesize above, so it is already on disk here.
 ;;!
-;;! All four, in manifest order — the staged one first, since it is the one a
+;;! All of them, in manifest order — the staged one first, since it is the one a
 ;;! bare URL opens and the picker lists it like any other. This is also the
 ;;! assertion that a project which is shipped but not staged still reaches the
 ;;! Load Project control, which is the whole difference between the two
@@ -711,7 +713,8 @@
            (string=? (krudd-slurp (string-append (dirname ninja-out)
                                                  "/assets/projects.json"))
                      (string-append "[\"default.scm\",\"chess.scm\","
-                                    "\"training.scm\",\"ducks.scm\"]\n"))))
+                                    "\"training.scm\",\"ducks.scm\","
+                                    "\"modelgen.scm\"]\n"))))
 
 (if (and ninja-out (> (string-length ninja-out) 0))
     (begin

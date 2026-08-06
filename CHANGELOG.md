@@ -1,5 +1,12 @@
 # Changelog
 
+## [22.1.0](https://github.com/kruddage/engine/compare/v22.0.0...v22.1.0) (2026-08-06)
+
+
+### Features
+
+* **projects:** modelgen — a model viewer, and the seam a project draws its own panel through ([#1049](https://github.com/kruddage/engine/issues/1049)) ([88e0441](https://github.com/kruddage/engine/commit/88e0441e5f9a79e9e7bdf163795934af38a17a54))
+
 ## [22.0.0](https://github.com/kruddage/engine/compare/v21.0.0...v22.0.0) (2026-08-04)
 
 

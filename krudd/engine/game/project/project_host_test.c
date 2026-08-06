@@ -22,7 +22,10 @@
  *     selection made in the meantime is not delivered late when the project
  *     comes back;
  *   - a malformed or partial form is refused with a log line and registers
- *     nothing, since a project is user input rather than a compiled-in plugin.
+ *     nothing, since a project is user input rather than a compiled-in plugin;
+ *   - the panel seam runs the other way: a load installs what the project hands
+ *     over, the next load empties the slot, and a panel that faults costs one
+ *     call rather than the gui layer that made it.
  *
  * The last group is project_host_load — the door a project opened while the
  * engine is already running comes in by, which is one call rather than two so
@@ -530,6 +533,81 @@ static void test_load_of_a_bad_source_changes_nothing(void)
 	assert(poll("demo-ticks") == ticks + 1);
 }
 
+/*
+ * A project that draws its own panel. The rules keep a draw counter and three
+ * polls over the seam: whether a panel is installed, one pump of the host's
+ * per-tick entry point (the gui's call, made by hand because there is no gui
+ * here), and a way to install one that faults.
+ */
+static const char *PANEL_SRC =
+	"(project \"Panel Project\"\n"
+	"  (rules\n"
+	"   (define *panel-draws* 0)\n"
+	"   (define (panel-tick) (set! *panel-draws* (+ *panel-draws* 1)))\n"
+	"   (define (panel-load . ignored) (project-set-panel! panel-tick))\n"
+	"   (define (panel-pump ignored) (project-panel-draw) *panel-draws*)\n"
+	"   (define (panel-break ignored)\n"
+	"     (project-set-panel! (lambda () (car 5))) 0)\n"
+	"   (define (panel-installed ignored)\n"
+	"     (if (procedure? project-panel) 1 0)))\n"
+	"  (scene panel (entity (name \"panel-pad\")))\n"
+	"  (on-load panel-load))\n";
+
+static int32_t g_panel;
+
+/*
+ * The panel seam, which is the one thing a project hands the engine rather than
+ * the other way round: a load installs it, and the host's per-tick entry point
+ * calls exactly what was installed, once per call.
+ */
+static void test_panel_installed_by_load(void)
+{
+	g_panel = project_host_eval(PANEL_SRC);
+	assert(g_panel >= 0);
+
+	/* Registered but not loaded: no hook has run, so no panel. */
+	assert(poll("panel-installed") == 0);
+	assert(poll("panel-pump") == 0);
+
+	game_load(g_panel);
+	assert(poll("panel-installed") == 1);
+	assert(poll("panel-pump") == 1);
+	assert(poll("panel-pump") == 2);
+}
+
+/*
+ * Loading a project that installs none empties the slot — the panel goes with
+ * the project that drew it, so a game never inherits the last game's UI. The
+ * counter proves the old panel is not merely hidden but no longer called.
+ */
+static void test_panel_cleared_by_the_next_load(void)
+{
+	int32_t draws = poll("panel-pump");
+
+	game_load(g_project);
+	assert(poll("panel-installed") == 0);
+	assert(poll("panel-pump") == draws);
+}
+
+/*
+ * A panel that faults costs its own frame and nothing else: the call returns,
+ * the fault is on the log, and the panel is still installed — one bad frame is
+ * no evidence about the next, and a game that lost its UI to a hiccup would be
+ * the worse failure.
+ */
+static void test_panel_fault_is_survivable(void)
+{
+	game_load(g_panel);
+	log_init();
+	assert(poll("panel-break") == 0);
+	assert(poll("panel-pump") == poll("panel-pump"));
+	assert(logged_warning("panel fault"));
+	assert(poll("panel-installed") == 1);
+
+	/* Put the harness back where the other checks expect it. */
+	game_load(g_project);
+}
+
 int main(void)
 {
 	/*
@@ -555,6 +633,9 @@ int main(void)
 	test_load_replaces_the_previous();
 	test_load_reuses_a_registered_name();
 	test_load_of_a_bad_source_changes_nothing();
+	test_panel_installed_by_load();
+	test_panel_cleared_by_the_next_load();
+	test_panel_fault_is_survivable();
 
 	printf("project_host_test: ok\n");
 	return 0;

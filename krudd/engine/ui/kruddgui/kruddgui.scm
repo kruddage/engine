@@ -29,6 +29,13 @@
 ;;!     underneath it so a hitch is visible in a game's own play view (chess,
 ;;!     ...), not only in the editor. See kruddgui-perf-hud-draw below.
 ;;!
+;;! A second thing draws every tick and is not a panel of this file's at all:
+;;! the loaded project's own, whose procedure the gui host calls out of
+;;! game/project's project-panel slot. What it draws with comes from here — the
+;;! dropdown at the bottom of this file is the first widget written for it — but
+;;! what it draws is a game's, and the slot is the game tier's (see the note
+;;! above that dropdown for why).
+;;!
 ;;! Each panel is bracketed by (kgui-panel-begin name x y w h) / (kgui-panel-end):
 ;;! the named region captures any gesture whose down lands inside it, so taps
 ;;! route to the right panel and a finger on one never disturbs the other or the
@@ -2917,6 +2924,88 @@
              (+ y kruddgui-perf-header-h kruddgui-perf-pad)
              (- w (* 2 kruddgui-perf-pad)) kruddgui-perf-graph-h)
             (kgui-panel-end)))))))
+
+;;! ------------------------------------------------------------------
+;;! The dropdown — a widget for the panel a loaded project draws
+;;! ------------------------------------------------------------------
+;;!
+;;! Every panel above is the engine's own: the editor consoles, and the perf HUD
+;;! that outlives them in a play view. A GAME draws through a seam of its own —
+;;! game/project's project-set-panel!, which the gui host calls every tick, see
+;;! the note above project-panel in krudd/engine/game/project/project.scm — and
+;;! this is the widget that seam was opened for. It lives here rather than in a
+;;! project because it is gui and not game: which control a list of choices is
+;;! spelled as is the layer's decision, and the next game that wants one should
+;;! find it rather than draw its own.
+;;!
+;;! Reaching it from a project costs nothing extra. A project's panel only ever
+;;! runs from inside the host's per-tick call, and that call is what loads this
+;;! image in the first place (ensure_panel_scm in kruddgui.cpp), so by the time
+;;! a game's draw procedure runs, everything below is defined.
+
+;;! The id of the one open dropdown, or #f — one open at a time, the discipline
+;;! the scene console's combos and the colour picker already keep, so two lists
+;;! can never overlap each other on a phone.
+(define kruddgui-drop-open #f)
+
+;;! A dropdown's rows: the preview header and every option under it are one
+;;! height, so the open list reads as a single column, and that height clears
+;;! the 44px finger-target minimum this file sizes its other controls against.
+(define kruddgui-drop-row-h 44)
+
+;;! (kruddgui-dropdown id x y w label options sel) -> the option index chosen
+;;! this frame, which is SEL until a row is tapped. A labelled preview header
+;;! that toggles the list open; while open, one row per string in OPTIONS with
+;;! the current one highlighted, and a tap selects it and closes the list.
+;;!
+;;! The caller owns the value — it passes SEL in and acts on what comes back —
+;;! so the widget holds nothing per dropdown but which one is open. That is what
+;;! lets a game keep its selection in its own rules (where its tests can read
+;;! it) rather than in the gui layer.
+;;!
+;;! The whole widget sits in ONE input region, sized from the open state as it
+;;! stood when the frame began: the tap that closes a list is therefore still
+;;! inside the region that captured it, and the row taps below can never leak
+;;! through to the game underneath. The frame that OPENS a list draws its rows
+;;! one tick ahead of the region growing to cover them, which costs nothing —
+;;! the tap that opened it has already been consumed.
+(define (kruddgui-dropdown id x y w label options sel)
+  (let* ((n    (length options))
+         (i    (max 0 (min (- n 1) sel)))
+         (open (and (> n 0) (equal? kruddgui-drop-open id)))
+         (lh   kruddgui-scene-line)
+         (rh   kruddgui-drop-row-h)
+         (hy   (+ y lh))
+         (h    (+ lh (* rh (if open (+ n 1) 1))))
+         (pick i))
+    (kgui-panel-begin (string-append "kgui-drop-" id) x y w h)
+    (kruddgui-rect* (list x y w h) kruddgui-panel-bg)
+    (kruddgui-board-cell (+ x 8) y lh label kruddgui-scene-label-fg)
+    (kruddgui-rect* (list x hy w rh) kruddgui-idle-bg)
+    (kruddgui-label x hy (- w rh) rh
+                    (if (> n 0) (list-ref options i) "(none)")
+                    kruddgui-idle-fg)
+    (when (and (> n 0) (kgui-button x hy w rh))
+      (set! kruddgui-drop-open (if open #f id)))
+    ;;! Re-read after the header tap so the caret and the rows agree on the
+    ;;! state the tap just left the list in, rather than showing the one before.
+    (let ((shown (equal? kruddgui-drop-open id)))
+      (kruddgui-label (- (+ x w) rh) hy rh rh (if shown "^" "v")
+                      kruddgui-idle-fg)
+      (when shown
+        (let loop ((k 0) (os options))
+          (when (pair? os)
+            (let ((ry (+ hy (* rh (+ k 1)))))
+              (kruddgui-rect* (list x ry w rh)
+                              (if (= k i) kruddgui-active-bg kruddgui-idle-bg))
+              (kruddgui-label x ry w rh (car os)
+                              (if (= k i) kruddgui-active-fg kruddgui-idle-fg))
+              (when (kgui-button x ry w rh)
+                (set! pick k)
+                (set! kruddgui-drop-open #f)))
+            (loop (+ k 1) (cdr os))))))
+    (kgui-panel-end)
+    pick))
 
 ;;! (kruddgui-draw) the whole layer — the host's per-tick entry point, laid out
 ;;! through the dock shell. Off a safe frame it reserves the top toolbar band

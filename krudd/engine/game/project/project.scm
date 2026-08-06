@@ -185,14 +185,59 @@
         (lambda () (set! (*s7* 'print-length) prev)))
     src))
 
+;;! --- the loaded project's own panel ----------------------------------------
+;;!
+;;! A project's hooks are called by the host; this is the one thing a project
+;;! hands the ENGINE instead — a procedure to draw its own on-screen panel with,
+;;! which the gui host calls once a tick (call_scm_panel in
+;;! krudd/engine/ui/kruddgui/kruddgui.cpp, alongside its own perf HUD). A game's
+;;! HUD is drawn with the gui layer's widgets, so what a panel does is gui
+;;! vocabulary — but the SLOT is here, in the game tier, for one load-bearing
+;;! reason: the gui image loads lazily, on the first tick that draws anything,
+;;! while this image is up before any project source is ever evaluated. A slot
+;;! on the far side would be missing exactly when an early-loading project went
+;;! looking for it, and a game's UI would then be present or absent depending on
+;;! whether a fetch beat a frame. The gui reaches in by name once it is up; a
+;;! project reaches for something that is always there.
+;;!
+;;! ONE panel and not a list, because a project is the loaded one and there is
+;;! only ever one of those.
+
+;;! The loaded project's panel procedure, or #f — which is every project that
+;;! does not draw one, and every moment before one is loaded.
+(define project-panel #f)
+
+;;! (project-set-panel! p) install P as the loaded project's panel, or clear the
+;;! slot when P is not a procedure (#f being what a caller with nothing to draw
+;;! passes). A project calls this from its (on-load ...) hook, which is after
+;;! project-open has emptied the slot — so an install is per load rather than
+;;! once, and survives a reload without depending on what was there before.
+(define (project-set-panel! p)
+  (set! project-panel (and (procedure? p) p)))
+
+;;! (project-panel-draw) — the gui host's per-tick entry point. A fault in a
+;;! project's own drawing is caught and logged rather than taking the gui layer
+;;! down with it, for the reason project-call catches a project's hooks: game
+;;! code is user input and the frame loop is not its to lose. The panel stays
+;;! installed through a fault — one bad frame is no evidence about the next, and
+;;! an uninstall would cost a game its UI for good over a hiccup.
+(define (project-panel-draw)
+  (when (procedure? project-panel)
+    (catch #t
+           (lambda () (project-panel))
+           (lambda args (project-warn "panel fault") #f))))
+
 ;;! (project-open p) — the launcher's load callback for project P, run with the
 ;;! live world bound. The three steps a game plugin's load did, in the same
 ;;! order: empty whatever scene was showing, build this project's own, and start
 ;;! a fresh game. Between the build and the reset the selection baseline is
 ;;! re-armed from the world itself (a cleared world selects nothing), so the
-;;! first click after a load is an edge no matter what was selected before.
+;;! first click after a load is an edge no matter what was selected before, and
+;;! the panel slot is emptied for the same reason — what the last project left
+;;! behind is not this one's.
 (define (project-open p)
   (scene-clear!)
+  (project-set-panel! #f)
   (let ((form (project-scene p)))
     (when (pair? form)
       (when (< (scene-build! (project-scene-source form)) 0)

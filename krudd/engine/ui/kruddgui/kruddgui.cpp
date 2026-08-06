@@ -1599,15 +1599,28 @@ static void kruddgui_tick(void)
 	}
 
 	/*
-	 * The perf HUD is the one panel the host draws every tick, so a hitch
-	 * is visible in a game's play view (chess, ...). It owns its own input
-	 * region (kgui-panel-begin), so it traps its own small corner rather
-	 * than leaking a tap through to the game underneath.
+	 * Two panels draw every tick, chrome on or off.
+	 *
+	 * The loaded project's own, if it installed one — a project is a .scm
+	 * loaded at runtime, so a procedure is the only thing it can hand over,
+	 * and this is the call that runs it. The slot it comes out of belongs to
+	 * game/project rather than to this module (project-set-panel! in
+	 * project.scm), because this image loads lazily on the first tick that
+	 * draws while that one is up before any project is evaluated: a project
+	 * must not have to race a frame to find somewhere to put its panel.
+	 * First of the two, so the engine's own HUD composes over a game's and
+	 * a game can never bury it.
+	 *
+	 * Then the perf HUD, so a hitch is visible in a game's play view
+	 * (chess, ...). Each owns its own input region (kgui-panel-begin), so
+	 * each traps its own corner rather than leaking a tap through to the
+	 * game underneath.
 	 *
 	 * The rest of the panel image (kruddgui-draw) is still parked: the
 	 * krudd-* accessors it reads went with kruddboard in #661 and have not
 	 * been rebuilt.
 	 */
+	call_scm_panel("project-panel-draw");
 	call_scm_panel("kruddgui-perf-hud-draw");
 
 	/*

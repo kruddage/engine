@@ -112,4 +112,5 @@
  "projects/default"
  "projects/chess"
  "projects/training"
- "projects/ducks")
+ "projects/ducks"
+ "projects/modelgen")

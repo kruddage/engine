@@ -1,19 +1,20 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*
  * Native test for the Scheme-authored widget foundations and shared layout
- * vocabulary (the draggable slider, the 2D colour picker, the fold header and
- * the button row in kruddgui.scm, #492 PR6a/6b). Like kgui_scene_test it
- * registers *stub* kgui-* primitives — here with a steerable kgui-region so a
- * test can simulate a captured pointer at a fraction across a named widget's
- * rect, and a steerable tap — loads the same image the WASM host loads
- * (KRUDDGUI_SCM), and drives each widget *directly*: it builds a layout cursor
- * with a wide-open clip band and calls the widget, then reads the value it
- * returns and the state it writes. Driving the helpers directly (rather than
+ * vocabulary (the draggable slider, the 2D colour picker, the fold header, the
+ * button row and the dropdown in kruddgui.scm, #492 PR6a/6b). Like
+ * kgui_scene_test it registers *stub* kgui-* primitives — here with a steerable
+ * kgui-region so a test can simulate a captured pointer at a fraction across a
+ * named widget's rect, and a steerable tap — loads the same image the WASM host
+ * loads (KRUDDGUI_SCM), and drives each widget *directly*: it builds a layout
+ * cursor with a wide-open clip band and calls the widget, then reads the value
+ * it returns and the state it writes. Driving the helpers directly (rather than
  * through a panel body) keeps the tests geometry-free, so inserting a row above a
  * widget can't shift a hard-coded y out from under it. It verifies the portable
  * logic — the press-to-value mapping and clamping, the HSV round-trip, the
- * one-picker-open discipline, and the fold's independent open state — leaving
- * pixel layout to browser verification.
+ * one-picker-open discipline, the fold's independent open state, and the
+ * dropdown's open/pick/close cycle — leaving pixel layout to browser
+ * verification.
  */
 #include <core/script.h>
 
@@ -121,6 +122,8 @@ static void setup(void)
 	/* Reset the one-open-at-a-time picker and the fold set a prior test set. */
 	s7_eval_c_string(sc, "(set! kruddgui-open-picker #f)");
 	s7_eval_c_string(sc, "(set! kruddgui-fold-state '())");
+	/* And the one open dropdown, which keeps the same discipline. */
+	s7_eval_c_string(sc, "(set! kruddgui-drop-open #f)");
 	/* Reset the console arbiter so a tray test starts from a clean slate. */
 	s7_eval_c_string(sc, "(set! kruddgui-active-console #f)");
 }
@@ -511,6 +514,103 @@ static void test_button_row_selects(void)
 	assert(s7_is_string(r) && strcmp(s7_string(r), "Warm") == 0);
 }
 
+/* ------------------------------------------------------------------ */
+/* The dropdown a project's panel picks with                           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * A dropdown at x 10, y 0, w 200 over three options. Its label line is 26px
+ * (kruddgui-scene-line), so the preview header is y 26..70 and, once open, the
+ * option rows are y 70..114, 114..158 and 158..202 (kruddgui-drop-row-h 44).
+ */
+#define TEST_DROP(sel) \
+	"(kruddgui-dropdown \"d1\" 10 0 200 \"MODEL\" " \
+	"(list \"Ay\" \"Bee\" \"Cee\") " sel ")"
+
+/* The id of the open dropdown, or "" when none is open. */
+static const char *drop_open(void)
+{
+	s7_pointer p = s7_name_to_value(script_s7(), "kruddgui-drop-open");
+
+	return s7_is_string(p) ? s7_string(p) : "";
+}
+
+/*
+ * Closed, a dropdown is its preview alone: the selection's label and nothing
+ * else from the list, and the value it was handed comes straight back.
+ */
+static void test_dropdown_closed_previews_the_selection(void)
+{
+	assert(s7_integer(eval(TEST_DROP("1"))) == 1);
+	assert(rec_has("text Bee"));
+	assert(!rec_has("text Ay"));
+	assert(!rec_has("text Cee"));
+	assert(strcmp(drop_open(), "") == 0);
+}
+
+/* A tap on the preview header opens the list, and another closes it again. */
+static void test_dropdown_header_toggles_the_list(void)
+{
+	tap(100.0f, 40.0f);
+	g_rec_n = 0;
+	assert(s7_integer(eval(TEST_DROP("0"))) == 0);
+	assert(strcmp(drop_open(), "d1") == 0);
+	/* Open on the same frame the tap opened it: every option is listed. */
+	assert(rec_has("text Ay"));
+	assert(rec_has("text Bee"));
+	assert(rec_has("text Cee"));
+
+	tap(100.0f, 40.0f);
+	assert(s7_integer(eval(TEST_DROP("0"))) == 0);
+	assert(strcmp(drop_open(), "") == 0);
+}
+
+/*
+ * A tap on an option row picks it — the widget holds no value, so the pick is
+ * the return — and closes the list behind it.
+ */
+static void test_dropdown_row_tap_picks_and_closes(void)
+{
+	tap(100.0f, 40.0f);
+	eval(TEST_DROP("0"));
+	assert(strcmp(drop_open(), "d1") == 0);
+
+	tap(100.0f, 180.0f);
+	assert(s7_integer(eval(TEST_DROP("0"))) == 2);
+	assert(strcmp(drop_open(), "") == 0);
+
+	/* Closed again, and untapped it reports whatever it is handed. */
+	g_rec_n = 0;
+	assert(s7_integer(eval(TEST_DROP("2"))) == 2);
+	assert(!rec_has("text Ay"));
+}
+
+/* Opening a second dropdown closes the first: one list open at a time. */
+static void test_dropdown_one_open_at_a_time(void)
+{
+	tap(100.0f, 40.0f);
+	eval(TEST_DROP("0"));
+	assert(strcmp(drop_open(), "d1") == 0);
+
+	tap(100.0f, 40.0f);
+	eval("(kruddgui-dropdown \"d2\" 10 0 200 \"OTHER\" (list \"X\") 0)");
+	assert(strcmp(drop_open(), "d2") == 0);
+}
+
+/*
+ * An empty list draws a preview that says so and cannot be opened — the guard
+ * on a game whose model list has not been filled in yet.
+ */
+static void test_dropdown_with_no_options_is_inert(void)
+{
+	tap(100.0f, 40.0f);
+	g_rec_n = 0;
+	assert(s7_integer(eval(
+		"(kruddgui-dropdown \"d3\" 10 0 200 \"MODEL\" (list) 0)")) == 0);
+	assert(rec_has("text (none)"));
+	assert(strcmp(drop_open(), "") == 0);
+}
+
 /* The line splitter behind the multiline field's per-line paint. */
 static void test_multi_nth_line(void)
 {
@@ -837,6 +937,11 @@ int main(void)
 	RUN(md_heading_scaled);
 	RUN(md_code_has_slab);
 	RUN(md_paragraph_styled_segments);
+	RUN(dropdown_closed_previews_the_selection);
+	RUN(dropdown_header_toggles_the_list);
+	RUN(dropdown_row_tap_picks_and_closes);
+	RUN(dropdown_one_open_at_a_time);
+	RUN(dropdown_with_no_options_is_inert);
 
 	printf("\n%d/%d kgui widget tests passed\n", tests_passed, tests_run);
 	return tests_passed == tests_run ? 0 : 1;

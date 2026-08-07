@@ -548,14 +548,31 @@ static void test_dropdown_closed_previews_the_selection(void)
 	assert(strcmp(drop_open(), "") == 0);
 }
 
-/* A tap on the preview header opens the list, and another closes it again. */
+/*
+ * A tap on the preview header flips kruddgui-drop-open for the frame AFTER
+ * this one — not this one. The frame the tap lands on still draws (and
+ * captures input for) the closed preview: that is what keeps the widget's one
+ * input region, sized from the SAME open state the rows below are gated on,
+ * always matching what a real tap would find on screen. The list only draws
+ * open, region and all, starting the frame after — which is also the
+ * earliest frame a user could physically tap a row that has just appeared.
+ */
 static void test_dropdown_header_toggles_the_list(void)
 {
 	tap(100.0f, 40.0f);
 	g_rec_n = 0;
 	assert(s7_integer(eval(TEST_DROP("0"))) == 0);
 	assert(strcmp(drop_open(), "d1") == 0);
-	/* Open on the same frame the tap opened it: every option is listed. */
+	/* Not open on the tap's own frame: the toggle takes effect next frame.
+	 * "Ay" is not a useful witness here — it is also the closed header's own
+	 * preview text (the current selection, index 0) — so check the two
+	 * option rows that only ever appear once the list is actually open. */
+	assert(!rec_has("text Bee"));
+	assert(!rec_has("text Cee"));
+
+	/* The next frame, with no further tap, draws it open. */
+	g_rec_n = 0;
+	assert(s7_integer(eval(TEST_DROP("0"))) == 0);
 	assert(rec_has("text Ay"));
 	assert(rec_has("text Bee"));
 	assert(rec_has("text Cee"));

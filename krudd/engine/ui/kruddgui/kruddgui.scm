@@ -2963,12 +2963,18 @@
 ;;! lets a game keep its selection in its own rules (where its tests can read
 ;;! it) rather than in the gui layer.
 ;;!
-;;! The whole widget sits in ONE input region, sized from the open state as it
-;;! stood when the frame began: the tap that closes a list is therefore still
-;;! inside the region that captured it, and the row taps below can never leak
-;;! through to the game underneath. The frame that OPENS a list draws its rows
-;;! one tick ahead of the region growing to cover them, which costs nothing —
-;;! the tap that opened it has already been consumed.
+;;! The whole widget sits in ONE input region, declared once, sized from the
+;;! open state as it stood when the frame began — the SAME open state that
+;;! gates the rows below, so the region and what is actually on screen this
+;;! frame always agree. A tap on the header still toggles the state (for the
+;;! FOLLOWING frame): what changes here is that the rows are no longer drawn a
+;;! tick ahead of the region that is meant to cover them. A list that has just
+;;! opened is a closed frame whose only visible effect is the state flip; it
+;;! draws open, region and all, starting next frame — which is also the
+;;! earliest frame a real tap on a now-visible row could possibly land, so
+;;! that tap is never tested against a region still shaped for the frame
+;;! before. A tap that closes the list stays inside the region that captured
+;;! it, and the row taps below can never leak through to the game underneath.
 (define (kruddgui-dropdown id x y w label options sel)
   (let* ((n    (length options))
          (i    (max 0 (min (- n 1) sel)))
@@ -2985,25 +2991,22 @@
     (kruddgui-label x hy (- w rh) rh
                     (if (> n 0) (list-ref options i) "(none)")
                     kruddgui-idle-fg)
+    (kruddgui-label (- (+ x w) rh) hy rh rh (if open "^" "v")
+                    kruddgui-idle-fg)
     (when (and (> n 0) (kgui-button x hy w rh))
       (set! kruddgui-drop-open (if open #f id)))
-    ;;! Re-read after the header tap so the caret and the rows agree on the
-    ;;! state the tap just left the list in, rather than showing the one before.
-    (let ((shown (equal? kruddgui-drop-open id)))
-      (kruddgui-label (- (+ x w) rh) hy rh rh (if shown "^" "v")
-                      kruddgui-idle-fg)
-      (when shown
-        (let loop ((k 0) (os options))
-          (when (pair? os)
-            (let ((ry (+ hy (* rh (+ k 1)))))
-              (kruddgui-rect* (list x ry w rh)
-                              (if (= k i) kruddgui-active-bg kruddgui-idle-bg))
-              (kruddgui-label x ry w rh (car os)
-                              (if (= k i) kruddgui-active-fg kruddgui-idle-fg))
-              (when (kgui-button x ry w rh)
-                (set! pick k)
-                (set! kruddgui-drop-open #f)))
-            (loop (+ k 1) (cdr os))))))
+    (when open
+      (let loop ((k 0) (os options))
+        (when (pair? os)
+          (let ((ry (+ hy (* rh (+ k 1)))))
+            (kruddgui-rect* (list x ry w rh)
+                            (if (= k i) kruddgui-active-bg kruddgui-idle-bg))
+            (kruddgui-label x ry w rh (car os)
+                            (if (= k i) kruddgui-active-fg kruddgui-idle-fg))
+            (when (kgui-button x ry w rh)
+              (set! pick k)
+              (set! kruddgui-drop-open #f)))
+          (loop (+ k 1) (cdr os)))))
     (kgui-panel-end)
     pick))
 
